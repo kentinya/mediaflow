@@ -23,7 +23,7 @@ const TOKEN = "run-once-token";
 const DISCOVERY_ID = "discovery-1";
 const INTENT_ID = "intent-1";
 const PREVIEW_ID = "preview-1";
-const API_PATH = `/api/v1/operations/automation/run-once/${DISCOVERY_ID}`;
+const API_PATH = `/api/operations/automation/run-once/${DISCOVERY_ID}`;
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -206,7 +206,7 @@ function frozenRunOnceDocument(previewId: string | null): Json {
         path:
           previewId === null
             ? null
-            : `/api/v1/operations/organize/previews/${previewId}`,
+            : `/api/operations/organize/previews/${previewId}`,
         nextAction:
           "review the frozen manifest's exact plan summary in this Run once",
       }),
@@ -288,7 +288,7 @@ function previewDocument(): Json {
   (actions["execute"] as Json)["available"] = true;
   (actions["execute"] as Json)["reason"] = null;
   (actions["execute"] as Json)["path"] =
-    `/api/v1/operations/organize/previews/${PREVIEW_ID}/execute`;
+    `/api/operations/organize/previews/${PREVIEW_ID}/execute`;
   return value;
 }
 
@@ -298,7 +298,7 @@ describe("V2 Automation Run once journey", () => {
     // ready (unfrozen) → finalize → analyzing → Worker links the plan (frozen)
     let stage: "ready" | "analyzing" | "linked" = "ready";
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (call.url === API_PATH && call.method === "GET") {
@@ -317,12 +317,12 @@ describe("V2 Automation Run once journey", () => {
         stage = "analyzing";
         return jsonResponse(analyzingRunOnceDocument(), 201);
       }
-      if (call.url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+      if (call.url === `/api/operations/organize/previews/${PREVIEW_ID}`) {
         return jsonResponse(previewDocument());
       }
       if (
         call.method === "GET" &&
-        call.url.startsWith("/api/v1/operations/organize/executions?previewId=")
+        call.url.startsWith("/api/operations/organize/executions?previewId=")
       ) {
         return jsonResponse({
           journey: "organize",
@@ -336,7 +336,7 @@ describe("V2 Automation Run once journey", () => {
     });
     authStore.setToken(TOKEN);
     const { router } = renderApp(
-      `/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`,
+      `/operations/automation/run-once/${DISCOVERY_ID}`,
     );
     await screen.findByRole("heading", { name: "运行一次" });
     await user.click(
@@ -384,7 +384,7 @@ describe("V2 Automation Run once journey", () => {
 
   it("keeps the finalize action and plan route available after the manifest froze", async () => {
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (call.url === API_PATH && call.method === "GET") {
@@ -393,7 +393,7 @@ describe("V2 Automation Run once journey", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`);
+    renderApp(`/operations/automation/run-once/${DISCOVERY_ID}`);
 
     await screen.findByText("来源清单已冻结");
     // The plan summary is restored from the durable association, and the
@@ -409,7 +409,7 @@ describe("V2 Automation Run once journey", () => {
 
   it("refuses a stale URL plan that no longer names this Run once's plan", async () => {
     recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (call.url === API_PATH && call.method === "GET") {
@@ -417,14 +417,14 @@ describe("V2 Automation Run once journey", () => {
         // shows the current plan, never the one the address still names.
         return jsonResponse(frozenRunOnceDocument(PREVIEW_ID));
       }
-      if (call.url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+      if (call.url === `/api/operations/organize/previews/${PREVIEW_ID}`) {
         return jsonResponse(previewDocument());
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
     renderApp(
-      `/ui-v2/operations/automation/run-once/${DISCOVERY_ID}?plan=preview-stale`,
+      `/operations/automation/run-once/${DISCOVERY_ID}?plan=preview-stale`,
     );
 
     await screen.findByText("来源清单已冻结");
@@ -437,7 +437,7 @@ describe("V2 Automation Run once journey", () => {
 
   it("keeps a cancelled run terminal with no plan, recovery or confirmation", async () => {
     recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (call.url === API_PATH && call.method === "GET") {
@@ -448,7 +448,7 @@ describe("V2 Automation Run once journey", () => {
     authStore.setToken(TOKEN);
     // A stale plan hint in the URL must not override the terminal outcome.
     renderApp(
-      `/ui-v2/operations/automation/run-once/${DISCOVERY_ID}?plan=${PREVIEW_ID}`,
+      `/operations/automation/run-once/${DISCOVERY_ID}?plan=${PREVIEW_ID}`,
     );
 
     await screen.findByText("本次运行已取消");
@@ -464,7 +464,7 @@ describe("V2 Automation Run once journey", () => {
 
   it("offers only the explicit freeze action while the manifest is not frozen", async () => {
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (call.url === API_PATH && call.method === "GET") {
@@ -473,7 +473,7 @@ describe("V2 Automation Run once journey", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`);
+    renderApp(`/operations/automation/run-once/${DISCOVERY_ID}`);
 
     expect(
       await screen.findByRole("button", { name: "冻结清单并生成计划摘要" }),
@@ -489,7 +489,7 @@ describe("V2 Automation Run once journey", () => {
 
   it("shows the durable analyzing stage and offers no plan while the Worker runs", async () => {
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (call.url === API_PATH && call.method === "GET") {
@@ -498,7 +498,7 @@ describe("V2 Automation Run once journey", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`);
+    renderApp(`/operations/automation/run-once/${DISCOVERY_ID}`);
 
     // The frozen manifest's analysis is a durable stage of this run: the page
     // explains it and keeps the run's cancellation available, without any

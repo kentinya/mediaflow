@@ -78,8 +78,8 @@ async function apiRows(
 ): Promise<Array<{ name: string; type: string; size: number }>> {
   const url =
     kind === "resource"
-      ? `/api/v1/resource-libraries/${library}/files?path=${encodeURIComponent(path)}&limit=100`
-      : `/api/v1/media-libraries/${library}/files?path=${encodeURIComponent(path)}&limit=100`;
+      ? `/api/resource-libraries/${library}/files?path=${encodeURIComponent(path)}&limit=100`
+      : `/api/media-libraries/${library}/files?path=${encodeURIComponent(path)}&limit=100`;
   const response = await page.request.get(url, {
     headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
   });
@@ -99,8 +99,8 @@ async function openWebFiles(
   await page.setViewportSize({ width: 760, height: 900 });
   const route =
     kind === "resource"
-      ? `/ui-v2/resourcelib/files?resourceLibraryId=${library}&path=${encodeURIComponent(path)}`
-      : `/ui-v2/medialib/files?mediaLibraryId=${library}&path=${encodeURIComponent(path)}`;
+      ? `/resourcelib/files?resourceLibraryId=${library}&path=${encodeURIComponent(path)}`
+      : `/medialib/files?mediaLibraryId=${library}&path=${encodeURIComponent(path)}`;
   await page.goto(route);
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();

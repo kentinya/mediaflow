@@ -23,9 +23,7 @@ function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
 }
 
 async function openFiles(page: Page, mediaLibrary = false): Promise<void> {
-  await page.goto(
-    mediaLibrary ? "/ui-v2/medialib/files" : "/ui-v2/resourcelib/files",
-  );
+  await page.goto(mediaLibrary ? "/medialib/files" : "/resourcelib/files");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -43,7 +41,7 @@ function directoryReads(
   return api.filter(
     (entry) =>
       entry.method === "GET" &&
-      /\/api\/v1\/(resource-libraries|media-libraries)\/[^/]+\/files(\?|$)/.test(
+      /\/api\/(resource-libraries|media-libraries)\/[^/]+\/files(\?|$)/.test(
         entry.url,
       ),
   ).length;

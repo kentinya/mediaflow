@@ -214,7 +214,7 @@ class WebhookManagementTests(unittest.TestCase):
 
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{active.revision_id}/objects",
+                    f"/api/configuration/revisions/{active.revision_id}/objects",
                 )
                 self.assertEqual(status, 200, detail)
                 projected = detail["objects"]["webhooks"][0]
@@ -224,7 +224,7 @@ class WebhookManagementTests(unittest.TestCase):
 
                 status, page = request(
                     harness.api,
-                    "/api/v1/operations/notifications/webhooks",
+                    "/api/operations/notifications/webhooks",
                 )
                 self.assertEqual(status, 200, page)
                 self.assertEqual([item["id"] for item in page["items"]], ["operations-webhook"])
@@ -233,7 +233,7 @@ class WebhookManagementTests(unittest.TestCase):
 
                 status, operator_detail = request(
                     harness.api,
-                    "/api/v1/operations/notifications/webhooks/operations-webhook",
+                    "/api/operations/notifications/webhooks/operations-webhook",
                 )
                 self.assertEqual(status, 200, operator_detail)
                 self.assertEqual(operator_detail["webhook"]["events"], canonical_events)
@@ -249,7 +249,7 @@ class WebhookManagementTests(unittest.TestCase):
                 )
                 status, draft_detail = request(
                     harness.api,
-                    "/api/v1/operations/notifications/webhooks/operations-webhook/draft",
+                    "/api/operations/notifications/webhooks/operations-webhook/draft",
                 )
                 self.assertEqual(status, 200, draft_detail)
                 self.assertEqual(draft_detail["webhook"]["events"], canonical_events)
@@ -311,7 +311,7 @@ class WebhookManagementTests(unittest.TestCase):
                 # the action the detail page offers to open a successor Draft.
                 status, detail = request(
                     harness.api,
-                    "/api/v1/operations/notifications/webhooks/operations-webhook",
+                    "/api/operations/notifications/webhooks/operations-webhook",
                 )
                 self.assertEqual(status, 200, detail)
                 self.assertEqual(detail["webhook"]["events"], canonical_events)
@@ -333,7 +333,7 @@ class WebhookManagementTests(unittest.TestCase):
                 # open Draft and still presents the current event names.
                 status, detail = request(
                     harness.api,
-                    "/api/v1/operations/notifications/webhooks/operations-webhook",
+                    "/api/operations/notifications/webhooks/operations-webhook",
                 )
                 self.assertEqual(status, 200, detail)
                 self.assertEqual(detail["webhook"]["events"], canonical_events)
@@ -342,7 +342,7 @@ class WebhookManagementTests(unittest.TestCase):
                 for action in ("copy", "enable", "disable"):
                     self.assertTrue(actions[action]["available"], action)
                     self.assertIn(
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/",
+                        f"/api/configuration/revisions/{revision_id}/objects/webhooks/",
                         actions[action]["path"],
                     )
 
@@ -422,7 +422,7 @@ class WebhookManagementTests(unittest.TestCase):
                 # spelling; only the server-assembled source read maps it.
                 status, rejected = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/{copy_id}",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/{copy_id}",
                     method="PUT",
                     body=json.dumps(
                         {
@@ -499,7 +499,7 @@ class WebhookManagementTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(len(created), 1)
-                status, deliveries = request(harness.api, "/api/v1/notifications")
+                status, deliveries = request(harness.api, "/api/notifications")
                 self.assertEqual(status, 200, deliveries)
                 self.assertEqual(
                     sorted(
@@ -527,7 +527,7 @@ class WebhookManagementTests(unittest.TestCase):
                 # definition, which the managed graph presents for editing.
                 status, before = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects",
+                    f"/api/configuration/revisions/{revision_id}/objects",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(
@@ -537,7 +537,7 @@ class WebhookManagementTests(unittest.TestCase):
 
                 status, created = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
                 )
@@ -557,7 +557,7 @@ class WebhookManagementTests(unittest.TestCase):
 
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects",
+                    f"/api/configuration/revisions/{revision_id}/objects",
                 )
                 self.assertEqual(status, 200)
                 webhooks = detail["objects"]["webhooks"]
@@ -575,7 +575,7 @@ class WebhookManagementTests(unittest.TestCase):
                 )
                 status, updated = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook",
                     method="PUT",
                     body=json.dumps({"object": edited, "expectedVersion": 2}).encode(),
                 )
@@ -585,7 +585,7 @@ class WebhookManagementTests(unittest.TestCase):
                 # Copy starts disabled with a unique id.
                 status, copied = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/copy",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/copy",
                     method="POST",
                     body=json.dumps({"expectedVersion": 3}).encode(),
                 )
@@ -603,14 +603,14 @@ class WebhookManagementTests(unittest.TestCase):
                 # Enable copy, disable original.
                 status, enabled = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook-copy/enable",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook-copy/enable",
                     method="POST",
                     body=json.dumps({"expectedVersion": 4}).encode(),
                 )
                 self.assertEqual(status, 200)
                 status, disabled = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/disable",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/disable",
                     method="POST",
                     body=json.dumps({"expectedVersion": 5}).encode(),
                 )
@@ -623,7 +623,7 @@ class WebhookManagementTests(unittest.TestCase):
                 # Delete the copy; the original remains.
                 status, deleted = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook-copy",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook-copy",
                     method="DELETE",
                     body=json.dumps({"expectedVersion": 6}).encode(),
                 )
@@ -641,7 +641,7 @@ class WebhookManagementTests(unittest.TestCase):
                 # Viewer cannot mutate but can read.
                 status, denied = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps(
                         {"object": webhook_document(id="second"), "expectedVersion": 7}
@@ -651,7 +651,7 @@ class WebhookManagementTests(unittest.TestCase):
                 self.assertEqual(status, 403)
                 status, _ = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects",
+                    f"/api/configuration/revisions/{revision_id}/objects",
                     token="viewer-token",
                 )
                 self.assertEqual(status, 200)
@@ -665,7 +665,7 @@ class WebhookManagementTests(unittest.TestCase):
                 revision_id = harness.draft.revision_id
                 status, created = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
                 )
@@ -674,7 +674,7 @@ class WebhookManagementTests(unittest.TestCase):
                 # Stale write with an old version fails closed.
                 status, stale = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook",
                     method="PUT",
                     body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
                 )
@@ -685,7 +685,7 @@ class WebhookManagementTests(unittest.TestCase):
                 active = _activate(harness)
                 status, immutable = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{active.revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{active.revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps(
                         {"object": webhook_document(id="second"), "expectedVersion": active.version}
@@ -720,7 +720,7 @@ class WebhookManagementTests(unittest.TestCase):
                 )
                 status, superseded = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{active.revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{active.revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps(
                         {"object": webhook_document(id="third"), "expectedVersion": active.version}
@@ -767,7 +767,7 @@ class WebhookManagementTests(unittest.TestCase):
                     with self.subTest(label=label):
                         status, response = request(
                             harness.api,
-                            f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                            f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                             method="POST",
                             body=json.dumps({"object": value, "expectedVersion": 1}).encode(),
                         )
@@ -779,7 +779,7 @@ class WebhookManagementTests(unittest.TestCase):
                 with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "real-secret-value"}):
                     status, created = request(
                         harness.api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                        f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                         method="POST",
                         body=json.dumps(
                             {"object": webhook_document(), "expectedVersion": 1}
@@ -788,7 +788,7 @@ class WebhookManagementTests(unittest.TestCase):
                     self.assertEqual(status, 200)
                     status, detail = request(
                         harness.api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects",
+                        f"/api/configuration/revisions/{revision_id}/objects",
                     )
                     self.assertEqual(status, 200)
                     webhook = next(
@@ -809,7 +809,7 @@ class WebhookManagementTests(unittest.TestCase):
             try:
                 status, created = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
                 )
@@ -822,7 +822,7 @@ class WebhookManagementTests(unittest.TestCase):
                 with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "top-secret-value"}):
                     status, result = request(
                         harness.api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
+                        f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
                         method="POST",
                         body=json.dumps(
                             {
@@ -857,7 +857,7 @@ class WebhookManagementTests(unittest.TestCase):
                 with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "top-secret-value"}):
                     request(
                         harness.api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
+                        f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
                         method="POST",
                         body=json.dumps(
                             {
@@ -885,7 +885,7 @@ class WebhookManagementTests(unittest.TestCase):
             try:
                 status, created = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
                 )
@@ -900,7 +900,7 @@ class WebhookManagementTests(unittest.TestCase):
                 with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "top-secret-value"}):
                     status, result = request(
                         harness.api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
+                        f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
                         method="POST",
                         body=json.dumps(
                             {
@@ -944,7 +944,7 @@ class WebhookManagementTests(unittest.TestCase):
             try:
                 status, created = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
                 )
@@ -955,7 +955,7 @@ class WebhookManagementTests(unittest.TestCase):
                 with patch.dict(os.environ, {}, clear=True):
                     status, missing = request(
                         harness.api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
+                        f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
                         method="POST",
                         body=json.dumps(
                             {
@@ -973,7 +973,7 @@ class WebhookManagementTests(unittest.TestCase):
                 # Stale exact-revision identity fails closed with durable evidence.
                 status, stale = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
                     method="POST",
                     body=json.dumps(
                         {
@@ -992,7 +992,7 @@ class WebhookManagementTests(unittest.TestCase):
                 with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "top-secret-value"}):
                     status, transport = request(
                         harness.api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
+                        f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
                         method="POST",
                         body=json.dumps(
                             {
@@ -1023,7 +1023,7 @@ class WebhookManagementTests(unittest.TestCase):
                     try:
                         status, created = request(
                             harness.api,
-                            f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                            f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                             method="POST",
                             body=json.dumps(
                                 {"object": webhook_document(), "expectedVersion": 1}
@@ -1036,7 +1036,7 @@ class WebhookManagementTests(unittest.TestCase):
                         ):
                             status, outcome = request(
                                 harness.api,
-                                f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
+                                f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook/test",
                                 method="POST",
                                 body=json.dumps(
                                     {

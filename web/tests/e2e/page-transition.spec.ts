@@ -40,7 +40,7 @@ const WAITING_READ_MARKERS =
   /正在读取(作品列表|筛选选项|资源库信息|媒体库信息|文件|Active 规则|自动化任务|执行记录|配置状态|已应用条件|整理记录|引擎设置|通知定义)|正在加载(运行清单|存储管理)|读取运行清单/;
 
 async function connect(page: Page): Promise<void> {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -243,55 +243,55 @@ const DESTINATIONS: ReadonlyArray<{
   {
     name: "Files",
     page: "files",
-    path: "/ui-v2/resourcelib/files",
+    path: "/resourcelib/files",
     heading: "文件",
   },
   {
     name: "Library",
     page: "library",
-    path: "/ui-v2/medialib/files",
+    path: "/medialib/files",
     heading: "媒体库",
   },
   {
     name: "Explore",
     page: "home",
-    path: "/ui-v2/explore",
+    path: "/explore",
     heading: "探索",
   },
   {
     name: "Storage management",
     page: "storage",
-    path: "/ui-v2/storage",
+    path: "/storage",
     heading: "存储管理",
   },
   {
     name: "Organizing rules",
     page: "rules",
-    path: "/ui-v2/rules",
+    path: "/rules",
     heading: "整理规则",
   },
   {
     name: "Automation",
     page: "automation",
-    path: "/ui-v2/operations/automation",
+    path: "/operations/automation",
     heading: "自动化",
   },
   {
     name: "任务中心",
     page: "operations",
-    path: "/ui-v2/operations",
+    path: "/operations",
     heading: "任务中心",
   },
   {
     name: "Notifications",
     page: "notifications",
-    path: "/ui-v2/operations/notifications",
+    path: "/operations/notifications",
     heading: "通知",
   },
   {
     name: "Configuration",
     page: "settings",
-    path: "/ui-v2/configuration",
+    path: "/configuration",
     heading: "系统设置",
   },
 ];
@@ -396,7 +396,7 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
   await openSidebarLink(page, "Explore");
   await openSidebarLink(page, "Files");
   await openSidebarLink(page, "Library");
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/medialib/files");
+  await expect.poll(() => currentPath(page)).toBe("/medialib/files");
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();
@@ -412,10 +412,10 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
 
   // Browser Back/Forward follows the same main-page identity.
   await page.goBack();
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/resourcelib/files");
+  await expect.poll(() => currentPath(page)).toBe("/resourcelib/files");
   await expect(page.locator('[data-main-page="files"]')).toHaveCount(1);
   await page.goForward();
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/medialib/files");
+  await expect.poll(() => currentPath(page)).toBe("/medialib/files");
   await expect(page.locator('[data-main-page="library"]')).toHaveCount(1);
 
   // Narrow layout keeps the same stable shell and one transition per change.
@@ -456,7 +456,7 @@ test("PATCH-20261107-1 holds the loading placeholder and settles the real conten
   // The delay is well past the shared reveal window, so the waiting panel is
   // observed as a genuinely slow read rather than a race.
   await page.route(
-    "**/api/v1/operations/storage-management/inventory*",
+    "**/api/operations/storage-management/inventory*",
     async (route) => {
       const response = await route.fetch();
       await new Promise((resolve) => setTimeout(resolve, 1_600));
@@ -528,7 +528,7 @@ test("a forwarded detail card keeps its viewport overlay while the page enters",
   // in the the same frame; the fixed card/backdrop must not be transformed,
   // clipped or confined by the page-entry transition.
   await page.goBack();
-  await expect(page).toHaveURL(/\/ui-v2\/explore$/);
+  await expect(page).toHaveURL(/\/explore$/);
   await page.goForward();
   await expect(table).toBeVisible();
   await startNavigationSampler(page);
@@ -606,7 +606,7 @@ test("unsaved automation input holds the current page until the operator discard
   await expect(page.getByLabel(/任务名称/)).toHaveValue("未保存的页面切换");
   await expect(automationSurface).toHaveCount(1);
   await expect(page.locator("[data-main-page]")).toHaveCount(1);
-  expect(currentPath(page)).not.toBe("/ui-v2/storage");
+  expect(currentPath(page)).not.toBe("/storage");
 
   await choice.getByRole("button", { name: "继续填写" }).click();
   await expect(page.getByLabel(/任务名称/)).toHaveValue("未保存的页面切换");
@@ -622,13 +622,13 @@ test("unsaved automation input holds the current page until the operator discard
   await page.getByRole("button", { name: "取消" }).click();
   await expect(choice).toBeVisible();
   await choice.getByRole("button", { name: "放弃修改" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
   await expect(
     page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
   ).toBeVisible();
   await expect(automationSurface).toHaveCount(1);
   await openSidebarLink(page, "Storage management");
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/storage");
+  await expect.poll(() => currentPath(page)).toBe("/storage");
   await expect(
     page.getByRole("heading", { name: "存储管理", exact: true }),
   ).toBeVisible();
@@ -725,13 +725,11 @@ test("authentication continuation, narrow keyboard and reduced motion land on th
 }) => {
   // Unauthenticated deep entry records the exact destination; connecting
   // continues there as one new main page, not as a flash of a parent list.
-  await page.goto("/ui-v2/medialib/files?mediaLibraryId=movies");
-  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await page.goto("/medialib/files?mediaLibraryId=movies");
+  await expect(page).toHaveURL(/\/$/);
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
-  );
+  await expect(page).toHaveURL(/\/medialib\/files\?mediaLibraryId=movies$/);
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();
@@ -746,7 +744,7 @@ test("authentication continuation, narrow keyboard and reduced motion land on th
   });
   await storage.focus();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/ui-v2\/storage$/);
+  await expect(page).toHaveURL(/\/storage$/);
   await expect(
     page.getByRole("heading", { name: "存储管理", exact: true }),
   ).toBeVisible();
@@ -757,12 +755,10 @@ test("authentication continuation, narrow keyboard and reduced motion land on th
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.getByRole("button", { name: "Open menu", exact: true }).click();
   await page.getByRole("link", { name: "Library", exact: true }).click();
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/medialib/files");
+  await expect.poll(() => currentPath(page)).toBe("/medialib/files");
   // The shared transition never leaks the previous page's search into the
   // arrived Library URL; it is the page's own selected-library address.
-  await expect(page).toHaveURL(
-    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
-  );
+  await expect(page).toHaveURL(/\/medialib\/files\?mediaLibraryId=movies$/);
   const reducedSurface = page.locator('[data-main-page="library"]');
   await expect(reducedSurface).toHaveCount(1);
   expect(
@@ -821,7 +817,7 @@ test("sidebar handoff keeps the storage and both library bodies steady through f
   // cache — the body is present without any waiting marker and must not be
   // dimmed again when the entry window closes over already-visible content.
   await openSidebarLink(page, "Explore");
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/explore");
+  await expect.poll(() => currentPath(page)).toBe("/explore");
   await sampleHandoff("storage", 1_800);
   await expect(page.getByText(WAITING_READ_MARKERS)).toHaveCount(0);
   await sampleHandoff("files", 1_800);
@@ -834,7 +830,7 @@ test("sidebar handoff keeps the storage and both library bodies steady through f
   // existing auth continuation, then slow only the content reads this
   // journey really issues.
   await openSidebarLink(page, "Explore");
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/explore");
+  await expect.poll(() => currentPath(page)).toBe("/explore");
   await page.reload();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
@@ -845,15 +841,15 @@ test("sidebar handoff keeps the storage and both library bodies steady through f
     await route.fulfill({ response });
   };
   await page.route(
-    "**/api/v1/operations/storage-management/inventory*",
+    "**/api/operations/storage-management/inventory*",
     slowContentRead,
   );
   await page.route(
-    /\/api\/v1\/resource-libraries\/[^/]+\/files(?:\?|$)/,
+    /\/api\/resource-libraries\/[^/]+\/files(?:\?|$)/,
     slowContentRead,
   );
   await page.route(
-    /\/api\/v1\/media-libraries\/[^/]+\/files(?:\?|$)/,
+    /\/api\/media-libraries\/[^/]+\/files(?:\?|$)/,
     slowContentRead,
   );
 
@@ -1030,20 +1026,17 @@ test("settings handoff keeps the engine wait hidden through a fast read and a ca
   // than a genuine-wait threshold: the configuration status answers first and
   // the engine read lands a moment later — the observed B52.2-02 handoff.
   const engineDelayMs = 220;
-  await page.route(
-    "**/api/v1/operations/automation/settings*",
-    async (route) => {
-      const response = await route.fetch();
-      if (engineDelayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, engineDelayMs));
-      }
-      await route.fulfill({ response });
-    },
-  );
+  await page.route("**/api/operations/automation/settings*", async (route) => {
+    const response = await route.fetch();
+    if (engineDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, engineDelayMs));
+    }
+    await route.fulfill({ response });
+  });
 
   await startSettingsProbe(page);
   await openSidebarLink(page, "Configuration");
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
+  await expect.poll(() => currentPath(page)).toBe("/configuration");
   const form = page.getByRole("region", { name: "系统运行设置" });
   await expect(form).toBeVisible();
   await expect(page.getByRole("heading", { name: "高级配置" })).toBeVisible();
@@ -1060,10 +1053,10 @@ test("settings handoff keeps the engine wait hidden through a fast read and a ca
   // Cached re-entry through the same sidebar: the engine query already holds
   // data, so the form is there again with no wait line in any frame.
   await openSidebarLink(page, "Explore");
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/explore");
+  await expect.poll(() => currentPath(page)).toBe("/explore");
   await startSettingsProbe(page);
   await openSidebarLink(page, "Configuration");
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
+  await expect.poll(() => currentPath(page)).toBe("/configuration");
   await expect(form).toBeVisible();
   await page.waitForTimeout(200);
   frames = await stopSettingsProbe(page);
@@ -1077,10 +1070,10 @@ test("settings handoff keeps the engine wait hidden through a fast read and a ca
   // had the farthest to move when the form attached.
   await page.setViewportSize({ width: 390, height: 844 });
   await openSidebarLink(page, "Explore");
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/explore");
+  await expect.poll(() => currentPath(page)).toBe("/explore");
   await startSettingsProbe(page);
   await openSidebarLink(page, "Configuration");
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
+  await expect.poll(() => currentPath(page)).toBe("/configuration");
   await expect(form).toBeVisible();
   await expect(page.getByRole("heading", { name: "高级配置" })).toBeVisible();
   await page.waitForTimeout(250);
@@ -1100,18 +1093,15 @@ test("a slow engine read shows one stable waiting state before the form takes ov
   await connect(page);
   // The same real engine-settings read, genuinely slow through the same entry.
   const engineDelayMs = 1_500;
-  await page.route(
-    "**/api/v1/operations/automation/settings*",
-    async (route) => {
-      const response = await route.fetch();
-      await new Promise((resolve) => setTimeout(resolve, engineDelayMs));
-      await route.fulfill({ response });
-    },
-  );
+  await page.route("**/api/operations/automation/settings*", async (route) => {
+    const response = await route.fetch();
+    await new Promise((resolve) => setTimeout(resolve, engineDelayMs));
+    await route.fulfill({ response });
+  });
 
   await startSettingsProbe(page, 3_600);
   await openSidebarLink(page, "Configuration");
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
+  await expect.poll(() => currentPath(page)).toBe("/configuration");
   await expect(page.getByText("正在读取引擎设置")).toBeVisible();
   await expect(
     page.getByRole("region", { name: "系统运行设置" }),
@@ -1159,7 +1149,7 @@ test("a failed engine read lands on the existing recovery without a wait flash",
   });
   // The child read fails through the same entry; only this read behaves as a
   // failure, every other request keeps the fake API's real answer.
-  await page.route("**/api/v1/operations/automation/settings*", (route) =>
+  await page.route("**/api/operations/automation/settings*", (route) =>
     route.fulfill({
       status: 500,
       contentType: "application/json",
@@ -1169,7 +1159,7 @@ test("a failed engine read lands on the existing recovery without a wait flash",
 
   await startSettingsProbe(page);
   await openSidebarLink(page, "Configuration");
-  await expect.poll(() => currentPath(page)).toBe("/ui-v2/configuration");
+  await expect.poll(() => currentPath(page)).toBe("/configuration");
   // The failure reaches the operator on its own terms with its existing
   // recovery copy, while the page's own status section stays in place.
   await expect(page.getByText("引擎设置暂不可用")).toBeVisible();

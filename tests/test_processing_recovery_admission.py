@@ -571,13 +571,13 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 checkpoint_status, checkpoint = api_request(
                     api,
                     "GET",
-                    f"/api/v1/tasks/{task.task_id}/items/{item.item_id}",
+                    f"/api/tasks/{task.task_id}/items/{item.item_id}",
                 )
                 self.assertEqual(checkpoint_status, 200)
                 status, payload = api_request(
                     api,
                     "POST",
-                    f"/api/v1/tasks/{task.task_id}/items/{item.item_id}/recovery",
+                    f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery",
                     body={
                         "actionId": "retry",
                         "expectedCheckpointVersion": checkpoint["checkpoint_version"],
@@ -592,14 +592,14 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 status, after = api_request(
                     api,
                     "GET",
-                    f"/api/v1/tasks/{task.task_id}/items/{item.item_id}",
+                    f"/api/tasks/{task.task_id}/items/{item.item_id}",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(after["recovery_request"]["request_id"], payload["requestId"])
                 status, denied = api_request(
                     api,
                     "POST",
-                    f"/api/v1/tasks/{task.task_id}/items/{item.item_id}/recovery",
+                    f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery",
                     body={
                         "actionId": "retry",
                         "expectedCheckpointVersion": checkpoint["checkpoint_version"],
@@ -633,13 +633,13 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 )
 
                 def route(task_id: str, item_id: str) -> str:
-                    return f"/api/v1/tasks/{task_id}/items/{item_id}/recovery"
+                    return f"/api/tasks/{task_id}/items/{item_id}/recovery"
 
                 def checkpoint(task_id: str, item_id: str) -> dict[str, object]:
                     status, payload = api_request(
                         api,
                         "GET",
-                        f"/api/v1/tasks/{task_id}/items/{item_id}",
+                        f"/api/tasks/{task_id}/items/{item_id}",
                     )
                     self.assertEqual(status, 200)
                     return payload
@@ -886,7 +886,7 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 audit = repository.list_security_audit(limit=1000)
                 self.assertTrue(
                     any(
-                        value.route == "/api/v1/tasks/{task_id}/items/{item_id}/recovery"
+                        value.route == "/api/tasks/{task_id}/items/{item_id}/recovery"
                         and value.action == "recovery-admission"
                         and value.outcome == "denied"
                         and value.http_status == 409
@@ -961,7 +961,7 @@ class RecoveryAdmissionTests(unittest.TestCase):
                 checkpoint_status, checkpoint = api_request(
                     api,
                     "GET",
-                    f"/api/v1/tasks/{task.task_id}/items/{item.item_id}",
+                    f"/api/tasks/{task.task_id}/items/{item.item_id}",
                 )
                 self.assertEqual(checkpoint_status, 200)
                 with (
@@ -981,7 +981,7 @@ class RecoveryAdmissionTests(unittest.TestCase):
                     status, payload = api_request(
                         api,
                         "POST",
-                        f"/api/v1/tasks/{task.task_id}/items/{item.item_id}/recovery",
+                        f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery",
                         body={
                             "actionId": "retry",
                             "expectedCheckpointVersion": checkpoint["checkpoint_version"],

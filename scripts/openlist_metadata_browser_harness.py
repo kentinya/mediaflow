@@ -330,7 +330,7 @@ def main(argv: list[str] | None = None) -> int:
         server_class=inventory.ThreadingWSGIServer,
         handler_class=inventory.QuietHandler,
     )
-    print(f"OpenList metadata harness: http://{args.host}:{args.port}/ui-v2/", flush=True)
+    print(f"OpenList metadata harness: http://{args.host}:{args.port}/", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

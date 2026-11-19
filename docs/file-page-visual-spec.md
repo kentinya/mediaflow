@@ -4,7 +4,7 @@ Status: CURRENT — accepted50 cards/tree removal/loading and current Files prep
 retained37/38/46 business and shell rules.
 Current visual acceptance follows this written specification and actual desktop/narrow journeys.
 The obsolete design image is retained only in Git; it is no longer a design or acceptance baseline.
-Current route: `/ui-v2/resourcelib/files`; MediaLibrary has its
+Current route: `/resourcelib/files`; MediaLibrary has its
 [separate specification](media-library-page-visual-spec.md). Old library URLs provide route recovery.
 
 This file owns Files/shared-shell composition and controlled visual acceptance, not live work scope.
@@ -67,7 +67,7 @@ Task from Task Center's Running/All views. Its `继续整理` action opens the s
 above the preserved Task Center list/detail, including after reload or re-authentication while
 that work remains continuable. Ended Task details show results and inline file evidence, without
 a preparation section or summary/restart buttons.
-The canonical `/ui-v2/operations?run=<Task>&dialog=organize` address retains ended work's read-only
+The canonical `/operations?run=<Task>&dialog=organize` address retains ended work's read-only
 history in that same shared dialog. The former standalone receiving page and route are removed;
 its old addresses return ordinary not-found. The shared organizer keeps readable space between
 status text and its colored border. New organizing starts from ResourceLibrary Files.
@@ -342,7 +342,7 @@ The current page completes one vertical journey:
 | Stage | Files page contract |
 |---|---|
 | Goal | Browse and fully manage common file operations in configured ResourceLibraries, create a ResourceLibrary, or choose media to organize |
-| Entry | Select `文件` from the shell or open `/ui-v2/resourcelib/files` |
+| Entry | Select `文件` from the shell or open `/resourcelib/files` |
 | Visible state | Shared shell, ResourceLibrary cards, exact breadcrumbs and full-width file table, common commands/progress, selection footer and explicit Add/Edit card; truthful library/directory loading |
 | Action | Browse, select, refresh, switch view, Create Folder/Text File, Rename/Copy/Move/Delete/Edit eligible content, organize selected media or complete the local add-library flow |
 | Success | Common actions refresh from live Storage with independent outcomes, selected organize action remains clear, a saved ResourceLibrary is Active/browseable, and the page follows the current written composition |

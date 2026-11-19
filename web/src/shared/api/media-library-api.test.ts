@@ -77,19 +77,19 @@ describe("mediaLibraryFilesUrl", () => {
         cursor: "a+b/c",
       }),
     ).toBe(
-      "/api/v1/media-libraries/movies/files?path=TV+Shows%2FNew+%26+Old&cursor=a%2Bb%2Fc",
+      "/api/media-libraries/movies/files?path=TV+Shows%2FNew+%26+Old&cursor=a%2Bb%2Fc",
     );
   });
 
   it("uses the media-libraries namespace, never the resource-libraries one", () => {
     const url = mediaLibraryFilesUrl({ mediaLibraryId: "shared" });
-    expect(url).toBe("/api/v1/media-libraries/shared/files");
+    expect(url).toBe("/api/media-libraries/shared/files");
     expect(url).not.toContain("resource-libraries");
   });
 
   it("omits optional fields when not selected", () => {
     expect(mediaLibraryFilesUrl({ mediaLibraryId: "movies" })).toBe(
-      "/api/v1/media-libraries/movies/files",
+      "/api/media-libraries/movies/files",
     );
   });
 });
@@ -107,7 +107,7 @@ describe("fetchMediaLibraryFiles", () => {
     }
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(input).toBe("/api/v1/media-libraries/movies/files");
+    expect(input).toBe("/api/media-libraries/movies/files");
     expect(init.method).toBe("GET");
     expect((init.headers as Record<string, string>).Authorization).toBe(
       `Bearer ${TOKEN}`,
@@ -269,7 +269,7 @@ describe("fetchMediaLibraryList", () => {
     expect(model.total).toBe(1);
     expect(model.items[0]?.name).toBe("Movies");
     const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(input).toBe("/api/v1/media-libraries");
+    expect(input).toBe("/api/media-libraries");
     expect(init.method).toBe("GET");
   });
 

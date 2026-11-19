@@ -741,7 +741,7 @@ class _SourceHistoryJourneyTests(unittest.TestCase):
             "expectedDefinitionFingerprint": definition.definition_fingerprint,
         }
         return self.request(
-            value, "POST", "/api/v1/operations/automation/task-definitions/nightly/run-once", body
+            value, "POST", "/api/operations/automation/task-definitions/nightly/run-once", body
         )
 
     def execute_run_once(self, value):
@@ -964,7 +964,7 @@ class DueOccurrenceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
             status, _created = self.request(
                 value,
                 "POST",
-                "/api/v1/operations/automation/definitions",
+                "/api/operations/automation/definitions",
                 {
                     "expectedRevisionId": active.revision_id,
                     "expectedVersion": active.revision_sequence or active.version,
@@ -1155,7 +1155,7 @@ class ManualHistoryWarningJourneyTests(_SourceHistoryJourneyTests):
             # Preview GET: the bounded projection publishes them, so the Web
             # summary banner is fed by the actual API, not by client invention.
             status, document = self.request(
-                value, "GET", f"/api/v1/operations/organize/previews/{preview.preview_id}"
+                value, "GET", f"/api/operations/organize/previews/{preview.preview_id}"
             )
             self.assertEqual(200, status, document)
             (api_item,) = document["items"]
@@ -1389,7 +1389,7 @@ class AutomaticAdmissionHistoryRaceTests(_SourceHistoryJourneyTests):
                     status, admitted = self.request(
                         value,
                         "POST",
-                        "/api/v1/resource-libraries/library/files/discoveries",
+                        "/api/resource-libraries/library/files/discoveries",
                         {
                             "paths": ["One.2001.mkv"],
                             "autoPrepare": True,
@@ -1432,13 +1432,13 @@ class AutomaticAdmissionHistoryRaceTests(_SourceHistoryJourneyTests):
                     status, preview = self.request(
                         value,
                         "GET",
-                        f"/api/v1/operations/organize/previews/{discovery.preview_id}",
+                        f"/api/operations/organize/previews/{discovery.preview_id}",
                     )
                     self.assertEqual(200, status, preview)
                     status, _confirmed = self.request(
                         value,
                         "POST",
-                        f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                        f"/api/operations/organize/previews/{preview['previewId']}/execute",
                         {
                             "confirmation": True,
                             "itemIds": [
@@ -1551,7 +1551,7 @@ class _SupersededHandoffFixture(_DiscoveryFixture):
     def _admit(self, value, paths, *, auto_prepare=True, request_id="handoff-request"):
         return self.request(
             value,
-            "/api/v1/resource-libraries/library/files/discoveries",
+            "/api/resource-libraries/library/files/discoveries",
             "POST",
             {"paths": list(paths), "autoPrepare": auto_prepare, "requestId": request_id},
         )
@@ -1596,7 +1596,7 @@ class _SupersededHandoffFixture(_DiscoveryFixture):
         ]
         status, reply = self.request(
             value,
-            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            f"/api/operations/organize/previews/{preview['previewId']}/execute",
             "POST",
             {
                 "confirmation": True,
@@ -1617,7 +1617,7 @@ class _SupersededHandoffFixture(_DiscoveryFixture):
         task_id = admitted["organizeTaskId"]
         discovery = self._drive(value, task_id)
         status, preview = self.request(
-            value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+            value, f"/api/operations/organize/previews/{discovery.preview_id}"
         )
         self.assertEqual(200, status, preview)
         return task_id, preview

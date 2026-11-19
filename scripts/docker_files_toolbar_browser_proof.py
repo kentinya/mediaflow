@@ -502,11 +502,11 @@ def route_cases() -> list[dict]:
             "name": "resourcelib",
             "crumbLabel": "资源库面包屑",
             "homeLabel": "返回资源库根目录",
-            "deepLink": f"/ui-v2/resourcelib/files?path={encoded(DEEP_PATH)}",
-            "tailLink": f"/ui-v2/resourcelib/files?path={encoded(TAIL_PATH)}",
-            "prefixLink": f"/ui-v2/resourcelib/files?path={encoded(PREFIX_PATH + '/nested')}",
-            "missingLink": "/ui-v2/resourcelib/files?path=missing-directory",
-            "shortLink": "/ui-v2/resourcelib/files?path=Shows/nested",
+            "deepLink": f"/resourcelib/files?path={encoded(DEEP_PATH)}",
+            "tailLink": f"/resourcelib/files?path={encoded(TAIL_PATH)}",
+            "prefixLink": f"/resourcelib/files?path={encoded(PREFIX_PATH + '/nested')}",
+            "missingLink": "/resourcelib/files?path=missing-directory",
+            "shortLink": "/resourcelib/files?path=Shows/nested",
             "crumbs": [{"name": name} for name in deep_names],
             "accessibleNames": deep_names,
             "tailCrumbs": [{"name": name} for name in tail_names],
@@ -521,11 +521,11 @@ def route_cases() -> list[dict]:
             "name": "medialib",
             "crumbLabel": "媒体库面包屑",
             "homeLabel": "返回媒体库根目录",
-            "deepLink": f"/ui-v2/medialib/files?path={encoded(DEEP_PATH)}",
-            "tailLink": f"/ui-v2/medialib/files?path={encoded(TAIL_PATH)}",
-            "prefixLink": f"/ui-v2/medialib/files?path={encoded(PREFIX_PATH + '/nested')}",
-            "missingLink": "/ui-v2/medialib/files?path=missing-directory",
-            "shortLink": "/ui-v2/medialib/files?path=Shows/nested",
+            "deepLink": f"/medialib/files?path={encoded(DEEP_PATH)}",
+            "tailLink": f"/medialib/files?path={encoded(TAIL_PATH)}",
+            "prefixLink": f"/medialib/files?path={encoded(PREFIX_PATH + '/nested')}",
+            "missingLink": "/medialib/files?path=missing-directory",
+            "shortLink": "/medialib/files?path=Shows/nested",
             "crumbs": [{"name": name} for name in deep_names],
             "accessibleNames": deep_names,
             "tailCrumbs": [{"name": name} for name in tail_names],
@@ -609,14 +609,14 @@ def served_asset_identity(base: str, token: str) -> dict:
 
     identity: dict[str, object] = {}
     # The UI entry is the built static document, not a JSON API document.
-    with urllib.request.urlopen(f"{base}/ui-v2/", timeout=10) as response:
+    with urllib.request.urlopen(f"{base}/", timeout=10) as response:
         if response.status != 200:
             raise RuntimeError(f"the production UI entry returned HTTP {response.status}")
         index = response.read()
     identity["index.html"] = hashlib.sha256(index).hexdigest()
     import re
 
-    assets = sorted(set(re.findall(rb"/ui-v2/assets/[A-Za-z0-9._-]+", index)))
+    assets = sorted(set(re.findall(rb"/assets/[A-Za-z0-9._-]+", index)))
     hashes: dict[str, str] = {}
     for raw in assets:
         path = raw.decode("utf-8")
@@ -635,7 +635,7 @@ def local_asset_identity() -> dict:
     return {
         "index.html": hashlib.sha256(index.read_bytes()).hexdigest(),
         "assets": {
-            f"/ui-v2/assets/{asset.name}": hashlib.sha256(asset.read_bytes()).hexdigest()
+            f"/assets/{asset.name}": hashlib.sha256(asset.read_bytes()).hexdigest()
             for asset in assets
         },
     }

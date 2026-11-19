@@ -36,9 +36,9 @@ describe("Rules workspace API", () => {
         enabled: true,
       }),
     ).toBe(
-      "/api/v1/operations/rules/inventory?family=recognitionTypes&q=Special&enabled=true",
+      "/api/operations/rules/inventory?family=recognitionTypes&q=Special&enabled=true",
     );
-    expect(rulesInventoryPath()).toBe("/api/v1/operations/rules/inventory");
+    expect(rulesInventoryPath()).toBe("/api/operations/rules/inventory");
   });
 
   it("normalizes accepted data and maps bounded errors", async () => {
@@ -46,7 +46,7 @@ describe("Rules workspace API", () => {
     const model = await fetchRulesInventory("token", {}, fetchOk);
     expect(model.active?.status).toBe("ACTIVE");
     expect(fetchOk).toHaveBeenCalledWith(
-      "/api/v1/operations/rules/inventory",
+      "/api/operations/rules/inventory",
       expect.objectContaining({ method: "GET" }),
     );
     await expect(
@@ -96,7 +96,7 @@ describe("Rules workspace API", () => {
     expect(outcome.ok && outcome.model.result?.recognitionType).toBe("C");
     expect(fetchOk).toHaveBeenCalledTimes(1);
     expect(fetchOk).toHaveBeenCalledWith(
-      "/api/v1/operations/rules/previews/organize",
+      "/api/operations/rules/previews/organize",
       expect.objectContaining({ method: "POST" }),
     );
   });
@@ -175,10 +175,10 @@ describe("Rules workspace API", () => {
     // Every accepted ID is percent-encoded on the wire, never sent raw and
     // never turned into a different object identity.
     expect(seenUrls).toContain(
-      "/api/v1/operations/rules/objects/recognitionTypes/proof%2Btype/copy",
+      "/api/operations/rules/objects/recognitionTypes/proof%2Btype/copy",
     );
     expect(seenUrls).toContain(
-      "/api/v1/operations/rules/objects/recognitionTypes/proof%20type/impact",
+      "/api/operations/rules/objects/recognitionTypes/proof%20type/impact",
     );
     expect(seenUrls.every((url) => !url.includes(" "))).toBe(true);
   });
@@ -260,13 +260,13 @@ describe("Rules workspace API", () => {
     );
     expect(remove.ok).toBe(true);
     expect(seenUrls).toContain(
-      "/api/v1/operations/rules/objects/recognitionTypes",
+      "/api/operations/rules/objects/recognitionTypes",
     );
     expect(seenUrls).toContain(
-      "/api/v1/operations/rules/objects/recognitionTypes/proof%2Btype",
+      "/api/operations/rules/objects/recognitionTypes/proof%2Btype",
     );
     expect(seenUrls).toContain(
-      "/api/v1/operations/rules/objects/recognitionTypes/proof%2Btype/state/disable",
+      "/api/operations/rules/objects/recognitionTypes/proof%2Btype/state/disable",
     );
   });
 

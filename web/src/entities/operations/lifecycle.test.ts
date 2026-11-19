@@ -42,7 +42,7 @@ function action(
     action: name,
     label: `${name} label`,
     method: "POST",
-    path: `/api/v1/tasks/{id}/${name}`,
+    path: `/api/tasks/{id}/${name}`,
     available,
     unavailableReason,
     confirmationRequired: false,
@@ -59,7 +59,7 @@ const RECOVERY = {
   available: true,
   reason: null,
   method: "POST",
-  path: "/api/v1/tasks/task-1/remaining-scope-previews",
+  path: "/api/tasks/task-1/remaining-scope-previews",
   requiresConfirmation: false,
   sideEffects: "none",
   durableOutcome: "a durable zero-mutation exact Preview is stored",
@@ -204,7 +204,7 @@ describe("native continuation recovery normalization", () => {
     expect(model.actions[0]?.recovery).toEqual({
       action: "preview",
       method: "POST",
-      path: "/api/v1/tasks/task-1/remaining-scope-previews",
+      path: "/api/tasks/task-1/remaining-scope-previews",
       available: true,
       confirmationRequired: false,
       durableOutcome: "a durable zero-mutation exact Preview is stored",
@@ -279,7 +279,7 @@ describe("native continuation recovery normalization", () => {
     );
     expect(model.actions[0]?.available).toBe(false);
     expect(model.actions[0]?.recovery?.path).toBe(
-      "/api/v1/tasks/task-1/remaining-scope-previews",
+      "/api/tasks/task-1/remaining-scope-previews",
     );
   });
 });

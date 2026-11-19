@@ -2,7 +2,7 @@
 
 These regressions drive the real ``MediaFlowApi`` against a real managed
 configuration runtime and the real Webhook/notification services. They prove
-the new ``/api/v1/operations/notifications/*`` read projections are bounded
+the new ``/api/operations/notifications/*`` read projections are bounded
 operator documents — no revision digests, no secret values, no delivery bodies,
 no signature material — with backend-authoritative actions and Draft state;
 that the exact-revision signed test sends exactly one request and never
@@ -11,7 +11,7 @@ checked activation publishes only the reviewed Webhook-only change and rejects
 sibling and general-configuration changes; that delivery list/detail truthfully
 distinguish every durable status and lease state; that recovery is exact,
 optimistically fenced, permission-gated and isolated; and that the existing
-``/api/v1/notifications`` and configuration surfaces remain untouched for V1
+``/api/notifications`` and configuration surfaces remain untouched for V1
 clients.
 """
 
@@ -48,7 +48,7 @@ VIEWER_TOKEN = "notification-viewer-token"
 MANAGER_TOKEN = "notification-manager-token"
 ACTIVATOR_TOKEN = "notification-activator-token"
 
-OPERATIONS_ROUTE = "/api/v1/operations/notifications/webhooks"
+OPERATIONS_ROUTE = "/api/operations/notifications/webhooks"
 
 WEBHOOK_ID = "operations-webhook"
 SECRET_ENV = "MEDIAFLOW_NOTIFICATION_TEST_SECRET"
@@ -224,17 +224,17 @@ class NotificationHarness:
         active = self.configuration.active()
         _status, draft = _request(
             self.api,
-            f"/api/v1/configuration/revisions/{active.revision_id}/successor",
+            f"/api/configuration/revisions/{active.revision_id}/successor",
             method="POST",
             body={},
         )
         revision_id = draft["revisionId"]
         version = draft["version"]
         if stored.get("id") == WEBHOOK_ID:
-            route = f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}"
+            route = f"/api/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}"
             method = "PUT"
         else:
-            route = f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks"
+            route = f"/api/configuration/revisions/{revision_id}/objects/webhooks"
             method = "POST"
         _status, response = _request(
             self.api,
@@ -247,7 +247,7 @@ class NotificationHarness:
         # managed service rejects activation of a plain Draft.
         _status, validated = _request(
             self.api,
-            f"/api/v1/configuration/revisions/{revision_id}/validate",
+            f"/api/configuration/revisions/{revision_id}/validate",
             method="POST",
             body={},
         )
@@ -396,7 +396,7 @@ class WebhookMutationJourneyTests(unittest.TestCase):
                 active = harness.configuration.active()
                 _status, draft = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{active.revision_id}/successor",
+                    f"/api/configuration/revisions/{active.revision_id}/successor",
                     method="POST",
                     body={},
                 )
@@ -407,7 +407,7 @@ class WebhookMutationJourneyTests(unittest.TestCase):
                 # and migrates the legacy nested spelling to the root section.
                 status, edited = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}",
                     method="PUT",
                     body={
                         "object": _webhook_document(maxAttempts=7),
@@ -421,7 +421,7 @@ class WebhookMutationJourneyTests(unittest.TestCase):
                 # A stale expectedVersion is rejected atomically.
                 status, stale = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}",
                     method="PUT",
                     body={
                         "object": _webhook_document(enabled=False),
@@ -434,7 +434,7 @@ class WebhookMutationJourneyTests(unittest.TestCase):
                 # version and cannot collide with an existing identity.
                 status, created = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body={
                         "object": _webhook_document(id="created-webhook"),
@@ -447,7 +447,7 @@ class WebhookMutationJourneyTests(unittest.TestCase):
 
                 status, collision = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body={
                         "object": _webhook_document(id="created-webhook"),
@@ -459,7 +459,7 @@ class WebhookMutationJourneyTests(unittest.TestCase):
                 for action, expected_flag in (("enable", True), ("disable", False)):
                     status, toggled = _request(
                         harness.api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}/{action}",
+                        f"/api/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}/{action}",
                         method="POST",
                         body={"expectedVersion": version},
                     )
@@ -469,7 +469,7 @@ class WebhookMutationJourneyTests(unittest.TestCase):
 
                 status, copied = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}/copy",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}/copy",
                     method="POST",
                     body={"expectedVersion": version},
                 )
@@ -501,13 +501,13 @@ class WebhookMutationJourneyTests(unittest.TestCase):
                 active = harness.configuration.active()
                 _status, draft = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{active.revision_id}/successor",
+                    f"/api/configuration/revisions/{active.revision_id}/successor",
                     method="POST",
                     body={},
                 )
                 revision_id = draft["revisionId"]
                 version = draft["version"]
-                route = f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks"
+                route = f"/api/configuration/revisions/{revision_id}/objects/webhooks"
                 hostile = [
                     {"object": _webhook_document(unknownField=1), "expectedVersion": version},
                     {"object": _webhook_document(secret="value"), "expectedVersion": version},
@@ -597,7 +597,7 @@ class WebhookTestJourneyTests(unittest.TestCase):
                 self.assertNotIn(SECRET_VALUE, request.headers["X-MediaFlow-Signature"])
                 # No delivery exists, no configuration was published and no
                 # activation happened.
-                status, deliveries = _request(harness.api, "/api/v1/notifications")
+                status, deliveries = _request(harness.api, "/api/notifications")
                 self.assertEqual(status, 200)
                 self.assertEqual(deliveries["items"], [])
                 self.assertEqual(
@@ -795,7 +795,7 @@ class WebhookCheckedActivationTests(unittest.TestCase):
                 self.assertEqual([item["id"] for item in document["webhooks"]], [WEBHOOK_ID])
                 self.assertNotIn("webhooks", document.get("notifications", {}))
                 # No delivery was created and no request was sent.
-                status, deliveries = _request(harness.api, "/api/v1/notifications")
+                status, deliveries = _request(harness.api, "/api/notifications")
                 self.assertEqual(deliveries["items"], [])
                 self.assertEqual(len(harness.transport.requests), 0)
 
@@ -820,7 +820,7 @@ class WebhookCheckedActivationTests(unittest.TestCase):
                 active = harness.configuration.active()
                 _status, draft = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{active.revision_id}/successor",
+                    f"/api/configuration/revisions/{active.revision_id}/successor",
                     method="POST",
                     body={},
                 )
@@ -828,14 +828,14 @@ class WebhookCheckedActivationTests(unittest.TestCase):
                 version = draft["version"]
                 _status, _edited = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}",
                     method="PUT",
                     body={"object": _webhook_document(), "expectedVersion": version},
                 )
                 version += 1
                 _status, sibling = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body={
                         "object": _webhook_document(id="sibling-webhook"),
@@ -873,7 +873,7 @@ class WebhookCheckedActivationTests(unittest.TestCase):
                 active = harness.configuration.active()
                 _status, draft = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{active.revision_id}/successor",
+                    f"/api/configuration/revisions/{active.revision_id}/successor",
                     method="POST",
                     body={},
                 )
@@ -881,7 +881,7 @@ class WebhookCheckedActivationTests(unittest.TestCase):
                 version = draft["version"]
                 _status, _edited = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/{WEBHOOK_ID}",
                     method="PUT",
                     body={"object": _webhook_document(), "expectedVersion": version},
                 )
@@ -1013,7 +1013,7 @@ class DeliveryProjectionTests(unittest.TestCase):
 
                 status, page = _request(
                     harness.api,
-                    "/api/v1/notifications",
+                    "/api/notifications",
                     query="limit=50",
                 )
                 self.assertEqual(status, 200)
@@ -1028,7 +1028,7 @@ class DeliveryProjectionTests(unittest.TestCase):
                 # Status filter is bounded and truthful.
                 status, filtered = _request(
                     harness.api,
-                    "/api/v1/notifications",
+                    "/api/notifications",
                     query="status=dead-letter",
                 )
                 self.assertEqual(status, 200)
@@ -1038,7 +1038,7 @@ class DeliveryProjectionTests(unittest.TestCase):
                 )
                 status, rejected = _request(
                     harness.api,
-                    "/api/v1/notifications",
+                    "/api/notifications",
                     query="status=not-a-status",
                 )
                 self.assertEqual(status, 400)
@@ -1046,7 +1046,7 @@ class DeliveryProjectionTests(unittest.TestCase):
                 # Detail: bounded document, correct lease and recovery evidence.
                 status, dead_detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{dead.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{dead.delivery_id}",
                 )
                 self.assertEqual(status, 200)
                 _assert_operator_document_clean(dead_detail)
@@ -1058,7 +1058,7 @@ class DeliveryProjectionTests(unittest.TestCase):
                 self.assertTrue(dead_detail["actions"]["requeue"]["available"])
                 status, viewer_detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{dead.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{dead.delivery_id}",
                     token=VIEWER_TOKEN,
                 )
                 self.assertEqual(status, 200)
@@ -1067,7 +1067,7 @@ class DeliveryProjectionTests(unittest.TestCase):
 
                 status, delivering_detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{delivering.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{delivering.delivery_id}",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(delivering_detail["lease"]["state"], "active")
@@ -1075,7 +1075,7 @@ class DeliveryProjectionTests(unittest.TestCase):
 
                 status, pending_detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{pending.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{pending.delivery_id}",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(pending_detail["lease"], {"state": "not_leased"})
@@ -1083,7 +1083,7 @@ class DeliveryProjectionTests(unittest.TestCase):
 
                 status, missing = _request(
                     harness.api,
-                    "/api/v1/operations/notifications/deliveries/absent-delivery",
+                    "/api/operations/notifications/deliveries/absent-delivery",
                 )
                 self.assertEqual(status, 404)
             finally:
@@ -1104,7 +1104,7 @@ class DeliveryProjectionTests(unittest.TestCase):
                 self.assertIsNotNone(claimed)
                 status, detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{delivery.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{delivery.delivery_id}",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(detail["lease"]["state"], "expired")
@@ -1122,7 +1122,7 @@ class DeliveryProjectionTests(unittest.TestCase):
                     harness.publish_delivery(f"event-page-{index}")
                 status, first = _request(
                     harness.api,
-                    "/api/v1/notifications",
+                    "/api/notifications",
                     query="limit=2",
                 )
                 self.assertEqual(status, 200)
@@ -1131,7 +1131,7 @@ class DeliveryProjectionTests(unittest.TestCase):
                 self.assertIsNone(first["previous_cursor"])
                 status, second = _request(
                     harness.api,
-                    "/api/v1/notifications",
+                    "/api/notifications",
                     query=f"limit=2&cursor={first['next_cursor']}",
                 )
                 self.assertEqual(status, 200)
@@ -1172,7 +1172,7 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 harness.run_worker(transport=FakeTransport(400), attempts=1)
                 status, detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{dead.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{dead.delivery_id}",
                     token=ADMIN_TOKEN,
                 )
                 fence = {
@@ -1182,7 +1182,7 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 active_before = harness.configuration.active().revision_id
                 status, result = _request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}/requeue",
+                    f"/api/notifications/{dead.delivery_id}/requeue",
                     method="POST",
                     body=fence,
                 )
@@ -1199,12 +1199,12 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 # The same row identity, no sibling change, no new row, no
                 # configuration change and no media effect.
                 sibling = harness.publish_delivery("event-sibling")
-                status, listing = _request(harness.api, "/api/v1/notifications", query="limit=50")
+                status, listing = _request(harness.api, "/api/notifications", query="limit=50")
                 self.assertEqual(len(listing["items"]), 2)
                 self.assertEqual(harness.configuration.active().revision_id, active_before)
                 status, sibling_detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{sibling.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{sibling.delivery_id}",
                 )
                 self.assertEqual(sibling_detail["status"], "pending")
                 self.assertEqual(sibling_detail["attempts"], 0)
@@ -1224,7 +1224,7 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 dead, _sibling = self._dead_letter_and_sibling(harness)
                 status, detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{dead.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{dead.delivery_id}",
                 )
                 fence = {
                     "expectedStatus": detail["status"],
@@ -1232,7 +1232,7 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 }
                 status, _first = _request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}/requeue",
+                    f"/api/notifications/{dead.delivery_id}/requeue",
                     method="POST",
                     body=fence,
                 )
@@ -1240,7 +1240,7 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 # A repeated submission is stale: the state already moved.
                 status, second = _request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}/requeue",
+                    f"/api/notifications/{dead.delivery_id}/requeue",
                     method="POST",
                     body=fence,
                 )
@@ -1249,7 +1249,7 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 # A wrong fence never mutates.
                 status, wrong = _request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}/requeue",
+                    f"/api/notifications/{dead.delivery_id}/requeue",
                     method="POST",
                     body={
                         "expectedStatus": "dead-letter",
@@ -1261,11 +1261,11 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 # Wrong action for the current status fails closed.
                 status, detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{dead.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{dead.delivery_id}",
                 )
                 status, wrong_action = _request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}/resolve-stale",
+                    f"/api/notifications/{dead.delivery_id}/resolve-stale",
                     method="POST",
                     body={
                         "expectedStatus": detail["status"],
@@ -1277,7 +1277,7 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 # Malformed evidence fails closed.
                 status, malformed = _request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}/requeue",
+                    f"/api/notifications/{dead.delivery_id}/requeue",
                     method="POST",
                     body={"expectedStatus": "dead-letter"},
                 )
@@ -1286,7 +1286,7 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 # The delivery is still exactly once requeued: pending.
                 status, final = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{dead.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{dead.delivery_id}",
                 )
                 self.assertEqual(final["status"], "pending")
             finally:
@@ -1305,12 +1305,12 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 self.assertIsNotNone(claimed)
                 status, detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{delivery.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{delivery.delivery_id}",
                 )
                 self.assertEqual(detail["lease"]["state"], "active")
                 status, rejected = _request(
                     harness.api,
-                    f"/api/v1/notifications/{delivery.delivery_id}/resolve-stale",
+                    f"/api/notifications/{delivery.delivery_id}/resolve-stale",
                     method="POST",
                     body={
                         "expectedStatus": detail["status"],
@@ -1329,7 +1329,7 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 dead, _sibling = self._dead_letter_and_sibling(harness)
                 status, detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{dead.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{dead.delivery_id}",
                 )
                 fence = {
                     "expectedStatus": detail["status"],
@@ -1337,7 +1337,7 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 }
                 status, denied = _request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}/requeue",
+                    f"/api/notifications/{dead.delivery_id}/requeue",
                     method="POST",
                     body=fence,
                     token=VIEWER_TOKEN,
@@ -1345,7 +1345,7 @@ class DeliveryRecoveryTests(unittest.TestCase):
                 self.assertEqual(status, 403)
                 status, still = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{dead.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{dead.delivery_id}",
                 )
                 self.assertEqual(still["status"], "dead-letter")
             finally:
@@ -1375,7 +1375,7 @@ class DeliveryEvidenceTests(unittest.TestCase):
                 # The supported detail read carries the exact dead delivery.
                 status, detail = _request(
                     harness.api,
-                    f"/api/v1/operations/notifications/deliveries/{dead.delivery_id}",
+                    f"/api/operations/notifications/deliveries/{dead.delivery_id}",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(detail["status"], "dead-letter")
@@ -1384,7 +1384,7 @@ class DeliveryEvidenceTests(unittest.TestCase):
                 # The supported list read surfaces exactly this dead letter.
                 status, listing = _request(
                     harness.api,
-                    "/api/v1/notifications",
+                    "/api/notifications",
                     query="limit=50&status=dead-letter",
                 )
                 self.assertEqual(status, 200)
@@ -1397,7 +1397,7 @@ class DeliveryEvidenceTests(unittest.TestCase):
                 self.assertNotIn("\\", dead.delivery_id)
                 status, missing = _request(
                     harness.api,
-                    "/api/v1/operations/notifications/deliveries/unknown-delivery",
+                    "/api/operations/notifications/deliveries/unknown-delivery",
                 )
                 self.assertEqual(status, 404, missing)
             finally:
@@ -1449,7 +1449,7 @@ class CompatibilityTests(unittest.TestCase):
             harness = NotificationHarness(directory)
             try:
                 # The V1 notification list keeps its historical document shape.
-                status, listing = _request(harness.api, "/api/v1/notifications")
+                status, listing = _request(harness.api, "/api/notifications")
                 self.assertEqual(status, 200)
                 self.assertIn("limit", listing)
                 self.assertIn("next_cursor", listing)
@@ -1461,7 +1461,7 @@ class CompatibilityTests(unittest.TestCase):
                 revision = harness.configuration.require(active.revision_id)
                 status, result = _request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{active.revision_id}/objects/webhooks/{WEBHOOK_ID}/test",
+                    f"/api/configuration/revisions/{active.revision_id}/objects/webhooks/{WEBHOOK_ID}/test",
                     method="POST",
                     body={
                         "expectedVersion": revision.version,
@@ -1472,7 +1472,7 @@ class CompatibilityTests(unittest.TestCase):
                 self.assertIn("digest", result["revision"])
 
                 # Unmatched operations notification routes fail closed.
-                status, missing = _request(harness.api, "/api/v1/operations/notifications/unknown")
+                status, missing = _request(harness.api, "/api/operations/notifications/unknown")
                 self.assertEqual(status, 404)
                 status, deep = _request(
                     harness.api,
@@ -1492,7 +1492,7 @@ class CompatibilityTests(unittest.TestCase):
             try:
                 status, denied = _request(
                     harness.api,
-                    "/api/v1/operations/notifications/deliveries/whatever",
+                    "/api/operations/notifications/deliveries/whatever",
                     token=None,
                 )
                 self.assertEqual(status, 401)

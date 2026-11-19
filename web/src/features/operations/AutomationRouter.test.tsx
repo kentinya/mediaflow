@@ -76,7 +76,7 @@ function action(
     available: true,
     reason: null,
     method: "POST",
-    path: "/api/v1/automation/task-definitions/auto-task/grant",
+    path: "/api/automation/task-definitions/auto-task/grant",
     requiresConfirmation: false,
     sideEffects: "none",
     durableOutcome: "a persistent scoped unattended execution grant is stored",
@@ -166,7 +166,7 @@ function definitionDocument(
       detail: action({
         available: true,
         method: "GET",
-        path: "/api/v1/operations/automation/task-definitions/auto-task",
+        path: "/api/operations/automation/task-definitions/auto-task",
         requiresConfirmation: false,
         durableOutcome: null,
         nextAction: "inspect the durable definition state",
@@ -174,13 +174,13 @@ function definitionDocument(
       occurrences: action({
         available: true,
         method: "GET",
-        path: "/api/v1/operations/automation/task-definitions/auto-task/occurrences",
+        path: "/api/operations/automation/task-definitions/auto-task/occurrences",
         requiresConfirmation: false,
         durableOutcome: null,
         nextAction: "inspect the bounded occurrence history",
       }),
       runOnce: action({
-        path: "/api/v1/operations/automation/task-definitions/auto-task/run-once",
+        path: "/api/operations/automation/task-definitions/auto-task/run-once",
         requiresConfirmation: false,
         durableOutcome:
           "a durable bounded discovery of the definition scope is admitted",
@@ -189,27 +189,27 @@ function definitionDocument(
       grantState: action({
         available: true,
         method: "GET",
-        path: "/api/v1/automation/task-definitions/auto-task/grant-state",
+        path: "/api/automation/task-definitions/auto-task/grant-state",
         durableOutcome: null,
         nextAction: "read the current grant state",
       }),
       grant: action({ requiresConfirmation: true }),
       revoke: action({
-        path: "/api/v1/automation/task-definitions/auto-task/revoke",
+        path: "/api/automation/task-definitions/auto-task/revoke",
         durableOutcome: "the grant is revoked",
         nextAction: "revoke the grant when its bounds are no longer wanted",
       }),
       copy: action({
         available: false,
         method: "POST",
-        path: "/api/v1/automation/task-definitions/auto-task/copy",
+        path: "/api/automation/task-definitions/auto-task/copy",
         requiresConfirmation: false,
         reason: "an open successor Draft is required to copy this definition",
         durableOutcome: "a copied definition is stored inside the Draft",
         nextAction: "create or open a successor Draft, then copy",
       }),
       draftCreate: action({
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
         requiresConfirmation: false,
         durableOutcome: "a successor Draft is stored",
         nextAction: "create or open the successor Draft",
@@ -344,13 +344,13 @@ function listDocument(
     actions: {
       create: action({
         method: "POST",
-        path: "/api/v1/automation/task-definitions",
+        path: "/api/automation/task-definitions",
         requiresConfirmation: false,
         durableOutcome: "the bounded definition is stored inside the Draft",
         nextAction: "start or open a successor Draft, then create",
       }),
       createDraft: action({
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
         requiresConfirmation: false,
         durableOutcome: "a successor Draft is stored",
         nextAction: "create or open the successor Draft",
@@ -475,7 +475,7 @@ function draftOnlyDefinitionDocument(
       detail: action({
         available: true,
         method: "GET",
-        path: "/api/v1/operations/automation/task-definitions/created-task",
+        path: "/api/operations/automation/task-definitions/created-task",
         requiresConfirmation: false,
         durableOutcome: null,
         nextAction: "inspect the durable definition state",
@@ -483,7 +483,7 @@ function draftOnlyDefinitionDocument(
       occurrences: action({
         available: true,
         method: "GET",
-        path: "/api/v1/operations/automation/task-definitions/created-task/occurrences",
+        path: "/api/operations/automation/task-definitions/created-task/occurrences",
         requiresConfirmation: false,
         durableOutcome: null,
         nextAction: "inspect the bounded occurrence history",
@@ -491,7 +491,7 @@ function draftOnlyDefinitionDocument(
       runOnce: action({
         available: false,
         reason: notActiveReason,
-        path: "/api/v1/operations/automation/task-definitions/created-task/run-once",
+        path: "/api/operations/automation/task-definitions/created-task/run-once",
         requiresConfirmation: false,
         durableOutcome:
           "a durable bounded discovery of the definition scope is admitted",
@@ -500,14 +500,14 @@ function draftOnlyDefinitionDocument(
       grantState: action({
         available: true,
         method: "GET",
-        path: "/api/v1/automation/task-definitions/created-task/grant-state",
+        path: "/api/automation/task-definitions/created-task/grant-state",
         durableOutcome: null,
         nextAction: "read the current grant state",
       }),
       grant: action({
         available: false,
         reason: notActiveReason,
-        path: "/api/v1/automation/task-definitions/created-task/grant",
+        path: "/api/automation/task-definitions/created-task/grant",
         requiresConfirmation: true,
         durableOutcome:
           "a persistent scoped unattended execution grant is stored",
@@ -516,19 +516,19 @@ function draftOnlyDefinitionDocument(
       revoke: action({
         available: false,
         reason: notActiveReason,
-        path: "/api/v1/automation/task-definitions/created-task/revoke",
+        path: "/api/automation/task-definitions/created-task/revoke",
         durableOutcome: "the grant is revoked",
         nextAction: "activate the Draft before granting unattended authority",
       }),
       copy: action({
         method: "POST",
-        path: "/api/v1/automation/task-definitions/created-task/copy",
+        path: "/api/automation/task-definitions/created-task/copy",
         requiresConfirmation: false,
         durableOutcome: "a copied definition is stored inside the Draft",
         nextAction: "copy the definition inside the open successor Draft",
       }),
       draftCreate: action({
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
         requiresConfirmation: false,
         durableOutcome: "a successor Draft is stored",
         nextAction: "create or open the successor Draft",
@@ -543,14 +543,14 @@ describe("V2 Automation journey", () => {
     recordingFetch((call) => {
       if (
         call.url ===
-        "/api/v1/operations/automation/task-definitions?sort=name&limit=20"
+        "/api/operations/automation/task-definitions?sort=name&limit=20"
       ) {
         return jsonResponse(listDocument());
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation");
+    renderApp("/operations/automation");
 
     await screen.findByRole("heading", { name: "自动化" });
     const main = screen.getByRole("main");
@@ -591,7 +591,7 @@ describe("V2 Automation journey", () => {
     recordingFetch((call) => {
       if (
         call.url ===
-        "/api/v1/operations/automation/task-definitions?sort=name&limit=20"
+        "/api/operations/automation/task-definitions?sort=name&limit=20"
       ) {
         return jsonResponse(
           listDocument({
@@ -608,7 +608,7 @@ describe("V2 Automation journey", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation");
+    renderApp("/operations/automation");
 
     await screen.findByRole("heading", { name: "自动化" });
     await waitFor(() =>
@@ -625,7 +625,7 @@ describe("V2 Automation journey", () => {
       // one the backend minted its cursor for.
       if (
         call.url ===
-        "/api/v1/operations/automation/task-definitions?sort=name&limit=20"
+        "/api/operations/automation/task-definitions?sort=name&limit=20"
       ) {
         return jsonResponse(
           listDocument({
@@ -638,7 +638,7 @@ describe("V2 Automation journey", () => {
       }
       if (
         call.url ===
-        "/api/v1/operations/automation/task-definitions?sort=name&limit=20&cursor=page-2"
+        "/api/operations/automation/task-definitions?sort=name&limit=20&cursor=page-2"
       ) {
         return jsonResponse(
           listDocument({
@@ -652,7 +652,7 @@ describe("V2 Automation journey", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation");
+    renderApp("/operations/automation");
 
     await screen.findByRole("heading", { name: "自动化" });
     // The count is the full population total, not the rows on this page.
@@ -673,7 +673,7 @@ describe("V2 Automation journey", () => {
     (page["actions"] as Json)["create"] = action({
       available: false,
       method: "POST",
-      path: "/api/v1/automation/task-definitions",
+      path: "/api/automation/task-definitions",
       requiresConfirmation: false,
       reason:
         "the connected API principal cannot create Automation Task Definitions",
@@ -683,14 +683,14 @@ describe("V2 Automation journey", () => {
     recordingFetch((call) => {
       if (
         call.url ===
-        "/api/v1/operations/automation/task-definitions?sort=name&limit=20"
+        "/api/operations/automation/task-definitions?sort=name&limit=20"
       ) {
         return jsonResponse(page);
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation");
+    renderApp("/operations/automation");
 
     await screen.findByRole("heading", { name: "自动化" });
     await screen.findByText("自动化任务数");
@@ -701,14 +701,14 @@ describe("V2 Automation journey", () => {
     recordingFetch((call) => {
       if (
         call.url ===
-        "/api/v1/operations/automation/task-definitions?sort=name&limit=20"
+        "/api/operations/automation/task-definitions?sort=name&limit=20"
       ) {
         return jsonResponse(listDocument());
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation");
+    renderApp("/operations/automation");
 
     const row = await screen.findByRole("row", {
       name: /Nightly automation/,
@@ -723,8 +723,8 @@ describe("V2 Automation journey", () => {
   });
 
   it.each([
-    "/ui-v2/operations/automation/definition/auto-task?returnTab=definitions",
-    "/ui-v2/operations/automation/editor/auto-task?returnTab=definitions",
+    "/operations/automation/definition/auto-task?returnTab=definitions",
+    "/operations/automation/editor/auto-task?returnTab=definitions",
   ])(
     "answers the retired Automation address %s with the ordinary not-found page",
     async (path) => {
@@ -748,18 +748,18 @@ describe("V2 Automation journey", () => {
     const { calls } = recordingFetch((call) => {
       if (
         call.url ===
-        "/api/v1/operations/automation/task-definitions/auto-task/occurrences?limit=20"
+        "/api/operations/automation/task-definitions/auto-task/occurrences?limit=20"
       ) {
         return jsonResponse(occurrencesDocument());
       }
-      if (call.url.startsWith("/api/v1/operations/automation/records?")) {
+      if (call.url.startsWith("/api/operations/automation/records?")) {
         return jsonResponse(recordsDocument());
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
     const { router } = renderApp(
-      "/ui-v2/operations/automation/occurrences/auto-task",
+      "/operations/automation/occurrences/auto-task",
     );
 
     await screen.findByRole("heading", { name: "Automation occurrences" });
@@ -778,7 +778,7 @@ describe("V2 Automation journey", () => {
       calls.some(
         (call) =>
           call.method === "GET" &&
-          call.url.startsWith("/api/v1/operations/automation/records?") &&
+          call.url.startsWith("/api/operations/automation/records?") &&
           call.url.includes("definition=auto-task"),
       ),
     ).toBe(true);
@@ -789,18 +789,18 @@ describe("V2 Automation journey", () => {
     recordingFetch((call) => {
       if (
         call.url ===
-        "/api/v1/operations/automation/task-definitions/auto-task/occurrences?limit=20"
+        "/api/operations/automation/task-definitions/auto-task/occurrences?limit=20"
       ) {
         return jsonResponse({ error: { code: "unavailable" } }, 503);
       }
-      if (call.url.startsWith("/api/v1/operations/automation/records?")) {
+      if (call.url.startsWith("/api/operations/automation/records?")) {
         return jsonResponse(recordsDocument());
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
     const { router } = renderApp(
-      "/ui-v2/operations/automation/occurrences/auto-task",
+      "/operations/automation/occurrences/auto-task",
     );
 
     await screen.findByRole("heading", { name: "Operations unavailable" });
@@ -818,13 +818,13 @@ describe("V2 Automation journey", () => {
 
   it("answers the retired Automation create address with the ordinary not-found page", async () => {
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "automation-operator" });
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation/new");
+    renderApp("/operations/automation/new");
 
     expect(
       await screen.findByRole("heading", { name: "Route not found" }),
@@ -891,18 +891,18 @@ describe("V2 Automation journey", () => {
       },
     };
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "automation-operator" });
       }
       if (
         call.url ===
-          "/api/v1/operations/automation/task-definitions?sort=name&limit=20" &&
+          "/api/operations/automation/task-definitions?sort=name&limit=20" &&
         call.method === "GET"
       ) {
         return jsonResponse(listDocument());
       }
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(formAuthority);
@@ -910,7 +910,7 @@ describe("V2 Automation journey", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation");
+    renderApp("/operations/automation");
 
     await screen.findByRole("heading", { name: "自动化" });
     await screen.findByText(/Nightly automation/);
@@ -933,14 +933,14 @@ describe("V2 Automation journey", () => {
         (call) =>
           call.method === "GET" &&
           call.url ===
-            "/api/v1/operations/automation/task-definitions?sort=name&limit=20",
+            "/api/operations/automation/task-definitions?sort=name&limit=20",
       ),
     ).toBe(true);
     expect(
       calls.some(
         (call) =>
           call.method === "GET" &&
-          call.url === "/api/v1/operations/automation/definitions",
+          call.url === "/api/operations/automation/definitions",
       ),
     ).toBe(true);
     // Opening and rendering the card submits no business command.

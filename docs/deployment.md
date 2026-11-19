@@ -70,11 +70,11 @@ This renders the **management-only** bootstrap: the durable database locator and
 one environment reference for the API credential, with no Storage, library,
 policy, schedule or Webhook. It is deliberately the default, because it is the
 shape a fresh installation needs and it starts every service without any media
-mount. Open `/ui-v2/configuration`, create the first Draft, and activate a valid
+mount. Open `/configuration`, create the first Draft, and activate a valid
 empty baseline; Storage and libraries are configured afterwards through the
 business pages.
 
-In `系统设置` (`/ui-v2/configuration`), the compact `配置状态摘要` shows whether setup is required.
+In `系统设置` (`/configuration`), the compact `配置状态摘要` shows whether setup is required.
 Use `创建首个草稿`, reload the page and use `恢复草稿（编辑版本 N）` to prove the same Draft is
 recovered. In `高级配置`, `验证草稿` validates that exact edit version. The `发布前检查` panel
 lists only checks applicable to that revision; an empty baseline reports `该草稿没有适用检查`.
@@ -216,7 +216,7 @@ first business configuration is *healthy*; it is running, registered and
 reporting. Treating "waiting for configuration" as a container failure would
 restart a healthy process forever. Whether a service can actually do work yet —
 and the bounded reason it cannot — is reported by the authenticated status
-surface (`GET /api/v1/management/readiness`), where an operator is present to act
+surface (`GET /api/management/readiness`), where an operator is present to act
 on it.
 
 None of these checks requires an Active configuration, and they perform no
@@ -239,7 +239,7 @@ The production artifact flow is one image, two stages, one Python runtime:
   exact directory in the image configuration. No Node executable, npm,
   `node_modules`, frontend source, Vite/dev server, SSR process, CDN runtime
   or second HTTP service exists in, or is required by, the runtime image.
-- The existing API service serves `/ui-v2/`, the current Explore, Library,
+- The existing API service serves `/`, the current Explore, Library,
   Operations, Automation, Notifications, Rules, Storage and System Settings
   route families (unknown client routes fall back to the entry document), and
   the referenced hashed assets from that directory through the Python
@@ -249,15 +249,18 @@ The production artifact flow is one image, two stages, one Python runtime:
   unknown, traversal-like or missing assets fail closed with 404 without
   exposing paths, credentials or raw exceptions. Static requests never access
   repositories, Providers, Tasks or Storage and never create work.
-- The retired V1 `/ui`, `/ui/`, `/ui/app.js` and `/ui/style.css` are ordinary
-  unknown routes with no redirect, notice page or alternate static product;
-  `/api/v1/*` Bearer authentication and RBAC behavior are unchanged beside V2
-  static serving.
+- The retired `/ui`, `/ui/` and `/ui-v2/*` navigation addresses render the
+  same entry document and the browser shows its ordinary not-found view at the
+  same address; their old asset addresses (`/ui/app.js`, `/ui/style.css`,
+  `/ui-v2/app.js`) are plain 404s, with no redirect, notice page or alternate
+  static product. `/api/v1` and `/api/v2` are ordinary JSON 404s that never
+  authenticate or reach a business service, and `/api/*` Bearer authentication
+  and RBAC behavior are unchanged beside V2 static serving.
 - `MEDIAFLOW_UI_V2_ASSET_ROOT` is deployment-owned: a value in the mounted
   deployment environment file overrides the image default, but the documented
   layout needs no override and no host mount of `web/dist`. If the configured
-  directory has no built artifact, `/ui-v2/*` fails closed with 404 while the
-  API keeps serving and the retired `/ui` addresses stay unknown.
+  directory has no built artifact, every Web address fails closed with 404
+  while `/health` and `/api/*` keep serving.
 
 ## CURRENT — Resident services across empty setup and publication (Slice 40)
 
@@ -342,7 +345,7 @@ implies the other signals.
 
    ```bash
    curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
-     http://127.0.0.1:8080/api/v1/management/readiness
+     http://127.0.0.1:8080/api/management/readiness
    ```
 
    The document reports `authority`, `setupRequired`, `runtimeConfigured`,
@@ -356,7 +359,7 @@ implies the other signals.
 
    ```bash
    curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
-     http://127.0.0.1:8080/api/v1/workers/readiness
+     http://127.0.0.1:8080/api/workers/readiness
    ```
 
    Compatibility fields still report `ready`, `condition`,
@@ -474,11 +477,12 @@ before any release claim:
   requests create no Task, notification, execution authority or Storage
   mutation.
 - The running API service is probed live for V2 static serving: the entry
-  document, the `/ui-v2/explore` deep route, every referenced hashed JS/CSS
-  asset with its safe headers, and the retired `/ui` addresses as ordinary
-  404s; a V2 POST request and missing/traversal-like asset paths fail closed;
-  and an unauthenticated `/api/v1/auth/principal` request stays denied beside
-  V2 serving.
+  document, the `/explore` and `/resourcelib/files` routes, every referenced
+  hashed JS/CSS asset with its safe headers, the retired `/ui`, `/ui-v2` and
+  `/ui-v2/explore` navigation addresses as the same entry document, their old
+  asset addresses and retired `/api/v1`, `/api/v2` addresses as ordinary 404s;
+  a V2 POST request and missing/traversal-like asset paths fail closed; and an
+  unauthenticated `/api/auth/principal` request stays denied beside V2 serving.
 - Bounded response/export scans cover Web assets, configuration status,
   managed configuration and result exports, audit/log projections, system
   status and service logs. Durable SQLite evidence is scanned directly. Failures
@@ -498,10 +502,10 @@ configuration, media, credentials, Storage or Providers.
 ```bash
 curl -i http://127.0.0.1:8080/health
 curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
-  "http://127.0.0.1:8080/api/v1/tasks?limit=100"
+  "http://127.0.0.1:8080/api/tasks?limit=100"
 ```
 
-Open `http://127.0.0.1:8080/ui-v2/` in a browser and connect with an API-principal token.
+Open `http://127.0.0.1:8080/` in a browser and connect with an API-principal token.
 The retired `/ui` addresses render the ordinary not-found route.
 
 Restart one service without replacing state:

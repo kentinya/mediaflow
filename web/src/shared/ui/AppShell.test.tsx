@@ -23,11 +23,11 @@ function stubShellReads(): void {
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      const payload = url.includes("/api/v1/explore/options")
+      const payload = url.includes("/api/explore/options")
         ? exploreOptionsPayload
-        : url.includes("/api/v1/explore/browse")
+        : url.includes("/api/explore/browse")
           ? exploreBrowsePayload
-          : url.includes("/api/v1/explore/")
+          : url.includes("/api/explore/")
             ? exploreDetailPayload
             : rulesPayload;
       return new Response(JSON.stringify(payload), {
@@ -47,7 +47,7 @@ afterEach(() => {
 describe("AppShell", () => {
   it("renders semantic navigation, active context and migration status", async () => {
     authStore.setToken("shell-test-token");
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     expect(
       await screen.findByRole("navigation", { name: "Primary" }),
@@ -65,7 +65,7 @@ describe("AppShell", () => {
 
   it("marks the ResourceLibrary Files destination active at its new address", async () => {
     authStore.setToken("shell-test-token");
-    renderApp("/ui-v2/resourcelib/files");
+    renderApp("/resourcelib/files");
 
     expect(await screen.findByRole("link", { name: "Files" })).toHaveAttribute(
       "aria-current",
@@ -79,7 +79,7 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     stubShellReads();
     authStore.setToken("shell-test-token");
-    const { router } = renderApp("/ui-v2/explore");
+    const { router } = renderApp("/explore");
 
     await screen.findByRole("region", { name: "探索" });
     const shellSurface = document.querySelector<HTMLElement>(
@@ -90,7 +90,7 @@ describe("AppShell", () => {
 
     await user.click(screen.getByRole("link", { name: "任务中心" }));
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
+      expect(router.history.location.pathname).toBe("/operations"),
     );
     // The arrived identity updates the one persistent surface. It must not
     // replace the wrapper that carries AuthBoundary and the Router Outlet:
@@ -116,7 +116,7 @@ describe("AppShell", () => {
     await act(async () => {
       await router.navigate({ to: "/operations", search: { view: "ended" } });
     });
-    expect(router.history.location.pathname).toBe("/ui-v2/operations");
+    expect(router.history.location.pathname).toBe("/operations");
     expect(document.querySelector('[data-main-page="operations"]')).toBe(
       shellSurface,
     );
@@ -129,7 +129,7 @@ describe("AppShell", () => {
     // entering state once; it never replaces the routed subtree wholesale.
     await user.click(screen.getByRole("link", { name: "Library" }));
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe("/ui-v2/medialib/files"),
+      expect(router.history.location.pathname).toBe("/medialib/files"),
     );
     expect(document.querySelector("[data-main-page]")).toBe(shellSurface);
     expect(shellSurface).toHaveAttribute("data-main-page", "library");
@@ -148,7 +148,7 @@ describe("AppShell", () => {
   it("lands on the last requested sidebar page after rapid navigation", async () => {
     stubShellReads();
     authStore.setToken("shell-test-token");
-    const { router } = renderApp("/ui-v2/explore");
+    const { router } = renderApp("/explore");
     await screen.findByRole("region", { name: "探索" });
 
     // Real Route/Query state still decides the page; the presentation layer
@@ -160,7 +160,7 @@ describe("AppShell", () => {
       await router.navigate({ to: "/storage" });
     });
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe("/ui-v2/storage"),
+      expect(router.history.location.pathname).toBe("/storage"),
     );
     const surfaces = document.querySelectorAll("[data-main-page]");
     expect(surfaces).toHaveLength(1);
@@ -172,7 +172,7 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     stubShellReads();
     authStore.setToken("shell-test-token");
-    const { router } = renderApp("/ui-v2/explore");
+    const { router } = renderApp("/explore");
     await screen.findByRole("region", { name: "探索" });
     const surface = document.querySelector<HTMLElement>(
       '[data-main-page="home"]',
@@ -181,7 +181,7 @@ describe("AppShell", () => {
 
     await user.click(screen.getByRole("link", { name: "任务中心" }));
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
+      expect(router.history.location.pathname).toBe("/operations"),
     );
     // The entry starts once and settles; a same-page search update keeps the
     // exact same surface and never re-adds the entry start class.
@@ -193,7 +193,7 @@ describe("AppShell", () => {
     await act(async () => {
       await router.navigate({ to: "/operations", search: { view: "ended" } });
     });
-    expect(router.history.location.pathname).toBe("/ui-v2/operations");
+    expect(router.history.location.pathname).toBe("/operations");
     expect(document.querySelector("[data-main-page]")).toBe(surface);
     expect(surface?.dataset.pageTransition).toBe("enter");
     expect(surface?.classList.contains("mf-page-surface-enter-start")).toBe(
@@ -207,7 +207,7 @@ describe("AppShell", () => {
       void router.navigate({ to: "/explore" });
     });
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe("/ui-v2/explore"),
+      expect(router.history.location.pathname).toBe("/explore"),
     );
     expect(document.querySelectorAll("[data-main-page]")).toHaveLength(1);
     expect(document.querySelector("[data-main-page]")).toBe(surface);
@@ -220,7 +220,7 @@ describe("AppShell", () => {
   });
 
   it("exposes a keyboard-operable narrow navigation control", async () => {
-    renderApp("/ui-v2/");
+    renderApp("/");
     const toggle = await screen.findByRole("button", { name: "Open menu" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     await userEvent.setup().click(toggle);
@@ -233,7 +233,7 @@ describe("AppShell", () => {
 
   it("does not render the unsupported system-storage capacity block", async () => {
     authStore.setToken("shell-test-token");
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     // The shared shell and navigation remain operable.
     expect(
@@ -260,7 +260,7 @@ describe("AppShell", () => {
           }),
       ),
     );
-    renderApp("/ui-v2/rules?section=recognitionTypes");
+    renderApp("/rules?section=recognitionTypes");
 
     // Content owns the Rules title and local search; account controls remain
     // in the one shared topbar.
@@ -285,12 +285,9 @@ describe("AppShell", () => {
     // destination line above that list (or reserve its space) on any of them,
     // including legacy/deep-link and post-login continuations.
     const routes: Array<readonly [string, string]> = [
-      ["/ui-v2/operations/automation", "Automation"],
-      ["/ui-v2/operations/automation/lifecycle", "New Automation definition"],
-      [
-        "/ui-v2/operations/automation/lifecycle/nightly",
-        "Automation lifecycle",
-      ],
+      ["/operations/automation", "Automation"],
+      ["/operations/automation/lifecycle", "New Automation definition"],
+      ["/operations/automation/lifecycle/nightly", "Automation lifecycle"],
     ];
     vi.stubGlobal(
       "fetch",
@@ -325,7 +322,7 @@ describe("AppShell", () => {
           }),
       ),
     );
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
 
     await screen.findByRole("heading", { name: "规则关系概览" });
     expect(screen.queryByRole("searchbox")).toBeNull();
@@ -343,7 +340,7 @@ describe("AppShell", () => {
       ),
     );
     authStore.setToken("shell-test-token");
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     await screen.findByRole("heading", { name: "任务中心" });
     const main = screen.getByRole("main");
@@ -368,7 +365,7 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     stubShellReads();
     authStore.setToken("shell-test-token");
-    const { router } = renderApp("/ui-v2/explore");
+    const { router } = renderApp("/explore");
     await screen.findByRole("region", { name: "探索" });
     const surface = document.querySelector<HTMLElement>(
       '[data-main-page="home"]',
@@ -396,7 +393,7 @@ describe("AppShell", () => {
       within(dialog).getByRole("link", { name: /访问 TMDB 首页/ }),
     ).toHaveAttribute("href", "https://www.themoviedb.org");
     // Same-page static card: no route, surface transition or API read starts.
-    expect(router.history.location.pathname).toBe("/ui-v2/explore");
+    expect(router.history.location.pathname).toBe("/explore");
     expect(document.querySelector('[data-main-page="home"]')).toBe(surface);
     expect(surface?.dataset.pageTransition).toBe("initial");
     expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore);
@@ -406,13 +403,13 @@ describe("AppShell", () => {
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(entry).toHaveFocus());
-    expect(router.history.location.pathname).toBe("/ui-v2/explore");
+    expect(router.history.location.pathname).toBe("/explore");
   });
 
   it("shows Explore as one labelled region without a visible title", async () => {
     stubShellReads();
     authStore.setToken("shell-test-token");
-    const { router } = renderApp("/ui-v2/explore");
+    const { router } = renderApp("/explore");
 
     await screen.findByRole("region", { name: "探索" });
     const main = screen.getByRole("main");
@@ -460,12 +457,12 @@ describe("AppShell", () => {
       ),
     );
     authStore.setToken("shell-test-token");
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
 
     await screen.findByRole("heading", { name: "任务中心" });
     expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
       "href",
-      "/ui-v2/resourcelib/files",
+      "/resourcelib/files",
     );
 
     fireEvent.change(screen.getByLabelText("开始日期"), {
@@ -476,12 +473,12 @@ describe("AppShell", () => {
     );
     expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
       "href",
-      "/ui-v2/resourcelib/files",
+      "/resourcelib/files",
     );
 
     await user.click(screen.getByRole("link", { name: "Files" }));
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe("/ui-v2/resourcelib/files"),
+      expect(router.history.location.pathname).toBe("/resourcelib/files"),
     );
     expect(router.history.location.search).toBe("");
     expect(screen.queryByRole("link", { name: "返回任务中心" })).toBeNull();
@@ -491,19 +488,19 @@ describe("AppShell", () => {
     // leaving a mount-time copy behind.
     cleanup();
     const second = renderApp(
-      "/ui-v2/resourcelib/files?returnOps=status%3Dpaused%26run%3Dtask-source",
+      "/resourcelib/files?returnOps=status%3Dpaused%26run%3Dtask-source",
     );
     expect(
       await screen.findByRole("link", { name: "返回任务中心" }),
     ).toBeVisible();
     expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
       "href",
-      "/ui-v2/resourcelib/files",
+      "/resourcelib/files",
     );
     await user.click(screen.getByRole("link", { name: "Files" }));
     await waitFor(() =>
       expect(second.router.history.location.pathname).toBe(
-        "/ui-v2/resourcelib/files",
+        "/resourcelib/files",
       ),
     );
     expect(second.router.history.location.search).toBe("");
@@ -525,17 +522,17 @@ describe("AppShell", () => {
     );
     authStore.setToken("shell-test-token");
     renderApp(
-      "/ui-v2/resourcelib/files?returnOps=status%3Dpaused%26run%3Dtask-source",
+      "/resourcelib/files?returnOps=status%3Dpaused%26run%3Dtask-source",
     );
 
     // The explicit deep link still re-validates its bounded context and offers
     // the exact task-center return; the shared sidebar Files link stays plain.
     expect(
       await screen.findByRole("link", { name: "返回任务中心" }),
-    ).toHaveAttribute("href", "/ui-v2/operations?run=task-source");
+    ).toHaveAttribute("href", "/operations?run=task-source");
     expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
       "href",
-      "/ui-v2/resourcelib/files",
+      "/resourcelib/files",
     );
   });
 
@@ -559,7 +556,7 @@ describe("AppShell", () => {
         });
       }),
     );
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    renderApp("/rules/edit/recognitionTypes/C");
 
     // The Edit route keeps the unified card as its subject context — the
     // failed read is stated inside that card — while the shared registry

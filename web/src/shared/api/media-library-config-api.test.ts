@@ -9,7 +9,7 @@ import {
 
 /**
  * MediaLibrary-scoped configuration mutations.  Every request must target the
- * `/api/v1/media-libraries` namespace with the shared mutation headers, and a
+ * `/api/media-libraries` namespace with the shared mutation headers, and a
  * malformed or identity-inconsistent success document must fail closed rather
  * than surface as a published Active.
  */
@@ -113,7 +113,7 @@ describe("saveMediaLibrary", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/v1/media-libraries");
+    expect(url).toBe("/api/media-libraries");
     expect(url).not.toContain("resource-libraries");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({
@@ -247,7 +247,7 @@ describe("fetchMediaLibraryRemovalPreview", () => {
     const result = await fetchMediaLibraryRemovalPreview(TOKEN, "movies");
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/v1/media-libraries/movies/removal-preview");
+    expect(url).toBe("/api/media-libraries/movies/removal-preview");
     expect(init?.method ?? "GET").toBe("GET");
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -322,7 +322,7 @@ describe("removeMediaLibrary", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/v1/media-libraries/movies");
+    expect(url).toBe("/api/media-libraries/movies");
     expect(init.method).toBe("DELETE");
     expect(JSON.parse(String(init.body))).toEqual({
       expectedRevisionId: "rev-2",
@@ -451,7 +451,7 @@ describe("MediaLibrary edit API", () => {
       expectedDigest: projection.model.activeDigest,
     });
     const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
-    expect(url).toBe("/api/v1/media-libraries/movies");
+    expect(url).toBe("/api/media-libraries/movies");
     expect(init.method).toBe("PUT");
     expect(JSON.parse(String(init.body))).toMatchObject({
       expectedVersion: 3,

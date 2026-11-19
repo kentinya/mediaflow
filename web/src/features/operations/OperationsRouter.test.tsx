@@ -32,14 +32,14 @@ afterEach(() => {
 
 describe("Task55.1 retired Operations Web routes", () => {
   it.each([
-    "/ui-v2/operations/tasks",
-    "/ui-v2/operations/tasks?status=failed&command=preview",
-    "/ui-v2/operations/tasks/task-run",
-    "/ui-v2/operations/jobs",
-    "/ui-v2/operations/jobs/job-005",
-    "/ui-v2/operations/automation/new",
-    "/ui-v2/operations/automation/definition/def-1",
-    "/ui-v2/operations/automation/editor/def-1",
+    "/operations/tasks",
+    "/operations/tasks?status=failed&command=preview",
+    "/operations/tasks/task-run",
+    "/operations/jobs",
+    "/operations/jobs/job-005",
+    "/operations/automation/new",
+    "/operations/automation/definition/def-1",
+    "/operations/automation/editor/def-1",
   ])(
     "answers %s with the ordinary not-found page and no reads",
     async (path) => {

@@ -2,7 +2,7 @@
  * Frontend-owned bounded models for the native Automation definition lifecycle.
  *
  * The Python contract exposes the focused publication surface under
- * ``/api/v1/operations/automation/definitions``: form authority, typed edit and
+ * ``/api/operations/automation/definitions``: form authority, typed edit and
  * copy candidates, a zero-mutation schedule preview, removal evidence and one
  * checked publication document per command. Normalization is fail-closed: an
  * unknown enum, a coerced boolean, a missing identity or a contradictory

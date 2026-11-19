@@ -1,8 +1,8 @@
 /**
  * Frontend-owned unified run inventory entity for the Operations workspace.
  *
- * The Python contract (`GET /api/v1/operations/runs`,
- * `GET /api/v1/operations/runs/{id}`) returns the bounded, secret-free run
+ * The Python contract (`GET /api/operations/runs`,
+ * `GET /api/operations/runs/{id}`) returns the bounded, secret-free run
  * projection over one deduplicated Task population. Normalization is
  * deliberately fail-closed: an unknown status, trigger or library kind, a
  * coerced boolean or a miscounted progress pair makes the whole response

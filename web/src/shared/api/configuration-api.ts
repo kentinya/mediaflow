@@ -174,7 +174,7 @@ export const fetchConfigurationStatus = (
 ) =>
   request<ConfigurationStatus>(
     token,
-    "/api/v1/configuration/status",
+    "/api/configuration/status",
     {},
     fetchImpl,
   );
@@ -182,7 +182,7 @@ export const fetchConfigurationStatus = (
 export const createFirstDraft = (token: string | null, fetchImpl?: FetchLike) =>
   request<Record<string, unknown>>(
     token,
-    "/api/v1/configuration/drafts/first",
+    "/api/configuration/drafts/first",
     { method: "POST", body: "{}" },
     fetchImpl,
   );
@@ -194,7 +194,7 @@ export const fetchRevision = (
 ) =>
   request<Record<string, unknown>>(
     token,
-    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}`,
+    `/api/configuration/revisions/${encodeURIComponent(revisionId)}`,
     {},
     fetchImpl,
   );
@@ -213,7 +213,7 @@ export const fetchRevisionObjects = (
 ) =>
   request<Record<string, unknown>>(
     token,
-    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/objects`,
+    `/api/configuration/revisions/${encodeURIComponent(revisionId)}/objects`,
     {},
     fetchImpl,
   );
@@ -225,7 +225,7 @@ export const fetchSystemSettings = (
 ) =>
   request<Record<string, unknown>>(
     token,
-    `/api/v1/system/settings${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ""}`,
+    `/api/system/settings${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ""}`,
     {},
     fetchImpl,
   );
@@ -237,7 +237,7 @@ export const saveSystemSettings = (
 ) =>
   request<Record<string, unknown>>(
     token,
-    "/api/v1/system/settings",
+    "/api/system/settings",
     { method: "PUT", body: JSON.stringify(body) },
     fetchImpl,
   );
@@ -249,7 +249,7 @@ export const validateRevision = (
 ) =>
   request<Record<string, unknown>>(
     token,
-    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/validate`,
+    `/api/configuration/revisions/${encodeURIComponent(revisionId)}/validate`,
     { method: "POST", body: "{}" },
     fetchImpl,
   );
@@ -262,7 +262,7 @@ export const activateRevision = (
 ) =>
   request<Record<string, unknown>>(
     token,
-    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/activate`,
+    `/api/configuration/revisions/${encodeURIComponent(revisionId)}/activate`,
     {
       method: "POST",
       body: JSON.stringify({ expectedVersion, checked: true }),
@@ -277,13 +277,13 @@ export const exportConfigurationPackage = (
 ) =>
   request<Record<string, unknown>>(
     token,
-    `/api/v1/configuration/packages/export/configuration${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ""}`,
+    `/api/configuration/packages/export/configuration${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ""}`,
     {},
     fetchImpl,
   );
 
 export const fetchManagementReadiness = (token: string | null) =>
-  request<Record<string, unknown>>(token, "/api/v1/management/readiness", {});
+  request<Record<string, unknown>>(token, "/api/management/readiness", {});
 
 /** Run one exact-revision, read-only Storage root check. */
 export const runStorageCheck = (
@@ -298,7 +298,7 @@ export const runStorageCheck = (
 ) =>
   request<Record<string, unknown>>(
     token,
-    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/storage-check`,
+    `/api/configuration/revisions/${encodeURIComponent(revisionId)}/storage-check`,
     { method: "POST", body: JSON.stringify(input) },
     fetchImpl,
     true,
@@ -318,7 +318,7 @@ export const runRecognitionStrategyTest = (
 ) =>
   request<Record<string, unknown>>(
     token,
-    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/recognition-strategy-test`,
+    `/api/configuration/revisions/${encodeURIComponent(revisionId)}/recognition-strategy-test`,
     { method: "POST", body: JSON.stringify(input) },
     fetchImpl,
     true,
@@ -338,7 +338,7 @@ export const runDestinationPrecheck = (
 ) =>
   request<Record<string, unknown>>(
     token,
-    `/api/v1/configuration/revisions/${encodeURIComponent(revisionId)}/destination-precheck`,
+    `/api/configuration/revisions/${encodeURIComponent(revisionId)}/destination-precheck`,
     { method: "POST", body: JSON.stringify(input) },
     fetchImpl,
     true,

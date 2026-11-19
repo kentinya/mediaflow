@@ -29,7 +29,7 @@ afterEach(() => {
 describe("EntryPage", () => {
   it("requires token material before connecting", async () => {
     const user = userEvent.setup();
-    renderApp("/ui-v2/");
+    renderApp("/");
     await user.click(await screen.findByRole("button", { name: "Connect" }));
     expect(
       await screen.findByText("Enter an API principal token to connect."),
@@ -43,7 +43,7 @@ describe("EntryPage", () => {
       async () =>
         new Response(JSON.stringify(exploreBrowsePayload), { status: 200 }),
     );
-    renderApp("/ui-v2/");
+    renderApp("/");
     const input = await screen.findByLabelText("API token");
     await user.type(input, TOKEN);
     await user.click(screen.getByRole("button", { name: "Connect" }));
@@ -58,7 +58,7 @@ describe("EntryPage", () => {
     stubFetch(async (input: RequestInfo | URL) => {
       // The MediaLibrary Files continuation reads only its own bounded list
       // contract; every other read in this test keeps the Explore payload.
-      if (String(input) === "/api/v1/media-libraries") {
+      if (String(input) === "/api/media-libraries") {
         return new Response(
           JSON.stringify({
             surface: "media_libraries",
@@ -76,7 +76,7 @@ describe("EntryPage", () => {
     // AuthBoundary records /medialib/files when an unauthenticated operator
     // opens it directly; the EntryPage just consumes the captured intention.
     authStore.setIntendedPath("/medialib/files");
-    renderApp("/ui-v2/");
+    renderApp("/");
     const input = await screen.findByLabelText("API token");
     await user.type(input, TOKEN);
     await user.click(screen.getByRole("button", { name: "Connect" }));
@@ -97,7 +97,7 @@ describe("EntryPage", () => {
       async () =>
         new Response(JSON.stringify(exploreBrowsePayload), { status: 200 }),
     );
-    renderApp("/ui-v2/");
+    renderApp("/");
     await user.type(await screen.findByLabelText("API token"), TOKEN);
     await user.click(screen.getByRole("button", { name: "Connect" }));
     await screen.findByRole("region", { name: "探索" });
@@ -108,7 +108,7 @@ describe("EntryPage", () => {
   it("connected state reports memory-only auth and disconnect clears memory, intent and cache", async () => {
     authStore.setToken(TOKEN);
     authStore.setIntendedPath("/medialib/files");
-    const { queryClient } = renderApp("/ui-v2/");
+    const { queryClient } = renderApp("/");
     const exploreKey = [
       "explore",
       browseContextId(DEFAULT_BROWSE_FILTERS),

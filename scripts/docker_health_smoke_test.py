@@ -110,7 +110,7 @@ def activate_runtime(base: str, token: str, config_file: Path) -> dict:
     document = json.loads(config_file.read_text(encoding="utf-8"))
     status, draft = json_request(
         base,
-        "/api/v1/configuration/drafts",
+        "/api/configuration/drafts",
         token,
         method="POST",
         body={"document": document},
@@ -120,7 +120,7 @@ def activate_runtime(base: str, token: str, config_file: Path) -> dict:
     revision_id = draft["revisionId"]
     status, validated = json_request(
         base,
-        f"/api/v1/configuration/revisions/{urllib.parse.quote(revision_id)}/validate",
+        f"/api/configuration/revisions/{urllib.parse.quote(revision_id)}/validate",
         token,
         method="POST",
         body={},
@@ -129,7 +129,7 @@ def activate_runtime(base: str, token: str, config_file: Path) -> dict:
         raise RuntimeError(f"managed Draft validation failed: {validated}")
     status, active = json_request(
         base,
-        f"/api/v1/configuration/revisions/{urllib.parse.quote(revision_id)}/activate",
+        f"/api/configuration/revisions/{urllib.parse.quote(revision_id)}/activate",
         token,
         method="POST",
         body={"expectedVersion": validated["version"]},
@@ -144,7 +144,7 @@ def readiness_assertions(base: str, token: str, config_file: Path) -> None:
     if status != 200 or health.get("processAlive") is not True:
         raise RuntimeError(f"public liveness is not healthy: {health}")
 
-    status, management = json_request(base, "/api/v1/management/readiness", token)
+    status, management = json_request(base, "/api/management/readiness", token)
     if status != 200 or management.get("managementReady") is not True:
         raise RuntimeError(f"management readiness is not ready: {management}")
     if management.get("authority") != "MANAGED":
@@ -153,7 +153,7 @@ def readiness_assertions(base: str, token: str, config_file: Path) -> None:
     if not active.get("revisionId") or not active.get("digest"):
         raise RuntimeError(f"management readiness lacks exact Active identity: {management}")
 
-    status, worker = json_request(base, "/api/v1/workers/readiness", token)
+    status, worker = json_request(base, "/api/workers/readiness", token)
     if status != 200:
         raise RuntimeError(f"worker readiness returned HTTP {status}: {worker}")
     if worker.get("processAlive") is not True:
@@ -229,7 +229,7 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
             base = f"http://127.0.0.1:{api_port}"
             wait_for_api(base, token)
 
-            status, tasks = json_request(base, "/api/v1/tasks?limit=100", token)
+            status, tasks = json_request(base, "/api/tasks?limit=100", token)
             if status != 200 or tasks.get("items"):
                 raise RuntimeError(
                     "service startup created durable Tasks; startup must be side-effect free"
@@ -239,7 +239,7 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
 
             print("Activating the managed runtime through the API...")
             active = activate_runtime(base, token, activation_file)
-            status, management = json_request(base, "/api/v1/management/readiness", token)
+            status, management = json_request(base, "/api/management/readiness", token)
             if (
                 status != 200
                 or (management.get("active") or {}).get("revisionId") != active["revisionId"]
@@ -247,7 +247,7 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
                 raise RuntimeError(f"management readiness did not pin the new Active: {management}")
 
             def worker_ready() -> bool:
-                _, worker = json_request(base, "/api/v1/workers/readiness", token)
+                _, worker = json_request(base, "/api/workers/readiness", token)
                 work = worker.get("workReadiness") or {}
                 return bool(
                     (worker.get("baseReadiness") or {}).get("ready")
@@ -264,7 +264,7 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
             run([*command, "stop", "worker"], environment=environment)
 
             def no_worker() -> bool:
-                _, worker = json_request(base, "/api/v1/workers/readiness", token)
+                _, worker = json_request(base, "/api/workers/readiness", token)
                 return worker.get("ready") is False and worker.get("condition") in {
                     "no_worker",
                     "stale_worker",
@@ -287,7 +287,7 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
             source_root.chmod(0o755)
             wait_for_service_health(command, environment, "api", expected="healthy")
 
-            status, tasks = json_request(base, "/api/v1/tasks?limit=100", token)
+            status, tasks = json_request(base, "/api/tasks?limit=100", token)
             if status != 200 or tasks.get("items"):
                 raise RuntimeError("health/readiness activity created durable Tasks")
             logs = run([*command, "logs", "--no-color", "--tail", "500"], environment=environment)

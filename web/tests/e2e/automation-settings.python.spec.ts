@@ -26,7 +26,7 @@ import {
  */
 
 const ADMIN_TOKEN = "harness-admin-token";
-const SETTINGS_PATH = "/api/v1/operations/automation/settings";
+const SETTINGS_PATH = "/api/operations/automation/settings";
 
 async function connectOn(
   page: Page,
@@ -79,7 +79,7 @@ function recordApiCalls(page: Page): { method: string; path: string }[] {
   const api: { method: string; path: string }[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname.startsWith("/api/v1/")) {
+    if (url.pathname.startsWith("/api/")) {
       api.push({ method: request.method(), path: url.pathname });
     }
   });
@@ -90,7 +90,7 @@ test("system runtime settings render the three fields and states publication apa
   page,
 }) => {
   const api = recordApiCalls(page);
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
 
@@ -136,7 +136,7 @@ test("a live resident consumer adopts the published cadence without a restart", 
   );
   expect(started.ok()).toBe(true);
 
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
 
@@ -286,7 +286,7 @@ test("a graceful resident restart restores current adoption and keeps the predec
   // The page shows the same truth: the live replacement adopted, and the
   // retained identity is folded into history rather than presented as a
   // current consumer to "start up".
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const schedulerAdoption = page.getByRole("region", {
@@ -318,7 +318,7 @@ test("a graceful resident restart restores current adoption and keeps the predec
 test("a stale form is refused and the published Active is preserved", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
@@ -347,7 +347,7 @@ test("a stale form is refused and the published Active is preserved", async ({
 test("out-of-scope, non-finite and out-of-range values never publish", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
@@ -392,7 +392,7 @@ test("out-of-scope, non-finite and out-of-range values never publish", async ({
 test("a checked Save from the form publishes once and keeps adoption separate", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
@@ -437,7 +437,7 @@ test("a checked Save from the form publishes once and keeps adoption separate", 
 test("a concurrent writer makes the ordinary background readback refuse the stale Save", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
@@ -537,7 +537,7 @@ test("a lost same-field conflict stays an explicit choice until the operator sav
   // must stay a conflict: each choice writes nothing, and only the explicit Save
   // publishes the operator's value — while an older context without baseline
   // values needs the same explicit choice.
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
@@ -649,7 +649,7 @@ test("a lost same-field conflict stays an explicit choice until the operator sav
 test("an unknown submission is reconciled from its own durable evidence, never by value equality", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
@@ -724,7 +724,7 @@ test("an unknown submission is reconciled from its own durable evidence, never b
 test("a lost rejection response reconciles into a correctable form, across a reload", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
@@ -829,7 +829,7 @@ test("a lost rejection response reconciles into a correctable form, across a rel
 test("a lost invalid-input rejection reconciles into a correctable integer", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const before = await settingsDocument(page);
@@ -938,7 +938,7 @@ test("a lost invalid-input rejection reconciles into a correctable integer", asy
 test("system runtime settings use the System Settings page as the one ordinary editor", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const document = await settingsDocument(page);
@@ -988,7 +988,7 @@ async function organizeOneFileThroughFiles(
   file: string,
 ): Promise<void> {
   await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await page
     .getByRole("button", { name: /source/ })
     .first()
@@ -1020,7 +1020,7 @@ async function organizeOneFileThroughFiles(
   expect(before).toEqual({ sourceExists: true, destinationTargets: [] });
   await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: /^确认整理 1 项$/ }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 20_000,
   });
@@ -1052,7 +1052,7 @@ test("system runtime settings publish 1025 and 10000 and Files organizing really
     [1025, "Three.2003.mkv"],
     [10000, "Four.2004.mkv"],
   ] as const) {
-    await connectOn(page, "/ui-v2/configuration");
+    await connectOn(page, "/configuration");
     await saveAutomationCapacity(page, capacity);
     await organizeOneFileThroughFiles(page, request, file);
     // The same page still reports the published high value (no clamping).
@@ -1079,12 +1079,12 @@ test("system runtime settings share one organizing allowance across automation a
   request,
 }) => {
   await request.post("/__harness__/restore-source-media");
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   await saveAutomationCapacity(page, 1);
 
   // The harness seeded one real due Automation occurrence at startup; it holds
   // the only shared organizing slot as a queued Task.
-  await connectOn(page, "/ui-v2/resourcelib/files");
+  await connectOn(page, "/resourcelib/files");
   await page
     .getByRole("button", { name: /source/ })
     .first()
@@ -1134,7 +1134,7 @@ test("system runtime settings share one organizing allowance across automation a
   ).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: /^确认整理 1 项$/ }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 20_000,
   });
@@ -1157,13 +1157,13 @@ test("system runtime settings keep an old summary at the current organizing capa
   request,
 }) => {
   await request.post("/__harness__/restore-source-media");
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   await saveAutomationCapacity(page, 1025);
 
   // Prepare Three's exact summary under the high allowance and remember the
   // real page the operator will return to.
   await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await page
     .getByRole("button", { name: /source/ })
     .first()
@@ -1191,10 +1191,10 @@ test("system runtime settings keep an old summary at the current organizing capa
   // competing admission: it either takes the only slot or, when the harness's
   // due Automation work already holds it, is truthfully refused.  Either way
   // the old summary must no longer be confirmable at its old 1025 pin.
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   await saveAutomationCapacity(page, 1);
   await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await page
     .getByRole("button", { name: /source/ })
     .first()
@@ -1228,7 +1228,7 @@ test("system runtime settings keep an old summary at the current organizing capa
   await page.getByRole("button", { name: /^确认整理 1 项$/ }).click();
   expect((await confirmation).status()).toBe(409);
   await expect(page.getByText(/这次执行被明确拒绝/)).toBeVisible();
-  await expect(page).not.toHaveURL(/\/ui-v2\/operations\?/);
+  await expect(page).not.toHaveURL(/\/operations\?/);
   const state = await (
     await request.get("/__harness__/manual-file-state?file=Three.2003.mkv")
   ).json();
@@ -1246,7 +1246,7 @@ test("system runtime settings keep an old summary at the current organizing capa
 // ---------------------------------------------------------------------------
 
 async function openAdvancedSettings(page: Page): Promise<void> {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   await expect(
     page.getByRole("heading", { name: "系统设置", exact: true }),
   ).toBeVisible();
@@ -1262,8 +1262,8 @@ async function systemSettingsRead(
 ): Promise<Record<string, unknown>> {
   const path =
     revisionId === undefined
-      ? "/api/v1/system/settings"
-      : `/api/v1/system/settings?revisionId=${encodeURIComponent(revisionId)}`;
+      ? "/api/system/settings"
+      : `/api/system/settings?revisionId=${encodeURIComponent(revisionId)}`;
   const response = await request.get(path, {
     headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
   });
@@ -1303,7 +1303,7 @@ test("advanced typed settings save a Draft, validate it and activate only the ex
   const saveResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "PUT" &&
-      response.url().endsWith("/api/v1/system/settings"),
+      response.url().endsWith("/api/system/settings"),
   );
   await page.getByRole("button", { name: "保存到草稿" }).click();
   const saved = await saveResponse;
@@ -1359,7 +1359,7 @@ test("advanced typed settings save a Draft, validate it and activate only the ex
   expect(afterRefusal.isActive).toBe(true);
   expect(afterRefusal.revisionId).toBe(beforeChecks.revisionId);
   expect(afterRefusal.revisionId).not.toBe(savedBody.revisionId);
-  const refusedStatus = await request.get("/api/v1/configuration/status", {
+  const refusedStatus = await request.get("/api/configuration/status", {
     headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
   });
   expect(refusedStatus.ok()).toBe(true);
@@ -1479,7 +1479,7 @@ test("two browsers editing the same Draft preserve input and merge only their ow
   const createDraft = page.waitForResponse(
     (response) =>
       response.request().method() === "PUT" &&
-      response.url().endsWith("/api/v1/system/settings"),
+      response.url().endsWith("/api/system/settings"),
   );
   await page.getByRole("button", { name: "保存到草稿" }).click();
   const createdResponse = await createDraft;
@@ -1510,7 +1510,7 @@ test("two browsers editing the same Draft preserve input and merge only their ow
   const firstSave = page.waitForResponse(
     (response) =>
       response.request().method() === "PUT" &&
-      response.url().endsWith("/api/v1/system/settings"),
+      response.url().endsWith("/api/system/settings"),
   );
   await page.getByRole("button", { name: "保存到草稿" }).click();
   expect((await firstSave).status()).toBe(200);
@@ -1520,7 +1520,7 @@ test("two browsers editing the same Draft preserve input and merge only their ow
   const staleSave = second.waitForResponse(
     (response) =>
       response.request().method() === "PUT" &&
-      response.url().endsWith("/api/v1/system/settings"),
+      response.url().endsWith("/api/system/settings"),
   );
   await second.getByRole("button", { name: "保存到草稿" }).click();
   expect((await staleSave).status()).toBe(409);
@@ -1536,7 +1536,7 @@ test("two browsers editing the same Draft preserve input and merge only their ow
   const retried = second.waitForResponse(
     (response) =>
       response.request().method() === "PUT" &&
-      response.url().endsWith("/api/v1/system/settings"),
+      response.url().endsWith("/api/system/settings"),
   );
   await second.getByRole("button", { name: "保存到草稿" }).click();
   expect((await retried).status()).toBe(200);
@@ -1558,7 +1558,7 @@ test("a Save whose answer is lost after the real write is reconciled read-only a
   request,
 }) => {
   await openAdvancedSettings(page);
-  const beforeStatus = await request.get("/api/v1/configuration/status", {
+  const beforeStatus = await request.get("/api/configuration/status", {
     headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
   });
   expect(beforeStatus.ok()).toBe(true);
@@ -1578,7 +1578,7 @@ test("a Save whose answer is lost after the real write is reconciled read-only a
   await retention.fill(String(next));
 
   let writes = 0;
-  await page.route("**/api/v1/system/settings", async (route) => {
+  await page.route("**/api/system/settings", async (route) => {
     if (route.request().method() !== "PUT") {
       await route.continue();
       return;
@@ -1593,13 +1593,13 @@ test("a Save whose answer is lost after the real write is reconciled read-only a
   await expect(page.getByText("操作结果未知")).toBeVisible();
   await expect(page.getByText("操作结果待核实")).toBeVisible();
   expect(writes).toBe(1);
-  await page.unroute("**/api/v1/system/settings");
+  await page.unroute("**/api/system/settings");
 
   await page.getByRole("button", { name: "核实当前状态" }).click();
   await expect(page.getByText("已核实当前配置状态")).toBeVisible();
   expect(writes).toBe(1);
 
-  const afterStatus = await request.get("/api/v1/configuration/status", {
+  const afterStatus = await request.get("/api/configuration/status", {
     headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
   });
   expect(afterStatus.ok()).toBe(true);

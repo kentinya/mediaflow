@@ -62,7 +62,7 @@ try {
   });
 
   // -- create a plus-ID object through the real create drawer ---------------
-  await page.goto(BASE + '/ui-v2/rules?section=recognitionTypes');
+  await page.goto(BASE + '/rules?section=recognitionTypes');
   await connect(page);
   await expect(page.getByRole('heading', { name: '识别类型', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '添加识别类型' }).last().click();
@@ -119,12 +119,12 @@ try {
   // -- a dotted-ID edit route survives refresh and reconnect ----------------
   // The seed composes against the exact current Active, the same way the
   // browser's own Save would after re-reading the authority.
-  const authorityRead = await page.request.get(BASE + '/api/v1/operations/rules/form-authority', {
+  const authorityRead = await page.request.get(BASE + '/api/operations/rules/form-authority', {
     headers: { Authorization: 'Bearer ' + TOKEN },
   });
   if (!authorityRead.ok()) throw new Error('authority read failed: ' + authorityRead.status());
   const authority = (await authorityRead.json()).active;
-  const seedUrl = BASE + '/api/v1/operations/rules/objects/recognitionTypes';
+  const seedUrl = BASE + '/api/operations/rules/objects/recognitionTypes';
   const response = await page.request.post(seedUrl, {
     headers: { Authorization: 'Bearer ' + TOKEN },
     data: {
@@ -135,7 +135,7 @@ try {
     },
   });
   if (!response.ok()) throw new Error('dotted seed failed: ' + response.status());
-  await page.goto(BASE + '/ui-v2/rules/edit/recognitionTypes/proof.type');
+  await page.goto(BASE + '/rules/edit/recognitionTypes/proof.type');
   await connect(page);
   await expect(page.getByRole('heading', { name: 'proof.type' })).toBeVisible();
   await page.reload();
@@ -151,14 +151,14 @@ try {
   const fileLikeIds = ['proof.js', 'proof.env', 'proof.type.bak'];
   for (const objectId of [...otherLegalIds, ...fileLikeIds]) {
     const authorityRead = await page.request.get(
-      BASE + '/api/v1/operations/rules/form-authority',
+      BASE + '/api/operations/rules/form-authority',
       { headers: { Authorization: 'Bearer ' + TOKEN } },
     );
     if (!authorityRead.ok()) {
       throw new Error('authority read failed: ' + authorityRead.status());
     }
     const authority = (await authorityRead.json()).active;
-    const seedUrl = BASE + '/api/v1/operations/rules/objects/recognitionTypes';
+    const seedUrl = BASE + '/api/operations/rules/objects/recognitionTypes';
     const seed = await page.request.post(seedUrl, {
       headers: { Authorization: 'Bearer ' + TOKEN },
       data: {
@@ -170,14 +170,14 @@ try {
     });
     if (!seed.ok()) throw new Error('seed ' + objectId + ' failed: ' + seed.status());
     const encodedId = encodeURIComponent(objectId);
-    await page.goto(BASE + '/ui-v2/rules/edit/recognitionTypes/' + encodedId);
+    await page.goto(BASE + '/rules/edit/recognitionTypes/' + encodedId);
     await connect(page);
     await expect(page.getByRole('heading', { name: objectId })).toBeVisible();
     await page.reload();
     await connect(page);
     await expect(page.getByRole('heading', { name: objectId })).toBeVisible();
     expect(new URL(page.url()).pathname).toBe(
-      '/ui-v2/rules/edit/recognitionTypes/' + encodedId,
+      '/rules/edit/recognitionTypes/' + encodedId,
     );
   }
 
@@ -188,13 +188,13 @@ try {
   // real impact and gets 404. The confirmation must present a failed read
   // with a reread recovery, never "0 references, cannot remove", and the
   // browser must issue no mutation.
-  await page.goto(BASE + '/ui-v2/rules?section=recognitionTypes');
+  await page.goto(BASE + '/rules?section=recognitionTypes');
   await connect(page);
   await expect(page.getByRole('heading', { name: '识别类型', exact: true })).toBeVisible();
   const staleRow = page.getByRole('row', { name: new RegExp(fileLikeIds[0].replace('.', '\\.')) });
   await expect(staleRow).toBeVisible();
   const staleAuthority = await page.request.get(
-    BASE + '/api/v1/operations/rules/form-authority',
+    BASE + '/api/operations/rules/form-authority',
     { headers: { Authorization: 'Bearer ' + TOKEN } },
   );
   if (!staleAuthority.ok()) {
@@ -203,7 +203,7 @@ try {
   const staleAuthorityDocument = (await staleAuthority.json()).active;
   const staleRemovalUrl =
     BASE +
-    '/api/v1/operations/rules/objects/recognitionTypes/' +
+    '/api/operations/rules/objects/recognitionTypes/' +
     encodeURIComponent(fileLikeIds[0]);
   const staleRemoval = await page.request.delete(staleRemovalUrl, {
     headers: { Authorization: 'Bearer ' + TOKEN },
@@ -265,7 +265,7 @@ try {
     'proof.type.bak',
   ]) {
     const entry = await context.request.get(
-      BASE + '/ui-v2/rules/edit/recognitionTypes/' + encodeURIComponent(objectId),
+      BASE + '/rules/edit/recognitionTypes/' + encodeURIComponent(objectId),
     );
     if (entry.status() !== 200) {
       throw new Error('edit route ' + objectId + ' returned ' + entry.status());
@@ -279,13 +279,13 @@ try {
       throw new Error('edit route ' + objectId + ' did not serve the entry document');
     }
   }
-  const missing = await context.request.get(BASE + '/ui-v2/missing-asset-abc123.js');
+  const missing = await context.request.get(BASE + '/missing-asset-abc123.js');
   if (missing.status() !== 404) throw new Error('unknown asset returned ' + missing.status());
-  const traversal = await context.request.get(BASE + '/ui-v2/..%2f..%2fetc%2fpasswd');
+  const traversal = await context.request.get(BASE + '/..%2f..%2fetc%2fpasswd');
   if (traversal.status() !== 404) throw new Error('traversal returned ' + traversal.status());
-  const unauth = await context.request.get(BASE + '/api/v1/auth/principal');
+  const unauth = await context.request.get(BASE + '/api/auth/principal');
   if (unauth.status() !== 401) throw new Error('unauthenticated API returned ' + unauth.status());
-  const authed = await context.request.get(BASE + '/api/v1/auth/principal', {
+  const authed = await context.request.get(BASE + '/api/auth/principal', {
     headers: { Authorization: 'Bearer ' + process.env.MF_PROOF_TOKEN },
   });
   if (authed.status() !== 200) {
@@ -416,7 +416,7 @@ def main() -> int:
         import urllib.request
 
         request = urllib.request.Request(
-            f"{BASE}/api/v1/operations/rules/form-authority",
+            f"{BASE}/api/operations/rules/form-authority",
             headers={"Authorization": f"Bearer {TOKEN}"},
         )
         with urllib.request.urlopen(request, timeout=10) as response:

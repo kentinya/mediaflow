@@ -216,7 +216,7 @@ function lifecycleFor(
       action: item.action,
       label: item.action,
       method: "POST",
-      path: `/api/v1/tasks/${taskId}/${item.action}`,
+      path: `/api/tasks/${taskId}/${item.action}`,
       available: item.available,
       unavailableReason: item.available
         ? null
@@ -288,13 +288,11 @@ function stubPage(items: readonly unknown[], options: StubOptions = {}) {
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/v1/system/status") return jsonResponse(status);
-      if (url.startsWith("/api/v1/resource-libraries/operation-origins")) {
+      if (url === "/api/system/status") return jsonResponse(status);
+      if (url.startsWith("/api/resource-libraries/operation-origins")) {
         return jsonResponse(origins(options.originIds));
       }
-      if (
-        url.startsWith("/api/v1/resource-libraries/source/files/operations/")
-      ) {
+      if (url.startsWith("/api/resource-libraries/source/files/operations/")) {
         if (options.detailStatus !== undefined && options.detailStatus >= 400) {
           return jsonResponse(
             { error: { code: options.detailErrorCode ?? "forbidden" } },
@@ -346,7 +344,7 @@ function stubPage(items: readonly unknown[], options: StubOptions = {}) {
           }),
         );
       }
-      if (url.startsWith("/api/v1/resource-libraries/source/file-operations")) {
+      if (url.startsWith("/api/resource-libraries/source/file-operations")) {
         if (options.listStatus !== undefined && options.listStatus >= 400) {
           return jsonResponse(
             { error: { code: options.listErrorCode ?? "forbidden" } },
@@ -359,7 +357,7 @@ function stubPage(items: readonly unknown[], options: StubOptions = {}) {
       for (const historical of options.historicalOrigins ?? []) {
         if (
           url.startsWith(
-            `/api/v1/resource-libraries/${historical.libraryId}/file-operations`,
+            `/api/resource-libraries/${historical.libraryId}/file-operations`,
           )
         ) {
           return jsonResponse(
@@ -370,7 +368,7 @@ function stubPage(items: readonly unknown[], options: StubOptions = {}) {
           );
         }
       }
-      if (url.startsWith("/api/v1/resource-libraries/source/files"))
+      if (url.startsWith("/api/resource-libraries/source/files"))
         return jsonResponse(files);
       if (init?.method === "POST") {
         posts.push(url);

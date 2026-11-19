@@ -52,7 +52,7 @@ async function openMediaLibrary(
   search = "",
   token = VIEWER_TOKEN,
 ): Promise<void> {
-  await page.goto("/ui-v2/medialib/files" + search);
+  await page.goto("/medialib/files" + search);
   await connectAs(page, token);
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
@@ -131,7 +131,7 @@ test("MediaLibrary edit preloads exact Active values and activates one immutable
   page.on("request", (request) => {
     if (
       request.method() === "PUT" &&
-      request.url().includes("/api/v1/media-libraries/movies")
+      request.url().includes("/api/media-libraries/movies")
     ) {
       puts.push(request.postDataJSON() as Record<string, unknown>);
     }
@@ -290,7 +290,7 @@ test("an enabled Save becomes the exact Active library, is selected and browseab
   page.on("request", (request) => {
     if (
       request.method() === "POST" &&
-      request.url().includes("/api/v1/media-libraries") &&
+      request.url().includes("/api/media-libraries") &&
       !request.url().includes("/files")
     ) {
       posts.push(request.url());
@@ -330,7 +330,7 @@ test("a disabled Save is truthful, hidden from browsing and offers the handoff",
 }) => {
   const browseReads: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/media-libraries/e2e-disabled/files")) {
+    if (request.url().includes("/api/media-libraries/e2e-disabled/files")) {
       browseReads.push(request.url());
     }
   });
@@ -361,7 +361,7 @@ test("an invalid candidate is blocked with inline validation and no mutation", a
   page.on("request", (request) => {
     if (
       request.method() === "POST" &&
-      request.url().includes("/api/v1/media-libraries")
+      request.url().includes("/api/media-libraries")
     ) {
       posts.push(request.url());
     }
@@ -428,7 +428,7 @@ test("a duplicate ID is refused with a correctable identity", async ({
   page.on("request", (request) => {
     if (
       request.method() === "POST" &&
-      request.url().includes("/api/v1/media-libraries")
+      request.url().includes("/api/media-libraries")
     ) {
       posts.push(request.url());
     }
@@ -486,7 +486,7 @@ test("removal previews the exact Active library and keeps every file", async ({
   page.on("request", (request) => {
     if (
       request.method() === "DELETE" &&
-      request.url().includes("/api/v1/media-libraries")
+      request.url().includes("/api/media-libraries")
     ) {
       deletes.push(request.url());
     }
@@ -550,12 +550,12 @@ test("a referenced library cannot be removed and offers the handoff", async ({
   // It carries no removed /review address and the referenced library remains.
   await openRemovalDialog(page, "115网盘");
   await page.getByRole("button", { name: "前往整理规则处理这些引用" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/rules$/);
+  await expect(page).toHaveURL(/\/rules$/);
   await expect(
     page.getByRole("heading", { name: "整理规则", exact: true }),
   ).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/\/ui-v2\/medialib\/files/);
+  await expect(page).toHaveURL(/\/medialib\/files/);
   await expect(card(page, "115网盘")).toBeVisible();
 });
 
@@ -599,7 +599,7 @@ test("a limited principal cannot save or remove a MediaLibrary", async ({
   page.on("request", (request) => {
     if (request.method() !== "GET") mutations.push(request.url());
   });
-  await page.goto("/ui-v2/medialib/files");
+  await page.goto("/medialib/files");
   await connectAs(page, LIMITED_TOKEN);
   await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
   await expect(page.getByText(LIMITED_TOKEN)).toHaveCount(0);

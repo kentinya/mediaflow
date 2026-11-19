@@ -674,7 +674,7 @@ class AutomationRunOnceService:
                     or (not cancelled and discovery.frozen and discovery.intent_id is not None)
                 ),
                 "method": "GET",
-                "path": (f"/api/v1/operations/organize/previews/{plan_id}" if plan_id else None),
+                "path": (f"/api/operations/organize/previews/{plan_id}" if plan_id else None),
                 "sideEffects": "none",
                 "nextAction": (
                     "review the frozen manifest's exact plan summary in this Run once"

@@ -34,7 +34,7 @@ def api_request(api, authorization: str | None):
     headers = []
     environ = {
         "REQUEST_METHOD": "GET",
-        "PATH_INFO": "/api/v1/auth/principal",
+        "PATH_INFO": "/api/auth/principal",
         "QUERY_STRING": "",
         "CONTENT_LENGTH": "0",
         "REMOTE_ADDR": "127.0.0.1",

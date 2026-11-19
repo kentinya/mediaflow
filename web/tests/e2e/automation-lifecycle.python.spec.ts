@@ -75,7 +75,7 @@ function recordApiCalls(page: Page): { method: string; path: string }[] {
   const api: { method: string; path: string }[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname.startsWith("/api/v1/")) {
+    if (url.pathname.startsWith("/api/")) {
       api.push({ method: request.method(), path: url.pathname });
     }
   });
@@ -83,7 +83,7 @@ function recordApiCalls(page: Page): { method: string; path: string }[] {
 }
 
 async function openLifecycleNew(page: Page): Promise<void> {
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
   ).toBeVisible();
@@ -95,10 +95,7 @@ async function openLifecycleNew(page: Page): Promise<void> {
 
 /** Continue to one durable definition route without losing shell authority. */
 async function openLifecycle(page: Page, definitionId: string): Promise<void> {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/lifecycle/${definitionId}`,
-  );
+  await connectOn(page, `/operations/automation/lifecycle/${definitionId}`);
   await expect(
     page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
@@ -157,7 +154,7 @@ async function saveEnabledChoice(page: Page, enabled: boolean): Promise<void> {
   if (enabled) await page.getByLabel("启用定时计划").check();
   else await page.getByLabel("启用定时计划").uncheck();
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(page).toHaveURL(/\/operations\/automation(\?.*)?$/);
   await expect(
     page.getByRole("heading", {
       name: enabled ? "已保存并启用" : "已保存，当前停用",
@@ -174,7 +171,7 @@ async function copyDefinitionFromList(
   sourceName = "Harness automation",
 ): Promise<string> {
   const before = (await harnessState(page)).definitions.map((item) => item.id);
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   const sourceRow = page
     .getByRole("row")
     .filter({ has: page.getByText(sourceName, { exact: true }) });
@@ -199,7 +196,7 @@ async function saveItemLimit(
   await openLifecycle(page, definitionId);
   await page.getByLabel("处理上限").fill(String(itemLimit));
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(page).toHaveURL(/\/operations\/automation(\?.*)?$/);
   await expect(page.getByRole("heading", { name: /已保存/ })).toBeVisible();
 }
 
@@ -235,7 +232,7 @@ test("one checked Save publishes the definition and a reload confirms durable tr
 
   // The ordinary list consumes the real Python contract while disabled.
   // Reading does not depend on an independent grant or start work.
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   const row = page
     .getByRole("row")
     .filter({ has: page.getByText("Harness automation", { exact: true }) });
@@ -254,7 +251,7 @@ test("one checked Save publishes the definition and a reload confirms durable tr
     api.some(
       (call) =>
         call.method === "POST" &&
-        call.path === "/api/v1/operations/automation/definitions",
+        call.path === "/api/operations/automation/definitions",
     ),
   ).toBe(true);
 });
@@ -264,7 +261,7 @@ test("a Rules save preserves the inventory New Automation entry", async ({
 }) => {
   // Rules publishes the domain spelling `move`, while imported policies may
   // still use MOVE. Exercise the real publisher, API projection and list link.
-  const path = "/api/v1/operations/rules/objects/organizePolicies/A";
+  const path = "/api/operations/rules/objects/organizePolicies/A";
   const headers = { Authorization: `Bearer ${ADMIN_TOKEN}` };
   const projectionResponse = await page.request.get(path, { headers });
   expect(projectionResponse.ok()).toBe(true);
@@ -284,7 +281,7 @@ test("a Rules save preserves the inventory New Automation entry", async ({
 
   const before = await harnessState(page);
   const api = recordApiCalls(page);
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await page.getByRole("link", { name: "新建自动化任务" }).click();
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
@@ -357,7 +354,7 @@ test("one submission with the explicit choice creates and enables the definition
   const creates = api.filter(
     (call) =>
       call.method === "POST" &&
-      call.path === "/api/v1/operations/automation/definitions",
+      call.path === "/api/operations/automation/definitions",
   );
   expect(creates).toHaveLength(1);
   const state = await harnessState(page);
@@ -382,7 +379,7 @@ test("edit, enable, copy and removal are separate durable commands", async ({
   // and the confirmed Save returns to the original list.
   await page.getByLabel(/任务名称/).fill("Harness automation renamed");
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(page).toHaveURL(/\/operations\/automation(\?.*)?$/);
   await expect(
     page.getByRole("heading", { name: "已保存，当前停用" }),
   ).toBeVisible();
@@ -443,7 +440,7 @@ test("edit, enable, copy and removal are separate durable commands", async ({
   await expect(remove).toBeDisabled();
   await page.getByLabel(/我确认移除此定义/).check();
   await remove.click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(page).toHaveURL(/\/operations\/automation(\?.*)?$/);
   state = await harnessState(page);
   expect(state.definitions.map((item) => item.id)).toEqual([DEFINITION_ID]);
 });
@@ -477,7 +474,7 @@ test("removal stops the enabled definition, revokes historical authority and ret
   await expect(page.getByLabel("启用定时计划")).toBeChecked();
   await page.getByLabel(/我确认移除此定义/).check();
   await page.getByRole("button", { name: "移除定义" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
 
   state = await harnessState(page, DEFINITION_ID);
   expect(state.definitions).toEqual([]);
@@ -518,10 +515,7 @@ test("retained occurrence history stays readable after removal", async ({
   expect(tickBody.emitted).toContain(DEFINITION_ID);
 
   // The operator's existing occurrences route reads the emitted history.
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
-  );
+  await connectOn(page, `/operations/automation/occurrences/${DEFINITION_ID}`);
   await expect(
     page.getByRole("heading", { name: /occurrences/i }),
   ).toBeVisible();
@@ -531,15 +525,12 @@ test("retained occurrence history stays readable after removal", async ({
   await openLifecycle(page, DEFINITION_ID);
   await page.getByLabel(/我确认移除此定义/).check();
   await page.getByRole("button", { name: "移除定义" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
   let state = await harnessState(page, DEFINITION_ID);
   expect(state.definitions).toEqual([]);
   expect(state.occurrenceTotal).toBe(1);
 
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
-  );
+  await connectOn(page, `/operations/automation/occurrences/${DEFINITION_ID}`);
   await expect(
     page.getByRole("heading", { name: /occurrences/i }),
   ).toBeVisible();
@@ -552,7 +543,7 @@ test("retained occurrence history stays readable after removal", async ({
   ).toHaveAttribute(
     "href",
     new RegExp(
-      `/ui-v2/operations/automation\\?.*tab=records.*rdefinition=${DEFINITION_ID}`,
+      `/operations/automation\\?.*tab=records.*rdefinition=${DEFINITION_ID}`,
     ),
   );
   state = await harnessState(page, DEFINITION_ID);
@@ -586,7 +577,7 @@ test("navigating to the copy route never applies the origin's unsaved input", as
   // Saving publishes the copy's own values under the copy identity and
   // returns to the list.
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(page).toHaveURL(/\/operations\/automation(\?.*)?$/);
   const state = await harnessState(page);
   const copy = state.definitions.find((item) => item.id === copyId);
   expect(copy).toBeDefined();
@@ -616,16 +607,13 @@ test("a concurrent peer publication is surfaced before a stale Save can publish"
   // A second real tab publishes a legitimate focused edit.
   const second = await browser.newContext();
   const peer = await second.newPage();
-  await connectOn(
-    peer,
-    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
-  );
+  await connectOn(peer, `/operations/automation/lifecycle/${DEFINITION_ID}`);
   await expect(
     peer.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
   await peer.getByLabel("处理上限").fill("9");
   await peer.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(peer).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(peer).toHaveURL(/\/operations\/automation(\?.*)?$/);
   await second.close();
 
   // Back in the first tab, the explicit Save is refused by the peer's newer
@@ -653,7 +641,7 @@ test("a concurrent peer publication is surfaced before a stale Save can publish"
   // the peer's durable item limit 9 survives, never overwritten by the stale
   // cached value. The confirmed Save returns to the list.
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(page).toHaveURL(/\/operations\/automation(\?.*)?$/);
   const state = await harnessState(page);
   expect(state.definitions[0]?.name).toBe("Harness automation");
   expect(state.definitions[0]?.itemLimit).toBe(9);
@@ -673,7 +661,7 @@ test("a committed create with a lost response reconciles after reload without a 
   // Other journeys share this isolated harness; the create itself must not add
   // any scheduled occurrence.
   const occurrencesBefore = (await harnessState(page)).occurrenceTotal;
-  await page.route("**/api/v1/operations/automation/definitions", (route) => {
+  await page.route("**/api/operations/automation/definitions", (route) => {
     if (route.request().method() !== "POST") {
       void route.continue();
       return;
@@ -708,7 +696,7 @@ test("a committed create with a lost response reconciles after reload without a 
     api.filter(
       (call) =>
         call.method === "POST" &&
-        call.path === "/api/v1/operations/automation/definitions",
+        call.path === "/api/operations/automation/definitions",
     ),
   ).toHaveLength(0);
   state = await harnessState(page);
@@ -720,7 +708,7 @@ test("a committed create with a lost response reconciles after reload without a 
   await openLifecycle(page, DEFINITION_ID);
   await page.getByLabel(/任务名称/).fill("Harness automation reconciled");
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(page).toHaveURL(/\/operations\/automation(\?.*)?$/);
   await openLifecycle(page, DEFINITION_ID);
   await saveEnabledChoice(page, true);
   state = await harnessState(page);
@@ -741,7 +729,7 @@ test("a lost Copy response stays unknown across reload until reconciled from the
   // is never named as this intent's result.
   await publishNewDefinition(page);
 
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   // Drop only the Copy response: the backend still executes the command.
   await page.route("**/copy", (route) => {
     void route.fetch().then(() => route.abort());
@@ -761,7 +749,7 @@ test("a lost Copy response stays unknown across reload until reconciled from the
   // observed authority only), Copy stays blocked, and reconciliation resolves
   // the exact committed copy through the list's own entry.
   await page.reload();
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await expect(page.getByText(/复制结果待核对/)).toBeVisible();
   await expect(
     sourceRow().getByRole("button", { name: "复制", exact: true }),
@@ -792,7 +780,7 @@ test("a committed Copy beyond the audit page boundary still reconciles after rel
   // authority, survive a real reload, and leave no second copy.
   await publishNewDefinition(page);
 
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   // Drop only the Copy response: the backend still executes the command.
   await page.route("**/copy", (route) => {
     void route.fetch().then(() => route.abort());
@@ -822,7 +810,7 @@ test("a committed Copy beyond the audit page boundary still reconciles after rel
   // ledger to resolve the original committed copy rather than allocating a
   // duplicate.
   await page.reload();
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   const reloadedRow = () =>
     page
       .getByRole("row")
@@ -851,7 +839,7 @@ test("a second lost Copy after a successful copy shows the current unknown and r
   await publishNewDefinition(page);
   const before = await harnessState(page);
   const copyBodies = recordCopyBodies(page);
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   const sourceRow = () =>
     page
       .getByRole("row")
@@ -893,7 +881,7 @@ test("a second lost Copy after a successful copy shows the current unknown and r
   expect(copyBodies[1]?.expectedRevisionId).toBe(afterFirst.activeRevisionId);
   await sourceRow().getByRole("button", { name: "编辑副本" }).click();
   await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/automation/lifecycle/${secondCopy}(\\?.*)?$`),
+    new RegExp(`/operations/automation/lifecycle/${secondCopy}(\\?.*)?$`),
   );
 });
 
@@ -911,7 +899,7 @@ test("a later authority read never pairs with an older displayed row", async ({
   // The list read may finish first; the authority read is held until another
   // tab has published a newer Active.
   await page.route(
-    "**/api/v1/operations/automation/definitions",
+    "**/api/operations/automation/definitions",
     async (route) => {
       if (route.request().method() !== "GET") {
         await route.continue();
@@ -925,7 +913,7 @@ test("a later authority read never pairs with an older displayed row", async ({
     },
   );
   const copyBodies = recordCopyBodies(page);
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   const sourceRow = () =>
     page
       .getByRole("row")
@@ -978,7 +966,7 @@ test("a conflict refresh updates the Copy authority so the next explicit copy su
   await publishNewDefinition(page);
   const before = await harnessState(page);
   const copyBodies = recordCopyBodies(page);
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   const sourceRow = () =>
     page
       .getByRole("row")
@@ -1044,12 +1032,9 @@ test("retained history shows the published configuration, never an open Draft", 
   await openLifecycle(page, DEFINITION_ID);
   await page.getByLabel(/我确认移除此定义/).check();
   await page.getByRole("button", { name: "移除定义" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
 
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
-  );
+  await connectOn(page, `/operations/automation/occurrences/${DEFINITION_ID}`);
   await expect(
     page.getByRole("heading", { name: "Automation occurrences" }),
   ).toBeVisible();
@@ -1084,13 +1069,10 @@ test("corrupt published evidence is reported as unavailable, never a draft or ab
   await openLifecycle(page, DEFINITION_ID);
   await page.getByLabel(/我确认移除此定义/).check();
   await page.getByRole("button", { name: "移除定义" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
 
   // Intact evidence still resolves the real published occurrence history.
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
-  );
+  await connectOn(page, `/operations/automation/occurrences/${DEFINITION_ID}`);
   await expect(
     page.getByRole("heading", { name: "Automation occurrences" }),
   ).toBeVisible();
@@ -1104,10 +1086,7 @@ test("corrupt published evidence is reported as unavailable, never a draft or ab
   // The state-backed edit route and occurrence history report the bounded
   // unavailable state instead of the unpublished Draft candidate or a false
   // absence.
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
-  );
+  await connectOn(page, `/operations/automation/lifecycle/${DEFINITION_ID}`);
   const editCard = page.getByRole("dialog");
   await expect(editCard.getByText("无法读取该定义")).toBeVisible();
   await expect(
@@ -1123,10 +1102,7 @@ test("corrupt published evidence is reported as unavailable, never a draft or ab
 
   // The occurrences route fails closed identically rather than claiming the
   // removed definition never existed.
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
-  );
+  await connectOn(page, `/operations/automation/occurrences/${DEFINITION_ID}`);
   await expect(
     page.getByRole("heading", { name: "Operations unavailable" }),
   ).toBeVisible();
@@ -1145,7 +1121,7 @@ test("the row edit entry opens the same card over the list and protects unsaved 
   // to the same list context and re-opening shows the saved values again.
   await publishNewDefinition(page);
 
-  await connectOn(page, "/ui-v2/operations/automation?sort=name");
+  await connectOn(page, "/operations/automation?sort=name");
   const rowFor = (name: string) =>
     page
       .getByRole("row")
@@ -1169,7 +1145,7 @@ test("the row edit entry opens the same card over the list and protects unsaved 
   await expect(
     page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toHaveCount(0);
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  await expect(page).toHaveURL(/\/operations\/automation\?.*sort=name/);
 
   // Edited input is protected by the same pinned choice as creation.
   await rowFor("Harness automation")
@@ -1189,7 +1165,7 @@ test("the row edit entry opens the same card over the list and protects unsaved 
   // Discarding returns to the preserved list context; nothing was published.
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "放弃修改" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  await expect(page).toHaveURL(/\/operations\/automation\?.*sort=name/);
   await expect(
     page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toHaveCount(0);
@@ -1204,7 +1180,7 @@ test("the row edit entry opens the same card over the list and protects unsaved 
   await expect(page.getByLabel(/任务名称/)).toHaveValue("Harness automation");
   await page.getByLabel(/任务名称/).fill("卡片保存返回");
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  await expect(page).toHaveURL(/\/operations\/automation\?.*sort=name/);
   await expect(
     page.getByRole("heading", { name: "已保存，当前停用" }),
   ).toBeVisible();
@@ -1229,7 +1205,7 @@ test("a submitting save blocks accidental departure; an unknown outcome stays re
     release = resolve;
   });
   await page.route(
-    "**/api/v1/operations/automation/definitions/*",
+    "**/api/operations/automation/definitions/*",
     async (route) => {
       if (route.request().method() !== "PUT") {
         await route.continue();
@@ -1257,7 +1233,7 @@ test("a submitting save blocks accidental departure; an unknown outcome stays re
   release?.();
 
   // The confirmed outcome releases the block and returns to the list.
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(page).toHaveURL(/\/operations\/automation(\?.*)?$/);
   await expect(
     page.getByRole("heading", { name: "已保存，当前停用" }),
   ).toBeVisible();
@@ -1267,7 +1243,7 @@ test("a submitting save blocks accidental departure; an unknown outcome stays re
   // An unknown save outcome retains the exact command: leaving is allowed and
   // re-opening offers reconciliation, never a resubmission.
   let putCount = 0;
-  await page.route("**/api/v1/operations/automation/definitions/*", (route) => {
+  await page.route("**/api/operations/automation/definitions/*", (route) => {
     if (route.request().method() !== "PUT") {
       void route.continue();
       return;
@@ -1297,7 +1273,7 @@ test("the edit card fits a narrow viewport and stays keyboard operable", async (
 }) => {
   await publishNewDefinition(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await page.getByRole("button", { name: "编辑", exact: true }).first().click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
@@ -1350,14 +1326,13 @@ test("re-editing right after an enabled save keeps the saved values and fence", 
     const url = new URL(request.url());
     if (
       request.method() === "PUT" &&
-      url.pathname ===
-        `/api/v1/operations/automation/definitions/${DEFINITION_ID}`
+      url.pathname === `/api/operations/automation/definitions/${DEFINITION_ID}`
     ) {
       writes.push(request.postDataJSON() as Submitted);
     }
   });
 
-  await connectOn(page, "/ui-v2/operations/automation?sort=name");
+  await connectOn(page, "/operations/automation?sort=name");
   const rowFor = (text: string) =>
     page
       .getByRole("row")
@@ -1375,7 +1350,7 @@ test("re-editing right after an enabled save keeps the saved values and fence", 
   await page.getByLabel("处理上限").fill("7");
   await page.getByLabel("启用定时计划").check();
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  await expect(page).toHaveURL(/\/operations\/automation\?.*sort=name/);
   await expect(
     page.getByRole("heading", { name: "已保存并启用" }),
   ).toBeVisible();
@@ -1390,7 +1365,7 @@ test("re-editing right after an enabled save keeps the saved values and fence", 
   // confirmed Save's own values and fence, never the cached "disabled, limit 5"
   // fields joined to the newer Active.
   await page.route(
-    `**/api/v1/operations/automation/definitions/${DEFINITION_ID}`,
+    `**/api/operations/automation/definitions/${DEFINITION_ID}`,
     async (route) => {
       if (route.request().method() !== "GET") {
         await route.continue();
@@ -1409,7 +1384,7 @@ test("re-editing right after an enabled save keeps the saved values and fence", 
   // Act while the read is still in flight: only the Name changes.
   await page.getByLabel(/任务名称/).fill("只改名称（慢读）");
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  await expect(page).toHaveURL(/\/operations\/automation\?.*sort=name/);
   await expect(
     page.getByRole("heading", { name: "已保存并启用" }),
   ).toBeVisible();
@@ -1431,7 +1406,7 @@ test("re-editing right after an enabled save keeps the saved values and fence", 
   await expect(page.getByLabel("启用定时计划")).toBeChecked();
   await page.getByLabel(/任务名称/).fill("只改名称（正常读）");
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  await expect(page).toHaveURL(/\/operations\/automation\?.*sort=name/);
   state = await harnessState(page);
   expect(
     state.definitions.find((item) => item.id === DEFINITION_ID),

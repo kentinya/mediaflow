@@ -31,7 +31,7 @@ async function connectAndOpenFiles(
   page: Page,
   expectTable = true,
 ): Promise<void> {
-  await page.goto("/ui-v2/resourcelib/files");
+  await page.goto("/resourcelib/files");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -74,7 +74,7 @@ test("a slow directory read hands over in place without a temporary organizing h
   const api = apiRequestsOf(page);
   // Delay only the bounded live directory read.  The page must show its own
   // coordinated wait and then the real table, never a placeholder history.
-  await page.route("**/api/v1/resource-libraries/*/files", async (route) => {
+  await page.route("**/api/resource-libraries/*/files", async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 1200));
     await route.continue();
   });
@@ -94,7 +94,7 @@ test("a failed directory read offers its own retry and no organizing history", a
 }) => {
   const api = apiRequestsOf(page);
   let failed = false;
-  await page.route("**/api/v1/resource-libraries/*/files", async (route) => {
+  await page.route("**/api/resource-libraries/*/files", async (route) => {
     if (!failed) {
       failed = true;
       await route.abort("failed");

@@ -180,7 +180,7 @@ class ManagedOpenListDiscoveryTests(_DiscoveryFixture):
                 )
                 status, admitted = self.request(
                     value,
-                    "/api/v1/resource-libraries/library/files/discoveries",
+                    "/api/resource-libraries/library/files/discoveries",
                     "POST",
                     {"paths": ["Movies"]},
                 )
@@ -206,7 +206,7 @@ class ManagedOpenListDiscoveryTests(_DiscoveryFixture):
                 self.assertTrue(settled["actions"]["finalize"]["available"], settled)
                 status, frozen = self.request(
                     value,
-                    f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                    f"/api/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
                     "POST",
                     {"expectedVersion": settled["version"]},
                 )
@@ -234,7 +234,7 @@ class ManagedOpenListDiscoveryTests(_DiscoveryFixture):
                 )
                 status, refused = self.request(
                     value,
-                    f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                    f"/api/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
                     "POST",
                     {"expectedVersion": settled["version"]},
                 )

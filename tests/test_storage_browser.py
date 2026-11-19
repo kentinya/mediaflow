@@ -768,7 +768,7 @@ class StorageBrowserApiTests(unittest.TestCase):
                 )
                 status, page = _request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/storage-browser?{query}",
+                    f"/api/configuration/revisions/{draft.revision_id}/storage-browser?{query}",
                     token="viewer-token",
                 )
                 self.assertEqual(status, 200)
@@ -783,7 +783,7 @@ class StorageBrowserApiTests(unittest.TestCase):
                     "expectedDigest": draft.digest,
                 }
                 selection_url = (
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/storage-browser/select"
+                    f"/api/configuration/revisions/{draft.revision_id}/storage-browser/select"
                 )
                 status, denied = _request(
                     api, selection_url, method="POST", body=selection, token="viewer-token"
@@ -797,7 +797,7 @@ class StorageBrowserApiTests(unittest.TestCase):
                 self.assertEqual(selected["object"]["storagePath"], "chosen")
                 status, failed = _request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/storage-browser?"
+                    f"/api/configuration/revisions/{draft.revision_id}/storage-browser?"
                     + urlencode({"storageId": "storage", "path": "../secret"}),
                     token="viewer-token",
                 )

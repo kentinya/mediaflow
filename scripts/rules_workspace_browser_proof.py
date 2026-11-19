@@ -201,7 +201,7 @@ try {
   };
 
   // -- desktop: shared header, navigation, inventory, drawer ---------------
-  await open(page, '/ui-v2/rules?section=recognitionTypes', 1536, 1024);
+  await open(page, '/rules?section=recognitionTypes', 1536, 1024);
   const title = page.getByRole('heading', { name: '整理规则', exact: true });
   await expect(title).toBeVisible();
   await expect(page.getByText('管理识别类型、规则和整理策略。')).toBeVisible();
@@ -597,7 +597,7 @@ try {
   await expect(refusalDrawer).toHaveCount(0);
 
   // -- B54-04: the bounded Create entry survives refresh + reconnection -----
-  await open(page, '/ui-v2/rules?section=recognitionTypes', 1536, 1024);
+  await open(page, '/rules?section=recognitionTypes', 1536, 1024);
   await page.getByRole('button', { name: '添加识别类型' }).first().click();
   const createCard = page.getByRole('dialog', { name: '添加识别类型' });
   await expect(createCard).toBeVisible();
@@ -719,7 +719,7 @@ try {
   // test are all observed as actual HTTP requests.
   const conflictObjectId = (await publishCard.getByLabel(/^ID/).inputValue()).trim();
   const objectUrl =
-    `${BASE}/api/v1/operations/rules/objects/recognitionTypes/` +
+    `${BASE}/api/operations/rules/objects/recognitionTypes/` +
     encodeURIComponent(conflictObjectId);
   const peerHeaders = {
     Authorization: `Bearer ${TOKEN}`,
@@ -863,7 +863,7 @@ try {
     );
   }
   for (const entry of mutations) {
-    if (!entry.startsWith('PUT /api/v1/operations/rules/objects/recognitionTypes/')) {
+    if (!entry.startsWith('PUT /api/operations/rules/objects/recognitionTypes/')) {
       throw new Error('an unexpected mutating request travelled: ' + entry);
     }
   }
@@ -878,7 +878,7 @@ try {
     { name: 'desktop-1536x1000', width: 1536, height: 1000, measure: true },
     { name: 'mobile-390x844', width: 390, height: 844, measure: false },
   ]) {
-    await open(page, '/ui-v2/rules?section=recognitionTypes', setup.width, setup.height);
+    await open(page, '/rules?section=recognitionTypes', setup.width, setup.height);
     const local = page.getByRole('searchbox', { name: '搜索类型名称或描述' });
     await local.fill('Normal');
     const row = page.getByRole('row', { name: /Normal Movie/ });
@@ -970,7 +970,7 @@ try {
   // through an existing row's Edit card and its cancel/return. This is the
   // same route-level shell contract, exercised through each family entry.
   const familyBackground = [];
-  await open(page, '/ui-v2/rules?section=recognitionTypes', 1536, 1000);
+  await open(page, '/rules?section=recognitionTypes', 1536, 1000);
   for (const label of [
     '识别类型',
     '识别规则',
@@ -1036,7 +1036,7 @@ try {
   // -- representative narrow and mobile widths -----------------------------
   for (const viewport of VIEWPORTS) {
     if (viewport.name.startsWith('desktop')) continue;
-    await open(page, '/ui-v2/rules?section=recognitionTypes', viewport.width, viewport.height);
+    await open(page, '/rules?section=recognitionTypes', viewport.width, viewport.height);
     const narrowNav = page.getByRole('navigation', { name: '规则分类' });
     await expect(narrowNav.getByRole('button')).toHaveCount(8);
     await page.getByRole('button', { name: '添加识别类型' }).first().click();
@@ -1066,7 +1066,7 @@ try {
 
   // Read-only page controls and comparison with the real task-center entry.
   for (const viewport of VIEWPORTS) {
-    await open(page, '/ui-v2/rules', viewport.width, viewport.height);
+    await open(page, '/rules', viewport.width, viewport.height);
     const heading = page.getByRole('heading', { name: '整理规则', exact: true });
     await expect(page.getByRole('searchbox')).toHaveCount(0);
     const rulesTitle = await bounds(heading);
@@ -1078,7 +1078,7 @@ try {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
     if (overflow) throw new Error(viewport.name + ': Rules page overflows viewport');
     evidence.screenshots.push(await shoot(page, viewport.name + '-overview-header'));
-    await page.goto(BASE + '/ui-v2/operations');
+    await page.goto(BASE + '/operations');
     if (await page.getByLabel('API token').count()) await connect(page);
     const center = page.getByRole('heading', { name: '任务中心', exact: true });
     await expect(center).toBeVisible();
@@ -1089,7 +1089,7 @@ try {
     });
     const centerType = await typography(center);
     evidence.screenshots.push(await shoot(page, viewport.name + '-task-center-header'));
-    await open(page, '/ui-v2/rules', viewport.width, viewport.height);
+    await open(page, '/rules', viewport.width, viewport.height);
     const rulesType = await typography(heading);
     const desktopMisaligned = viewport.width > 760
       && (rulesTitle.x !== centerTitle.x || rulesTitle.y !== centerTitle.y);
@@ -1356,7 +1356,7 @@ def main() -> int:
         print("== real Python-served reference-aligned rules workspace proof ==")
 
         database_path = root / "runtime.sqlite3"
-        active_before = api("GET", "/api/v1/operations/rules/form-authority")["active"]
+        active_before = api("GET", "/api/operations/rules/form-authority")["active"]
         activations_before = _activation_count(database_path)
         audits_before = _audit_counts(database_path)
         work_before = _executable_work(database_path)
@@ -1386,7 +1386,7 @@ def main() -> int:
         print("   " + result.stdout.strip().splitlines()[-1])
         evidence = json.loads((ARTIFACT_ROOT / "evidence.json").read_text(encoding="utf-8"))
 
-        active_after = api("GET", "/api/v1/operations/rules/form-authority")["active"]
+        active_after = api("GET", "/api/operations/rules/form-authority")["active"]
         activations_after = _activation_count(database_path)
         audits_after = _audit_counts(database_path)
         work_after = _executable_work(database_path)
@@ -1406,7 +1406,7 @@ def main() -> int:
                 + json.dumps(evidence["unexpectedMutations"])
             )
         if len(mutations_seen) != 2 or any(
-            not item.startswith("PUT /api/v1/operations/rules/objects/") for item in mutations_seen
+            not item.startswith("PUT /api/operations/rules/objects/") for item in mutations_seen
         ):
             raise RuntimeError(
                 "expected the refused Save and the Edit publication as the only "

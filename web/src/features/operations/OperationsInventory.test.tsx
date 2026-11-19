@@ -164,8 +164,8 @@ function stubInventoryJourney(
     const url = String(input);
     requested.push(url);
     if (
-      url.startsWith("/api/v1/operations/runs?") ||
-      url === "/api/v1/operations/runs"
+      url.startsWith("/api/operations/runs?") ||
+      url === "/api/operations/runs"
     ) {
       return jsonResponse(page);
     }
@@ -241,7 +241,7 @@ describe("Operations run inventory landing", () => {
       requested,
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     await screen.findByRole("heading", { name: "任务中心" });
     // Chinese business labels describe operation and state.
@@ -275,14 +275,14 @@ describe("Operations run inventory landing", () => {
     expect(screen.queryByText(/整理发现/)).toBeNull();
     expect(screen.queryByText(/手动操作/)).toBeNull();
     expect(
-      requested.some((url) => url.includes("/api/v1/workers/readiness")),
+      requested.some((url) => url.includes("/api/workers/readiness")),
     ).toBe(false);
     expect(
-      requested.some((url) => url.includes("/api/v1/management/readiness")),
+      requested.some((url) => url.includes("/api/management/readiness")),
     ).toBe(false);
-    expect(
-      requested.some((url) => url.includes("/api/v1/operations/runs")),
-    ).toBe(true);
+    expect(requested.some((url) => url.includes("/api/operations/runs"))).toBe(
+      true,
+    );
   });
 
   it("shows stage, result, and recovery guidance in their matching views", async () => {
@@ -330,7 +330,7 @@ describe("Operations run inventory landing", () => {
       }),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     const views = await screen.findByRole("navigation", {
       name: "任务中心视图",
@@ -392,12 +392,12 @@ describe("Operations run inventory landing", () => {
       requested,
     );
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
 
     await screen.findByRole("heading", { name: "任务中心" });
     await waitFor(() =>
       expect(
-        requested.some((url) => url.includes("/api/v1/operations/runs")),
+        requested.some((url) => url.includes("/api/operations/runs")),
       ).toBe(true),
     );
     expect(
@@ -486,7 +486,7 @@ describe("Operations run inventory landing", () => {
     stubInventoryJourney(pageDocument({ items: [], total: 0 }), requested);
     authStore.setToken(TOKEN);
     const { router } = renderApp(
-      `/ui-v2/operations?view=${view}&q=old&status=failed&source=Movies&command=organize&attention=true&problem=metadata&cursor=old`,
+      `/operations?view=${view}&q=old&status=failed&source=Movies&command=organize&attention=true&problem=metadata&cursor=old`,
     );
     await screen.findByRole("heading", { name: "还没有运行记录" });
     const filters = screen.getByRole("region", { name: "运行筛选" });
@@ -515,7 +515,7 @@ describe("Operations run inventory landing", () => {
     );
     expect(
       requested
-        .filter((url) => url.startsWith("/api/v1/operations/runs?"))
+        .filter((url) => url.startsWith("/api/operations/runs?"))
         .every((url) => {
           const params = new URL(url, "http://mediaflow.test").searchParams;
           return (
@@ -537,7 +537,7 @@ describe("Operations run inventory landing", () => {
   it("keeps the date range and clear without timezone explanations", async () => {
     stubInventoryJourney(pageDocument({ items: [], total: 0 }));
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?view=ended&from=2026-08-01&to=2026-08-02");
+    renderApp("/operations?view=ended&from=2026-08-01&to=2026-08-02");
     await screen.findByRole("heading", { name: "没有匹配的运行" });
     const filters = screen.getByRole("region", { name: "运行筛选" });
     expect(
@@ -565,17 +565,17 @@ describe("Operations run inventory landing", () => {
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
-      if (url.startsWith("/api/v1/operations/runs?")) {
+      if (url.startsWith("/api/operations/runs?")) {
         return jsonResponse(pageDocument());
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(runDocument());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
     const { router } = renderApp(
-      "/ui-v2/operations?q=secret&status=failed&source=Movies%2Fbeta" +
+      "/operations?q=secret&status=failed&source=Movies%2Fbeta" +
         "&command=manual&attention=true&cursor=old-scope&run=task-001",
     );
 
@@ -590,7 +590,7 @@ describe("Operations run inventory landing", () => {
       expect(search).toContain("run=task-001");
     });
     const listReads = requested.filter((url) =>
-      url.startsWith("/api/v1/operations/runs?"),
+      url.startsWith("/api/operations/runs?"),
     );
     expect(listReads.length).toBeGreaterThan(0);
     for (const read of listReads) {
@@ -608,7 +608,7 @@ describe("Operations run inventory landing", () => {
     const pending = new Map<string, (response: Response) => void>();
     stubFetch(async (input) => {
       const url = String(input);
-      if (!url.startsWith("/api/v1/operations/runs?")) {
+      if (!url.startsWith("/api/operations/runs?")) {
         return jsonResponse({ error: { code: "not_found" } }, 404);
       }
       const from =
@@ -616,7 +616,7 @@ describe("Operations run inventory landing", () => {
       return new Promise<Response>((resolve) => pending.set(from, resolve));
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     await screen.findByRole("heading", { name: "任务中心" });
     await waitFor(() => expect(pending.has("all")).toBe(true));
@@ -664,19 +664,19 @@ describe("Operations run inventory landing", () => {
       const url = String(input);
       requested.push(url);
       if (
-        url.startsWith("/api/v1/operations/runs?") ||
-        url === "/api/v1/operations/runs"
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
       ) {
         return jsonResponse(pageDocument());
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         overviewRead = true;
         return jsonResponse(runDocument({ target_scope: "Library/History" }));
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
@@ -718,7 +718,7 @@ describe("Operations run inventory landing", () => {
     const user = userEvent.setup();
     const backend = stubOrganizeHost();
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
@@ -780,12 +780,12 @@ describe("Operations run inventory landing", () => {
     stubFetch(async (input) => {
       const url = String(input);
       if (
-        url.startsWith("/api/v1/operations/runs?") ||
-        url === "/api/v1/operations/runs"
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
       ) {
         return jsonResponse(pageDocument());
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(
           runDocument({
             status: "failed",
@@ -800,7 +800,7 @@ describe("Operations run inventory landing", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
@@ -909,18 +909,18 @@ describe("Operations run inventory landing", () => {
       stubFetch(async (input) => {
         const url = String(input);
         if (
-          url.startsWith("/api/v1/operations/runs?") ||
-          url === "/api/v1/operations/runs"
+          url.startsWith("/api/operations/runs?") ||
+          url === "/api/operations/runs"
         ) {
           return jsonResponse(pageDocument());
         }
-        if (url === "/api/v1/operations/runs/task-001") {
+        if (url === "/api/operations/runs/task-001") {
           return jsonResponse(runDocument(overrides));
         }
         return jsonResponse({ error: { code: "not_found" } }, 404);
       });
       authStore.setToken(TOKEN);
-      renderApp("/ui-v2/operations?run=task-001");
+      renderApp("/operations?run=task-001");
 
       const detail = await screen.findByRole("dialog", { name: "运行详情" });
       await within(detail).findByText("流程状态");
@@ -962,18 +962,18 @@ describe("Operations run inventory landing", () => {
       const url = String(input);
       requested.push({ url, method: init?.method ?? "GET" });
       if (
-        url.startsWith("/api/v1/operations/runs?") ||
-        url === "/api/v1/operations/runs"
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
       ) {
         return jsonResponse(pageDocument());
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(overview);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations?run=task-001");
+    const { router } = renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     expect(
@@ -1013,16 +1013,16 @@ describe("Operations run inventory landing", () => {
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
-      if (url.startsWith("/api/v1/operations/runs?")) {
+      if (url.startsWith("/api/operations/runs?")) {
         return jsonResponse(pageDocument());
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(runDocument());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&view=running");
+    renderApp("/operations?run=task-001&view=running");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     expect(
@@ -1040,13 +1040,13 @@ describe("Operations run inventory landing", () => {
   it("renders the bounded failure states distinctly", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url.startsWith("/api/v1/operations/runs")) {
+      if (url.startsWith("/api/operations/runs")) {
         return jsonResponse({ error: { code: "internal_error" } }, 500);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     await screen.findByRole("heading", { name: "任务中心" });
     expect(
@@ -1058,13 +1058,13 @@ describe("Operations run inventory landing", () => {
   it("treats a malformed inventory response as a bounded failure, not an empty list", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url.startsWith("/api/v1/operations/runs")) {
+      if (url.startsWith("/api/operations/runs")) {
         return jsonResponse({ items: "everything", total: -1 });
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     await screen.findByRole("heading", { name: "任务中心" });
     expect(
@@ -1078,7 +1078,7 @@ describe("Operations run inventory landing", () => {
       throw new TypeError("network down");
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     await screen.findByRole("heading", { name: "任务中心" });
     expect(
@@ -1100,7 +1100,7 @@ describe("Operations run inventory landing", () => {
       return jsonResponse(pageDocument());
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
     await screen.findByRole("table");
     fireEvent.change(screen.getByLabelText("开始日期"), {
       target: { value: "2026-08-01" },
@@ -1142,13 +1142,13 @@ describe("Operations run inventory landing", () => {
       if (url.includes("cursor=next-cursor")) {
         return jsonResponse(pageTwo);
       }
-      if (url.startsWith("/api/v1/operations/runs")) {
+      if (url.startsWith("/api/operations/runs")) {
         return jsonResponse(pageOne);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
 
     expect((await screen.findAllByText("Movies")).length).toBeGreaterThan(0);
     const forward = screen.getByRole("button", { name: "下一页" });
@@ -1247,7 +1247,7 @@ describe("Operations run inventory landing", () => {
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
-      if (url.startsWith("/api/v1/operations/runs")) {
+      if (url.startsWith("/api/operations/runs")) {
         return jsonResponse(
           url.includes("view=attention") ? attentionPage : fullPage,
         );
@@ -1255,7 +1255,7 @@ describe("Operations run inventory landing", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
 
     const tab = await screen.findByRole("button", { name: "需要处理" });
     // The advertised view is an operable control, never a disabled label.
@@ -1446,13 +1446,13 @@ describe("Operations run inventory landing", () => {
           url.includes("cursor=page-two") ? problemItemsPageTwo : problemItems,
         );
       }
-      if (url.startsWith("/api/v1/operations/runs")) {
+      if (url.startsWith("/api/operations/runs")) {
         return jsonResponse(recoveryPage);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations?view=metadata");
+    const { router } = renderApp("/operations?view=metadata");
 
     const table = await screen.findByRole("table");
     const recoveryRow = within(table)
@@ -1533,7 +1533,7 @@ describe("Operations run inventory landing", () => {
       })[0]!,
     );
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
+      expect(router.history.location.pathname).toBe("/operations"),
     );
     expect(router.history.location.search).toContain("item=item-b");
     expect(new URLSearchParams(router.history.location.search).get("run")).toBe(
@@ -1654,13 +1654,13 @@ describe("Operations run inventory landing", () => {
       if (url.includes("/problem-items")) {
         return jsonResponse({ ...problemItems, problem: "metadata" });
       }
-      if (url.startsWith("/api/v1/operations/runs")) {
+      if (url.startsWith("/api/operations/runs")) {
         return jsonResponse(attentionPage);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations?view=attention");
+    const { router } = renderApp("/operations?view=attention");
 
     const table = await screen.findByRole("table");
     const mixedRow = within(table)
@@ -1751,7 +1751,7 @@ describe("Operations run inventory landing", () => {
       requested,
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     const table = await screen.findByRole("table");
     // The only row of the page is the technical failure: no attention column,
@@ -1780,9 +1780,9 @@ describe("Operations run inventory landing", () => {
       expect(await screen.findByRole("button", { name: label })).toBeVisible();
     }
     expect(screen.queryByRole("button", { name: "失败恢复" })).toBeNull();
-    expect(
-      requested.some((url) => url.includes("/api/v1/operations/runs")),
-    ).toBe(true);
+    expect(requested.some((url) => url.includes("/api/operations/runs"))).toBe(
+      true,
+    );
   });
 
   it("shows independent success, partial and failure counts for a completed mixed run", async () => {
@@ -1820,7 +1820,7 @@ describe("Operations run inventory landing", () => {
       }),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     const views = await screen.findByRole("navigation", {
       name: "任务中心视图",
@@ -1883,18 +1883,18 @@ describe("Operations run inventory landing", () => {
     stubFetch(async (input) => {
       const url = String(input);
       if (
-        url.startsWith("/api/v1/operations/runs?") ||
-        url === "/api/v1/operations/runs"
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
       ) {
         return jsonResponse(pageDocument({ items: [overview] }));
       }
-      if (url === "/api/v1/operations/runs/task-mixed-ended") {
+      if (url === "/api/operations/runs/task-mixed-ended") {
         return jsonResponse(overview);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-mixed-ended&view=ended");
+    renderApp("/operations?run=task-mixed-ended&view=ended");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const flow = await within(detail).findByRole("region", {
@@ -1962,7 +1962,7 @@ describe("Operations run inventory landing", () => {
             action: "cancel",
             label: "Cancel Task",
             method: "POST",
-            path: "/api/v1/tasks/task-001/cancel",
+            path: "/api/tasks/task-001/cancel",
             available: false,
             unavailableReason: "a completed Task cannot be cancelled",
             confirmationRequired: false,
@@ -1979,18 +1979,18 @@ describe("Operations run inventory landing", () => {
     stubFetch(async (input) => {
       const url = String(input);
       if (
-        url.startsWith("/api/v1/operations/runs?") ||
-        url === "/api/v1/operations/runs"
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
       ) {
         return jsonResponse(pageDocument({ items: [overview] }));
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(overview);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findByText("流程状态");
@@ -2029,7 +2029,7 @@ describe("Operations run inventory landing", () => {
       requested,
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     expect(await screen.findByRole("table")).toBeVisible();
     expect(screen.getAllByText("Movies").length).toBeGreaterThan(0);
@@ -2041,9 +2041,9 @@ describe("Operations run inventory landing", () => {
     expect(
       screen.queryByRole("heading", { name: "还没有运行记录" }),
     ).toBeNull();
-    expect(
-      requested.some((url) => url.includes("/api/v1/operations/runs")),
-    ).toBe(true);
+    expect(requested.some((url) => url.includes("/api/operations/runs"))).toBe(
+      true,
+    );
   });
 
   it("only claims recovered completion when the whole run really succeeded", async () => {
@@ -2078,7 +2078,7 @@ describe("Operations run inventory landing", () => {
     });
     stubFetch(async (input) => {
       const url = String(input);
-      if (url.startsWith("/api/v1/operations/runs?")) {
+      if (url.startsWith("/api/operations/runs?")) {
         return jsonResponse(
           pageDocument({
             items: [mixed, recovered],
@@ -2094,16 +2094,16 @@ describe("Operations run inventory landing", () => {
           }),
         );
       }
-      if (url === "/api/v1/operations/runs/mixed-run") {
+      if (url === "/api/operations/runs/mixed-run") {
         return jsonResponse(mixed);
       }
-      if (url === "/api/v1/operations/runs/recovered-run") {
+      if (url === "/api/operations/runs/recovered-run") {
         return jsonResponse(recovered);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=mixed-run");
+    renderApp("/operations?run=mixed-run");
 
     const table = await screen.findByRole("table");
     const rows = within(table).getAllByRole("row");
@@ -2147,23 +2147,22 @@ describe("Operations run inventory landing", () => {
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
-      if (url.startsWith("/api/v1/operations/runs?")) {
+      if (url.startsWith("/api/operations/runs?")) {
         return jsonResponse(pageDocument());
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(runDocument());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
     await screen.findByRole("dialog", { name: "运行详情" });
     const overviewReads = () =>
-      requested.filter((url) => url.startsWith("/api/v1/operations/runs/"))
-        .length;
+      requested.filter((url) => url.startsWith("/api/operations/runs/")).length;
     await waitFor(() => expect(overviewReads()).toBeGreaterThanOrEqual(1));
 
     const before = overviewReads();
@@ -2187,16 +2186,16 @@ describe("Operations run inventory landing", () => {
     const user = userEvent.setup();
     stubFetch(async (input) => {
       const url = String(input);
-      if (url.startsWith("/api/v1/operations/runs?")) {
+      if (url.startsWith("/api/operations/runs?")) {
         return jsonResponse(pageDocument());
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(runDocument());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
@@ -2296,7 +2295,7 @@ describe("Operations run inventory landing", () => {
       if (url.includes("/problem-items")) {
         return jsonResponse(problemItems);
       }
-      if (url.startsWith("/api/v1/operations/runs")) {
+      if (url.startsWith("/api/operations/runs")) {
         return jsonResponse(
           pageDocument({
             items: [problemRun],
@@ -2329,7 +2328,7 @@ describe("Operations run inventory landing", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations?view=metadata");
+    const { router } = renderApp("/operations?view=metadata");
 
     const table = await screen.findByRole("table");
     const row = within(table)
@@ -2370,7 +2369,7 @@ describe("Operations run inventory landing", () => {
     // create nothing.
     stubInventoryJourney(pageDocument({ items: [], total: 0 }), []);
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
 
     await screen.findByRole("heading", { name: "任务中心" });
     expect(screen.queryByRole("link", { name: "新建整理任务" })).toBeNull();
@@ -2411,7 +2410,7 @@ describe("Operations run inventory landing", () => {
           action: "cancel",
           label: "取消运行",
           method: "POST",
-          path: "/api/v1/tasks/task-001/cancel",
+          path: "/api/tasks/task-001/cancel",
           available: true,
           unavailableReason: null,
           confirmationRequired: false,
@@ -2435,18 +2434,18 @@ describe("Operations run inventory landing", () => {
     stubFetch(async (input) => {
       const url = String(input);
       if (
-        url.startsWith("/api/v1/operations/runs?") ||
-        url === "/api/v1/operations/runs"
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
       ) {
         return jsonResponse(pageDocument());
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return gate;
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
@@ -2471,18 +2470,18 @@ describe("Operations run inventory landing", () => {
     stubFetch(async (input) => {
       const url = String(input);
       if (
-        url.startsWith("/api/v1/operations/runs?") ||
-        url === "/api/v1/operations/runs"
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
       ) {
         return jsonResponse(pageDocument());
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return gate;
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
@@ -2509,15 +2508,15 @@ describe("Operations run inventory landing", () => {
         posted.push(url);
       }
       if (
-        url.startsWith("/api/v1/operations/runs?") ||
-        url === "/api/v1/operations/runs"
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
       ) {
         return jsonResponse(pageDocument());
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(runDocument({ lifecycle: lifecycleDocument() }));
       }
-      if (url === "/api/v1/tasks/task-001/cancel") {
+      if (url === "/api/tasks/task-001/cancel") {
         // The request never reached a decision: the transport failed, so the
         // outcome is unknown and every control of this run must stay locked.
         throw new TypeError("network unreachable");
@@ -2525,7 +2524,7 @@ describe("Operations run inventory landing", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
@@ -2563,7 +2562,7 @@ describe("Operations run inventory landing", () => {
       within(reopenedControls).getByRole("button", { name: "取消运行" }),
     ).toBeDisabled();
     // The locked reopen never resubmits: still exactly one cancel POST.
-    expect(posted).toEqual(["/api/v1/tasks/task-001/cancel"]);
+    expect(posted).toEqual(["/api/tasks/task-001/cancel"]);
   });
 
   it("shows only the reopened run's evidence after switching runs", async () => {
@@ -2575,8 +2574,8 @@ describe("Operations run inventory landing", () => {
     stubFetch(async (input) => {
       const url = String(input);
       if (
-        url.startsWith("/api/v1/operations/runs?") ||
-        url === "/api/v1/operations/runs"
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
       ) {
         return jsonResponse(
           pageDocument({
@@ -2591,10 +2590,10 @@ describe("Operations run inventory landing", () => {
           }),
         );
       }
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return slowFirst;
       }
-      if (url === "/api/v1/operations/runs/task-002") {
+      if (url === "/api/operations/runs/task-002") {
         return jsonResponse(
           runDocument({
             run_id: "task-002",
@@ -2606,7 +2605,7 @@ describe("Operations run inventory landing", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(
@@ -2763,7 +2762,7 @@ function hostPreviewDocument(): Record<string, unknown> {
   value["executionCandidateItemIds"] = ["item-1"];
   const actions = value["actions"] as Record<string, Record<string, unknown>>;
   actions["execute"]!["path"] =
-    `/api/v1/operations/organize/previews/${HOST_PREVIEW_ID}/execute`;
+    `/api/operations/organize/previews/${HOST_PREVIEW_ID}/execute`;
   return value;
 }
 
@@ -2784,7 +2783,7 @@ function hostIntentDocument(): Record<string, unknown> {
   source["filename"] = "One.2001.mkv";
   const actions = value["actions"] as Record<string, Record<string, unknown>>;
   actions["choice"]!["path"] =
-    `/api/v1/operations/organize/intents/${HOST_INTENT_ID}/items/{itemId}/choice`;
+    `/api/operations/organize/intents/${HOST_INTENT_ID}/items/{itemId}/choice`;
   value["latestPlan"] = {
     previewId: HOST_PREVIEW_ID,
     status: "previewed",
@@ -2810,8 +2809,8 @@ function hostExecutionDocument(taskId: string): Record<string, unknown> {
   value["selectedItemIds"] = ["item-1"];
   value["unselectedItemIds"] = [];
   const actions = value["actions"] as Record<string, Record<string, unknown>>;
-  actions["detail"]!["path"] = "/api/v1/operations/organize/executions/exec-1";
-  actions["task"]!["path"] = `/api/v1/operations/tasks/${taskId}`;
+  actions["detail"]!["path"] = "/api/operations/organize/executions/exec-1";
+  actions["task"]!["path"] = `/api/operations/tasks/${taskId}`;
   const items = value["items"] as Record<string, unknown>[];
   items[0]!["itemId"] = "item-1";
   items[0]!["taskId"] = taskId;
@@ -2869,12 +2868,12 @@ function stubOrganizeHost(
     const method = init?.method ?? "GET";
     if (method !== "GET") backend.calls.posts.push(url);
     if (
-      url.startsWith("/api/v1/operations/runs?") ||
-      url === "/api/v1/operations/runs"
+      url.startsWith("/api/operations/runs?") ||
+      url === "/api/operations/runs"
     ) {
       return jsonResponse(pageDocument());
     }
-    if (url === "/api/v1/operations/runs/task-001") {
+    if (url === "/api/operations/runs/task-001") {
       backend.calls.overviewReads += 1;
       if (backend.state.overviewUnavailable) {
         return jsonResponse({ error: { code: "unavailable" } }, 503);
@@ -2891,7 +2890,7 @@ function stubOrganizeHost(
       );
     }
     if (
-      url === `/api/v1/operations/organize/discoveries/${HOST_DISCOVERY_ID}` &&
+      url === `/api/operations/organize/discoveries/${HOST_DISCOVERY_ID}` &&
       method === "GET"
     ) {
       backend.calls.discoveryReads += 1;
@@ -2904,7 +2903,7 @@ function stubOrganizeHost(
       return jsonResponse(hostDiscoveryDocument(options.discovery));
     }
     if (
-      url === `/api/v1/operations/organize/intents/${HOST_INTENT_ID}` &&
+      url === `/api/operations/organize/intents/${HOST_INTENT_ID}` &&
       method === "GET"
     ) {
       backend.calls.intentReads += 1;
@@ -2914,12 +2913,12 @@ function stubOrganizeHost(
       return jsonResponse(hostIntentDocument());
     }
     if (
-      url === `/api/v1/operations/organize/previews/${HOST_PREVIEW_ID}` &&
+      url === `/api/operations/organize/previews/${HOST_PREVIEW_ID}` &&
       method === "GET"
     ) {
       return jsonResponse(hostPreviewDocument());
     }
-    if (url.startsWith("/api/v1/operations/organize/executions")) {
+    if (url.startsWith("/api/operations/organize/executions")) {
       return jsonResponse({
         items: [],
         total: 0,
@@ -2928,8 +2927,7 @@ function stubOrganizeHost(
       });
     }
     if (
-      url ===
-        `/api/v1/operations/organize/previews/${HOST_PREVIEW_ID}/execute` &&
+      url === `/api/operations/organize/previews/${HOST_PREVIEW_ID}/execute` &&
       method === "POST"
     ) {
       if (backend.state.executeResponseLost) {
@@ -2943,7 +2941,7 @@ function stubOrganizeHost(
     }
     if (
       url.startsWith(
-        `/api/v1/operations/organize/previews/${HOST_PREVIEW_ID}/admission`,
+        `/api/operations/organize/previews/${HOST_PREVIEW_ID}/admission`,
       ) &&
       method === "GET"
     ) {
@@ -2971,7 +2969,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     const backend = stubOrganizeHost();
     authStore.setToken(TOKEN);
     const { router } = renderApp(
-      "/ui-v2/operations?run=task-001&tab=records&dialog=organize",
+      "/operations?run=task-001&tab=records&dialog=organize",
     );
 
     const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
@@ -2990,7 +2988,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
   it("explains a marker without an exact Task and starts no read", async () => {
     const backend = stubOrganizeHost();
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations?dialog=organize");
+    const { router } = renderApp("/operations?dialog=organize");
 
     const notice = await screen.findByRole("dialog", {
       name: "无法继续这次整理",
@@ -3018,7 +3016,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
       overview: { filesPreparation: null },
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+    renderApp("/operations?run=task-001&dialog=organize");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const notice = await screen.findByRole("dialog", {
@@ -3035,9 +3033,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
   it("drops an unknown hosted-card marker instead of replaying it", async () => {
     const backend = stubOrganizeHost();
     authStore.setToken(TOKEN);
-    const { router } = renderApp(
-      "/ui-v2/operations?run=task-001&dialog=execute",
-    );
+    const { router } = renderApp("/operations?run=task-001&dialog=execute");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     expect(await within(detail).findByText("流程状态")).toBeVisible();
@@ -3071,7 +3067,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
       },
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+    renderApp("/operations?run=task-001&dialog=organize");
 
     const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
     expect(await within(dialog).findByText(/本次整理工作已结束/)).toBeVisible();
@@ -3114,7 +3110,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
       },
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+    renderApp("/operations?run=task-001&dialog=organize");
 
     const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
     expect(
@@ -3156,7 +3152,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
       },
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+    renderApp("/operations?run=task-001&dialog=organize");
 
     const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
     expect(await within(dialog).findByText(/从未生成过计划摘要/)).toBeVisible();
@@ -3168,9 +3164,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
   it("never carries A's preparation into another selected Task", async () => {
     const backend = stubOrganizeHost();
     authStore.setToken(TOKEN);
-    const { router } = renderApp(
-      "/ui-v2/operations?run=task-001&dialog=organize",
-    );
+    const { router } = renderApp("/operations?run=task-001&dialog=organize");
 
     const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
     await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
@@ -3198,7 +3192,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     const backend = stubOrganizeHost();
     backend.state.overviewUnavailable = true;
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+    renderApp("/operations?run=task-001&dialog=organize");
 
     const notice = await screen.findByRole("dialog", {
       name: "无法继续这次整理",
@@ -3221,7 +3215,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     const user = userEvent.setup();
     const backend = stubOrganizeHost();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&dialog=organize");
+    renderApp("/operations?run=task-001&dialog=organize");
 
     const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
     await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
@@ -3271,9 +3265,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     const backend = stubOrganizeHost();
     backend.state.executeResponseLost = true;
     authStore.setToken(TOKEN);
-    const { router } = renderApp(
-      "/ui-v2/operations?run=task-001&dialog=organize",
-    );
+    const { router } = renderApp("/operations?run=task-001&dialog=organize");
 
     const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
     await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
@@ -3330,7 +3322,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     const user = userEvent.setup();
     const backend = stubOrganizeHost();
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
@@ -3345,7 +3337,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     );
     // A route-changing exit (the real browser Back reaches the same blocker
     // through its popstate path) must not silently drop the draft.
-    router.history.push("/ui-v2/resourcelib/files");
+    router.history.push("/resourcelib/files");
     const prompt = await screen.findByRole("alertdialog");
     expect(
       within(prompt).getByText(/有尚未保存的逐文件修正草稿/),
@@ -3364,9 +3356,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     const user = userEvent.setup();
     const backend = stubOrganizeHost();
     authStore.setToken(TOKEN);
-    const { router } = renderApp(
-      "/ui-v2/operations?run=task-001&dialog=organize",
-    );
+    const { router } = renderApp("/operations?run=task-001&dialog=organize");
 
     const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
     await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });

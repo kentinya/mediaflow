@@ -63,14 +63,11 @@ function recordingFetch(
       // the card under test; individual tests override their own reads.
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/notifications/webhooks"
+        call.url === "/api/operations/notifications/webhooks"
       ) {
         return jsonResponse(listPayload());
       }
-      if (
-        call.method === "GET" &&
-        call.url.startsWith("/api/v1/notifications?")
-      ) {
+      if (call.method === "GET" && call.url.startsWith("/api/notifications?")) {
         return jsonResponse(deliveriesPayload());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
@@ -94,7 +91,7 @@ function action(
     available: true,
     reason: null,
     method: "POST",
-    path: `/api/v1/operations/notifications/webhooks/${webhookId}/test`,
+    path: `/api/operations/notifications/webhooks/${webhookId}/test`,
     requiresConfirmation: false,
     sideEffects: "one_signed_test_request",
     durableOutcome: "no durable change",
@@ -155,11 +152,11 @@ function definitionActions(
   draftRevision: string | null,
   webhookId: string = WEBHOOK_ID,
 ): Record<string, unknown> {
-  const operationsRoute = `/api/v1/operations/notifications/webhooks/${webhookId}`;
+  const operationsRoute = `/api/operations/notifications/webhooks/${webhookId}`;
   const editPath =
     draftRevision === null
       ? null
-      : `/api/v1/configuration/revisions/${draftRevision}/objects/webhooks/${webhookId}`;
+      : `/api/configuration/revisions/${draftRevision}/objects/webhooks/${webhookId}`;
   return {
     detail: {
       available: true,
@@ -219,7 +216,7 @@ function definitionActions(
       available: true,
       reason: null,
       method: "POST",
-      path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+      path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
       requiresConfirmation: false,
       sideEffects: "none",
       durableOutcome: "a successor Draft is stored",
@@ -277,7 +274,7 @@ function listPayload(
         available: true,
         reason: null,
         method: "POST",
-        path: `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+        path: `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
         requiresConfirmation: false,
         sideEffects: "none",
         durableOutcome: "the definition is stored in the Draft",
@@ -287,7 +284,7 @@ function listPayload(
         available: true,
         reason: null,
         method: "POST",
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
         requiresConfirmation: false,
         sideEffects: "none",
         durableOutcome: "a successor Draft is stored",
@@ -326,7 +323,7 @@ function draftDocumentPayload(
         available: true,
         reason: null,
         method: "POST",
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
         requiresConfirmation: false,
         sideEffects: "none",
         durableOutcome: "a successor Draft is stored",
@@ -336,7 +333,7 @@ function draftDocumentPayload(
         available: true,
         reason: null,
         method: "PUT",
-        path: `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`,
+        path: `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`,
         requiresConfirmation: false,
         sideEffects: "none",
         durableOutcome: "the bounded definition form is stored",
@@ -346,7 +343,7 @@ function draftDocumentPayload(
         available: true,
         reason: null,
         method: "POST",
-        path: `/api/v1/configuration/revisions/${DRAFT_REVISION}/validate`,
+        path: `/api/configuration/revisions/${DRAFT_REVISION}/validate`,
         requiresConfirmation: false,
         sideEffects: "none",
         durableOutcome: "the open Draft is validated",
@@ -356,7 +353,7 @@ function draftDocumentPayload(
         available: true,
         reason: null,
         method: "POST",
-        path: `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}/activate-draft`,
+        path: `/api/operations/notifications/webhooks/${WEBHOOK_ID}/activate-draft`,
         requiresConfirmation: true,
         sideEffects: "none",
         durableOutcome: "the reviewed Draft becomes Active",
@@ -376,7 +373,7 @@ function deniedDraftActions(): Record<string, unknown> {
       available: false,
       reason,
       method: "POST",
-      path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+      path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
       requiresConfirmation: false,
       sideEffects: "none",
       durableOutcome: "a successor Draft is stored",
@@ -386,7 +383,7 @@ function deniedDraftActions(): Record<string, unknown> {
       available: false,
       reason,
       method: "PUT",
-      path: `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`,
+      path: `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`,
       requiresConfirmation: false,
       sideEffects: "none",
       durableOutcome: "the bounded definition form is stored",
@@ -396,7 +393,7 @@ function deniedDraftActions(): Record<string, unknown> {
       available: false,
       reason,
       method: "POST",
-      path: `/api/v1/configuration/revisions/${DRAFT_REVISION}/validate`,
+      path: `/api/configuration/revisions/${DRAFT_REVISION}/validate`,
       requiresConfirmation: false,
       sideEffects: "none",
       durableOutcome: "the open Draft is validated",
@@ -406,7 +403,7 @@ function deniedDraftActions(): Record<string, unknown> {
       available: false,
       reason,
       method: "POST",
-      path: `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}/activate-draft`,
+      path: `/api/operations/notifications/webhooks/${WEBHOOK_ID}/activate-draft`,
       requiresConfirmation: true,
       sideEffects: "none",
       durableOutcome: "the reviewed Draft becomes Active",
@@ -479,7 +476,7 @@ function deliveryDetailPayload(
         available: true,
         reason: null,
         method: "POST",
-        path: "/api/v1/notifications/delivery-1/requeue",
+        path: "/api/notifications/delivery-1/requeue",
         requiresConfirmation: true,
         sideEffects: "delivery_queue_state_only",
         durableOutcome: "the dead-letter delivery returns to pending",
@@ -524,7 +521,7 @@ describe("NotificationListPage", () => {
   it("presents the Active definition, readable events and the deliveries surface", async () => {
     recordingFetch();
     await connect();
-    renderApp("/ui-v2/operations/notifications");
+    renderApp("/operations/notifications");
     expect(await screen.findByText("Webhook 定义")).toBeVisible();
     expect(screen.getByText("ops-webhook")).toBeVisible();
     expect(screen.getByText("已生效")).toBeVisible();
@@ -540,7 +537,7 @@ describe("NotificationListPage", () => {
 
   it("renders a Draft-only definition without presenting it as Active", async () => {
     recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/notifications/webhooks") {
+      if (call.url === "/api/operations/notifications/webhooks") {
         return jsonResponse(
           listPayload({
             items: [
@@ -556,7 +553,7 @@ describe("NotificationListPage", () => {
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications");
+    renderApp("/operations/notifications");
     const name = await screen.findByText("draft-only-webhook");
     const card = name.closest("li");
     expect(card).not.toBeNull();
@@ -567,7 +564,7 @@ describe("NotificationListPage", () => {
 
   it("does not offer a creatable link without a Draft and explains the next step", async () => {
     recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/notifications/webhooks") {
+      if (call.url === "/api/operations/notifications/webhooks") {
         return jsonResponse(
           listPayload({
             actions: {
@@ -586,7 +583,7 @@ describe("NotificationListPage", () => {
                 available: true,
                 reason: null,
                 method: "POST",
-                path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+                path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
                 requiresConfirmation: false,
                 sideEffects: "none",
                 durableOutcome: "a successor Draft is stored",
@@ -599,7 +596,7 @@ describe("NotificationListPage", () => {
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications");
+    renderApp("/operations/notifications");
     expect(await screen.findByText(/后继草稿才能继续/)).toBeVisible();
     expect(screen.queryByRole("link", { name: "新建 Webhook" })).toBeNull();
     expect(
@@ -610,13 +607,13 @@ describe("NotificationListPage", () => {
 
   it("fails closed on a malformed page without rendering a control", async () => {
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/notifications/webhooks") {
+      if (call.url === "/api/operations/notifications/webhooks") {
         return jsonResponse({ items: "not-a-list" });
       }
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications");
+    renderApp("/operations/notifications");
     expect(await screen.findByText(/could not be understood/)).toBeVisible();
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
   });
@@ -625,7 +622,7 @@ describe("NotificationListPage", () => {
 describe("NotificationNewPage", () => {
   it("does not render a fillable form without an editable Draft", async () => {
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/notifications/webhooks") {
+      if (call.url === "/api/operations/notifications/webhooks") {
         return jsonResponse(
           listPayload({
             draftState: draftState({
@@ -655,7 +652,7 @@ describe("NotificationNewPage", () => {
                 available: true,
                 reason: null,
                 method: "POST",
-                path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+                path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
                 requiresConfirmation: false,
                 sideEffects: "none",
                 durableOutcome: "a successor Draft is stored",
@@ -668,7 +665,7 @@ describe("NotificationNewPage", () => {
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications/webhooks/new");
+    renderApp("/operations/notifications/webhooks/new");
     const view = within(await dialog());
     expect(await view.findByText("当前不能新建 Webhook")).toBeVisible();
     expect(view.queryByLabelText("标识符")).toBeNull();
@@ -679,7 +676,7 @@ describe("NotificationNewPage", () => {
     const readsBefore = calls.filter(
       (call) =>
         call.method === "GET" &&
-        call.url === "/api/v1/operations/notifications/webhooks",
+        call.url === "/api/operations/notifications/webhooks",
     ).length;
     await userEvent.click(read);
     await waitFor(() => {
@@ -687,7 +684,7 @@ describe("NotificationNewPage", () => {
         calls.filter(
           (call) =>
             call.method === "GET" &&
-            call.url === "/api/v1/operations/notifications/webhooks",
+            call.url === "/api/operations/notifications/webhooks",
         ).length,
       ).toBe(readsBefore + 1);
     });
@@ -700,16 +697,14 @@ describe("NotificationNewPage", () => {
     const { calls } = recordingFetch((call) => {
       if (
         call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
+        `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
       ) {
         throw new Error("network lost");
       }
       return undefined;
     });
     await connect();
-    const { router } = renderApp(
-      "/ui-v2/operations/notifications/webhooks/new",
-    );
+    const { router } = renderApp("/operations/notifications/webhooks/new");
     const view = within(await dialog());
     await userEvent.type(
       await view.findByLabelText("标识符"),
@@ -735,7 +730,7 @@ describe("NotificationNewPage", () => {
         (call) =>
           call.method === "POST" &&
           call.url ===
-            `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+            `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
       ),
     ).toHaveLength(1);
   });
@@ -751,7 +746,7 @@ describe("NotificationNewPage", () => {
       if (
         call.method === "POST" &&
         call.url ===
-          `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
+          `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
       ) {
         return saveGate.then(() =>
           jsonResponse({
@@ -767,7 +762,7 @@ describe("NotificationNewPage", () => {
       }
       if (
         call.method === "GET" &&
-        call.url === `/api/v1/operations/notifications/webhooks/${createdId}`
+        call.url === `/api/operations/notifications/webhooks/${createdId}`
       ) {
         return jsonResponse({
           webhook: definitionPayload({
@@ -781,9 +776,7 @@ describe("NotificationNewPage", () => {
       return undefined;
     });
     await connect();
-    const { router } = renderApp(
-      "/ui-v2/operations/notifications/webhooks/new",
-    );
+    const { router } = renderApp("/operations/notifications/webhooks/new");
     const view = within(await dialog());
     await userEvent.type(await view.findByLabelText("标识符"), createdId);
     const urlInput = view.getByLabelText("HTTPS 接收地址");
@@ -800,7 +793,7 @@ describe("NotificationNewPage", () => {
           (call) =>
             call.method === "POST" &&
             call.url ===
-              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+              `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
         ),
       ).toHaveLength(1);
     });
@@ -849,7 +842,7 @@ describe("NotificationNewPage", () => {
       if (
         call.method === "POST" &&
         call.url ===
-          `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
+          `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
       ) {
         return saveGate.then(() =>
           jsonResponse(
@@ -861,9 +854,7 @@ describe("NotificationNewPage", () => {
       return undefined;
     });
     await connect();
-    const { router } = renderApp(
-      "/ui-v2/operations/notifications/webhooks/new",
-    );
+    const { router } = renderApp("/operations/notifications/webhooks/new");
     const view = within(await dialog());
     await userEvent.type(
       await view.findByLabelText("标识符"),
@@ -883,7 +874,7 @@ describe("NotificationNewPage", () => {
           (call) =>
             call.method === "POST" &&
             call.url ===
-              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+              `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
         ),
       ).toHaveLength(1);
     });
@@ -903,7 +894,7 @@ describe("NotificationNewPage", () => {
         (call) =>
           call.method === "POST" &&
           call.url ===
-            `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+            `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
       ),
     ).toHaveLength(1);
   });
@@ -912,9 +903,7 @@ describe("NotificationNewPage", () => {
 describe("NotificationDetailPage", () => {
   it("opens the definition card over the list and sends one bound test request", async () => {
     const { calls } = recordingFetch((call) => {
-      if (
-        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
-      ) {
+      if (call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}`) {
         return jsonResponse({
           webhook: definitionPayload(),
           activeConfiguration: activeConfiguration(),
@@ -942,7 +931,7 @@ describe("NotificationDetailPage", () => {
       return undefined;
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/webhooks/${WEBHOOK_ID}`);
     const card = await dialog();
     const view = within(card);
     expect(await view.findByText("密钥引用：已就绪")).toBeVisible();
@@ -968,9 +957,7 @@ describe("NotificationDetailPage", () => {
 
   it("shows the stale-test recovery without replaying the request", async () => {
     const { calls } = recordingFetch((call) => {
-      if (
-        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
-      ) {
+      if (call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}`) {
         return jsonResponse({
           webhook: definitionPayload(),
           activeConfiguration: activeConfiguration(),
@@ -990,7 +977,7 @@ describe("NotificationDetailPage", () => {
       return undefined;
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/webhooks/${WEBHOOK_ID}`);
     const view = within(await dialog());
     await userEvent.click(
       await view.findByRole("button", { name: "发送签名测试" }),
@@ -1005,9 +992,7 @@ describe("NotificationDetailPage", () => {
 
   it("does not render a misbound test outcome as success", async () => {
     recordingFetch((call) => {
-      if (
-        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
-      ) {
+      if (call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}`) {
         return jsonResponse({
           webhook: definitionPayload(),
           activeConfiguration: activeConfiguration(),
@@ -1035,7 +1020,7 @@ describe("NotificationDetailPage", () => {
       return undefined;
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/webhooks/${WEBHOOK_ID}`);
     const view = within(await dialog());
     await userEvent.click(
       await view.findByRole("button", { name: "发送签名测试" }),
@@ -1046,9 +1031,7 @@ describe("NotificationDetailPage", () => {
 
   it("keeps the list inert and closes a clean card with Escape", async () => {
     recordingFetch((call) => {
-      if (
-        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
-      ) {
+      if (call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}`) {
         return jsonResponse({
           webhook: definitionPayload(),
           activeConfiguration: activeConfiguration(),
@@ -1058,7 +1041,7 @@ describe("NotificationDetailPage", () => {
     });
     await connect();
     const { router } = renderApp(
-      `/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`,
+      `/operations/notifications/webhooks/${WEBHOOK_ID}`,
     );
     const view = within(await dialog());
     await waitFor(() => {
@@ -1083,9 +1066,7 @@ describe("NotificationDetailPage", () => {
 
   it("does not offer an executable editor when no Draft is open", async () => {
     recordingFetch((call) => {
-      if (
-        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
-      ) {
+      if (call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}`) {
         return jsonResponse({
           webhook: definitionPayload({
             draftState: draftState({
@@ -1102,7 +1083,7 @@ describe("NotificationDetailPage", () => {
       return undefined;
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/webhooks/${WEBHOOK_ID}`);
     const view = within(await dialog());
     expect(
       await view.findByRole("button", { name: "编辑草稿（不可用）" }),
@@ -1114,9 +1095,7 @@ describe("NotificationDetailPage", () => {
   it("submits copy, enable and disable with the exact optimistic version", async () => {
     let draftVersion = 4;
     const { calls } = recordingFetch((call) => {
-      if (
-        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
-      ) {
+      if (call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}`) {
         return jsonResponse({
           webhook: definitionPayload({
             draftState: draftState({ revisionVersion: draftVersion }),
@@ -1126,7 +1105,7 @@ describe("NotificationDetailPage", () => {
       }
       if (
         call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}/copy`
+        `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}/copy`
       ) {
         draftVersion += 1;
         expect(call.body).toMatchObject({
@@ -1141,8 +1120,7 @@ describe("NotificationDetailPage", () => {
         });
       }
       if (
-        call.url ===
-        "/api/v1/operations/notifications/webhooks/ops-webhook-copy"
+        call.url === "/api/operations/notifications/webhooks/ops-webhook-copy"
       ) {
         return jsonResponse({
           webhook: definitionPayload({
@@ -1155,7 +1133,7 @@ describe("NotificationDetailPage", () => {
       }
       if (
         call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/ops-webhook-copy/enable`
+        `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/ops-webhook-copy/enable`
       ) {
         draftVersion += 1;
         return jsonResponse({
@@ -1167,7 +1145,7 @@ describe("NotificationDetailPage", () => {
       }
       if (
         call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/ops-webhook-copy/disable`
+        `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/ops-webhook-copy/disable`
       ) {
         draftVersion += 1;
         return jsonResponse({
@@ -1180,7 +1158,7 @@ describe("NotificationDetailPage", () => {
       return undefined;
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/webhooks/${WEBHOOK_ID}`);
     let view = within(await dialog());
     await userEvent.click(
       await view.findByRole("button", { name: "复制到草稿" }),
@@ -1198,7 +1176,7 @@ describe("NotificationDetailPage", () => {
           (call) =>
             call.method === "GET" &&
             call.url ===
-              "/api/v1/operations/notifications/webhooks/ops-webhook-copy",
+              "/api/operations/notifications/webhooks/ops-webhook-copy",
         ).length,
       ).toBeGreaterThanOrEqual(2);
     });
@@ -1221,9 +1199,7 @@ describe("NotificationDetailPage", () => {
 
   it("does not render a wrong-object copy response as success", async () => {
     const { calls } = recordingFetch((call) => {
-      if (
-        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
-      ) {
+      if (call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}`) {
         return jsonResponse({
           webhook: definitionPayload(),
           activeConfiguration: activeConfiguration(),
@@ -1231,7 +1207,7 @@ describe("NotificationDetailPage", () => {
       }
       if (
         call.url ===
-        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}/copy`
+        `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}/copy`
       ) {
         return jsonResponse({
           revisionId: DRAFT_REVISION,
@@ -1243,7 +1219,7 @@ describe("NotificationDetailPage", () => {
       return undefined;
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/webhooks/${WEBHOOK_ID}`);
     const view = within(await dialog());
     await userEvent.click(
       await view.findByRole("button", { name: "复制到草稿" }),
@@ -1258,9 +1234,7 @@ describe("NotificationDetailPage", () => {
 
   it("does not render a contradictory enable toggle as success", async () => {
     const { calls } = recordingFetch((call) => {
-      if (
-        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
-      ) {
+      if (call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}`) {
         return jsonResponse({
           webhook: definitionPayload(),
           activeConfiguration: activeConfiguration(),
@@ -1277,7 +1251,7 @@ describe("NotificationDetailPage", () => {
       return undefined;
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/webhooks/${WEBHOOK_ID}`);
     const view = within(await dialog());
     await userEvent.click(
       await view.findByRole("button", { name: "在草稿中启用" }),
@@ -1330,7 +1304,7 @@ describe("NotificationEditorPage", () => {
         }
         if (
           call.url ===
-          `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`
+          `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`
         ) {
           version += 1;
           draftStatus = "draft";
@@ -1398,7 +1372,7 @@ describe("NotificationEditorPage", () => {
     const state = editorResponder();
     const { calls } = recordingFetch((call) => state.responder(call));
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.clear(urlInput);
@@ -1412,7 +1386,7 @@ describe("NotificationEditorPage", () => {
           (call) =>
             call.method === "PUT" &&
             call.url ===
-              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`,
+              `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`,
         ),
       ).toBe(true);
     });
@@ -1443,7 +1417,7 @@ describe("NotificationEditorPage", () => {
       return state.responder(call);
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.clear(urlInput);
@@ -1513,7 +1487,7 @@ describe("NotificationEditorPage", () => {
     });
     await connect();
     const { router } = renderApp(
-      `/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`,
+      `/operations/notifications/editor/${WEBHOOK_ID}`,
     );
     const view = within(await dialog());
     expect(
@@ -1565,7 +1539,7 @@ describe("NotificationEditorPage", () => {
       return state.responder(call);
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.clear(urlInput);
@@ -1595,7 +1569,7 @@ describe("NotificationEditorPage", () => {
     const state = editorResponder();
     const { calls } = recordingFetch((call) => state.responder(call));
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     const test = await view.findByRole("button", { name: "发送签名测试" });
     expect(test).toBeEnabled();
@@ -1621,7 +1595,7 @@ describe("NotificationEditorPage", () => {
       return state.responder(call);
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     await userEvent.click(
       await view.findByRole("button", { name: "发送签名测试" }),
@@ -1648,7 +1622,7 @@ describe("NotificationEditorPage", () => {
       return state.responder(call);
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     await userEvent.click(
       await view.findByRole("button", { name: "发送签名测试" }),
@@ -1682,7 +1656,7 @@ describe("NotificationEditorPage", () => {
     const state = editorResponder();
     const { calls } = recordingFetch((call) => state.responder(call));
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     const activate = await view.findByRole("button", {
       name: "发布已检查草稿",
@@ -1727,7 +1701,7 @@ describe("NotificationEditorPage", () => {
       }
       if (
         call.method === "GET" &&
-        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
+        call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}`
       ) {
         return jsonResponse({
           webhook: definitionPayload({ url: publishedUrl }),
@@ -1738,7 +1712,7 @@ describe("NotificationEditorPage", () => {
     });
     await connect();
     const { router } = renderApp(
-      `/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`,
+      `/operations/notifications/editor/${WEBHOOK_ID}`,
     );
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
@@ -1811,7 +1785,7 @@ describe("NotificationEditorPage", () => {
     });
     await connect();
     const { router } = renderApp(
-      `/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`,
+      `/operations/notifications/editor/${WEBHOOK_ID}`,
     );
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
@@ -1870,7 +1844,7 @@ describe("NotificationEditorPage", () => {
         }
         if (
           call.url ===
-          `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`
+          `/api/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`
         ) {
           const body = call.body as {
             expectedVersion?: number;
@@ -1910,7 +1884,7 @@ describe("NotificationEditorPage", () => {
     const session = draftConflictSession();
     const { calls } = recordingFetch((call) => session.responder(call));
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.clear(urlInput);
@@ -1964,7 +1938,7 @@ describe("NotificationEditorPage", () => {
     const session = draftConflictSession();
     const { calls } = recordingFetch((call) => session.responder(call));
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     await view.findByLabelText("HTTPS 接收地址");
     await userEvent.click(view.getByRole("button", { name: "检查草稿" }));
@@ -2031,7 +2005,7 @@ describe("NotificationEditorPage", () => {
           available: true,
           reason: null,
           method: "POST",
-          path: `/api/v1/configuration/revisions/${activeRevisionId}/successor`,
+          path: `/api/configuration/revisions/${activeRevisionId}/successor`,
           requiresConfirmation: false,
           sideEffects: "none",
           durableOutcome:
@@ -2046,7 +2020,7 @@ describe("NotificationEditorPage", () => {
           path:
             revisionId === null
               ? null
-              : `/api/v1/configuration/revisions/${revisionId}/objects/webhooks/${WEBHOOK_ID}`,
+              : `/api/configuration/revisions/${revisionId}/objects/webhooks/${WEBHOOK_ID}`,
           requiresConfirmation: false,
           sideEffects: "none",
           durableOutcome:
@@ -2060,7 +2034,7 @@ describe("NotificationEditorPage", () => {
           path:
             revisionId === null
               ? null
-              : `/api/v1/configuration/revisions/${revisionId}/validate`,
+              : `/api/configuration/revisions/${revisionId}/validate`,
           requiresConfirmation: false,
           sideEffects: "none",
           durableOutcome:
@@ -2071,7 +2045,7 @@ describe("NotificationEditorPage", () => {
           available: revisionId !== null,
           reason: revisionId === null ? noDraftReason : null,
           method: "POST",
-          path: `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}/activate-draft`,
+          path: `/api/operations/notifications/webhooks/${WEBHOOK_ID}/activate-draft`,
           requiresConfirmation: true,
           sideEffects: "none",
           durableOutcome:
@@ -2132,7 +2106,7 @@ describe("NotificationEditorPage", () => {
         }
         if (
           call.url ===
-          `/api/v1/configuration/revisions/${activeRevisionId}/successor`
+          `/api/configuration/revisions/${activeRevisionId}/successor`
         ) {
           draft = {
             revisionId: "revision-draft-2",
@@ -2148,7 +2122,7 @@ describe("NotificationEditorPage", () => {
         if (
           draft !== null &&
           call.url ===
-            `/api/v1/configuration/revisions/${draft.revisionId}/objects/webhooks/${WEBHOOK_ID}`
+            `/api/configuration/revisions/${draft.revisionId}/objects/webhooks/${WEBHOOK_ID}`
         ) {
           const body = call.body as {
             expectedVersion?: number;
@@ -2184,7 +2158,7 @@ describe("NotificationEditorPage", () => {
     const unsavedUrl = "https://example.invalid/hooks/unsaved-local";
     const publishedUrl = "https://example.invalid/hooks/published-by-b";
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.clear(urlInput);
@@ -2229,7 +2203,7 @@ describe("NotificationEditorPage", () => {
     const saves = calls.filter((call) => call.method === "PUT");
     expect(saves).toHaveLength(1);
     expect(saves[0].url).toBe(
-      "/api/v1/configuration/revisions/revision-draft-2/objects/webhooks/ops-webhook",
+      "/api/configuration/revisions/revision-draft-2/objects/webhooks/ops-webhook",
     );
     expect(saves[0].body).toMatchObject({
       expectedVersion: 1,
@@ -2243,7 +2217,7 @@ describe("NotificationEditorPage", () => {
     const unsavedUrl = "https://example.invalid/hooks/unsaved-local";
     const serverUrl = "https://example.invalid/hooks/server-revision";
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.clear(urlInput);
@@ -2267,7 +2241,7 @@ describe("NotificationEditorPage", () => {
     const { calls } = recordingFetch((call) => session.responder(call));
     const unsavedUrl = "https://example.invalid/hooks/unsaved-local";
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.clear(urlInput);
@@ -2302,7 +2276,7 @@ describe("NotificationEditorPage", () => {
     const state = editorResponder({ failReadsAfter: 1 });
     recordingFetch((call) => state.responder(call));
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.clear(urlInput);
@@ -2320,7 +2294,7 @@ describe("NotificationEditorPage", () => {
     recordingFetch((call) => state.responder(call));
     await connect();
     const { router } = renderApp(
-      `/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`,
+      `/operations/notifications/editor/${WEBHOOK_ID}`,
     );
     const view = within(await dialog());
     const urlInput = await view.findByLabelText("HTTPS 接收地址");
@@ -2389,7 +2363,7 @@ describe("NotificationEditorPage", () => {
                 available: false,
                 reason: "an open successor Draft is required",
                 method: "POST",
-                path: `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}/activate-draft`,
+                path: `/api/operations/notifications/webhooks/${WEBHOOK_ID}/activate-draft`,
                 requiresConfirmation: true,
                 sideEffects: "none",
                 durableOutcome: "active",
@@ -2403,7 +2377,7 @@ describe("NotificationEditorPage", () => {
       return undefined;
     });
     await connect();
-    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
     expect(await view.findByText(/当前没有渲染可填写的表单/)).toBeVisible();
     expect(view.queryByLabelText("HTTPS 接收地址")).toBeNull();
@@ -2428,13 +2402,13 @@ describe("NotificationEditorPage", () => {
 describe("DeliveryListPage", () => {
   it("renders readable statuses, attempts and failure summaries", async () => {
     recordingFetch((call) => {
-      if (call.url.startsWith("/api/v1/notifications?")) {
+      if (call.url.startsWith("/api/notifications?")) {
         return jsonResponse(deliveriesPayload());
       }
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications/deliveries?status=dead-letter");
+    renderApp("/operations/notifications/deliveries?status=dead-letter");
     expect(await screen.findByText("通知投递记录")).toBeVisible();
     const card = screen
       .getByText("任务完成", { selector: ".mf-notification-webhook-name" })
@@ -2451,19 +2425,17 @@ describe("DeliveryListPage", () => {
 
   it("opens a filtered delivery and returns to the same filter", async () => {
     recordingFetch((call) => {
-      if (call.url.startsWith("/api/v1/notifications?")) {
+      if (call.url.startsWith("/api/notifications?")) {
         return jsonResponse(deliveriesPayload());
       }
-      if (
-        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
-      ) {
+      if (call.url === "/api/operations/notifications/deliveries/delivery-1") {
         return jsonResponse(deliveryDetailPayload());
       }
       return undefined;
     });
     await connect();
     const { router } = renderApp(
-      "/ui-v2/operations/notifications/deliveries?status=dead-letter",
+      "/operations/notifications/deliveries?status=dead-letter",
     );
     await userEvent.click(
       await screen.findByRole("link", { name: "查看投递" }),
@@ -2492,14 +2464,12 @@ describe("DeliveryDetailPage recovery", () => {
   it("recovers a real HTTP 400 dead letter to pending without claiming the receiver was never reached", async () => {
     let recovered = false;
     const { calls } = recordingFetch((call) => {
-      if (
-        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
-      ) {
+      if (call.url === "/api/operations/notifications/deliveries/delivery-1") {
         return jsonResponse(
           recovered ? pendingDeliveryDetailPayload() : deliveryDetailPayload(),
         );
       }
-      if (call.url === "/api/v1/notifications/delivery-1/requeue") {
+      if (call.url === "/api/notifications/delivery-1/requeue") {
         recovered = true;
         return jsonResponse({
           action: "requeue-dead-letter",
@@ -2520,7 +2490,7 @@ describe("DeliveryDetailPage recovery", () => {
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    renderApp("/operations/notifications/deliveries/delivery-1");
     const view = within(await dialog());
     expect(
       await view.findByText("接收端返回 HTTP 400", { exact: true }),
@@ -2539,12 +2509,12 @@ describe("DeliveryDetailPage recovery", () => {
         calls.some(
           (call) =>
             call.method === "POST" &&
-            call.url === "/api/v1/notifications/delivery-1/requeue",
+            call.url === "/api/notifications/delivery-1/requeue",
         ),
       ).toBe(true);
     });
     const recovery = calls.find(
-      (call) => call.url === "/api/v1/notifications/delivery-1/requeue",
+      (call) => call.url === "/api/notifications/delivery-1/requeue",
     );
     expect(recovery?.body).toMatchObject({
       expectedStatus: "dead-letter",
@@ -2558,25 +2528,23 @@ describe("DeliveryDetailPage recovery", () => {
     ).toBeVisible();
     expect(
       calls.filter(
-        (call) => call.url === "/api/v1/notifications/delivery-1/requeue",
+        (call) => call.url === "/api/notifications/delivery-1/requeue",
       ),
     ).toHaveLength(1);
   });
 
   it("reports an unknown recovery result without replaying it", async () => {
     const { calls } = recordingFetch((call) => {
-      if (
-        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
-      ) {
+      if (call.url === "/api/operations/notifications/deliveries/delivery-1") {
         return jsonResponse(deliveryDetailPayload());
       }
-      if (call.url === "/api/v1/notifications/delivery-1/requeue") {
+      if (call.url === "/api/notifications/delivery-1/requeue") {
         throw new Error("network lost");
       }
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    renderApp("/operations/notifications/deliveries/delivery-1");
     const view = within(await dialog());
     await userEvent.click(
       await view.findByLabelText("我确认重新入队这条精确的死信投递"),
@@ -2600,19 +2568,17 @@ describe("DeliveryDetailPage recovery", () => {
     expect(view.getByText("死信", { exact: true })).toBeVisible();
     expect(
       calls.filter(
-        (call) => call.url === "/api/v1/notifications/delivery-1/requeue",
+        (call) => call.url === "/api/notifications/delivery-1/requeue",
       ),
     ).toHaveLength(1);
   });
 
   it("does not replay a stale recovery and offers the exact refresh", async () => {
     const { calls } = recordingFetch((call) => {
-      if (
-        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
-      ) {
+      if (call.url === "/api/operations/notifications/deliveries/delivery-1") {
         return jsonResponse(deliveryDetailPayload());
       }
-      if (call.url === "/api/v1/notifications/delivery-1/requeue") {
+      if (call.url === "/api/notifications/delivery-1/requeue") {
         return jsonResponse(
           { error: { code: "notification_delivery_conflict" } },
           409,
@@ -2621,7 +2587,7 @@ describe("DeliveryDetailPage recovery", () => {
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    renderApp("/operations/notifications/deliveries/delivery-1");
     const view = within(await dialog());
     await userEvent.click(
       await view.findByLabelText("我确认重新入队这条精确的死信投递"),
@@ -2641,7 +2607,7 @@ describe("DeliveryDetailPage recovery", () => {
     expect(view.queryByText("恢复结果未知")).toBeNull();
     expect(
       calls.filter(
-        (call) => call.url === "/api/v1/notifications/delivery-1/requeue",
+        (call) => call.url === "/api/notifications/delivery-1/requeue",
       ),
     ).toHaveLength(1);
   });
@@ -2649,16 +2615,14 @@ describe("DeliveryDetailPage recovery", () => {
   it("keeps the known recovery result when the follow-up read fails", async () => {
     let reads = 0;
     recordingFetch((call) => {
-      if (
-        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
-      ) {
+      if (call.url === "/api/operations/notifications/deliveries/delivery-1") {
         reads += 1;
         if (reads > 1) {
           return jsonResponse({ error: { code: "unavailable" } }, 500);
         }
         return jsonResponse(deliveryDetailPayload());
       }
-      if (call.url === "/api/v1/notifications/delivery-1/requeue") {
+      if (call.url === "/api/notifications/delivery-1/requeue") {
         return jsonResponse({
           action: "requeue-dead-letter",
           outcome: "success",
@@ -2678,7 +2642,7 @@ describe("DeliveryDetailPage recovery", () => {
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    renderApp("/operations/notifications/deliveries/delivery-1");
     const view = within(await dialog());
     await userEvent.click(
       await view.findByLabelText("我确认重新入队这条精确的死信投递"),
@@ -2692,9 +2656,7 @@ describe("DeliveryDetailPage recovery", () => {
 
   it("renders no recovery control when the backend advertises none", async () => {
     recordingFetch((call) => {
-      if (
-        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
-      ) {
+      if (call.url === "/api/operations/notifications/deliveries/delivery-1") {
         return jsonResponse(
           deliveryDetailPayload({
             status: "delivered",
@@ -2711,7 +2673,7 @@ describe("DeliveryDetailPage recovery", () => {
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    renderApp("/operations/notifications/deliveries/delivery-1");
     const view = within(await dialog());
     expect(await view.findByText("没有可用的人工恢复")).toBeVisible();
     expect(view.queryByRole("button", { name: /重新入队/ })).toBeNull();
@@ -2719,15 +2681,13 @@ describe("DeliveryDetailPage recovery", () => {
 
   it("fails closed on a malformed delivery document", async () => {
     const { calls } = recordingFetch((call) => {
-      if (
-        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
-      ) {
+      if (call.url === "/api/operations/notifications/deliveries/delivery-1") {
         return jsonResponse(deliveryDetailPayload({ status: "exploded" }));
       }
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    renderApp("/operations/notifications/deliveries/delivery-1");
     const view = within(await dialog());
     expect(await view.findByText("投递读取失败")).toBeVisible();
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
@@ -2736,9 +2696,7 @@ describe("DeliveryDetailPage recovery", () => {
 
   it("fails closed when a recovery transport names another delivery", async () => {
     const { calls } = recordingFetch((call) => {
-      if (
-        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
-      ) {
+      if (call.url === "/api/operations/notifications/deliveries/delivery-1") {
         return jsonResponse(
           deliveryDetailPayload({
             actions: {
@@ -2746,7 +2704,7 @@ describe("DeliveryDetailPage recovery", () => {
                 available: true,
                 reason: null,
                 method: "POST",
-                path: "/api/v1/notifications/delivery-2/requeue",
+                path: "/api/notifications/delivery-2/requeue",
                 requiresConfirmation: true,
                 sideEffects: "delivery_queue_state_only",
                 durableOutcome: "the delivery returns to pending",
@@ -2759,7 +2717,7 @@ describe("DeliveryDetailPage recovery", () => {
       return undefined;
     });
     await connect();
-    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    renderApp("/operations/notifications/deliveries/delivery-1");
     const view = within(await dialog());
     expect(await view.findByText("投递读取失败")).toBeVisible();
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);

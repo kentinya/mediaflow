@@ -271,7 +271,7 @@ class WebhookUrlManagedApiTests(unittest.TestCase):
                 unsafe = f"https://example.invalid/hooks?token={SENTINEL}"
                 status, response = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps(
                         {"object": webhook_document(url=unsafe), "expectedVersion": 1}
@@ -289,7 +289,7 @@ class WebhookUrlManagedApiTests(unittest.TestCase):
                 )
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects",
+                    f"/api/configuration/revisions/{revision_id}/objects",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(
@@ -312,7 +312,7 @@ class WebhookUrlManagedApiTests(unittest.TestCase):
                 )
                 status, response = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}",
+                    f"/api/configuration/revisions/{revision_id}",
                     method="PUT",
                     body=json.dumps({"document": incoming, "expectedVersion": 1}).encode(),
                 )
@@ -337,7 +337,7 @@ class WebhookUrlManagedApiTests(unittest.TestCase):
                 )
                 status, copy_result = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{legacy.revision_id}"
+                    f"/api/configuration/revisions/{legacy.revision_id}"
                     "/objects/webhooks/legacy-webhook-1/copy",
                     method="POST",
                     body=json.dumps({"expectedVersion": legacy.version}).encode(),
@@ -346,7 +346,7 @@ class WebhookUrlManagedApiTests(unittest.TestCase):
                 self.assertNotIn(SENTINEL, json.dumps(copy_result))
                 status, enable_result = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{legacy.revision_id}"
+                    f"/api/configuration/revisions/{legacy.revision_id}"
                     "/objects/webhooks/legacy-webhook-1/enable",
                     method="POST",
                     body=json.dumps({"expectedVersion": legacy.version}).encode(),
@@ -367,7 +367,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 revision_id = legacy.revision_id
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}",
+                    f"/api/configuration/revisions/{revision_id}",
                 )
                 self.assertEqual(status, 200)
                 encoded = json.dumps(detail)
@@ -379,7 +379,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
 
                 status, objects = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects",
+                    f"/api/configuration/revisions/{revision_id}/objects",
                 )
                 self.assertEqual(status, 200)
                 self.assertNotIn(SENTINEL, json.dumps(objects))
@@ -395,7 +395,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
 
                 status, package = request(
                     harness.api,
-                    "/api/v1/configuration/packages/export/configuration",
+                    "/api/configuration/packages/export/configuration",
                     query=f"revisionId={revision_id}",
                 )
                 self.assertEqual(status, 200)
@@ -435,8 +435,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 )
                 status, corrected = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/"
-                    "legacy-webhook-1",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/legacy-webhook-1",
                     method="PUT",
                     body=json.dumps({"object": safe_a, "expectedVersion": legacy.version}).encode(),
                 )
@@ -450,7 +449,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 # unchanged; its URL is never exposed by projections.
                 status, objects = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects",
+                    f"/api/configuration/revisions/{revision_id}/objects",
                 )
                 self.assertNotIn(SENTINEL, json.dumps(objects))
                 projected_b = next(
@@ -469,7 +468,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 # Audit records for the correction never contain the legacy URL.
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}",
+                    f"/api/configuration/revisions/{revision_id}",
                 )
                 self.assertNotIn(SENTINEL, json.dumps(detail))
                 self.assertNotIn(unsafe_a, json.dumps(detail))
@@ -482,8 +481,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 )
                 status, _ = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks/"
-                    "legacy-webhook-2",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/legacy-webhook-2",
                     method="PUT",
                     body=json.dumps(
                         {"object": safe_b, "expectedVersion": updated.version}
@@ -492,7 +490,7 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 status, objects = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects",
+                    f"/api/configuration/revisions/{revision_id}/objects",
                 )
                 self.assertEqual(status, 200)
                 self.assertTrue(
@@ -565,7 +563,7 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                 safe_url = "https://example.invalid/hooks/mediaflow/ops"
                 status, created = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps(
                         {
@@ -582,7 +580,7 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                 with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "env-secret-992"}):
                     status, detail = request(
                         harness.api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects",
+                        f"/api/configuration/revisions/{revision_id}/objects",
                     )
                     self.assertEqual(status, 200)
                     webhook = next(
@@ -598,7 +596,7 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                     # Export keeps the safe URL but never the environment value.
                     status, package = request(
                         harness.api,
-                        "/api/v1/configuration/packages/export/configuration",
+                        "/api/configuration/packages/export/configuration",
                         query=f"revisionId={revision_id}",
                     )
                     self.assertEqual(status, 200)
@@ -622,7 +620,7 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                     jobs_before = ()
                     status, test_result = request(
                         harness.api,
-                        f"/api/v1/configuration/revisions/{active.revision_id}/objects/"
+                        f"/api/configuration/revisions/{active.revision_id}/objects/"
                         "webhooks/ops-webhook/test",
                         method="POST",
                         body=json.dumps(
@@ -716,7 +714,7 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                 package["packageDigest"] = canonical_digest(package["payload"])
                 status, response = request(
                     harness.api,
-                    "/api/v1/configuration/packages",
+                    "/api/configuration/packages",
                     method="POST",
                     body=json.dumps({"package": package}).encode(),
                 )

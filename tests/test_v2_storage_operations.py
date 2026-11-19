@@ -2,7 +2,7 @@
 
 These regressions drive the real ``MediaFlowApi`` against a real managed
 configuration runtime. They prove the new
-``/api/v1/operations/storage-management`` read projections are bounded,
+``/api/operations/storage-management`` read projections are bounded,
 secret-free, exact-Active operator documents — no revision digests, no
 credential values, no raw provider exceptions — that distinguish a healthy
 empty inventory from missing/unavailable/malformed authority; that the
@@ -46,8 +46,8 @@ from mediaflow.interfaces.service_api import MediaFlowApi
 ADMIN_TOKEN = "storage-admin-token"
 VIEWER_TOKEN = "storage-viewer-token"
 
-INVENTORY_ROUTE = "/api/v1/operations/storage-management/inventory"
-DETAIL_ROUTE = "/api/v1/operations/storage-management/storage/{storage_id}"
+INVENTORY_ROUTE = "/api/operations/storage-management/inventory"
+DETAIL_ROUTE = "/api/operations/storage-management/storage/{storage_id}"
 CHECK_ROUTE = DETAIL_ROUTE + "/check"
 
 _FORBIDDEN_SUBSTRINGS = (
@@ -418,7 +418,7 @@ class StorageOperationsJourney(unittest.TestCase):
             self.assertEqual(status, 400, bad_query)
             self.assertEqual(denied["error"]["code"], "invalid_request", bad_query)
         self.assertEqual(
-            _request(self.api, "/api/v1/operations/storage-management", token=VIEWER_TOKEN)[0],
+            _request(self.api, "/api/operations/storage-management", token=VIEWER_TOKEN)[0],
             404,
         )
 
@@ -678,7 +678,7 @@ class StorageOperationsJourney(unittest.TestCase):
                 self.assertFalse(setup["setupDraftExists"])
                 self.assertFalse(setup["managedActivation"])
                 self.assertFalse(setup["recoveryRequired"])
-                self.assertEqual(setup["setupPath"], "/ui-v2/configuration")
+                self.assertEqual(setup["setupPath"], "/configuration")
                 # The permission to start the first Draft is backend
                 # authoritative, not a client judgement.
                 self.assertTrue(inventory["canStartSetup"])
@@ -811,7 +811,7 @@ class StorageOperationsJourney(unittest.TestCase):
             self.assertTrue(inventory["setup"]["managedActivation"])
             self.assertFalse(inventory["setup"]["setupRequired"])
             self.assertTrue(inventory["setup"]["recoveryRequired"])
-            self.assertEqual(inventory["setup"]["setupPath"], "/ui-v2/configuration")
+            self.assertEqual(inventory["setup"]["setupPath"], "/configuration")
         finally:
             repository.close()
             task_repository.close()
@@ -918,20 +918,20 @@ class StorageOperationsJourney(unittest.TestCase):
         active_id = self.active_identity()["revisionId"]
         _status, draft = _request(
             self.api,
-            f"/api/v1/configuration/revisions/{active_id}/successor",
+            f"/api/configuration/revisions/{active_id}/successor",
             method="POST",
             body={},
         )
         revision_id = draft["revisionId"]
         _status, versioned = _request(
             self.api,
-            f"/api/v1/configuration/revisions/{revision_id}/objects",
+            f"/api/configuration/revisions/{revision_id}/objects",
             token=ADMIN_TOKEN,
         )
         version = versioned["version"]
         _status, response = _request(
             self.api,
-            f"/api/v1/configuration/revisions/{revision_id}/objects/mediaLibraries",
+            f"/api/configuration/revisions/{revision_id}/objects/mediaLibraries",
             method="POST",
             body={
                 "object": {
@@ -949,13 +949,13 @@ class StorageOperationsJourney(unittest.TestCase):
         # exact Active configuration the detail projection reads.
         _status, _activated = _request(
             self.api,
-            f"/api/v1/configuration/revisions/{revision_id}/validate",
+            f"/api/configuration/revisions/{revision_id}/validate",
             method="POST",
             body={},
         )
         _status, _activated = _request(
             self.api,
-            f"/api/v1/configuration/revisions/{revision_id}/activate",
+            f"/api/configuration/revisions/{revision_id}/activate",
             method="POST",
             body={"expectedVersion": response["version"]},
         )
@@ -1140,13 +1140,13 @@ class StorageOperationsJourney(unittest.TestCase):
         # The V1/managed revision-object routes remain authoritative.
         status, revision = _request(
             self.api,
-            f"/api/v1/configuration/revisions/{active['revisionId']}/objects/storages",
+            f"/api/configuration/revisions/{active['revisionId']}/objects/storages",
         )
         self.assertEqual(status, 200)
         self.assertEqual(revision["total"], 4)
         _status, collection = _request(
             self.api,
-            f"/api/v1/configuration/revisions/{active['revisionId']}/storage-checks",
+            f"/api/configuration/revisions/{active['revisionId']}/storage-checks",
             token=VIEWER_TOKEN,
         )
         self.assertEqual(_status, 200)
@@ -1161,7 +1161,7 @@ class StorageOperationsJourney(unittest.TestCase):
         self.assertEqual(_status, 200)
         _status, document = _request(
             self.api,
-            f"/api/v1/configuration/revisions/{active['revisionId']}/storage-checks/nas",
+            f"/api/configuration/revisions/{active['revisionId']}/storage-checks/nas",
             token=VIEWER_TOKEN,
         )
         self.assertEqual(_status, 200)
@@ -1188,9 +1188,9 @@ class StorageOperationsJourney(unittest.TestCase):
             routes = [
                 row[0] for row in connection.execute("SELECT route FROM security_audit").fetchall()
             ]
-            self.assertIn("/api/v1/operations/storage-management/inventory", routes)
-            self.assertIn("/api/v1/operations/storage-management/storage/{id}", routes)
-            self.assertIn("/api/v1/operations/storage-management/storage/{id}/check", routes)
+            self.assertIn("/api/operations/storage-management/inventory", routes)
+            self.assertIn("/api/operations/storage-management/storage/{id}", routes)
+            self.assertIn("/api/operations/storage-management/storage/{id}/check", routes)
             self.assertFalse(any("nas" in route for route in routes))
         finally:
             connection.close()

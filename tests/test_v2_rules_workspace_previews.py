@@ -33,7 +33,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         assert before_active is not None
         status, body = self.harness.request(
             "POST",
-            "/api/v1/operations/rules/previews/naming",
+            "/api/operations/rules/previews/naming",
             {
                 **self.authority(),
                 "candidate": self.candidate("namingPolicies", "A"),
@@ -60,7 +60,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         candidate = self.candidate("organizePolicies", "A")
         status, body = self.harness.request(
             "POST",
-            "/api/v1/operations/rules/previews/organize",
+            "/api/operations/rules/previews/organize",
             {
                 **authority,
                 "candidate": candidate,
@@ -95,7 +95,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
             },
         }
         status, body = self.harness.request(
-            "POST", "/api/v1/operations/rules/previews/organize", stale
+            "POST", "/api/operations/rules/previews/organize", stale
         )
         self.assertEqual(status, 409)
         self.assertIn("stale", body["error"]["message"].lower())
@@ -105,7 +105,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         candidate["values"] = {**candidate["values"], "name": "Candidate C"}
         status, body = self.harness.request(
             "POST",
-            "/api/v1/operations/rules/previews/strategy",
+            "/api/operations/rules/previews/strategy",
             {
                 **self.authority(),
                 "candidate": candidate,
@@ -126,7 +126,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         assert before is not None
         status, body = self.harness.request(
             "POST",
-            "/api/v1/operations/rules/previews/naming",
+            "/api/operations/rules/previews/naming",
             {
                 **self.authority(),
                 "candidate": {
@@ -154,7 +154,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         candidate_values = {**values, "id": "candidate-name", "name": "Candidate Name"}
         status, body = self.harness.request(
             "POST",
-            "/api/v1/operations/rules/previews/naming",
+            "/api/operations/rules/previews/naming",
             {
                 **self.authority(),
                 "candidate": {
@@ -188,7 +188,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
             "liveMetadata": False,
         }
         status, body = self.harness.request(
-            "POST", "/api/v1/operations/rules/previews/metadata", request
+            "POST", "/api/operations/rules/previews/metadata", request
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "completed")
@@ -204,7 +204,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
             "liveMetadata": False,
         }
         status, body = self.harness.request(
-            "POST", "/api/v1/operations/rules/previews/metadata", mismatch
+            "POST", "/api/operations/rules/previews/metadata", mismatch
         )
         self.assertEqual(status, 409)
         self.assertEqual(body["error"]["code"], "configuration_version_conflict")
@@ -228,7 +228,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
             )
             status, body = self.harness.request(
                 "POST",
-                f"/api/v1/operations/rules/previews/{kind}",
+                f"/api/operations/rules/previews/{kind}",
                 {
                     **self.authority(),
                     "candidate": self.candidate("recognitionTypes", "C"),
@@ -257,7 +257,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
             }
             status, body = self.harness.request(
                 "POST",
-                f"/api/v1/operations/rules/previews/{kind}",
+                f"/api/operations/rules/previews/{kind}",
                 {**base, "sample": {"path": "/C/Special.C.2025.mkv"}},
             )
             self.assertEqual(status, 400, kind)
@@ -273,7 +273,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
                 sample["extension"] = "mkv"
             status, body = self.harness.request(
                 "POST",
-                f"/api/v1/operations/rules/previews/{kind}",
+                f"/api/operations/rules/previews/{kind}",
                 {**base, "sample": sample},
             )
             self.assertEqual(status, 400, kind)
@@ -282,7 +282,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
     def test_organize_explanation_composes_destination_verdict_without_authority(self) -> None:
         status, body = self.harness.request(
             "POST",
-            "/api/v1/operations/rules/previews/organize",
+            "/api/operations/rules/previews/organize",
             {
                 **self.authority(),
                 "candidate": self.candidate("organizePolicies", "A"),

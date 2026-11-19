@@ -62,7 +62,7 @@ async function open(page, path) {
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
-  await page.goto(BASE + '/ui-v2/rules?section=classificationPolicies');
+  await page.goto(BASE + '/rules?section=classificationPolicies');
   await connect(page);
   await expect(
     page.getByRole('heading', { name: '分类规则', exact: true }),
@@ -96,13 +96,13 @@ try {
 
   // The published Active carries the revised contract: no library prefix.
   const authority = await page.request.get(
-    BASE + '/api/v1/operations/rules/form-authority',
+    BASE + '/api/operations/rules/form-authority',
     { headers: { Authorization: 'Bearer ' + TOKEN } },
   );
   if (!authority.ok()) throw new Error('authority read failed: ' + authority.status());
 
   const projection = await page.request.get(
-    BASE + '/api/v1/operations/rules/objects/classificationPolicies/proof-destination',
+    BASE + '/api/operations/rules/objects/classificationPolicies/proof-destination',
     { headers: { Authorization: 'Bearer ' + TOKEN } },
   );
   if (!projection.ok()) throw new Error('projection read failed: ' + projection.status());
@@ -120,7 +120,7 @@ try {
   // The backend projection carries a read-only `destinationContract` key, so
   // the normal Edit page must be able to preview and Save exactly what it
   // rendered.  A 400 here is the reported defect, not a tolerated outcome.
-  await open(page, '/ui-v2/rules/edit/classificationPolicies/proof-destination');
+  await open(page, '/rules/edit/classificationPolicies/proof-destination');
   await expect(
     page.getByRole('heading', { name: 'proof-destination', exact: true }),
   ).toBeVisible();
@@ -144,7 +144,7 @@ try {
   await expect(page.getByText(/已发布为新的 Active|已发布/).first()).toBeVisible();
 
   const savedProjection = await page.request.get(
-    BASE + '/api/v1/operations/rules/objects/classificationPolicies/proof-destination',
+    BASE + '/api/operations/rules/objects/classificationPolicies/proof-destination',
     { headers: { Authorization: 'Bearer ' + TOKEN } },
   );
   if (!savedProjection.ok()) {
@@ -168,7 +168,7 @@ try {
   // The read-only key is a projection explanation, never a stored field: the
   // real export of the durable document must not contain it.
   const exported = await page.request.get(
-    BASE + '/api/v1/configuration/packages/export/configuration',
+    BASE + '/api/configuration/packages/export/configuration',
     { headers: { Authorization: 'Bearer ' + TOKEN } },
   );
   if (!exported.ok()) throw new Error('configuration export failed: ' + exported.status());
@@ -181,7 +181,7 @@ try {
   // -- native legacy preview → explicit conversion → Save → reopen ----------
   const legacyPolicyId = process.env.MF_PROOF_LEGACY_POLICY;
   if (!legacyPolicyId) throw new Error('MF_PROOF_LEGACY_POLICY is required');
-  await open(page, '/ui-v2/rules/edit/classificationPolicies/' + legacyPolicyId);
+  await open(page, '/rules/edit/classificationPolicies/' + legacyPolicyId);
   await expect(
     page.getByRole('heading', { name: legacyPolicyId, exact: true }),
   ).toBeVisible();
@@ -202,7 +202,7 @@ try {
       + (await legacyFailure.first().innerText()));
   }
   const stillLegacy = await page.request.get(
-    BASE + '/api/v1/operations/rules/objects/classificationPolicies/' + legacyPolicyId,
+    BASE + '/api/operations/rules/objects/classificationPolicies/' + legacyPolicyId,
     { headers: { Authorization: 'Bearer ' + TOKEN } },
   );
   const stillLegacyRule = (await stillLegacy.json()).object.rules.find(
@@ -220,7 +220,7 @@ try {
   await expect(page.getByText(/已发布为新的 Active|已发布/).first()).toBeVisible();
 
   const convertedProjection = await page.request.get(
-    BASE + '/api/v1/operations/rules/objects/classificationPolicies/' + legacyPolicyId,
+    BASE + '/api/operations/rules/objects/classificationPolicies/' + legacyPolicyId,
     { headers: { Authorization: 'Bearer ' + TOKEN } },
   );
   const convertedRule = (await convertedProjection.json()).object.rules.find(
@@ -234,7 +234,7 @@ try {
   }
 
   // Reopen the converted successor and round-trip preview plus Save again.
-  await open(page, '/ui-v2/rules/edit/classificationPolicies/' + legacyPolicyId);
+  await open(page, '/rules/edit/classificationPolicies/' + legacyPolicyId);
   await expect(
     page.getByRole('heading', { name: legacyPolicyId, exact: true }),
   ).toBeVisible();
@@ -422,13 +422,13 @@ def main() -> int:
         )
         print("== real Python-served classification destination proof ==")
 
-        authority = api("GET", "/api/v1/operations/rules/form-authority")["active"]
+        authority = api("GET", "/api/operations/rules/form-authority")["active"]
         version = authority.get("revisionSequence") or authority["version"]
 
         # -- the seeded legacy rule keeps its original contract ---------------
         legacy = api(
             "GET",
-            f"/api/v1/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
+            f"/api/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
         )["object"]
         legacy_rule = next(rule for rule in legacy["rules"] if rule["id"] == LEGACY_RULE["id"])
         if legacy_rule["result"].get("library") != "Movies":
@@ -444,7 +444,7 @@ def main() -> int:
         cosmetic["description"] = "cosmetic only"
         api(
             "PUT",
-            f"/api/v1/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
+            f"/api/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
             {
                 "object": cosmetic,
                 "expectedRevisionId": authority["revisionId"],
@@ -456,7 +456,7 @@ def main() -> int:
             rule["result"]
             for rule in api(
                 "GET",
-                f"/api/v1/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
+                f"/api/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
             )["object"]["rules"]
             if rule["id"] == LEGACY_RULE["id"]
         )
@@ -473,7 +473,7 @@ def main() -> int:
         def composed_target(active: dict) -> dict:
             draft = api(
                 "POST",
-                "/api/v1/configuration/drafts/successor",
+                "/api/configuration/drafts/successor",
                 {
                     "expectedActiveRevisionId": active["revisionId"],
                     "expectedActiveVersion": active.get("revisionSequence") or active["version"],
@@ -482,7 +482,7 @@ def main() -> int:
             )
             preview = api(
                 "POST",
-                f"/api/v1/configuration/revisions/{draft['revisionId']}/destination-preview",
+                f"/api/configuration/revisions/{draft['revisionId']}/destination-preview",
                 {
                     "expectedVersion": draft["version"],
                     "expectedDigest": draft["digest"],
@@ -499,7 +499,7 @@ def main() -> int:
             return preview["result"]
 
         legacy_target = composed_target(
-            api("GET", "/api/v1/operations/rules/form-authority")["active"]
+            api("GET", "/api/operations/rules/form-authority")["active"]
         )
         if legacy_target["destinationContract"] != "legacy_library_prefix":
             raise RuntimeError("legacy preview did not report its legacy contract")
@@ -516,10 +516,10 @@ def main() -> int:
             # An explicit null is the deliberate conversion intent.
             rule["result"]["library"] = None
             rule["result"].pop("destinationContract", None)
-        new_authority = api("GET", "/api/v1/operations/rules/form-authority")["active"]
+        new_authority = api("GET", "/api/operations/rules/form-authority")["active"]
         api(
             "PUT",
-            f"/api/v1/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
+            f"/api/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
             {
                 "object": converted,
                 "expectedRevisionId": new_authority["revisionId"],
@@ -532,7 +532,7 @@ def main() -> int:
             rule["result"]
             for rule in api(
                 "GET",
-                f"/api/v1/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
+                f"/api/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
             )["object"]["rules"]
             if rule["id"] == LEGACY_RULE["id"]
         )
@@ -541,7 +541,7 @@ def main() -> int:
         if revised.get("path") != ["电影", "华语"]:
             raise RuntimeError("explicit conversion did not preserve the explicit path")
         revised_target = composed_target(
-            api("GET", "/api/v1/operations/rules/form-authority")["active"]
+            api("GET", "/api/operations/rules/form-authority")["active"]
         )
         if revised_target["destinationContract"] != "media_library_path":
             raise RuntimeError("converted preview did not report the revised contract")
@@ -551,13 +551,13 @@ def main() -> int:
         print(f"   revised destination contract: {revised_target['destinationContract']}")
 
         # -- a stale Save is refused and the Active is preserved --------------
-        final_authority = api("GET", "/api/v1/operations/rules/form-authority")["active"]
+        final_authority = api("GET", "/api/operations/rules/form-authority")["active"]
         stale_document = json.loads(json.dumps(converted))
         stale_document["description"] = "stale attempt"
         try:
             api(
                 "PUT",
-                f"/api/v1/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
+                f"/api/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
                 {
                     "object": stale_document,
                     "expectedRevisionId": final_authority["revisionId"],
@@ -572,7 +572,7 @@ def main() -> int:
             raise RuntimeError("a stale Save was accepted")
         readback = api(
             "GET",
-            f"/api/v1/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
+            f"/api/operations/rules/objects/classificationPolicies/{LEGACY_POLICY_ID}",
         )["object"]
         if readback["description"] == "stale attempt":
             raise RuntimeError("stale Save changed the durable object")

@@ -133,8 +133,8 @@ class ApiSecurityTests(unittest.TestCase):
                     repository,
                     principals=principals(),
                 )
-                self.assertEqual(request(api, "GET", "/api/v1/tasks")[0], 401)
-                self.assertEqual(request(api, "GET", "/api/v1/tasks", token="viewer-token")[0], 200)
+                self.assertEqual(request(api, "GET", "/api/tasks")[0], 401)
+                self.assertEqual(request(api, "GET", "/api/tasks", token="viewer-token")[0], 200)
                 # Task cancellation stays permission-gated on the durable Task
                 # the scheduling kernel admitted.
                 from mediaflow.application.task_scheduling import TaskSchedulingService
@@ -156,7 +156,7 @@ class ApiSecurityTests(unittest.TestCase):
                     request(
                         api,
                         "POST",
-                        f"/api/v1/tasks/{task.task_id}/cancel",
+                        f"/api/tasks/{task.task_id}/cancel",
                         token="viewer-token",
                     )[0],
                     403,
@@ -165,21 +165,21 @@ class ApiSecurityTests(unittest.TestCase):
                     request(
                         api,
                         "POST",
-                        f"/api/v1/tasks/{task.task_id}/cancel",
+                        f"/api/tasks/{task.task_id}/cancel",
                         token="operator-token",
                     )[0],
                     200,
                 )
                 self.assertEqual(
-                    request(api, "GET", "/api/v1/security-audit", token="viewer-token")[0],
+                    request(api, "GET", "/api/security-audit", token="viewer-token")[0],
                     403,
                 )
                 self.assertEqual(
-                    request(api, "GET", "/api/v1/security-audit", token="auditor-token")[0],
+                    request(api, "GET", "/api/security-audit", token="auditor-token")[0],
                     200,
                 )
                 self.assertEqual(
-                    request(api, "GET", "/api/v1/security-audit", token="admin-token")[0],
+                    request(api, "GET", "/api/security-audit", token="admin-token")[0],
                     200,
                 )
 
@@ -190,14 +190,14 @@ class ApiSecurityTests(unittest.TestCase):
                 status, document = request(
                     api,
                     "GET",
-                    "/api/v1/auth/principal",
+                    "/api/auth/principal",
                     token="viewer-token",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(document, {"principal_id": "viewer"})
                 self.assertNotIn("token", json.dumps(document).lower())
                 self.assertEqual(
-                    request(api, "GET", "/api/v1/auth/principal")[0],
+                    request(api, "GET", "/api/auth/principal")[0],
                     401,
                 )
 
@@ -212,17 +212,100 @@ class ApiSecurityTests(unittest.TestCase):
                     wraps=hmac.compare_digest,
                 ) as compare:
                     self.assertEqual(
-                        request(api, "GET", "/api/v1/tasks", token="viewer-token")[0], 200
+                        request(api, "GET", "/api/tasks", token="viewer-token")[0], 200
                     )
                 self.assertEqual(compare.call_count, len(principals()))
+
+    def test_retired_api_prefixes_are_unknown_routes_with_no_business_effect(self) -> None:
+        """An old versioned prefix ends before authentication and business work.
+
+        Both reads and writes are ordinary JSON 404s even for a valid
+        identity, no security-audit row is created, and the durable Task and
+        security-audit state is unchanged afterwards.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                api = MediaFlowApi(repository, principals=principals())
+                audit_before = repository.list_security_audit(limit=500)
+                for method, path in (
+                    ("GET", "/api/v1/tasks"),
+                    ("GET", "/api/v1/operations/tasks"),
+                    ("GET", "/api/v2/tasks"),
+                    ("POST", "/api/v1/storages"),
+                    ("PUT", "/api/v1/resource-libraries/source"),
+                    ("DELETE", "/api/v1/media-libraries/library"),
+                ):
+                    with self.subTest(method=method, path=path):
+                        status, document = request(
+                            api,
+                            method,
+                            path,
+                            token="admin-token",
+                            document={},
+                        )
+                        self.assertEqual(status, 404)
+                        self.assertEqual(document["error"]["code"], "not_found")
+                self.assertEqual(repository.list_tasks(limit=10), ())
+                self.assertEqual(
+                    [item.audit_id for item in repository.list_security_audit(limit=500)],
+                    [item.audit_id for item in audit_before],
+                )
+
+    def test_new_audit_records_use_the_canonical_route_template(self) -> None:
+        """New audit rows classify the canonical route, not the retired prefix.
+
+        The template hides the object identity exactly as before, so a new
+        record is comparable with the current route family without publishing
+        a Task identifier.
+        """
+
+        from mediaflow.application.task_scheduling import TaskSchedulingService
+        from mediaflow.domain.task_scheduling import TaskTrigger
+
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                api = MediaFlowApi(repository, principals=principals())
+                task = (
+                    TaskSchedulingService(repository, capacity=10)
+                    .admit(
+                        "organize",
+                        execute_authorized=True,
+                        trigger=TaskTrigger.MANUAL,
+                        principal="operator",
+                        now=datetime.now(UTC),
+                    )
+                    .task
+                )
+                # The Task read is a read-only journey projection with no
+                # durable audit row; the cancel command is an audited write.
+                self.assertEqual(request(api, "GET", "/api/tasks", token="viewer-token")[0], 200)
+                self.assertEqual(
+                    request(
+                        api,
+                        "POST",
+                        f"/api/tasks/{task.task_id}/cancel",
+                        token="operator-token",
+                    )[0],
+                    200,
+                )
+                self.assertEqual(
+                    request(api, "GET", "/api/security-audit", token="auditor-token")[0],
+                    200,
+                )
+                routes = {item.route for item in repository.list_security_audit(limit=500)}
+                self.assertIn("/api/security-audit", routes)
+                self.assertIn("/api/tasks/{id}/cancel", routes)
+                self.assertFalse(any(route.startswith("/api/v1") for route in routes))
+                self.assertNotIn(task.task_id, " ".join(routes))
 
     def test_audit_success_denial_redaction_order_limit_and_source_sanitizing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 api = MediaFlowApi(repository, principals=principals())
-                request(api, "GET", "/api/v1/tasks", token="wrong-secret")
-                request(api, "GET", "/api/v1/auth/principal", token="viewer-token")
-                request(api, "GET", "/api/v1/path-token-secret", token="viewer-token")
+                request(api, "GET", "/api/tasks", token="wrong-secret")
+                request(api, "GET", "/api/auth/principal", token="viewer-token")
+                request(api, "GET", "/api/path-token-secret", token="viewer-token")
                 values = repository.list_security_audit(limit=10)
                 self.assertTrue(any(item.outcome == "denied" for item in values))
                 self.assertTrue(any(item.outcome == "allowed" for item in values))
@@ -272,7 +355,7 @@ class ApiSecurityTests(unittest.TestCase):
                 )
             with SQLiteTaskRepository(database) as repository:
                 api = MediaFlowApi(repository, principals=principals())
-                request(api, "GET", "/api/v1/tasks", token="viewer-token")
+                request(api, "GET", "/api/tasks", token="viewer-token")
             output, error = io.StringIO(), io.StringIO()
             self.assertEqual(
                 final_main(
@@ -296,7 +379,7 @@ class WorkerRouteSecurityTests(unittest.TestCase):
                     repository,
                     principals=principals(),
                 )
-                for path in ("/api/v1/workers", "/api/v1/workers/readiness"):
+                for path in ("/api/workers", "/api/workers/readiness"):
                     for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
                         with self.subTest(path=path, method=method):
                             status, _ = request(api, method, path, token=None)
@@ -309,7 +392,7 @@ class WorkerRouteSecurityTests(unittest.TestCase):
                     repository,
                     principals=principals(),
                 )
-                for path in ("/api/v1/workers", "/api/v1/workers/readiness"):
+                for path in ("/api/workers", "/api/workers/readiness"):
                     for method in ("POST", "PUT", "PATCH", "DELETE"):
                         with self.subTest(path=path, method=method):
                             status, _ = request(api, method, path, token="viewer-token")
@@ -333,14 +416,14 @@ class WorkerRouteSecurityTests(unittest.TestCase):
                     repository,
                     principals=principals(),
                 )
-                status, doc = request(api, "GET", "/api/v1/workers", token="viewer-token")
+                status, doc = request(api, "GET", "/api/workers", token="viewer-token")
                 self.assertEqual(status, 200)
                 self.assertEqual(doc["count"], 1)
                 serialized = json.dumps(doc)
                 self.assertIn("cfg-1", serialized)
                 self.assertNotIn("token", serialized.lower())
                 status, readiness = request(
-                    api, "GET", "/api/v1/workers/readiness", token="viewer-token"
+                    api, "GET", "/api/workers/readiness", token="viewer-token"
                 )
                 self.assertEqual(status, 200)
                 self.assertIn("ready", readiness)
@@ -383,9 +466,9 @@ class RetiredAutomationPreviewSecurityTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 api = MediaFlowApi(repository, principals=principals())
                 for method, path, token in (
-                    ("GET", "/api/v1/automation/task-definitions/task/previews", "viewer-token"),
-                    ("POST", "/api/v1/automation/task-definitions/task/preview", "viewer-token"),
-                    ("POST", "/api/v1/automation/task-definitions/task/preview", "operator-token"),
+                    ("GET", "/api/automation/task-definitions/task/previews", "viewer-token"),
+                    ("POST", "/api/automation/task-definitions/task/preview", "viewer-token"),
+                    ("POST", "/api/automation/task-definitions/task/preview", "operator-token"),
                 ):
                     with self.subTest(method=method, path=path, token=token):
                         status, body = request(

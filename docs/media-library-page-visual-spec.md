@@ -4,7 +4,7 @@ Status: CURRENT — accepted50 cards/tree removal/loading, retaining Slice38 bus
 Historical image only (not a current design or acceptance baseline): preserved in Git at
 `f458646d3dac280b118a511c60ec53a5d3075d67:docs/pics/媒体库页.png`.
 Desktop validation size: `1536 x 1024`
-Route: `/ui-v2/medialib/files`
+Route: `/medialib/files`
 Work authority: [SLICE.md](../SLICE.md) / [TASK.md](../TASK.md) under the
 [workflow](development-workflow.md); large-Slice acceptance: [Progress](progress.md).
 The [accepted browse correction](https://github.com/kentinya/mediaflow/blob/53bcc0a3d6e6506bec23dfa92aa35e27cc1864f5/TASK.md#patch-20261113-2--b-pass)

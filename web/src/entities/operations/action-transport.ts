@@ -106,7 +106,7 @@ export function isSafeActionPathSegment(value: string): boolean {
   return isSafeActionSegment(value) || value === ACTION_TEMPLATE_SEGMENT;
 }
 
-const SAFE_ACTION_PREFIX = "/api/v1/";
+const SAFE_ACTION_PREFIX = "/api/";
 const SAFE_ACTION_MAX_LENGTH = 256;
 
 /**

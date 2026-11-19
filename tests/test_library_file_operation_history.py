@@ -150,7 +150,7 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
         suffix = f"?{query}" if query else ""
         return request(
             api,
-            f"/api/v1/{base}/{library_id}/file-operations{suffix}",
+            f"/api/{base}/{library_id}/file-operations{suffix}",
             token=token,
         )
 
@@ -168,19 +168,19 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
         suffix = f"?{query}" if query else ""
         return request(
             api,
-            f"/api/v1/{base}/{library_id}/files/operations/{task_id}{suffix}",
+            f"/api/{base}/{library_id}/files/operations/{task_id}{suffix}",
             token=token,
         )
 
     @staticmethod
     def _origin(api, task_id: str, *, token="admin-token"):
-        return request(api, f"/api/v1/files/operation-origin/{task_id}", token=token)
+        return request(api, f"/api/files/operation-origin/{task_id}", token=token)
 
     @staticmethod
     def _origins(api, kind: str, *, query: str = "", token="admin-token"):
         base = "resource-libraries" if kind == "resource" else "media-libraries"
         suffix = f"?{query}" if query else ""
-        return request(api, f"/api/v1/{base}/operation-origins{suffix}", token=token)
+        return request(api, f"/api/{base}/operation-origins{suffix}", token=token)
 
     def _run_delete(self, case_service, **request_document):
         """Drive one confirmed Delete through the real durable Worker boundary."""
@@ -327,7 +327,7 @@ class LibraryFileOperationHistoryTests(unittest.TestCase):
 
             organize_job_id, _organize_document = admit_organize_job(api)
             self.assertIsNotNone(organize_job_id)
-            code, runs = request(api, "/api/v1/operations/runs?limit=100")
+            code, runs = request(api, "/api/operations/runs?limit=100")
             self.assertEqual(200, code, runs)
             # Task46.4 RO-4: the Task Center population is admitted organizing
             # work only, so the four ordinary file operations stay on their own

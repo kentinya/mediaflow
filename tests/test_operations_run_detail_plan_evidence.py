@@ -7,7 +7,7 @@ A. the **real managed journey** (reusing ``tests.test_v2_manual_organize``'s
    managed snapshot pins, real intent/Preview/execution services, the real
    Worker and a real ``MediaFlowApi`` graph): after the Worker completes a
    Manual Organize execution, ``GET
-   /api/v1/operations/runs/{taskId}/items/{taskItemId}`` publishes
+   /api/operations/runs/{taskId}/items/{taskItemId}`` publishes
    ``planEvidence`` — the durable reviewed plan (RecognitionType C with
    NamingPolicy A / ClassificationPolicy A stays C on every detail read), the
    analysis stages, the destination, the persisted per-step effects and the
@@ -102,7 +102,7 @@ class RunItemPlanEvidenceJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # the outcome document the operator sees and the repository row.
             execution_id = execution["executionId"]
             status, outcome = self._request(
-                value, f"/api/v1/operations/organize/executions/{execution_id}"
+                value, f"/api/operations/organize/executions/{execution_id}"
             )
             self.assertEqual(200, status, outcome)
             self.assertEqual("completed", outcome["status"])
@@ -126,7 +126,7 @@ class RunItemPlanEvidenceJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             mutations_before = list(value.source.mutations) + list(value.target.mutations)
 
             status, evidence = self._request(
-                value, f"/api/v1/operations/runs/{task_id}/items/{task_item_id}"
+                value, f"/api/operations/runs/{task_id}/items/{task_item_id}"
             )
             self.assertEqual(200, status, evidence)
             self.assertEqual(task_id, evidence["task_id"])
@@ -213,7 +213,7 @@ class RunItemPlanEvidenceJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             # Zero additional mutation: the reads above changed nothing.
             status, repeated = self._request(
-                value, f"/api/v1/operations/runs/{task_id}/items/{task_item_id}"
+                value, f"/api/operations/runs/{task_id}/items/{task_item_id}"
             )
             self.assertEqual(200, status)
             self.assertEqual(evidence, repeated)
@@ -246,7 +246,7 @@ class RunItemPlanEvidenceJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             assert durable is not None
             status, evidence = self._request(
                 value,
-                f"/api/v1/operations/runs/{durable.task_id}/items/{durable.items[0].task_item_id}",
+                f"/api/operations/runs/{durable.task_id}/items/{durable.items[0].task_item_id}",
             )
             self.assertEqual(200, status, evidence)
             plan_evidence = evidence["planEvidence"]
@@ -287,7 +287,7 @@ class UnlinkedRunItemPlanEvidenceTests(unittest.TestCase):
         code, evidence, _statuses = request(
             self.api,
             "GET",
-            f"/api/v1/operations/runs/{task_id}/items/item-0",
+            f"/api/operations/runs/{task_id}/items/item-0",
             token=OPERATOR.token,
         )
         self.assertEqual(200, code, evidence)

@@ -14,7 +14,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfi
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
-ROUTE = "/api/v1/operations/rules/inventory"
+ROUTE = "/api/operations/rules/inventory"
 
 
 def request(api, *, token="viewer", method="GET", query=""):

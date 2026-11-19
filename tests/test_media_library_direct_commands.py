@@ -665,7 +665,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertEqual(len(overlap.entries), 3)
             api_overlap = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/delete-impact?"
+                f"/api/media-libraries/{SHARED_ID}/files/delete-impact?"
                 "path=overlap&path=overlap/sub&path=overlap",
             )
             self.assertEqual(api_overlap[0], 200, api_overlap[1])
@@ -850,13 +850,13 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                 self.assertEqual(deleted["status"], "SUCCESS")
                 status, api_evidence = request(
                     api,
-                    f"/api/v1/media-libraries/{SHARED_ID}/files/rename-evidence?path=renamed.txt",
+                    f"/api/media-libraries/{SHARED_ID}/files/rename-evidence?path=renamed.txt",
                 )
                 self.assertEqual(status, 200, api_evidence)
                 self.assertNotIn("fingerprint", api_evidence)
                 status, api_rename = request(
                     api,
-                    f"/api/v1/media-libraries/{SHARED_ID}/files/commands",
+                    f"/api/media-libraries/{SHARED_ID}/files/commands",
                     method="POST",
                     body={
                         "operation": "rename",
@@ -1004,8 +1004,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertEqual(directory_record.error, "directory_changed")
             status = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/deletes/"
-                f"{directory_admission['taskId']}",
+                f"/api/media-libraries/{SHARED_ID}/files/deletes/{directory_admission['taskId']}",
             )
             self.assertEqual(status[0], 200, status[1])
             self.assertEqual(status[1]["outcomes"][0]["errorCategory"], "directory_changed")
@@ -1070,7 +1069,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             vault = root / "target" / "media-vault"
             created = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/commands",
+                f"/api/media-libraries/{SHARED_ID}/files/commands",
                 method="POST",
                 body={"operation": "create_directory", "parentPath": "", "name": "Show"},
             )
@@ -1080,7 +1079,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertEqual(created[1]["sideEffects"], "storage_mutations")
             text = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/commands",
+                f"/api/media-libraries/{SHARED_ID}/files/commands",
                 method="POST",
                 body={
                     "operation": "create_text",
@@ -1092,7 +1091,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertEqual(text[0], 200, text[1])
             read = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/text?path=Show/ep01.srt",
+                f"/api/media-libraries/{SHARED_ID}/files/text?path=Show/ep01.srt",
             )
             self.assertEqual(read[0], 200, read[1])
             self.assertEqual(
@@ -1103,7 +1102,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertEqual(read[1]["sideEffects"], "none")
             evidence = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/rename-evidence?path=Show/ep01.srt",
+                f"/api/media-libraries/{SHARED_ID}/files/rename-evidence?path=Show/ep01.srt",
             )
             self.assertEqual(evidence[0], 200, evidence[1])
             self.assertEqual(
@@ -1123,14 +1122,14 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertNotIn("fingerprint", json.dumps(evidence[1]))
             impact = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/delete-impact?path=Show",
+                f"/api/media-libraries/{SHARED_ID}/files/delete-impact?path=Show",
             )
             self.assertEqual(impact[0], 200, impact[1])
             self.assertEqual(impact[1]["mediaLibraryId"], SHARED_ID)
             self.assertEqual(impact[1]["sideEffects"], "none")
             deleted = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/commands",
+                f"/api/media-libraries/{SHARED_ID}/files/commands",
                 method="POST",
                 body={
                     "operation": "delete",
@@ -1149,7 +1148,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertFalse((vault / "Show").exists())
             status = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/deletes/{deleted[1]['taskId']}",
+                f"/api/media-libraries/{SHARED_ID}/files/deletes/{deleted[1]['taskId']}",
             )
             self.assertEqual(status[0], 200, status[1])
             self.assertEqual(status[1]["status"], "SUCCESS")
@@ -1165,7 +1164,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             # RBAC: the media command surface requires the same execute permission.
             denied = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/commands",
+                f"/api/media-libraries/{SHARED_ID}/files/commands",
                 method="POST",
                 token="viewer-token",
                 body={"operation": "create_directory", "parentPath": "", "name": "Nope"},
@@ -1177,21 +1176,21 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             # request does not).
             anonymous = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/text?path=Show/ep01.srt",
+                f"/api/media-libraries/{SHARED_ID}/files/text?path=Show/ep01.srt",
                 token=None,
             )
             self.assertIn(anonymous[0], {401, 403})
             # Unknown operation and extra fields fail closed before admission.
             bad = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/commands",
+                f"/api/media-libraries/{SHARED_ID}/files/commands",
                 method="POST",
                 body={"operation": "teleport", "parentPath": "", "name": "x"},
             )
             self.assertEqual(bad[0], 400, bad[1])
             extra = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/commands",
+                f"/api/media-libraries/{SHARED_ID}/files/commands",
                 method="POST",
                 body={
                     "operation": "create_directory",
@@ -1206,7 +1205,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             # the media file that was created and deleted above never appears there.
             wrong_namespace = request(
                 api,
-                f"/api/v1/resource-libraries/{SHARED_ID}/files/text?path=Show/ep01.srt",
+                f"/api/resource-libraries/{SHARED_ID}/files/text?path=Show/ep01.srt",
             )
             self.assertEqual(wrong_namespace[0], 404, wrong_namespace[1])
             self.assertEqual(wrong_namespace[1]["error"]["code"], "files_direct_not_found")
@@ -1229,7 +1228,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             ):
                 missing_storage = request(
                     api,
-                    f"/api/v1/media-libraries/{SHARED_ID}/files/commands",
+                    f"/api/media-libraries/{SHARED_ID}/files/commands",
                     method="POST",
                     body={"operation": "create_directory", "parentPath": "", "name": "x"},
                 )
@@ -1241,7 +1240,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertFalse((root / "target" / "media-vault" / "x").exists())
             disabled = request(
                 api,
-                "/api/v1/media-libraries/off/files/commands",
+                "/api/media-libraries/off/files/commands",
                 method="POST",
                 body={"operation": "create_directory", "parentPath": "", "name": "x"},
             )
@@ -1260,7 +1259,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             api, _objects, active, runtime = self._activate(root)
             created = request(
                 api,
-                f"/api/v1/resource-libraries/{SHARED_ID}/files/commands",
+                f"/api/resource-libraries/{SHARED_ID}/files/commands",
                 method="POST",
                 body={"operation": "create_directory", "parentPath": "", "name": "legacy"},
             )
@@ -1277,19 +1276,19 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertEqual(items[0].resource_library_id, SHARED_ID)
             evidence = request(
                 api,
-                f"/api/v1/resource-libraries/{SHARED_ID}/files/rename-evidence?path=legacy",
+                f"/api/resource-libraries/{SHARED_ID}/files/rename-evidence?path=legacy",
             )
             self.assertEqual(evidence[0], 200, evidence[1])
             self.assertEqual(evidence[1]["resourceLibraryId"], SHARED_ID)
             self.assertNotIn("mediaLibraryId", evidence[1])
             impact = request(
                 api,
-                f"/api/v1/resource-libraries/{SHARED_ID}/files/delete-impact?path=legacy",
+                f"/api/resource-libraries/{SHARED_ID}/files/delete-impact?path=legacy",
             )
             self.assertEqual(impact[1]["resourceLibraryId"], SHARED_ID)
             deleted = request(
                 api,
-                f"/api/v1/resource-libraries/{SHARED_ID}/files/commands",
+                f"/api/resource-libraries/{SHARED_ID}/files/commands",
                 method="POST",
                 body={
                     "operation": "delete",
@@ -1338,18 +1337,18 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                 )
                 surfaces = (
                     (
-                        f"/api/v1/media-libraries/{SHARED_ID}/files/commands",
+                        f"/api/media-libraries/{SHARED_ID}/files/commands",
                         "POST",
                         {"operation": "create_directory", "parentPath": "", "name": "x"},
                     ),
-                    (f"/api/v1/media-libraries/{SHARED_ID}/files/text?path=a.txt", "GET", None),
+                    (f"/api/media-libraries/{SHARED_ID}/files/text?path=a.txt", "GET", None),
                     (
-                        f"/api/v1/media-libraries/{SHARED_ID}/files/delete-impact?path=a.txt",
+                        f"/api/media-libraries/{SHARED_ID}/files/delete-impact?path=a.txt",
                         "GET",
                         None,
                     ),
                     (
-                        f"/api/v1/media-libraries/{SHARED_ID}/files/rename-evidence?path=a.txt",
+                        f"/api/media-libraries/{SHARED_ID}/files/rename-evidence?path=a.txt",
                         "GET",
                         None,
                     ),

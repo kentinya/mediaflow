@@ -136,7 +136,7 @@ class PackageExchangeApiTests(unittest.TestCase):
 
     def test_status_exposes_schema_version_and_currentness(self) -> None:
         api, service, _, active = self._bootstrap()
-        status_code, document = request(api, "/api/v1/configuration/packages")
+        status_code, document = request(api, "/api/configuration/packages")
         self.assertEqual(status_code, 200)
         self.assertEqual(document["configurationPackageSchemaVersion"], 1)
         self.assertEqual(document["packageKinds"]["configuration"], CONFIGURATION_PACKAGE_KIND)
@@ -150,7 +150,7 @@ class PackageExchangeApiTests(unittest.TestCase):
         root = Path(self.temporary.name)
 
         # Active export with no Draft.
-        code, active_package = request(api, "/api/v1/configuration/packages/export/configuration")
+        code, active_package = request(api, "/api/configuration/packages/export/configuration")
         self.assertEqual(code, 200)
         self.assertEqual(active_package["source"]["status"], "active")
         self.assertTrue(active_package["currentness"]["sourceIsCurrent"])
@@ -159,7 +159,7 @@ class PackageExchangeApiTests(unittest.TestCase):
         draft = service.import_draft(example_document(root, "draft.jsonl"), actor="tester")
         code, draft_package = request(
             api,
-            "/api/v1/configuration/packages/export/configuration",
+            "/api/configuration/packages/export/configuration",
             query=f"revisionId={draft.revision_id}",
         )
         self.assertEqual(code, 200)
@@ -169,7 +169,7 @@ class PackageExchangeApiTests(unittest.TestCase):
         validated = service.validate(draft.revision_id, actor="tester")
         code, validated_package = request(
             api,
-            "/api/v1/configuration/packages/export/configuration",
+            "/api/configuration/packages/export/configuration",
             query=f"revisionId={validated.revision_id}",
         )
         self.assertEqual(code, 200)
@@ -189,7 +189,7 @@ class PackageExchangeApiTests(unittest.TestCase):
         )
         code, superseded_package = request(
             api,
-            "/api/v1/configuration/packages/export/configuration",
+            "/api/configuration/packages/export/configuration",
             query=f"revisionId={superseded.revision_id}",
         )
         self.assertEqual(code, 200)
@@ -223,7 +223,7 @@ class PackageExchangeApiTests(unittest.TestCase):
         )
         code, package = request(
             api,
-            "/api/v1/configuration/packages/export/configuration",
+            "/api/configuration/packages/export/configuration",
             query=f"revisionId={draft.revision_id}",
         )
         self.assertEqual(code, 200)
@@ -252,12 +252,12 @@ class PackageExchangeApiTests(unittest.TestCase):
 
     def test_import_creates_draft_and_does_not_activate_or_overwrite(self) -> None:
         api, service, _, active = self._bootstrap()
-        code, package = request(api, "/api/v1/configuration/packages/export/configuration")
+        code, package = request(api, "/api/configuration/packages/export/configuration")
         self.assertEqual(code, 200)
 
         code, imported = request(
             api,
-            "/api/v1/configuration/packages",
+            "/api/configuration/packages",
             method="POST",
             body={"package": package},
         )
@@ -271,7 +271,7 @@ class PackageExchangeApiTests(unittest.TestCase):
         # A second import must fail closed; it cannot overwrite the current Draft.
         code, conflict = request(
             api,
-            "/api/v1/configuration/packages",
+            "/api/configuration/packages",
             method="POST",
             body={"package": package},
         )
@@ -293,11 +293,11 @@ class PackageExchangeApiTests(unittest.TestCase):
 
     def test_import_updates_exact_draft_with_explicit_recovery_identity(self) -> None:
         api, service, _, active = self._bootstrap()
-        code, package = request(api, "/api/v1/configuration/packages/export/configuration")
+        code, package = request(api, "/api/configuration/packages/export/configuration")
         self.assertEqual(code, 200)
         code, imported = request(
             api,
-            "/api/v1/configuration/packages",
+            "/api/configuration/packages",
             method="POST",
             body={"package": package},
         )
@@ -314,7 +314,7 @@ class PackageExchangeApiTests(unittest.TestCase):
         changed["packageDigest"] = canonical_digest(changed["payload"])
         code, updated = request(
             api,
-            "/api/v1/configuration/packages",
+            "/api/configuration/packages",
             method="POST",
             body={
                 "package": changed,
@@ -337,13 +337,13 @@ class PackageExchangeApiTests(unittest.TestCase):
 
     def test_stale_package_fails_closed_with_current_active_evidence(self) -> None:
         api, service, _, first = self._bootstrap()
-        code, package = request(api, "/api/v1/configuration/packages/export/configuration")
+        code, package = request(api, "/api/configuration/packages/export/configuration")
         self.assertEqual(code, 200)
         activate(service, example_document(Path(self.temporary.name), "later.jsonl"))
 
         code, stale = request(
             api,
-            "/api/v1/configuration/packages",
+            "/api/configuration/packages",
             method="POST",
             body={"package": package},
         )
@@ -360,13 +360,13 @@ class PackageExchangeApiTests(unittest.TestCase):
 
     def test_invalid_unsupported_digest_and_secret_packages_fail_closed(self) -> None:
         api, service, _, active = self._bootstrap()
-        code, package = request(api, "/api/v1/configuration/packages/export/configuration")
+        code, package = request(api, "/api/configuration/packages/export/configuration")
         self.assertEqual(code, 200)
 
         def attempt(changed, expected_code: str):
             status, response = request(
                 api,
-                "/api/v1/configuration/packages",
+                "/api/configuration/packages",
                 method="POST",
                 body={"package": changed},
             )
@@ -448,7 +448,7 @@ class PackageExchangeApiTests(unittest.TestCase):
 
         code, package = request(
             api,
-            "/api/v1/configuration/packages/export/results",
+            "/api/configuration/packages/export/results",
             query=f"taskId={task.task_id}&limit=2",
         )
         self.assertEqual(code, 200)
@@ -468,7 +468,7 @@ class PackageExchangeApiTests(unittest.TestCase):
 
         code, missing = request(
             api,
-            "/api/v1/configuration/packages/export/results",
+            "/api/configuration/packages/export/results",
             query="taskId=missing",
         )
         self.assertEqual(code, 404)
@@ -516,7 +516,7 @@ class PackageExchangeApiTests(unittest.TestCase):
 
         code, package = request(
             api,
-            "/api/v1/configuration/packages/export/results",
+            "/api/configuration/packages/export/results",
             query=f"taskId={task.task_id}&limit=10",
         )
         self.assertEqual(code, 200)
@@ -537,20 +537,20 @@ class PackageExchangeApiTests(unittest.TestCase):
 
     def test_permissions_audit_and_no_workflow_side_effects(self) -> None:
         api, service, repository, active = self._bootstrap()
-        code, package = request(api, "/api/v1/configuration/packages/export/configuration")
+        code, package = request(api, "/api/configuration/packages/export/configuration")
         self.assertEqual(code, 200)
         before_tasks = len(repository.list_tasks(limit=100))
 
         # Viewer may read/export but cannot import.
         code, _ = request(
             api,
-            "/api/v1/configuration/packages/export/configuration",
+            "/api/configuration/packages/export/configuration",
             token="viewer-token",
         )
         self.assertEqual(code, 200)
         code, denied = request(
             api,
-            "/api/v1/configuration/packages",
+            "/api/configuration/packages",
             method="POST",
             body={"package": package},
             token="viewer-token",
@@ -560,7 +560,7 @@ class PackageExchangeApiTests(unittest.TestCase):
 
         code, imported = request(
             api,
-            "/api/v1/configuration/packages",
+            "/api/configuration/packages",
             method="POST",
             body={"package": package},
         )
@@ -583,14 +583,14 @@ class PackageExchangeRequestContractTests(unittest.TestCase):
             api, service, repository, _ = setup_api(root)
             try:
                 # The Web reads the same package status/currentness surface.
-                code, status_view = request(api, "/api/v1/configuration/packages")
+                code, status_view = request(api, "/api/configuration/packages")
                 self.assertEqual(code, 200)
                 self.assertIsNotNone(status_view["currentActive"]["revisionId"])
 
                 # Web export request shape used by the served client.
                 code, exported = request(
                     api,
-                    "/api/v1/configuration/packages/export/configuration",
+                    "/api/configuration/packages/export/configuration",
                 )
                 self.assertEqual(code, 200)
                 self.assertEqual(
@@ -601,7 +601,7 @@ class PackageExchangeRequestContractTests(unittest.TestCase):
                 # Web import request shape: one supported package object.
                 code, imported = request(
                     api,
-                    "/api/v1/configuration/packages",
+                    "/api/configuration/packages",
                     method="POST",
                     body={"package": exported},
                 )
@@ -615,7 +615,7 @@ class PackageExchangeRequestContractTests(unittest.TestCase):
                 stale["packageSchemaVersion"] = 99
                 code, failed = request(
                     api,
-                    "/api/v1/configuration/packages",
+                    "/api/configuration/packages",
                     method="POST",
                     body={"package": stale},
                 )

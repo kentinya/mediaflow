@@ -79,7 +79,7 @@ class RetiredRemoteExecutionTests(unittest.TestCase):
                 )
                 status, document = request(
                     api,
-                    "/api/v1/tasks",
+                    "/api/tasks",
                     document={"command": "organize", "execute": True, "limit": 1},
                 )
                 self.assertIn(status, (404, 405), document)
@@ -506,7 +506,7 @@ class RetiredRemoteExecutionConfigurationTests(unittest.TestCase):
 
             status, body = request(
                 api,
-                "/api/v1/configuration/drafts",
+                "/api/configuration/drafts",
                 document={"document": submitted},
             )
             self.assertEqual(400, status, body)
@@ -518,13 +518,13 @@ class RetiredRemoteExecutionConfigurationTests(unittest.TestCase):
             # the whole Draft -> validate -> activate lifecycle.
             status, imported = request(
                 api,
-                "/api/v1/configuration/drafts",
+                "/api/configuration/drafts",
                 document={"document": document},
             )
             self.assertEqual(201, status, imported)
             status, refused_edit = request(
                 api,
-                f"/api/v1/configuration/revisions/{imported['revisionId']}",
+                f"/api/configuration/revisions/{imported['revisionId']}",
                 method="PUT",
                 document={"document": submitted, "expectedVersion": imported["version"]},
             )
@@ -533,14 +533,14 @@ class RetiredRemoteExecutionConfigurationTests(unittest.TestCase):
             self.assertEqual(imported["digest"], service.require(imported["revisionId"]).digest)
             status, validated = request(
                 api,
-                f"/api/v1/configuration/revisions/{imported['revisionId']}/validate",
+                f"/api/configuration/revisions/{imported['revisionId']}/validate",
                 document={},
             )
             self.assertEqual(200, status, validated)
             self.assertEqual("validated", validated["status"], validated)
             status, activated = request(
                 api,
-                f"/api/v1/configuration/revisions/{imported['revisionId']}/activate",
+                f"/api/configuration/revisions/{imported['revisionId']}/activate",
                 document={"expectedVersion": validated["version"]},
             )
             self.assertEqual(200, status, activated)
@@ -570,7 +570,7 @@ class RetiredRemoteExecutionConfigurationTests(unittest.TestCase):
 
             status, validated = request(
                 api,
-                f"/api/v1/configuration/revisions/{draft.revision_id}/validate",
+                f"/api/configuration/revisions/{draft.revision_id}/validate",
                 document={},
             )
             self.assertEqual(200, status, validated)
@@ -578,7 +578,7 @@ class RetiredRemoteExecutionConfigurationTests(unittest.TestCase):
             self.assertIn("retired", validated["validationErrors"][0])
             status, refused = request(
                 api,
-                f"/api/v1/configuration/revisions/{draft.revision_id}/activate",
+                f"/api/configuration/revisions/{draft.revision_id}/activate",
                 document={"expectedVersion": validated["version"]},
             )
             self.assertEqual(409, status, refused)

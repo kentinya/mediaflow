@@ -209,7 +209,7 @@ class MediaLibraryApiTests(unittest.TestCase):
                 active = _activate(managed, document)
                 api = _media_library_api(task_repository, managed, document)
 
-                status, listing = _request(api, "/api/v1/media-libraries")
+                status, listing = _request(api, "/api/media-libraries")
                 self.assertEqual(status, 200)
                 self.assertEqual(listing["surface"], "media_libraries")
                 self.assertEqual(listing["sideEffects"], "none")
@@ -227,7 +227,7 @@ class MediaLibraryApiTests(unittest.TestCase):
                 self.assertNotIn("statistics", shared)
                 self.assertEqual(listing["configuration"]["revisionId"], active.revision_id)
 
-                status, files = _request(api, "/api/v1/media-libraries/shared/files")
+                status, files = _request(api, "/api/media-libraries/shared/files")
                 self.assertEqual(status, 200)
                 self.assertEqual(files["surface"], "media_library_files")
                 self.assertEqual(files["mediaLibrary"]["id"], "shared")
@@ -245,32 +245,32 @@ class MediaLibraryApiTests(unittest.TestCase):
 
                 # Library-relative path stays confined to the configured root.
                 status, nested = _request(
-                    api, "/api/v1/media-libraries/shared/files?path=Breaking%20Bad"
+                    api, "/api/media-libraries/shared/files?path=Breaking%20Bad"
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(nested["path"], "Breaking Bad")
                 self.assertEqual(nested["breadcrumbs"][-1]["path"], "Breaking Bad")
 
                 # The disabled library cannot be listed or browsed.
-                status, error = _request(api, "/api/v1/media-libraries/off/files")
+                status, error = _request(api, "/api/media-libraries/off/files")
                 self.assertEqual(status, 404)
                 self.assertEqual(error["error"]["code"], "storage_browser_media_library_not_found")
 
                 status, error = _request(
                     api,
-                    "/api/v1/media-libraries/shared/files?path=../outside",
+                    "/api/media-libraries/shared/files?path=../outside",
                 )
                 self.assertEqual(status, 400)
                 self.assertEqual(error["error"]["code"], "storage_browser_invalid_path")
 
                 status, error = _request(
                     api,
-                    "/api/v1/media-libraries/shared/files",
+                    "/api/media-libraries/shared/files",
                     token=None,
                 )
                 self.assertEqual(status, 401)
 
-                status, error = _request(api, "/api/v1/media-libraries/shared/files", token="wrong")
+                status, error = _request(api, "/api/media-libraries/shared/files", token="wrong")
                 self.assertEqual(status, 401)
 
     def test_cross_kind_cursor_reuse_fails_closed_both_directions(self) -> None:
@@ -296,14 +296,14 @@ class MediaLibraryApiTests(unittest.TestCase):
                 # the same Storage and root: authority must still not cross.
                 status, resource_page = _request(
                     api,
-                    "/api/v1/resource-libraries/shared/files?limit=1",
+                    "/api/resource-libraries/shared/files?limit=1",
                 )
                 self.assertEqual(status, 200)
                 self.assertTrue(resource_page["nextCursor"])
 
                 status, error = _request(
                     api,
-                    "/api/v1/media-libraries/shared/files?limit=1&cursor="
+                    "/api/media-libraries/shared/files?limit=1&cursor="
                     + resource_page["nextCursor"],
                 )
                 self.assertEqual(status, 400)
@@ -311,13 +311,13 @@ class MediaLibraryApiTests(unittest.TestCase):
 
                 status, media_page = _request(
                     api,
-                    "/api/v1/media-libraries/shared/files?limit=1",
+                    "/api/media-libraries/shared/files?limit=1",
                 )
                 self.assertEqual(status, 200)
                 self.assertTrue(media_page["nextCursor"])
                 status, error = _request(
                     api,
-                    "/api/v1/resource-libraries/shared/files?limit=1&cursor="
+                    "/api/resource-libraries/shared/files?limit=1&cursor="
                     + media_page["nextCursor"],
                 )
                 self.assertEqual(status, 400)
@@ -326,7 +326,7 @@ class MediaLibraryApiTests(unittest.TestCase):
                 # A media cursor is bound to its own library, path and limit.
                 status, error = _request(
                     api,
-                    "/api/v1/media-libraries/tv/files?limit=1&cursor=" + media_page["nextCursor"],
+                    "/api/media-libraries/tv/files?limit=1&cursor=" + media_page["nextCursor"],
                 )
                 self.assertEqual(status, 400)
                 self.assertEqual(error["error"]["code"], "storage_browser_cursor_invalid")
@@ -334,8 +334,7 @@ class MediaLibraryApiTests(unittest.TestCase):
                 # The cursor continues correctly on its own authority scope.
                 status, second_page = _request(
                     api,
-                    "/api/v1/media-libraries/shared/files?limit=1&cursor="
-                    + media_page["nextCursor"],
+                    "/api/media-libraries/shared/files?limit=1&cursor=" + media_page["nextCursor"],
                 )
                 self.assertEqual(status, 200)
                 self.assertNotEqual(
@@ -364,12 +363,12 @@ class MediaLibraryApiTests(unittest.TestCase):
                     document,
                     storage_adapters={"storage": storage},
                 )
-                status, _ = _request(api, "/api/v1/media-libraries")
+                status, _ = _request(api, "/api/media-libraries")
                 self.assertEqual(status, 200)
-                status, files = _request(api, "/api/v1/media-libraries/shared/files?limit=5")
+                status, files = _request(api, "/api/media-libraries/shared/files?limit=5")
                 self.assertEqual(status, 200)
                 status, nested = _request(
-                    api, "/api/v1/media-libraries/shared/files?path=Movies&limit=5"
+                    api, "/api/media-libraries/shared/files?path=Movies&limit=5"
                 )
                 self.assertEqual(status, 200)
                 # All Storage access stays read-only and confined; the provider
@@ -398,19 +397,19 @@ class MediaLibraryApiTests(unittest.TestCase):
                 _activate(managed, document)
                 api = _media_library_api(task_repository, managed, document)
 
-                status, error = _request(api, "/api/v1/media-libraries/shared/files?bogus=1")
+                status, error = _request(api, "/api/media-libraries/shared/files?bogus=1")
                 self.assertEqual(status, 400)
 
-                status, error = _request(api, "/api/v1/media-libraries/shared/files?limit=0")
+                status, error = _request(api, "/api/media-libraries/shared/files?limit=0")
                 self.assertEqual(status, 400)
 
                 status, error = _request(
-                    api, "/api/v1/media-libraries/shared/files", token="nonexistent-scope"
+                    api, "/api/media-libraries/shared/files", token="nonexistent-scope"
                 )
                 # Unknown token fails closed as unauthorized.
                 self.assertEqual(status, 401)
 
-                status, _ = _request(api, "/api/v1/media-libraries", token=None)
+                status, _ = _request(api, "/api/media-libraries", token=None)
                 # The list route requires authentication.
                 self.assertEqual(status, 401)
 
@@ -429,7 +428,7 @@ class MediaLibraryApiTests(unittest.TestCase):
                     bootstrap_database_path=str(database),
                 )
                 api = _media_library_api(task_repository, managed, document)
-                status, error = _request(api, "/api/v1/media-libraries/shared/files")
+                status, error = _request(api, "/api/media-libraries/shared/files")
                 self.assertEqual(status, 503)
                 self.assertEqual(error["error"]["code"], "configuration_unavailable")
                 self.assertEqual(error["error"]["details"]["sideEffects"], "none")

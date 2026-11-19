@@ -135,33 +135,33 @@ function definitionDocument(
     actions: {
       detail: action({
         method: "GET",
-        path: `/api/v1/operations/automation/task-definitions/${id}`,
+        path: `/api/operations/automation/task-definitions/${id}`,
       }),
       occurrences: action({
         method: "GET",
-        path: `/api/v1/operations/automation/task-definitions/${id}/occurrences`,
+        path: `/api/operations/automation/task-definitions/${id}/occurrences`,
       }),
       runOnce: action({
         method: "POST",
-        path: `/api/v1/operations/automation/task-definitions/${id}/run-once`,
+        path: `/api/operations/automation/task-definitions/${id}/run-once`,
       }),
       grantState: action({
         method: "GET",
-        path: `/api/v1/automation/task-definitions/${id}/grant-state`,
+        path: `/api/automation/task-definitions/${id}/grant-state`,
       }),
       grant: action({
-        path: `/api/v1/automation/task-definitions/${id}/grant`,
+        path: `/api/automation/task-definitions/${id}/grant`,
         requiresConfirmation: true,
       }),
       revoke: action({
-        path: `/api/v1/automation/task-definitions/${id}/revoke`,
+        path: `/api/automation/task-definitions/${id}/revoke`,
       }),
       copy: action({
         method: "POST",
-        path: `/api/v1/automation/task-definitions/${id}/copy`,
+        path: `/api/automation/task-definitions/${id}/copy`,
       }),
       draftCreate: action({
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
       }),
     },
     ...overrides,
@@ -256,10 +256,10 @@ function listDocument(
     actions: {
       create: action({
         method: "POST",
-        path: "/api/v1/automation/task-definitions",
+        path: "/api/automation/task-definitions",
       }),
       createDraft: action({
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
       }),
     },
   };
@@ -309,8 +309,8 @@ function principalResponse(): Response {
 
 function baseResponder(list = listDocument()) {
   return (call: Call): Response | Promise<Response> | undefined => {
-    if (call.url === "/api/v1/auth/principal") return principalResponse();
-    if (call.url.startsWith("/api/v1/operations/automation/task-definitions?"))
+    if (call.url === "/api/auth/principal") return principalResponse();
+    if (call.url.startsWith("/api/operations/automation/task-definitions?"))
       return jsonResponse(list);
     return undefined;
   };
@@ -318,7 +318,7 @@ function baseResponder(list = listDocument()) {
 
 async function renderConnected() {
   authStore.setToken(TOKEN);
-  const { router } = renderApp("/ui-v2/operations/automation");
+  const { router } = renderApp("/operations/automation");
   const table = await screen.findByRole("table", { name: "自动化任务" });
   return { table: within(table), router };
 }
@@ -639,7 +639,7 @@ describe("Automation list Run once", () => {
       }
       if (
         call.method === "GET" &&
-        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
+        call.url.startsWith("/api/operations/automation/task-definitions?")
       ) {
         listReads += 1;
         return jsonResponse(listDocument());

@@ -1033,13 +1033,13 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(storage.mutations, [])
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/source/files/rename-evidence?path=note.txt",
+                "/api/resource-libraries/source/files/rename-evidence?path=note.txt",
             )
             self.assertEqual(status, 200, body)
             self.assertNotIn("fingerprint", body)
             status, renamed = request(
                 api,
-                "/api/v1/resource-libraries/source/files/commands",
+                "/api/resource-libraries/source/files/commands",
                 method="POST",
                 body={
                     "operation": "rename",
@@ -1994,7 +1994,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(len(overlap.entries), 4)
             api_overlap = request(
                 api,
-                "/api/v1/resource-libraries/source/files/delete-impact?"
+                "/api/resource-libraries/source/files/delete-impact?"
                 "path=season&path=season/ep1&path=season/ep1",
             )
             self.assertEqual(api_overlap[0], 200, api_overlap[1])
@@ -2122,7 +2122,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(len(runtime.list_tasks(command="files_delete")), 1)
             readback = request(
                 api,
-                f"/api/v1/resource-libraries/source/files/deletes/{admitted['taskId']}",
+                f"/api/resource-libraries/source/files/deletes/{admitted['taskId']}",
             )
             self.assertEqual(readback[0], 200, readback[1])
             self.assertEqual(readback[1]["status"], "QUEUED")
@@ -2162,7 +2162,7 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             readback = request(
                 api,
-                f"/api/v1/resource-libraries/source/files/deletes/{request_id}",
+                f"/api/resource-libraries/source/files/deletes/{request_id}",
             )
             self.assertEqual(readback[0], 200, readback[1])
             self.assertEqual(readback[1]["taskId"], request_id)
@@ -2234,7 +2234,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(directory_record.error, "directory_changed")
             status = request(
                 api,
-                f"/api/v1/resource-libraries/source/files/deletes/{directory_admission['taskId']}",
+                f"/api/resource-libraries/source/files/deletes/{directory_admission['taskId']}",
             )
             self.assertEqual(status[0], 200, status[1])
             self.assertEqual(status[1]["outcomes"][0]["errorCategory"], "directory_changed")
@@ -2457,7 +2457,7 @@ class DirectFileOperationsTests(unittest.TestCase):
 
     @staticmethod
     def _inventory_overview(api, task_id: str) -> dict:
-        code, overview = request(api, f"/api/v1/operations/runs/{task_id}", token="viewer-token")
+        code, overview = request(api, f"/api/operations/runs/{task_id}", token="viewer-token")
         if code != 200:
             raise AssertionError(f"overview read failed: {code} {overview}")
         return overview
@@ -2482,7 +2482,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             api, _objects, active, runtime = self._activate(root)
             code, created = request(
                 api,
-                "/api/v1/resource-libraries/source/files/commands",
+                "/api/resource-libraries/source/files/commands",
                 method="POST",
                 body={"operation": "create_directory", "parentPath": "", "name": "collections"},
             )
@@ -2503,7 +2503,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             # by the library-local history/detail reads, and the organizing
             # Task Center never lists it.
             code, page = request(
-                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
+                api, "/api/resource-libraries/source/file-operations", token="viewer-token"
             )
             self.assertEqual(200, code, page)
             self.assertEqual(1, page["total"], page)
@@ -2515,7 +2515,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual("Unified media source/collections", run["targetScope"])
             code, overview = request(
                 api,
-                f"/api/v1/resource-libraries/source/files/operations/{root_task}",
+                f"/api/resource-libraries/source/files/operations/{root_task}",
                 token="viewer-token",
             )
             self.assertEqual(200, code, overview)
@@ -2533,7 +2533,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual("Unified media source/collections", rows[0][0])
             self.assertEqual("Unified media source/collections/2024", rows[0][1])
             code, page = request(
-                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
+                api, "/api/resource-libraries/source/file-operations", token="viewer-token"
             )
             self.assertEqual(200, code, page)
             self.assertEqual(2, page["total"], page)
@@ -2542,7 +2542,7 @@ class DirectFileOperationsTests(unittest.TestCase):
                 {item["taskId"] for item in page["items"]},
             )
             # The organizing Task Center never treats these as its own work.
-            code, inventory = request(api, "/api/v1/operations/runs", token="viewer-token")
+            code, inventory = request(api, "/api/operations/runs", token="viewer-token")
             self.assertEqual(200, code, inventory)
             self.assertEqual(0, inventory["total"], inventory)
             self.assertEqual(2, len(runtime.list_tasks(limit=100)))
@@ -2565,7 +2565,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
             code, found = request(
                 restarted_api,
-                "/api/v1/resource-libraries/source/file-operations",
+                "/api/resource-libraries/source/file-operations",
                 token="viewer-token",
             )
             self.assertEqual(200, code)
@@ -2595,7 +2595,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual("Unified media source", rows[0][0])
             code, found = request(
                 api,
-                "/api/v1/resource-libraries/source/file-operations",
+                "/api/resource-libraries/source/file-operations",
                 token="viewer-token",
             )
             self.assertEqual(200, code)
@@ -2624,7 +2624,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             api, _objects, _active, runtime = self._activate(root)
             code, created = request(
                 api,
-                "/api/v1/media-libraries/movies/files/commands",
+                "/api/media-libraries/movies/files/commands",
                 method="POST",
                 body={"operation": "create_directory", "parentPath": "", "name": "media-folder"},
             )
@@ -2641,7 +2641,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             # Slice46 RO-3/RO-4: this MediaLibrary work belongs to the media
             # library surface and never to the organizing Task Center.
             code, page = request(
-                api, "/api/v1/media-libraries/movies/file-operations", token="viewer-token"
+                api, "/api/media-libraries/movies/file-operations", token="viewer-token"
             )
             self.assertEqual(200, code, page)
             self.assertEqual(1, page["total"], page)
@@ -2649,14 +2649,14 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(task_id, page["items"][0]["taskId"])
             code, overview = request(
                 api,
-                f"/api/v1/media-libraries/movies/files/operations/{task_id}",
+                f"/api/media-libraries/movies/files/operations/{task_id}",
                 token="viewer-token",
             )
             self.assertEqual(200, code)
             self.assertEqual("文件维护", overview["commandLabel"])
             self.assertEqual("Movies", overview["sourceScope"])
             self.assertEqual("Movies/media-folder", overview["targetScope"])
-            code, inventory = request(api, "/api/v1/operations/runs", token="viewer-token")
+            code, inventory = request(api, "/api/operations/runs", token="viewer-token")
             self.assertEqual(0, inventory["total"], inventory)
             self.assertEqual(1, len(runtime.list_tasks(limit=100)))
 
@@ -2688,7 +2688,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual("Unified media source/old-name.nfo", rows[0][0])
             self.assertEqual("Unified media source/new-name.nfo", rows[0][1])
             code, found = request(
-                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
+                api, "/api/resource-libraries/source/file-operations", token="viewer-token"
             )
             self.assertEqual(200, code, found)
             self.assertEqual(1, found["total"], found)
@@ -2709,7 +2709,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual("Unified media source/new-name.nfo", rows[0][0])
             self.assertEqual("Unified media source/new-name.nfo", rows[0][1])
             code, found = request(
-                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
+                api, "/api/resource-libraries/source/file-operations", token="viewer-token"
             )
             self.assertEqual(200, code)
             self.assertEqual(2, found["total"], found)
@@ -2719,7 +2719,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
             code, overview = request(
                 api,
-                f"/api/v1/resource-libraries/source/files/operations/{save_task}",
+                f"/api/resource-libraries/source/files/operations/{save_task}",
                 token="viewer-token",
             )
             self.assertEqual(200, code, overview)
@@ -2761,7 +2761,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertFalse((root / "source" / "trash").exists())
 
             code, found = request(
-                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
+                api, "/api/resource-libraries/source/file-operations", token="viewer-token"
             )
             self.assertEqual(200, code, found)
             self.assertEqual(1, found["total"], found)
@@ -2769,7 +2769,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual("删除", found["items"][0]["commandLabel"])
             code, overview = request(
                 api,
-                f"/api/v1/resource-libraries/source/files/operations/{task_id}",
+                f"/api/resource-libraries/source/files/operations/{task_id}",
                 token="viewer-token",
             )
             self.assertEqual(200, code, overview)
@@ -2803,7 +2803,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
             code, created = request(
                 api,
-                "/api/v1/resource-libraries/source/files/commands",
+                "/api/resource-libraries/source/files/commands",
                 method="POST",
                 body={"operation": "create_directory", "parentPath": "", "name": "collections"},
             )
@@ -2816,19 +2816,19 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             code, overview = request(
                 api,
-                f"/api/v1/resource-libraries/source/files/operations/{task_id}",
+                f"/api/resource-libraries/source/files/operations/{task_id}",
                 token="viewer-token",
             )
             self.assertEqual(200, code, overview)
             # The organizing Task Center never lists ordinary file work at all,
             # so no center list/count/type/search/overview document can leak any
             # part of this durable identity.
-            code, inventory = request(api, "/api/v1/operations/runs", token="viewer-token")
+            code, inventory = request(api, "/api/operations/runs", token="viewer-token")
             self.assertEqual(200, code)
             self.assertEqual(0, inventory["total"], inventory)
             self.assertEqual({}, inventory["status_counts"])
             self.assertEqual(0, inventory["attention_count"])
-            code, missing = request(api, f"/api/v1/operations/runs/{task_id}", token="viewer-token")
+            code, missing = request(api, f"/api/operations/runs/{task_id}", token="viewer-token")
             self.assertEqual(404, code, missing)
             self.assertNotIn("INVENTORYPROBE", json.dumps([inventory, missing]))
 
@@ -2842,7 +2842,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             api, _objects, _active, runtime = self._activate(root)
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/source/files/commands",
+                "/api/resource-libraries/source/files/commands",
                 method="POST",
                 body={"operation": "create_directory", "parentPath": "", "name": "via-api"},
                 token="admin-token",
@@ -2855,7 +2855,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(task.command, "files_direct_command")
             forbidden = request(
                 api,
-                "/api/v1/resource-libraries/source/files/commands",
+                "/api/resource-libraries/source/files/commands",
                 method="POST",
                 body={"operation": "create_directory", "parentPath": "", "name": "denied"},
                 token="viewer-token",
@@ -2865,14 +2865,14 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertFalse((root / "source" / "denied").exists())
             bad = request(
                 api,
-                "/api/v1/resource-libraries/source/files/commands",
+                "/api/resource-libraries/source/files/commands",
                 method="POST",
                 body={"operation": "teleport", "parentPath": "", "name": "x"},
             )
             self.assertEqual(bad[0], 400)
             unknown = request(
                 api,
-                "/api/v1/resource-libraries/missing/files/commands",
+                "/api/resource-libraries/missing/files/commands",
                 method="POST",
                 body={"operation": "create_directory", "parentPath": "", "name": "x"},
             )
@@ -2886,7 +2886,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "doc.txt").write_text("api text", encoding="utf-8")
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/source/files/text?path=doc.txt",
+                "/api/resource-libraries/source/files/text?path=doc.txt",
             )
             self.assertEqual(status, 200, body)
             self.assertEqual(body["content"], "api text")
@@ -2894,14 +2894,14 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertIn("digest", body["evidence"])
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/source/files/delete-impact?path=doc.txt",
+                "/api/resource-libraries/source/files/delete-impact?path=doc.txt",
             )
             self.assertEqual(status, 200, body)
             self.assertEqual(body["fileCount"], 1)
             self.assertTrue(body["scopeDigest"])
             missing = request(
                 api,
-                "/api/v1/resource-libraries/source/files/delete-impact",
+                "/api/resource-libraries/source/files/delete-impact",
             )
             self.assertEqual(missing[0], 400)
 
@@ -2912,12 +2912,12 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "doc.txt").write_text("v1", encoding="utf-8")
             _status, loaded = request(
                 api,
-                "/api/v1/resource-libraries/source/files/text?path=doc.txt",
+                "/api/resource-libraries/source/files/text?path=doc.txt",
             )
             (root / "source" / "doc.txt").write_text("v2", encoding="utf-8")
             stale = request(
                 api,
-                "/api/v1/resource-libraries/source/files/commands",
+                "/api/resource-libraries/source/files/commands",
                 method="POST",
                 body={
                     "operation": "save_text",
@@ -2942,7 +2942,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             source_file.write_text("v1", encoding="utf-8")
             missing_evidence = request(
                 api,
-                "/api/v1/resource-libraries/source/files/commands",
+                "/api/resource-libraries/source/files/commands",
                 method="POST",
                 body={"operation": "rename", "path": "before.txt", "name": "after.txt"},
             )
@@ -2951,13 +2951,13 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertTrue(source_file.exists())
             status, listing = request(
                 api,
-                "/api/v1/resource-libraries/source/files?path=",
+                "/api/resource-libraries/source/files?path=",
             )
             self.assertEqual(status, 200, listing)
             entry = next(item for item in listing["entries"] if item["name"] == "before.txt")
             listing_only = request(
                 api,
-                "/api/v1/resource-libraries/source/files/commands",
+                "/api/resource-libraries/source/files/commands",
                 method="POST",
                 body={
                     "operation": "rename",
@@ -2975,7 +2975,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertFalse((root / "source" / "after.txt").exists())
             status, evidence = request(
                 api,
-                "/api/v1/resource-libraries/source/files/rename-evidence?path=before.txt",
+                "/api/resource-libraries/source/files/rename-evidence?path=before.txt",
             )
             self.assertEqual(status, 200, evidence)
             self.assertEqual(evidence["sideEffects"], "none")
@@ -2989,7 +2989,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(source_file.stat().st_mtime_ns, observed.st_mtime_ns)
             stale = request(
                 api,
-                "/api/v1/resource-libraries/source/files/commands",
+                "/api/resource-libraries/source/files/commands",
                 method="POST",
                 body={
                     "operation": "rename",
@@ -3009,11 +3009,11 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertFalse((root / "source" / "after.txt").exists())
             _status, refreshed = request(
                 api,
-                "/api/v1/resource-libraries/source/files/rename-evidence?path=before.txt",
+                "/api/resource-libraries/source/files/rename-evidence?path=before.txt",
             )
             ok = request(
                 api,
-                "/api/v1/resource-libraries/source/files/commands",
+                "/api/resource-libraries/source/files/commands",
                 method="POST",
                 body={
                     "operation": "rename",
@@ -3033,7 +3033,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             # Fresh evidence for the migrated name is accepted again.
             status, migrated = request(
                 api,
-                "/api/v1/resource-libraries/source/files/rename-evidence?path=after.txt",
+                "/api/resource-libraries/source/files/rename-evidence?path=after.txt",
             )
             self.assertEqual(status, 200, migrated)
             self.assertNotEqual(migrated["evidence"], refreshed["evidence"])
@@ -3048,7 +3048,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "folder").mkdir()
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/source/files/rename-evidence?path=notes.txt",
+                "/api/resource-libraries/source/files/rename-evidence?path=notes.txt",
             )
             self.assertEqual(status, 200, body)
             self.assertEqual(
@@ -3074,18 +3074,18 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertNotIn(str(root), serialized)
             folder = request(
                 api,
-                "/api/v1/resource-libraries/source/files/rename-evidence?path=folder",
+                "/api/resource-libraries/source/files/rename-evidence?path=folder",
             )
             self.assertEqual(folder[0], 200, folder[1])
             self.assertTrue(folder[1]["isDirectory"])
             rejected = request(
                 api,
-                "/api/v1/resource-libraries/source/files/rename-evidence?path=",
+                "/api/resource-libraries/source/files/rename-evidence?path=",
             )
             self.assertEqual(rejected[0], 400)
             unknown = request(
                 api,
-                "/api/v1/resource-libraries/source/files/rename-evidence?path=missing.txt",
+                "/api/resource-libraries/source/files/rename-evidence?path=missing.txt",
             )
             self.assertEqual(unknown[0], 404, unknown[1])
             self.assertEqual(unknown[1]["error"]["code"], "files_direct_not_found")
@@ -3097,7 +3097,7 @@ class DirectFileOperationsTests(unittest.TestCase):
     def _save_library(self, api, library_id: str, *, storage_id: str = "source-storage"):
         status, body = request(
             api,
-            "/api/v1/resource-libraries",
+            "/api/resource-libraries",
             method="POST",
             body={
                 "resourceLibraryId": library_id,
@@ -3116,7 +3116,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             api, _objects, _active, _tasks = self._activate(root)
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/source/removal-preview",
+                "/api/resource-libraries/source/removal-preview",
             )
             self.assertEqual(status, 200, body)
             self.assertEqual(body["resourceLibrary"]["id"], "source")
@@ -3131,12 +3131,12 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "keep.txt").write_text("keep", encoding="utf-8")
             status, preview = request(
                 api,
-                "/api/v1/resource-libraries/source/removal-preview",
+                "/api/resource-libraries/source/removal-preview",
             )
             self.assertEqual(status, 200, preview)
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/source",
+                "/api/resource-libraries/source",
                 method="DELETE",
                 body=_removal_confirmation(preview),
             )
@@ -3146,7 +3146,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertTrue((root / "source" / "keep.txt").exists())
             status, libraries = request(
                 api,
-                "/api/v1/resource-libraries/files",
+                "/api/resource-libraries/files",
             )
             self.assertEqual(status, 200)
             self.assertEqual(libraries["total"], 1)
@@ -3165,12 +3165,12 @@ class DirectFileOperationsTests(unittest.TestCase):
             before = self._tree_bytes(root / "source")
             status, preview = request(
                 api,
-                "/api/v1/resource-libraries/second/removal-preview",
+                "/api/resource-libraries/second/removal-preview",
             )
             self.assertEqual(status, 200, preview)
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/second",
+                "/api/resource-libraries/second",
                 method="DELETE",
                 body=_removal_confirmation(preview),
             )
@@ -3178,10 +3178,10 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(body["removed"]["id"], "second")
             self.assertEqual(body["sideEffects"], "configuration_only")
             self.assertEqual(self._tree_bytes(root / "source"), before)
-            status, libraries = request(api, "/api/v1/resource-libraries/files")
+            status, libraries = request(api, "/api/resource-libraries/files")
             self.assertEqual(status, 200)
             self.assertEqual([item["id"] for item in libraries["items"]], ["source"])
-            status, browse = request(api, "/api/v1/resource-libraries/source/files?path=")
+            status, browse = request(api, "/api/resource-libraries/source/files?path=")
             self.assertEqual(status, 200, browse)
             self.assertEqual(browse["resourceLibrary"]["id"], "source")
 
@@ -3196,22 +3196,22 @@ class DirectFileOperationsTests(unittest.TestCase):
             before = self._tree_bytes(root / "source")
             status, preview = request(
                 api,
-                "/api/v1/resource-libraries/source/removal-preview",
+                "/api/resource-libraries/source/removal-preview",
             )
             self.assertEqual(status, 200, preview)
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/source",
+                "/api/resource-libraries/source",
                 method="DELETE",
                 body=_removal_confirmation(preview),
             )
             self.assertEqual(status, 200, body)
             self.assertEqual(self._tree_bytes(root / "source"), before)
-            status, libraries = request(api, "/api/v1/resource-libraries/files")
+            status, libraries = request(api, "/api/resource-libraries/files")
             self.assertEqual(status, 200)
             self.assertEqual(libraries["items"], [])
             self.assertEqual(libraries["total"], 0)
-            status, browse = request(api, "/api/v1/resource-libraries/source/files?path=")
+            status, browse = request(api, "/api/resource-libraries/source/files?path=")
             self.assertEqual(status, 404)
 
     def test_removal_never_invokes_organizer_executor_or_storage_mutation(self) -> None:
@@ -3226,12 +3226,12 @@ class DirectFileOperationsTests(unittest.TestCase):
             with patch.object(OrganizerExecutor, "execute") as execute:
                 status, preview = request(
                     api,
-                    "/api/v1/resource-libraries/source/removal-preview",
+                    "/api/resource-libraries/source/removal-preview",
                 )
                 self.assertEqual(status, 200, preview)
                 status, body = request(
                     api,
-                    "/api/v1/resource-libraries/source",
+                    "/api/resource-libraries/source",
                     method="DELETE",
                     body=_removal_confirmation(preview),
                 )
@@ -3245,12 +3245,12 @@ class DirectFileOperationsTests(unittest.TestCase):
             api, _objects, _active, _tasks = self._activate(root)
             status, preview = request(
                 api,
-                "/api/v1/resource-libraries/source/removal-preview",
+                "/api/resource-libraries/source/removal-preview",
             )
             self.assertEqual(status, 200, preview)
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/source",
+                "/api/resource-libraries/source",
                 method="DELETE",
                 token="viewer-token",
                 body=_removal_confirmation(preview),
@@ -3265,14 +3265,14 @@ class DirectFileOperationsTests(unittest.TestCase):
             self._save_library(api, "does-not-exist-target")
             status, preview = request(
                 api,
-                "/api/v1/resource-libraries/source/removal-preview",
+                "/api/resource-libraries/source/removal-preview",
             )
             self.assertEqual(status, 200, preview)
             confirmation = _removal_confirmation(preview)
             confirmation["expectedLibraryId"] = "does-not-exist"
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/does-not-exist",
+                "/api/resource-libraries/does-not-exist",
                 method="DELETE",
                 body=confirmation,
             )
@@ -3292,21 +3292,21 @@ class DirectFileOperationsTests(unittest.TestCase):
             self._save_library(api, "third")
             _status, preview = request(
                 api,
-                "/api/v1/resource-libraries/third/removal-preview",
+                "/api/resource-libraries/third/removal-preview",
             )
             stale_confirmation = _removal_confirmation(preview)
             # The Active revision advances after the operator previewed.
             self._save_library(api, "fourth")
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/third",
+                "/api/resource-libraries/third",
                 method="DELETE",
                 body=stale_confirmation,
             )
             self.assertEqual(status, 409, body)
             self.assertEqual(body["error"]["code"], "resource_library_removal_stale")
             self.assertEqual(body["error"]["details"]["durableState"], "active_preserved")
-            status, libraries = request(api, "/api/v1/resource-libraries/files")
+            status, libraries = request(api, "/api/resource-libraries/files")
             self.assertEqual(status, 200)
             self.assertEqual(
                 sorted(item["id"] for item in libraries["items"]),
@@ -3323,19 +3323,19 @@ class DirectFileOperationsTests(unittest.TestCase):
             self._save_library(api, "second")
             _status, preview = request(
                 api,
-                "/api/v1/resource-libraries/second/removal-preview",
+                "/api/resource-libraries/second/removal-preview",
             )
             confirmation = _removal_confirmation(preview)
             confirmation["expectedLibraryId"] = "source"
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/second",
+                "/api/resource-libraries/second",
                 method="DELETE",
                 body=confirmation,
             )
             self.assertEqual(status, 409, body)
             self.assertEqual(body["error"]["code"], "resource_library_removal_stale")
-            status, libraries = request(api, "/api/v1/resource-libraries/files")
+            status, libraries = request(api, "/api/resource-libraries/files")
             self.assertEqual(status, 200)
             self.assertEqual(
                 sorted(item["id"] for item in libraries["items"]),
@@ -3362,13 +3362,13 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
             status, preview = request(
                 api,
-                "/api/v1/resource-libraries/disabled-lib/removal-preview",
+                "/api/resource-libraries/disabled-lib/removal-preview",
             )
             self.assertEqual(status, 200, preview)
             self.assertEqual(preview["resourceLibrary"]["enabled"], False)
             status, body = request(
                 api,
-                "/api/v1/resource-libraries/disabled-lib",
+                "/api/resource-libraries/disabled-lib",
                 method="DELETE",
                 body=_removal_confirmation(preview),
             )
@@ -3379,7 +3379,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             # it and still refuses removal.
             status, preview_again = request(
                 api,
-                "/api/v1/resource-libraries/disabled-lib/removal-preview",
+                "/api/resource-libraries/disabled-lib/removal-preview",
             )
             self.assertEqual(status, 200, preview_again)
             self.assertEqual(preview_again["resourceLibrary"]["enabled"], False)
@@ -3403,12 +3403,12 @@ class DirectFileOperationsTests(unittest.TestCase):
             ):
                 status, body = request(
                     api,
-                    "/api/v1/resource-libraries/second",
+                    "/api/resource-libraries/second",
                     method="DELETE",
                     body=incomplete,
                 )
                 self.assertEqual(status, 400, body)
-            status, libraries = request(api, "/api/v1/resource-libraries/files")
+            status, libraries = request(api, "/api/resource-libraries/files")
             self.assertEqual(status, 200)
             self.assertEqual(
                 sorted(item["id"] for item in libraries["items"]),

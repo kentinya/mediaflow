@@ -5,11 +5,11 @@ configuration, a real ``LocalStorage`` source, a real scanner-produced
 FileIndex record and the real Preview services, and captures the
 exact bounded documents the V2 Operations workspace consumes:
 
-``POST /api/v1/operations/scans``
-``GET  /api/v1/operations/scans/{taskId}``
-``POST /api/v1/operations/previews``
-``GET  /api/v1/operations/previews``
-``GET  /api/v1/operations/previews/{previewId}``
+``POST /api/operations/scans``
+``GET  /api/operations/scans/{taskId}``
+``POST /api/operations/previews``
+``GET  /api/operations/previews``
+``GET  /api/operations/previews/{previewId}``
 
 The captured documents are canonicalized (timestamps, generated identifiers and
 opaque paging cursors) and compared with the checked-in fixture consumed by the
@@ -290,14 +290,14 @@ class ManualOperationsContractTests(unittest.TestCase):
         for method, path, body in (
             (
                 "POST",
-                "/api/v1/operations/previews",
+                "/api/operations/previews",
                 {
                     "scopeKind": "file",
                     "resourceLibraryId": "library",
                     "relativePath": "One.2001.mkv",
                 },
             ),
-            ("GET", "/api/v1/operations/previews?scopeKind=file&scopeId=One.2001.mkv", None),
+            ("GET", "/api/operations/previews?scopeKind=file&scopeId=One.2001.mkv", None),
         ):
             with self.subTest(path=path):
                 status, _ = _request(api, path, method=method, body=body)
@@ -306,7 +306,7 @@ class ManualOperationsContractTests(unittest.TestCase):
         # --- V2 manual Organize: live admission -> exact Preview -> one Execute action ---
         status, organize_intent = _request(
             api,
-            "/api/v1/resource-libraries/library/files/organize",
+            "/api/resource-libraries/library/files/organize",
             method="POST",
             body={"paths": ["One.2001.mkv"]},
         )
@@ -317,7 +317,7 @@ class ManualOperationsContractTests(unittest.TestCase):
         self.assertIsNone(organize_intent["latestPlan"])
         status, organize_intent_choice = _request(
             api,
-            f"/api/v1/operations/organize/intents/{organize_intent['intentId']}"
+            f"/api/operations/organize/intents/{organize_intent['intentId']}"
             f"/items/{intent_item['itemId']}/choice",
             method="POST",
             body={
@@ -332,7 +332,7 @@ class ManualOperationsContractTests(unittest.TestCase):
         self.assertEqual(200, status)
         status, organize_analysis = _request(
             api,
-            f"/api/v1/operations/organize/intents/{organize_intent['intentId']}/previews",
+            f"/api/operations/organize/intents/{organize_intent['intentId']}/previews",
             method="POST",
             body={"expectedVersion": organize_intent_choice["version"]},
         )
@@ -350,13 +350,13 @@ class ManualOperationsContractTests(unittest.TestCase):
                 break
         self.assertIsNotNone(preview_id)
         status, organize_preview_detail = _request(
-            api, f"/api/v1/operations/organize/previews/{preview_id}"
+            api, f"/api/operations/organize/previews/{preview_id}"
         )
         self.assertEqual(200, status)
         # The intent's durable plan association is what a hard reload, return or
         # reconnect re-reads to restore this exact fixed plan on the same page.
         status, organize_intent_with_plan = _request(
-            api, f"/api/v1/operations/organize/intents/{organize_intent['intentId']}"
+            api, f"/api/operations/organize/intents/{organize_intent['intentId']}"
         )
         self.assertEqual(200, status)
         latest_plan = organize_intent_with_plan["latestPlan"]
@@ -376,7 +376,7 @@ class ManualOperationsContractTests(unittest.TestCase):
         }
         status, organize_execution = _request(
             api,
-            f"/api/v1/operations/organize/previews/{organize_preview_detail['previewId']}/execute",
+            f"/api/operations/organize/previews/{organize_preview_detail['previewId']}/execute",
             method="POST",
             body={
                 "confirmation": True,
@@ -390,12 +390,12 @@ class ManualOperationsContractTests(unittest.TestCase):
         self.assertIsNotNone(completed)
         status, organize_execution_detail = _request(
             api,
-            f"/api/v1/operations/organize/executions/{organize_execution['executionId']}",
+            f"/api/operations/organize/executions/{organize_execution['executionId']}",
         )
         self.assertEqual(200, status)
         status, organize_execution_list = _request(
             api,
-            "/api/v1/operations/organize/executions",
+            "/api/operations/organize/executions",
             query=f"previewId={organize_preview_detail['previewId']}",
         )
         self.assertEqual(200, status)
@@ -483,7 +483,7 @@ class ManualOperationsContractTests(unittest.TestCase):
                 with self.subTest(query=query):
                     status, body = _request(
                         value.api,
-                        "/api/v1/operations/manual-actions",
+                        "/api/operations/manual-actions",
                         query=query,
                     )
                     self.assertEqual(404, status, body)

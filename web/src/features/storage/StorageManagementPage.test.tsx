@@ -183,7 +183,7 @@ const SETTLED_SETUP = {
   managedActivation: true,
   recoveryRequired: false,
   health: "HEALTHY",
-  setupPath: "/ui-v2/configuration",
+  setupPath: "/configuration",
 };
 
 function inventoryPayload(items: unknown[]): unknown {
@@ -215,7 +215,7 @@ function inventoryPayload(items: unknown[]): unknown {
   };
 }
 
-const INVENTORY_PATH = "/api/v1/operations/storage-management/inventory";
+const INVENTORY_PATH = "/api/operations/storage-management/inventory";
 
 /**
  * The read a management-only instance with no managed runtime returns: setup
@@ -246,7 +246,7 @@ function setupRequiredInventory(
       managedActivation: false,
       recoveryRequired: false,
       health: "SETUP_REQUIRED",
-      setupPath: "/ui-v2/configuration",
+      setupPath: "/configuration",
     },
     actions: {
       check: {
@@ -333,7 +333,7 @@ function detailPayload(storage: unknown, extra: Record<string, unknown> = {}) {
         reason: null,
         method: "POST",
         path:
-          "/api/v1/operations/storage-management/storage/" +
+          "/api/operations/storage-management/storage/" +
           (storage as { id: string }).id +
           "/check",
         sideEffects: "none",
@@ -397,7 +397,7 @@ describe("Storage management journey", () => {
   it("renders the prescribed header, provider cards and six-column table", async () => {
     stubInventory([STORAGE_LOCAL, STORAGE_R2]);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     expect(
       await screen.findByRole("heading", { name: "存储管理" }),
@@ -491,7 +491,7 @@ describe("Storage management journey", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await screen.findByRole("heading", { name: "存储管理" });
     await screen.findByRole("table");
@@ -598,7 +598,7 @@ describe("Storage management journey", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await screen.findByRole("heading", { name: "存储管理" });
     await screen.findByRole("table");
@@ -672,7 +672,7 @@ describe("Storage management journey", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await screen.findByRole("heading", { name: "存储管理" });
     await screen.findByRole("table");
@@ -715,7 +715,7 @@ describe("Storage management journey", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await screen.findByRole("heading", { name: "存储管理" });
     await screen.findByRole("table");
@@ -739,7 +739,7 @@ describe("Storage management journey", () => {
       if (url.startsWith(INVENTORY_PATH)) {
         return jsonResponse(inventoryPayload([STORAGE_OPENLIST_ROOT]));
       }
-      if (url === "/api/v1/storages/openlist-root/edit") {
+      if (url === "/api/storages/openlist-root/edit") {
         return jsonResponse({
           storage: {
             id: "openlist-root",
@@ -770,7 +770,7 @@ describe("Storage management journey", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await screen.findByRole("heading", { name: "存储管理" });
     await userEvent.click(
@@ -800,18 +800,18 @@ describe("Storage management journey", () => {
               managedActivation: false,
               recoveryRequired: false,
               health: "SETUP_REQUIRED",
-              setupPath: "/ui-v2/configuration",
+              setupPath: "/configuration",
             },
           }),
         ),
       ),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     expect(await screen.findByText(/继续已有的设置草稿/)).toBeVisible();
     expect(screen.getByRole("link", { name: "去完成设置" })).toHaveAttribute(
       "href",
-      "/ui-v2/configuration?returnTo=storage",
+      "/configuration?returnTo=storage",
     );
   });
 
@@ -828,14 +828,14 @@ describe("Storage management journey", () => {
       ),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     expect(await screen.findByText(/没有管理配置的权限/)).toBeVisible();
     // The read-only principal is never shown a control it cannot use, but is
     // still told exactly where the workflow lives.
     expect(screen.queryByRole("link", { name: "去完成设置" })).toBeNull();
     expect(screen.getByRole("link", { name: "查看设置页面" })).toHaveAttribute(
       "href",
-      "/ui-v2/configuration?returnTo=storage",
+      "/configuration?returnTo=storage",
     );
     // No mutation surface is offered to a viewer.
     expect(screen.getByRole("button", { name: "+ 添加存储" })).toBeDisabled();
@@ -856,14 +856,14 @@ describe("Storage management journey", () => {
               managedActivation: true,
               recoveryRequired: true,
               health: "UNAVAILABLE",
-              setupPath: "/ui-v2/configuration",
+              setupPath: "/configuration",
             },
           }),
         ),
       ),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     expect(await screen.findByText("已激活配置暂不可用")).toBeVisible();
     // The state states what did not happen; it never offers to start over.
     expect(screen.getByText(/这不是首次设置/)).toBeVisible();
@@ -883,14 +883,14 @@ describe("Storage management journey", () => {
               managedActivation: true,
               recoveryRequired: false,
               health: "UNAVAILABLE",
-              setupPath: "/ui-v2/configuration",
+              setupPath: "/configuration",
             },
           }),
         ),
       ),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     expect(await screen.findByText("配置快照无法解析")).toBeVisible();
     // The read did not change anything, and the state says so.
     expect(screen.getByText(/已有配置未被本次读取修改/)).toBeVisible();
@@ -905,18 +905,18 @@ describe("Storage management journey", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     const setupLink = await screen.findByRole("link", { name: "去完成设置" });
     expect(setupLink).toHaveAttribute(
       "href",
-      "/ui-v2/configuration?returnTo=storage",
+      "/configuration?returnTo=storage",
     );
     // Re-rendering the recovery state only re-reads the inventory; it never
     // issues a Draft, validation, activation or Storage command.
     await userEvent.click(screen.getByRole("button", { name: "刷新" }));
     await waitFor(() => {
       expect(
-        calls.filter(([url]) => url.startsWith("/api/v1/storages")),
+        calls.filter(([url]) => url.startsWith("/api/storages")),
       ).toHaveLength(0);
     });
     for (const [url, init] of calls) {
@@ -949,7 +949,7 @@ describe("Storage management journey", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await screen.findByRole("heading", { name: "存储管理" });
     await userEvent.click(
@@ -988,21 +988,21 @@ describe("Storage management journey", () => {
       vi.fn(async () => jsonResponse(setupRequiredInventory())),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     expect(await screen.findByText("尚未完成首次设置")).toBeVisible();
     // The recovery handoff the empty state previously lacked: one explicit
     // action that continues the existing V1 setup workflow.
     const setupLink = screen.getByRole("link", { name: "去完成设置" });
     expect(setupLink).toHaveAttribute(
       "href",
-      "/ui-v2/configuration?returnTo=storage",
+      "/configuration?returnTo=storage",
     );
   });
 
   it("distinguishes a healthy empty inventory from the setup state", async () => {
     stubInventory([]);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     expect(await screen.findByText("没有匹配的存储")).toBeVisible();
     expect(screen.queryByText("尚未完成首次设置")).toBeNull();
   });
@@ -1010,7 +1010,7 @@ describe("Storage management journey", () => {
   it("surfaces a failed check with an actionable, secret-free recovery", async () => {
     const fetchMock = stubInventory([STORAGE_LOCAL]);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     await screen.findByRole("heading", { name: "存储管理" });
     fetchMock.mockImplementation(async (input: string) => {
       const url = String(input);
@@ -1051,7 +1051,7 @@ describe("Storage management journey", () => {
   it("keeps narrow-screen and keyboard operation reachable", async () => {
     stubInventory([STORAGE_LOCAL]);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await screen.findByRole("heading", { name: "存储管理" });
     // The search input, filter cards, table and 查看 action are all keyboard
@@ -1206,7 +1206,7 @@ function errorPayload(code: string, details: Record<string, unknown> = {}) {
 }
 
 /**
- * Serve the workspace reads plus the `/api/v1/storages*` command surface.
+ * Serve the workspace reads plus the `/api/storages*` command surface.
  * `onSave` answers one POST/PUT with a [status, payload] pair.
  */
 function stubWorkspace(options: {
@@ -1223,19 +1223,19 @@ function stubWorkspace(options: {
   const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
-    if (url === "/api/v1/storages" && method === "GET") {
+    if (url === "/api/storages" && method === "GET") {
       return jsonResponse({
         active: options.authority ?? SMB_EDIT_PROJECTION.active,
         sideEffects: "none",
       });
     }
-    if (url.startsWith("/api/v1/storages/") && url.endsWith("/edit")) {
+    if (url.startsWith("/api/storages/") && url.endsWith("/edit")) {
       if (options.editProjection === null) {
         return jsonResponse(errorPayload("storage_not_found"), 404);
       }
       return jsonResponse(options.editProjection ?? SMB_EDIT_PROJECTION);
     }
-    if (url === "/api/v1/storages" || url.startsWith("/api/v1/storages/")) {
+    if (url === "/api/storages" || url.startsWith("/api/storages/")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<
         string,
         unknown
@@ -1265,7 +1265,7 @@ describe("Storage lifecycle actions", () => {
   it("exposes read-check from More and dismisses menu and copy with Escape", async () => {
     const fetchMock = stubWorkspace({ items: [STORAGE_LOCAL] });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     const invoker = await screen.findByLabelText("更多操作 Local source");
     await userEvent.click(invoker);
@@ -1313,7 +1313,7 @@ describe("Storage lifecycle actions", () => {
     expect(
       fetchMock.mock.calls.filter(
         ([url, init]) =>
-          String(url).endsWith("/api/v1/storages") &&
+          String(url).endsWith("/api/storages") &&
           (init as RequestInit | undefined)?.method === "POST",
       ),
     ).toHaveLength(0);
@@ -1335,7 +1335,7 @@ describe("Storage lifecycle actions", () => {
       ],
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     await userEvent.click(await screen.findByLabelText("更多操作 R2 media"));
     await userEvent.click(screen.getByRole("menuitem", { name: "复制" }));
     const copy = await screen.findByRole("dialog", { name: "复制存储" });
@@ -1374,7 +1374,7 @@ describe("Storage lifecycle actions", () => {
       },
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     await userEvent.click(await screen.findByLabelText("更多操作 R2 media"));
     await userEvent.click(screen.getByRole("menuitem", { name: "复制" }));
     const copy = await screen.findByRole("dialog", { name: "复制存储" });
@@ -1437,7 +1437,7 @@ describe("Storage lifecycle actions", () => {
       ],
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     await userEvent.click(await screen.findByLabelText("更多操作 Spare"));
     await userEvent.click(screen.getByRole("menuitem", { name: "复制" }));
     const copy = await screen.findByRole("dialog", { name: "复制存储" });
@@ -1474,7 +1474,7 @@ describe("Storage lifecycle actions", () => {
       },
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await userEvent.click(await screen.findByLabelText("更多操作 R2 media"));
     await userEvent.click(screen.getByRole("menuitem", { name: "移除配置" }));
@@ -1486,7 +1486,7 @@ describe("Storage lifecycle actions", () => {
     expect(
       fetchMock.mock.calls.some(
         ([url, init]) =>
-          String(url).endsWith("/api/v1/storages/r2-media") &&
+          String(url).endsWith("/api/storages/r2-media") &&
           (init as RequestInit | undefined)?.method === "DELETE",
       ),
     ).toBe(false);
@@ -1521,7 +1521,7 @@ describe("Storage lifecycle actions", () => {
       },
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await userEvent.click(await screen.findByLabelText("更多操作 R2 media"));
     await userEvent.click(screen.getByRole("menuitem", { name: "移除配置" }));
@@ -1533,7 +1533,7 @@ describe("Storage lifecycle actions", () => {
     expect(
       fetchMock.mock.calls.filter(
         ([url, init]) =>
-          String(url).endsWith("/api/v1/storages/r2-media") &&
+          String(url).endsWith("/api/storages/r2-media") &&
           (init as RequestInit | undefined)?.method === "DELETE",
       ),
     ).toHaveLength(1);
@@ -1547,7 +1547,7 @@ function commandCalls(
   return (fetchMock.mock.calls as unknown as [string, RequestInit][])
     .filter(
       ([url, init]) =>
-        String(url).startsWith("/api/v1/storages") && init?.method === method,
+        String(url).startsWith("/api/storages") && init?.method === method,
     )
     .map(([, init]) => JSON.parse(String(init.body ?? "{}")));
 }
@@ -1597,7 +1597,7 @@ describe("Storage Add/Edit drawer", () => {
   it("stays closed on normal entry and opens step 1 on explicit Add", async () => {
     stubWorkspace({});
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     await screen.findByRole("heading", { name: "存储管理" });
     expect(screen.queryByRole("dialog", { name: "添加存储" })).toBeNull();
 
@@ -1626,7 +1626,7 @@ describe("Storage Add/Edit drawer", () => {
   it("keeps inventory context and restores focus to the invoker on Cancel", async () => {
     const fetchMock = stubWorkspace({});
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     const form = within(await openAddDrawer());
     // The inventory stays visible as context beside the drawer.
     expect(screen.getByRole("table")).toBeVisible();
@@ -1644,7 +1644,7 @@ describe("Storage Add/Edit drawer", () => {
   it("closes on Escape without submitting a candidate", async () => {
     const fetchMock = stubWorkspace({});
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     const form = within(await openAddDrawer());
     await userEvent.type(form.getByLabelText("名称 *"), "半成品");
     await userEvent.keyboard("{Escape}");
@@ -1661,7 +1661,7 @@ describe("Storage Add/Edit drawer", () => {
       onSave: () => deferred.result,
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     const form = within(await openAddDrawer());
     await fillLocalAdd(form, "pending-add");
     await userEvent.click(form.getByRole("button", { name: "保存" }));
@@ -1692,7 +1692,7 @@ describe("Storage Add/Edit drawer", () => {
       onSave: () => deferred.result,
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     await userEvent.click(
       await screen.findByRole("button", { name: "编辑 NAS 媒体" }),
     );
@@ -1737,7 +1737,7 @@ describe("Storage Add/Edit drawer", () => {
       onSave: () => deferred.result,
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     const form = within(await openAddDrawer());
     await fillLocalAdd(form, "unknown-backdrop");
     await userEvent.click(form.getByRole("button", { name: "保存" }));
@@ -1757,7 +1757,7 @@ describe("Storage Add/Edit drawer", () => {
   it("blocks an invalid step instead of advancing", async () => {
     stubWorkspace({});
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     const form = within(await openAddDrawer());
     await userEvent.click(form.getByRole("button", { name: "下一步" }));
     expect(await form.findByText("请输入存储名称")).toBeVisible();
@@ -1774,7 +1774,7 @@ describe("Storage Add/Edit drawer", () => {
   it("prefills Edit from one exact Active object and preserves unexposed options", async () => {
     const fetchMock = stubWorkspace({});
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     await userEvent.click(
       await screen.findByRole("button", { name: "编辑 NAS 媒体" }),
     );
@@ -1834,7 +1834,7 @@ describe("Storage Add/Edit drawer", () => {
     // actionable recovery before Save, not a silent failure afterwards.
     expect(
       (fetchMock.mock.calls as unknown as [string][]).some(([url]) =>
-        String(url).endsWith("/api/v1/storages/nas-media/edit"),
+        String(url).endsWith("/api/storages/nas-media/edit"),
       ),
     ).toBe(true);
     // Only SMB-valid options travel; the unexposed option is preserved by
@@ -1860,7 +1860,7 @@ describe("Storage Add/Edit drawer", () => {
       ],
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     const drawer = await openAddDrawer();
     const form = within(drawer);
     await fillLocalAdd(form, "taken-id");
@@ -1880,7 +1880,7 @@ describe("Storage Add/Edit drawer", () => {
       onSave: () => [500, errorPayload("internal_error", {})],
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     const form = within(await openAddDrawer());
     await fillLocalAdd(form, "unknown-1");
     await userEvent.click(form.getByRole("button", { name: "保存" }));
@@ -1907,7 +1907,7 @@ describe("Storage Add/Edit drawer", () => {
       onSave: () => [500, errorPayload("internal_error")],
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     const form = within(await openAddDrawer());
     await fillLocalAdd(form, "verify-failed");
     await userEvent.click(form.getByRole("button", { name: "保存" }));
@@ -1961,7 +1961,7 @@ describe("Storage Add/Edit drawer", () => {
     async (status, payload, pattern) => {
       stubWorkspace({ onSave: () => [status, payload] });
       authStore.setToken(TOKEN);
-      renderApp("/ui-v2/storage");
+      renderApp("/storage");
       const form = within(await openAddDrawer());
       await fillLocalAdd(form, `case-${status}`);
       await userEvent.click(form.getByRole("button", { name: "保存" }));
@@ -1980,7 +1980,7 @@ describe("Storage Add/Edit drawer", () => {
   it("keeps a failed Edit projection inside the card with a real next step", async () => {
     const fetchMock = stubWorkspace({ editProjection: null });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     await userEvent.click(
       await screen.findByRole("button", { name: "编辑 NAS 媒体" }),
     );
@@ -2003,7 +2003,7 @@ describe("Storage Add/Edit drawer", () => {
   it("hides mutation intent behind a truthful disabled state for a viewer", async () => {
     stubWorkspace({ canManage: false });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     await screen.findByRole("heading", { name: "存储管理" });
     const addButton = screen.getByRole("button", { name: "+ 添加存储" });
     expect(addButton).toBeDisabled();
@@ -2018,7 +2018,7 @@ describe("Storage Add/Edit drawer", () => {
   it("keeps Add/Edit reachable by keyboard in a narrow layout", async () => {
     stubWorkspace({});
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     await screen.findByRole("heading", { name: "存储管理" });
     const editButton = screen.getByRole("button", { name: "编辑 NAS 媒体" });
     expect(editButton.tagName).toBe("BUTTON");
@@ -2061,7 +2061,7 @@ describe("Storage centered cards and More menu", () => {
       }),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await userEvent.click(
       await screen.findByRole("button", { name: "查看 Local source" }),
@@ -2098,7 +2098,7 @@ describe("Storage centered cards and More menu", () => {
       vi.fn(async (input: string, init?: RequestInit) => {
         const url = String(input);
         const method = (init?.method ?? "GET").toUpperCase();
-        if (url === "/api/v1/storages" && method === "GET") return authority;
+        if (url === "/api/storages" && method === "GET") return authority;
         if (url.startsWith(INVENTORY_PATH)) {
           return jsonResponse(commandInventoryPayload([STORAGE_LOCAL]));
         }
@@ -2106,7 +2106,7 @@ describe("Storage centered cards and More menu", () => {
       }),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await userEvent.click(
       await screen.findByRole("button", { name: "+ 添加存储" }),
@@ -2175,7 +2175,7 @@ describe("Storage centered cards and More menu", () => {
       }),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await userEvent.click(
       await screen.findByRole("button", { name: "编辑 NAS 媒体" }),
@@ -2217,7 +2217,7 @@ describe("Storage centered cards and More menu", () => {
   it("focuses the first More item and returns to the row entry on Escape", async () => {
     stubWorkspace({ items: [STORAGE_LOCAL] });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     const invoker = await screen.findByLabelText("更多操作 Local source");
     await userEvent.click(invoker);
@@ -2241,7 +2241,7 @@ describe("Storage centered cards and More menu", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     const invoker = await screen.findByRole("button", {
       name: "查看 Local source",
@@ -2280,7 +2280,7 @@ describe("Storage centered cards and More menu", () => {
   it("closes the Add card through the shared exit on cancel without any command", async () => {
     const fetchMock = stubWorkspace({});
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     const form = within(await openAddDrawer());
     await userEvent.type(form.getByLabelText("名称 *"), "退出中的草稿");
 
@@ -2312,7 +2312,7 @@ describe("Storage centered cards and More menu", () => {
       onSave: () => deferred.result,
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
     const form = within(await openAddDrawer());
     await fillLocalAdd(form, "exit-save");
     await userEvent.click(form.getByRole("button", { name: "保存" }));
@@ -2358,7 +2358,7 @@ describe("Storage centered cards and More menu", () => {
       vi.fn().mockReturnValue({ matches: true } as MediaQueryList),
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     const invoker = await screen.findByRole("button", {
       name: "查看 Local source",
@@ -2386,14 +2386,14 @@ describe("Storage More command boundary", () => {
     const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
-      if (url === "/api/v1/storages" && method === "GET") {
+      if (url === "/api/storages" && method === "GET") {
         return jsonResponse({
           active: SMB_EDIT_PROJECTION.active,
           sideEffects: "none",
         });
       }
       if (
-        url.endsWith("/api/v1/storages/local-source/disable") &&
+        url.endsWith("/api/storages/local-source/disable") &&
         method === "POST"
       ) {
         return toggle;
@@ -2405,7 +2405,7 @@ describe("Storage More command boundary", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/storage");
+    renderApp("/storage");
 
     await userEvent.click(
       await screen.findByLabelText("更多操作 Local source"),
@@ -2423,7 +2423,7 @@ describe("Storage More command boundary", () => {
     expect(
       (fetchMock.mock.calls as unknown as [string, RequestInit][]).filter(
         ([url, init]) =>
-          String(url).endsWith("/api/v1/storages/local-source/disable") &&
+          String(url).endsWith("/api/storages/local-source/disable") &&
           init?.method === "POST",
       ),
     ).toHaveLength(1);

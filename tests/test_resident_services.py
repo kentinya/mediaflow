@@ -711,7 +711,7 @@ class ManagementReadinessInfrastructureTests(ResidentDeploymentFixture):
         """
 
         api = self._api()
-        status, readiness = self._request(api, "/api/v1/management/readiness")
+        status, readiness = self._request(api, "/api/management/readiness")
         self.assertEqual(status, 200)
         self.assertFalse(readiness["runtimeConfigured"])
         self.assertTrue(readiness["managementReady"])
@@ -732,7 +732,7 @@ class ManagementReadinessInfrastructureTests(ResidentDeploymentFixture):
             waiting_detail="no valid Active configuration is published",
         )
         api = self._api(runtime.service)
-        status, readiness = self._request(api, "/api/v1/management/readiness")
+        status, readiness = self._request(api, "/api/management/readiness")
         self.assertEqual(status, 200)
         scheduler = readiness["infrastructure"]["services"]["scheduler"]
         self.assertTrue(scheduler["ready"])
@@ -771,7 +771,7 @@ class ManagementReadinessInfrastructureTests(ResidentDeploymentFixture):
                 raise OSError("database file is not readable")
 
         api = self._api(Failing())
-        status, readiness = self._request(api, "/api/v1/management/readiness")
+        status, readiness = self._request(api, "/api/management/readiness")
         self.assertEqual(status, 200)
         infrastructure = readiness["infrastructure"]
         self.assertFalse(infrastructure["available"])
@@ -785,7 +785,7 @@ class ManagementReadinessInfrastructureTests(ResidentDeploymentFixture):
         api = self._api(resident=None)
         # Replace the auto-built service with an explicit absence.
         api._resident_services = None
-        status, readiness = self._request(api, "/api/v1/management/readiness")
+        status, readiness = self._request(api, "/api/management/readiness")
         self.assertEqual(status, 200)
         infrastructure = readiness["infrastructure"]
         self.assertFalse(infrastructure["available"])

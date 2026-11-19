@@ -26,7 +26,7 @@ def request(api, query=""):
     statuses = []
     environ = {
         "REQUEST_METHOD": "GET",
-        "PATH_INFO": "/api/v1/logs",
+        "PATH_INFO": "/api/logs",
         "QUERY_STRING": query,
         "CONTENT_LENGTH": "0",
         "REMOTE_ADDR": "127.0.0.1",

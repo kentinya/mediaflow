@@ -43,7 +43,7 @@ def request(api, method="GET", query="", token="viewer-token"):
     statuses = []
     environ = {
         "REQUEST_METHOD": method,
-        "PATH_INFO": "/api/v1/system/status",
+        "PATH_INFO": "/api/system/status",
         "QUERY_STRING": query,
         "CONTENT_LENGTH": "0",
         "REMOTE_ADDR": "127.0.0.1",

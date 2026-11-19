@@ -421,7 +421,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
     def _save_recognition_decision_and_continue(self, value, task_id, item_id):
         """The real Task Center recovery chain over the live API routes."""
 
-        route = f"/api/v1/tasks/{task_id}/items/{item_id}/recovery"
+        route = f"/api/tasks/{task_id}/items/{item_id}/recovery"
         status, detail = self.request(value, "GET", route)
         self.assertEqual(200, status, detail)
         self.assertEqual("business_problem", detail["recoveryKind"])
@@ -446,14 +446,14 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
 
     def _confirm_ready_subset(self, value, task_id, item_id, *, actor_token=ADMIN_TOKEN):
         status, detail = self.request(
-            value, "GET", f"/api/v1/tasks/{task_id}/items/{item_id}/recovery"
+            value, "GET", f"/api/tasks/{task_id}/items/{item_id}/recovery"
         )
         self.assertEqual(200, status, detail)
         preparation = detail["manualRecoveryPreparation"]
         self.assertIsNotNone(preparation, detail)
         self.assertEqual("prepared", preparation["status"])
         status, preview = self.request(
-            value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+            value, "GET", f"/api/operations/organize/previews/{preparation['preview_id']}"
         )
         self.assertEqual(200, status, preview)
         ready = [entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"]
@@ -461,7 +461,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         status, confirmed = self.request(
             value,
             "POST",
-            f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+            f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
             {
                 "preparationId": preparation["preparation_id"],
                 "itemIds": ready,
@@ -523,7 +523,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             status, repeat = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task.task_id}/items/{item.item_id}/recovery/continue",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/continue",
                 {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
             )
             self.assertEqual(409, status, repeat)
@@ -540,7 +540,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             self.assertTrue((value.source_root / "One.2001.mkv").exists())
 
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task.task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             preparation = detail["manualRecoveryPreparation"]
@@ -554,13 +554,13 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             status, preview = self.request(
                 value,
                 "GET",
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}",
+                f"/api/operations/organize/previews/{preparation['preview_id']}",
             )
             self.assertEqual(200, status, preview)
             status, refused = self.request(
                 value,
                 "POST",
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
                 {
                     "preparationId": preparation["preparation_id"],
                     "itemIds": ["any"],
@@ -598,7 +598,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             # The original execution facts survive the reload; the confirmed
             # summary reads back with its linked execution.
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task.task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             confirmed_summary = detail["manualRecoveryPreparation"]

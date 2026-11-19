@@ -153,7 +153,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             local_root.mkdir()
             status, saved_storage = request(
                 api,
-                "/api/v1/storages",
+                "/api/storages",
                 method="POST",
                 body={
                     "storageId": "media",
@@ -172,7 +172,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             after_storage = service.active()
             status, saved_library = request(
                 api,
-                "/api/v1/media-libraries",
+                "/api/media-libraries",
                 method="POST",
                 body={
                     "mediaLibraryId": "movies",
@@ -323,7 +323,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
     def _save_media_library(self, api, media_library_id: str, *, enabled: bool = True):
         status, body = request(
             api,
-            "/api/v1/media-libraries",
+            "/api/media-libraries",
             method="POST",
             body=self._save_body(mediaLibraryId=media_library_id, enabled=enabled),
         )
@@ -336,7 +336,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _repository, service, _objects, _active, _runtime, api = self._active_api(root)
-            status, projection = request(api, "/api/v1/media-libraries/movies/edit")
+            status, projection = request(api, "/api/media-libraries/movies/edit")
             self.assertEqual(status, 200, projection)
             expected = projection["active"]
             self.assertEqual(
@@ -353,13 +353,13 @@ class MediaLibraryActivationTests(unittest.TestCase):
                 "expectedVersion": expected["version"],
                 "expectedDigest": expected["digest"],
             }
-            status, edited = request(api, "/api/v1/media-libraries/movies", method="PUT", body=body)
+            status, edited = request(api, "/api/media-libraries/movies", method="PUT", body=body)
             self.assertEqual(status, 200, edited)
             self.assertEqual(edited["mediaLibrary"]["name"], "Edited Movies")
             self.assertEqual(service.active().document["mediaLibraries"][0]["id"], "movies")
             stale_status, stale = request(
                 api,
-                "/api/v1/media-libraries/movies",
+                "/api/media-libraries/movies",
                 method="PUT",
                 body={**body, "name": "Stale overwrite"},
             )
@@ -377,13 +377,13 @@ class MediaLibraryActivationTests(unittest.TestCase):
                 self._save_media_library(api, library_id)
             active = service.active()
             self.assertNotEqual(active.version, active.revision_sequence)
-            status, projection = request(api, "/api/v1/media-libraries/movies/edit")
+            status, projection = request(api, "/api/media-libraries/movies/edit")
             self.assertEqual(status, 200, projection)
             self.assertEqual(projection["active"]["revisionSequence"], active.revision_sequence)
             self.assertTrue(all(item["enabled"] for item in projection["storages"]))
             status, edited = request(
                 api,
-                "/api/v1/media-libraries/movies",
+                "/api/media-libraries/movies",
                 method="PUT",
                 body={
                     "mediaLibraryId": "movies",
@@ -411,7 +411,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             configuration_repository, service, _objects, active, _runtime, api = values
             status, response = request(
                 api,
-                "/api/v1/media-libraries",
+                "/api/media-libraries",
                 method="POST",
                 body=self._save_body(),
             )
@@ -435,7 +435,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             )
             browse_status, browse = request(
                 api,
-                "/api/v1/media-libraries/archive/files",
+                "/api/media-libraries/archive/files",
                 token="admin-token",
             )
             self.assertEqual(browse_status, 200, browse)
@@ -475,7 +475,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/media-libraries",
+                    "/api/media-libraries",
                     method="POST",
                     body=body,
                 )
@@ -505,7 +505,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             )
             status, response = request(
                 api,
-                "/api/v1/media-libraries",
+                "/api/media-libraries",
                 method="POST",
                 body=self._save_body(),
             )
@@ -527,7 +527,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             )
             status, response = request(
                 api,
-                "/api/v1/media-libraries",
+                "/api/media-libraries",
                 method="POST",
                 body=self._save_body(storageId="disabled-storage"),
             )
@@ -542,7 +542,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             _repository, service, _objects, active, _runtime, api = self._active_api(root)
             status, response = request(
                 api,
-                "/api/v1/media-libraries",
+                "/api/media-libraries",
                 method="POST",
                 body=self._save_body(enabled=False),
             )
@@ -557,7 +557,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             self.assertFalse(saved["enabled"])
             browse_status, browse = request(
                 api,
-                "/api/v1/media-libraries/archive/files",
+                "/api/media-libraries/archive/files",
                 token="admin-token",
             )
             self.assertIn(browse_status, {403, 404, 409})
@@ -586,7 +586,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
                 )
                 status, response = request(
                     api,
-                    "/api/v1/media-libraries",
+                    "/api/media-libraries",
                     method="POST",
                     body=self._save_body(),
                     token=f"limited-token-{index}",
@@ -620,7 +620,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/media-libraries",
+                    "/api/media-libraries",
                     method="POST",
                     body=self._save_body(mediaLibraryId="race-library"),
                 )
@@ -662,7 +662,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/media-libraries",
+                    "/api/media-libraries",
                     method="POST",
                     body=self._save_body(mediaLibraryId="runtime-failure"),
                 )
@@ -701,7 +701,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/media-libraries",
+                    "/api/media-libraries",
                     method="POST",
                     body=self._save_body(mediaLibraryId="create-failure"),
                 )
@@ -717,7 +717,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/media-libraries",
+                    "/api/media-libraries",
                     method="POST",
                     body=self._save_body(mediaLibraryId="validate-failure"),
                 )
@@ -728,7 +728,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             with patch.object(service, "validate", return_value=active):
                 status, response = request(
                     api,
-                    "/api/v1/media-libraries",
+                    "/api/media-libraries",
                     method="POST",
                     body=self._save_body(mediaLibraryId="invalid-status"),
                 )
@@ -743,7 +743,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/media-libraries",
+                    "/api/media-libraries",
                     method="POST",
                     body=self._save_body(mediaLibraryId="activation-failure"),
                 )
@@ -791,7 +791,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             with provider_factory, task_create, organizer_execute, scanner:
                 status, response = request(
                     api,
-                    "/api/v1/media-libraries",
+                    "/api/media-libraries",
                     method="POST",
                     body=self._save_body(mediaLibraryId="side-effect-free"),
                 )
@@ -814,7 +814,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             _repository, _service, _objects, _active, _runtime, api = self._active_api(root)
             status, body = request(
                 api,
-                "/api/v1/media-libraries/movies/removal-preview",
+                "/api/media-libraries/movies/removal-preview",
             )
             self.assertEqual(status, 200, body)
             self.assertEqual(body["mediaLibrary"]["id"], "movies")
@@ -828,12 +828,12 @@ class MediaLibraryActivationTests(unittest.TestCase):
             _repository, service, _objects, active, _runtime, api = self._active_api(root)
             status, preview = request(
                 api,
-                "/api/v1/media-libraries/movies/removal-preview",
+                "/api/media-libraries/movies/removal-preview",
             )
             self.assertEqual(status, 200, preview)
             status, body = request(
                 api,
-                "/api/v1/media-libraries/movies",
+                "/api/media-libraries/movies",
                 method="DELETE",
                 body=_media_removal_confirmation(preview),
             )
@@ -858,12 +858,12 @@ class MediaLibraryActivationTests(unittest.TestCase):
             before = self._tree_bytes(root / "target")
             status, preview = request(
                 api,
-                "/api/v1/media-libraries/archive/removal-preview",
+                "/api/media-libraries/archive/removal-preview",
             )
             self.assertEqual(status, 200, preview)
             status, body = request(
                 api,
-                "/api/v1/media-libraries/archive",
+                "/api/media-libraries/archive",
                 method="DELETE",
                 body=_media_removal_confirmation(preview),
             )
@@ -892,12 +892,12 @@ class MediaLibraryActivationTests(unittest.TestCase):
                 self._save_media_library(api, "archive")
                 status, preview = request(
                     api,
-                    "/api/v1/media-libraries/archive/removal-preview",
+                    "/api/media-libraries/archive/removal-preview",
                 )
                 self.assertEqual(status, 200, preview)
                 status, body = request(
                     api,
-                    "/api/v1/media-libraries/archive",
+                    "/api/media-libraries/archive",
                     method="DELETE",
                     body=_media_removal_confirmation(preview),
                 )
@@ -921,13 +921,13 @@ class MediaLibraryActivationTests(unittest.TestCase):
             )
             status, preview = request(
                 viewer_api,
-                "/api/v1/media-libraries/movies/removal-preview",
+                "/api/media-libraries/movies/removal-preview",
                 token="viewer-token",
             )
             self.assertEqual(status, 200, preview)
             status, body = request(
                 viewer_api,
-                "/api/v1/media-libraries/movies",
+                "/api/media-libraries/movies",
                 method="DELETE",
                 token="viewer-token",
                 body=_media_removal_confirmation(preview),
@@ -941,14 +941,14 @@ class MediaLibraryActivationTests(unittest.TestCase):
             _repository, _service, _objects, _active, _runtime, api = self._active_api(root)
             status, preview = request(
                 api,
-                "/api/v1/media-libraries/movies/removal-preview",
+                "/api/media-libraries/movies/removal-preview",
             )
             self.assertEqual(status, 200, preview)
             confirmation = _media_removal_confirmation(preview)
             confirmation["expectedLibraryId"] = "does-not-exist"
             status, body = request(
                 api,
-                "/api/v1/media-libraries/does-not-exist",
+                "/api/media-libraries/does-not-exist",
                 method="DELETE",
                 body=confirmation,
             )
@@ -964,14 +964,14 @@ class MediaLibraryActivationTests(unittest.TestCase):
             self._save_media_library(api, "archive")
             _status, preview = request(
                 api,
-                "/api/v1/media-libraries/archive/removal-preview",
+                "/api/media-libraries/archive/removal-preview",
             )
             stale_confirmation = _media_removal_confirmation(preview)
             # The Active revision advances after the operator previewed.
             self._save_media_library(api, "vault")
             status, body = request(
                 api,
-                "/api/v1/media-libraries/archive",
+                "/api/media-libraries/archive",
                 method="DELETE",
                 body=stale_confirmation,
             )
@@ -990,13 +990,13 @@ class MediaLibraryActivationTests(unittest.TestCase):
             self._save_media_library(api, "archive")
             _status, preview = request(
                 api,
-                "/api/v1/media-libraries/archive/removal-preview",
+                "/api/media-libraries/archive/removal-preview",
             )
             confirmation = _media_removal_confirmation(preview)
             confirmation["expectedLibraryId"] = "movies"
             status, body = request(
                 api,
-                "/api/v1/media-libraries/archive",
+                "/api/media-libraries/archive",
                 method="DELETE",
                 body=confirmation,
             )
@@ -1014,13 +1014,13 @@ class MediaLibraryActivationTests(unittest.TestCase):
             self._save_media_library(api, "archive", enabled=False)
             status, preview = request(
                 api,
-                "/api/v1/media-libraries/archive/removal-preview",
+                "/api/media-libraries/archive/removal-preview",
             )
             self.assertEqual(status, 200, preview)
             self.assertEqual(preview["mediaLibrary"]["enabled"], False)
             status, body = request(
                 api,
-                "/api/v1/media-libraries/archive",
+                "/api/media-libraries/archive",
                 method="DELETE",
                 body=_media_removal_confirmation(preview),
             )

@@ -122,7 +122,7 @@ describe("Rules object-scoped local test", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    renderApp("/rules/edit/recognitionRules/rule-c");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     expect(
       await screen.findByRole("heading", { name: "测试与预览" }),
@@ -170,7 +170,7 @@ describe("Rules object-scoped local test", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    renderApp("/rules/edit/recognitionRules/rule-c");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     const runButton = await screen.findByRole("button", {
       name: "测试该识别规则",
@@ -216,7 +216,7 @@ describe("Rules object-scoped local test", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    renderApp("/rules/edit/recognitionRules/rule-c");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     await userEvent.click(
@@ -260,7 +260,7 @@ describe("Rules object-scoped local test", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    renderApp("/rules/edit/recognitionRules/rule-c");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     await userEvent.click(
@@ -289,7 +289,7 @@ describe("Rules object-scoped local test", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    renderApp("/rules/edit/recognitionRules/rule-c");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     const user = userEvent.setup();
@@ -332,7 +332,7 @@ describe("Rules object-scoped local test", () => {
       ),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    renderApp("/rules/edit/recognitionRules/rule-c");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     const user = userEvent.setup();
@@ -353,7 +353,7 @@ describe("Rules object-scoped local test", () => {
       stubRulesRoutes(() => new Response(JSON.stringify(analysisPayload()))),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    renderApp("/rules/edit/recognitionRules/rule-c");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     expect(screen.queryByLabelText("允许实时元数据测试")).toBeNull();
@@ -388,7 +388,7 @@ describe("Rules object-scoped local test", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/metadataPolicies/C");
+    renderApp("/rules/edit/metadataPolicies/C");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     expect(screen.getByLabelText("允许实时元数据测试")).not.toBeChecked();
@@ -424,7 +424,7 @@ describe("Rules object-scoped local test", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    renderApp("/rules/edit/recognitionTypes/C");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     expect(screen.queryByLabelText("测试合成路径")).toBeNull();
@@ -454,7 +454,7 @@ describe("Rules object-scoped local test", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/namingPolicies/B");
+    renderApp("/rules/edit/namingPolicies/B");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     const user = userEvent.setup();
@@ -526,7 +526,7 @@ describe("Rules object-scoped local test", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/typeBindings/type-c");
+    renderApp("/rules/edit/typeBindings/type-c");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     expect(screen.queryByLabelText("测试合成路径")).toBeNull();
@@ -566,7 +566,7 @@ describe("Rules object-scoped local test", () => {
       ),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/organizePolicies/C");
+    renderApp("/rules/edit/organizePolicies/C");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     await screen.findByRole("heading", { name: "测试与预览" });
     const user = userEvent.setup();
@@ -594,7 +594,7 @@ describe("Rules complete-flow check", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     expect(await screen.findByText("完整流程检查")).toBeVisible();
     // Landing on Overview reads the inventory only.
     expect(urls.filter((url) => url.includes("/inventory"))).toHaveLength(1);
@@ -673,7 +673,7 @@ describe("Rules complete-flow check", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByText("完整流程检查");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开完整流程检查" }));
@@ -770,7 +770,7 @@ describe("Rules complete-flow check", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByText("完整流程检查");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开完整流程检查" }));
@@ -849,7 +849,7 @@ describe("Rules complete-flow check", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByText("完整流程检查");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开完整流程检查" }));
@@ -934,7 +934,7 @@ describe("Rules complete-flow check", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByText("完整流程检查");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "打开完整流程检查" }));
@@ -953,7 +953,7 @@ describe("Rules local-test result readability", () => {
       stubRulesRoutes(() => new Response(JSON.stringify(analysisPayload()))),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionRules/rule-c");
+    renderApp("/rules/edit/recognitionRules/rule-c");
     await userEvent.click(await screen.findByRole("tab", { name: "单项测试" }));
     const runButton = await screen.findByRole("button", {
       name: "测试该识别规则",

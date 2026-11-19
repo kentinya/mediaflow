@@ -31,7 +31,7 @@ function offeredAction(
     available: true,
     reason: null,
     method: "POST",
-    path: "/api/v1/automation/task-definitions/auto-task/copy",
+    path: "/api/automation/task-definitions/auto-task/copy",
     requiresConfirmation: false,
     sideEffects: "none",
     durableOutcome: "a copied definition is stored inside the open Draft",
@@ -49,8 +49,8 @@ function listDefinitionPayload(
   id: string,
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  const operationsRoute = `/api/v1/operations/automation/task-definitions/${id}`;
-  const automationRoute = `/api/v1/automation/task-definitions/${id}`;
+  const operationsRoute = `/api/operations/automation/task-definitions/${id}`;
+  const automationRoute = `/api/automation/task-definitions/${id}`;
   return {
     id,
     name: `Automation ${id}`,
@@ -122,7 +122,7 @@ function listDefinitionPayload(
         available: true,
         reason: null,
         method: "POST",
-        path: "/api/v1/configuration/revisions/rev-1/successor",
+        path: "/api/configuration/revisions/rev-1/successor",
         requiresConfirmation: false,
       },
     },
@@ -214,14 +214,14 @@ function definitionsPagePayload(
         available: true,
         reason: null,
         method: "POST",
-        path: "/api/v1/automation/task-definitions",
+        path: "/api/automation/task-definitions",
         requiresConfirmation: false,
       },
       createDraft: {
         available: true,
         reason: null,
         method: "POST",
-        path: "/api/v1/configuration/revisions/rev-1/successor",
+        path: "/api/configuration/revisions/rev-1/successor",
         requiresConfirmation: false,
       },
     },
@@ -238,9 +238,7 @@ describe("normalizeAutomationAction transport binding", () => {
     );
     expect(model.available).toBe(true);
     expect(model.requiresConfirmation).toBe(false);
-    expect(model.path).toBe(
-      "/api/v1/automation/task-definitions/auto-task/copy",
-    );
+    expect(model.path).toBe("/api/automation/task-definitions/auto-task/copy");
   });
 
   it("rejects a non-URI-safe identity and its matching route", () => {
@@ -248,7 +246,7 @@ describe("normalizeAutomationAction transport binding", () => {
       expect(() =>
         normalizeAutomationAction(
           offeredAction({
-            path: `/api/v1/automation/task-definitions/${identity}/copy`,
+            path: `/api/automation/task-definitions/${identity}/copy`,
           }),
           "actions.copy",
           "definition-copy",
@@ -268,39 +266,39 @@ describe("normalizeAutomationAction transport binding", () => {
     }> = [
       {
         // The definition read route without /copy is never the mutation.
-        path: "/api/v1/automation/task-definitions/auto-task",
+        path: "/api/automation/task-definitions/auto-task",
         kind: "definition-copy",
         identity: "auto-task",
       },
       {
         // Another object's route is never this action's transport.
-        path: "/api/v1/automation/task-definitions/other-task/copy",
+        path: "/api/automation/task-definitions/other-task/copy",
         kind: "definition-copy",
         identity: "auto-task",
       },
       {
         // A safe method never carries the copy mutation.
-        path: "/api/v1/automation/task-definitions/auto-task/copy",
+        path: "/api/automation/task-definitions/auto-task/copy",
         method: "GET",
         kind: "definition-copy",
         identity: "auto-task",
       },
       {
         // A wrong fixed suffix is malformed too.
-        path: "/api/v1/automation/task-definitions/auto-task/copys",
+        path: "/api/automation/task-definitions/auto-task/copys",
         kind: "definition-copy",
         identity: "auto-task",
       },
       {
         // The draft-save parameter must name the exact definition.
-        path: "/api/v1/configuration/revisions/rev-1/objects/automationTaskDefinitions/other-task",
+        path: "/api/configuration/revisions/rev-1/objects/automationTaskDefinitions/other-task",
         kind: "draft-save",
         identity: "rev-1",
         parameter: "auto-task",
       },
       {
         // A non-URI-safe parameter segment is malformed even when unpinned.
-        path: "/api/v1/configuration/revisions/rev-1/objects/automationTaskDefinitions/<task>",
+        path: "/api/configuration/revisions/rev-1/objects/automationTaskDefinitions/<task>",
         kind: "draft-save",
         identity: "rev-1",
       },
@@ -322,19 +320,19 @@ describe("normalizeAutomationAction transport binding", () => {
     const model = normalizeAutomationAction(
       offeredAction({
         method: "POST",
-        path: "/api/v1/automation/task-definitions",
+        path: "/api/automation/task-definitions",
         requiresConfirmation: false,
       }),
       "actions.create",
       "list-create",
     );
     expect(model.available).toBe(true);
-    expect(model.path).toBe("/api/v1/automation/task-definitions");
+    expect(model.path).toBe("/api/automation/task-definitions");
     expect(() =>
       normalizeAutomationAction(
         offeredAction({
           method: "POST",
-          path: "/api/v1/automation/task-definitions/extra",
+          path: "/api/automation/task-definitions/extra",
           requiresConfirmation: false,
         }),
         "actions.create",
@@ -480,7 +478,7 @@ function previewDocument(
         available: true,
         reason: null,
         method: "GET",
-        path: "/api/v1/operations/automation/task-definitions/auto-task/previews/preview-1",
+        path: "/api/operations/automation/task-definitions/auto-task/previews/preview-1",
         sideEffects: "none",
         durableOutcome: null,
         nextAction: "inspect the exact Preview evidence and its items",
@@ -489,7 +487,7 @@ function previewDocument(
         available: true,
         reason: null,
         method: "GET",
-        path: "/api/v1/operations/automation/task-definitions/auto-task/previews/preview-1/items",
+        path: "/api/operations/automation/task-definitions/auto-task/previews/preview-1/items",
         sideEffects: "none",
         durableOutcome: null,
         nextAction: "page the bounded Preview item evidence",
@@ -498,7 +496,7 @@ function previewDocument(
         available: true,
         reason: null,
         method: "GET",
-        path: "/api/v1/operations/automation/task-definitions/auto-task",
+        path: "/api/operations/automation/task-definitions/auto-task",
         sideEffects: "none",
         durableOutcome: null,
         nextAction: "reopen the durable definition behind this Preview",
@@ -541,14 +539,14 @@ describe("normalizeAutomationPreview", () => {
         const actions = value["actions"] as Record<string, unknown>;
         actions["definition"] = {
           ...(actions["definition"] as object),
-          path: "/api/v1/automation/task-definitions/<task>",
+          path: "/api/automation/task-definitions/<task>",
         };
       },
       (value) => {
         const actions = value["actions"] as Record<string, unknown>;
         actions["items"] = {
           ...(actions["items"] as object),
-          path: "/api/v1/operations/automation/task-definitions/auto-task/previews/other/items",
+          path: "/api/operations/automation/task-definitions/auto-task/previews/other/items",
         };
       },
     ];
@@ -709,7 +707,7 @@ describe("normalizeAutomationDefinitionsPage", () => {
         available: true,
         reason: null,
         method: "GET",
-        path: "/api/v1/operations/automation/task-definitions/auto-task",
+        path: "/api/operations/automation/task-definitions/auto-task",
         sideEffects: "none",
         durableOutcome: null,
         nextAction: "inspect the durable definition state",
@@ -718,7 +716,7 @@ describe("normalizeAutomationDefinitionsPage", () => {
         available: true,
         reason: null,
         method: "GET",
-        path: "/api/v1/operations/automation/task-definitions/auto-task/occurrences",
+        path: "/api/operations/automation/task-definitions/auto-task/occurrences",
         sideEffects: "none",
         durableOutcome: null,
         nextAction: "inspect the bounded occurrence history",
@@ -727,7 +725,7 @@ describe("normalizeAutomationDefinitionsPage", () => {
         available: false,
         reason: "not Active yet",
         method: "POST",
-        path: "/api/v1/operations/automation/task-definitions/auto-task/run-once",
+        path: "/api/operations/automation/task-definitions/auto-task/run-once",
         sideEffects: "none",
         durableOutcome:
           "a durable bounded discovery of the definition scope is admitted",
@@ -737,7 +735,7 @@ describe("normalizeAutomationDefinitionsPage", () => {
         available: true,
         reason: null,
         method: "POST",
-        path: "/api/v1/automation/task-definitions/auto-task/copy",
+        path: "/api/automation/task-definitions/auto-task/copy",
         sideEffects: "none",
         durableOutcome: "a copied definition is stored inside the Draft",
         nextAction: "copy the definition inside the open successor Draft",
@@ -746,7 +744,7 @@ describe("normalizeAutomationDefinitionsPage", () => {
         available: true,
         reason: null,
         method: "POST",
-        path: "/api/v1/configuration/revisions/rev-1/successor",
+        path: "/api/configuration/revisions/rev-1/successor",
         sideEffects: "none",
         durableOutcome: "a successor Draft is stored",
         nextAction: "create or open the successor Draft",

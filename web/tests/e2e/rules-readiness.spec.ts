@@ -44,7 +44,7 @@ async function openRules(
   search = "",
   token = VIEWER_TOKEN,
 ): Promise<void> {
-  await page.goto(`/ui-v2/rules${search}`);
+  await page.goto(`/rules${search}`);
   await connectAs(page, token);
   await expect(
     page.getByRole("heading", { name: "整理规则", exact: true }),
@@ -55,7 +55,7 @@ async function openRules(
 }
 
 async function openSettings(page: Page, search = ""): Promise<void> {
-  await page.goto(`/ui-v2/configuration${search}`);
+  await page.goto(`/configuration${search}`);
   await connectAs(page, VIEWER_TOKEN);
   await expect(
     page.getByRole("heading", { name: "系统设置", exact: true }),
@@ -158,7 +158,7 @@ test.describe("Rules readiness and Settings handoff", () => {
       "Bearer%20abc",
       "sha256%3Aabcdef",
     ]) {
-      await page.goto(`/ui-v2/rules?section=${hostile}`);
+      await page.goto(`/rules?section=${hostile}`);
       await connectAs(page);
       await expect(
         page.getByRole("heading", { name: "规则关系概览" }),
@@ -212,11 +212,11 @@ test.describe("Rules readiness and Settings handoff", () => {
       .first();
     await expect(gapLink).toHaveAttribute(
       "href",
-      "/ui-v2/rules?section=recognitionRules",
+      "/rules?section=recognitionRules",
     );
     await expect(
       page.getByRole("link", { name: "查看识别类型" }),
-    ).toHaveAttribute("href", "/ui-v2/rules?section=recognitionTypes");
+    ).toHaveAttribute("href", "/rules?section=recognitionTypes");
     await gapLink.click();
     await expect(
       page.getByRole("heading", { name: "识别规则", exact: true }),
@@ -277,7 +277,7 @@ test.describe("Rules readiness and Settings handoff", () => {
     // inventory.
     await resetRules(page, "?noActive=1");
     const traffic = recordApiTraffic(page);
-    await page.goto("/ui-v2/rules?section=metadataPolicies");
+    await page.goto("/rules?section=metadataPolicies");
     await connectAs(page);
 
     // The no-Active state renders on the deep-linked family, and the Settings
@@ -290,7 +290,7 @@ test.describe("Rules readiness and Settings handoff", () => {
     });
     await expect(settingsLink).toHaveAttribute(
       "href",
-      "/ui-v2/configuration?returnTo=rules&returnSection=metadataPolicies",
+      "/configuration?returnTo=rules&returnSection=metadataPolicies",
     );
     await expect(page.getByRole("dialog")).toHaveCount(0);
 
@@ -305,7 +305,7 @@ test.describe("Rules readiness and Settings handoff", () => {
     });
     await expect(returnLink).toHaveAttribute(
       "href",
-      "/ui-v2/rules?section=metadataPolicies",
+      "/rules?section=metadataPolicies",
     );
 
     // First setup through the real lifecycle: create, validate, activate.
@@ -332,9 +332,9 @@ test.describe("Rules readiness and Settings handoff", () => {
       .filter((entry) => !entry.startsWith("GET "))
       .map((entry) => new URL(entry.split(" ")[1]!).pathname);
     expect(writes).toEqual([
-      "/api/v1/configuration/drafts/first",
-      "/api/v1/configuration/revisions/rules-setup-draft-e2e/validate",
-      "/api/v1/configuration/revisions/rules-setup-draft-e2e/activate",
+      "/api/configuration/drafts/first",
+      "/api/configuration/revisions/rules-setup-draft-e2e/validate",
+      "/api/configuration/revisions/rules-setup-draft-e2e/activate",
     ]);
   });
 

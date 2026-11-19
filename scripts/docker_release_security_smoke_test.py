@@ -162,13 +162,13 @@ def assert_v2_static_serving(base: str, canaries) -> None:
                     )
         return body
 
-    entry = probe(f"{base}/ui-v2/", content_type="text/html")
-    for path in ("/ui-v2", "/ui-v2/explore", "/ui-v2/unknown-client-route"):
+    entry = probe(f"{base}/", content_type="text/html")
+    for path in ("/", "/explore", "/unknown-client-route"):
         if probe(f"{base}{path}", content_type="text/html") != entry:
             raise RuntimeError(f"{path} did not serve the V2 entry document")
 
     document = entry.decode("utf-8", errors="replace")
-    references = sorted(set(re.findall(r'(?:src|href)="(/ui-v2/[^"]+)"', document)))
+    references = sorted(set(re.findall(r'(?:src|href)="(/assets/[^"]+)"', document)))
     asset_kinds = {"js": "text/javascript", "css": "text/css"}
     javascript = 0
     styles = 0
@@ -187,19 +187,37 @@ def assert_v2_static_serving(base: str, canaries) -> None:
             f"the V2 entry document does not reference built hashed JS/CSS assets: {references!r}"
         )
 
-    probe(f"{base}/ui-v2/", method="POST", expected=405, csp=None)
-    probe(f"{base}/ui-v2/missing-asset-abc123.js", expected=404, csp=None)
-    probe(f"{base}/ui-v2/..%2f..%2fetc%2fpasswd", expected=404, csp=None)
+    probe(f"{base}/", method="POST", expected=405, csp=None)
+    probe(f"{base}/missing-asset-abc123.js", expected=404, csp=None)
+    probe(f"{base}/..%2f..%2fetc%2fpasswd", expected=404, csp=None)
 
-    # The retired V1 static product is an ordinary unknown route: no V1 bytes,
-    # redirect, notice page or special static headers survive.
-    for retired_path in ("/ui", "/ui/", "/ui/app.js", "/ui/style.css"):
-        probe(f"{base}{retired_path}", expected=404, csp=None)
+    # A Web deep route (not only the root) is served from the same built
+    # artifact, so a refresh or a bookmark never depends on a proxy rewrite.
+    if probe(f"{base}/resourcelib/files", content_type="text/html") != entry:
+        raise RuntimeError("/resourcelib/files did not serve the V2 entry document")
 
-    status, _, _ = request_full(f"{base}/api/v1/auth/principal")
+    # The retired Web prefixes are ordinary unknown client routes: the same
+    # entry document renders the ordinary not-found view at the same address,
+    # with no redirect, notice page or retained bytes, and their old asset
+    # addresses stay plain 404s.
+    for retired_path in ("/ui", "/ui/", "/ui-v2", "/ui-v2/", "/ui-v2/explore"):
+        if probe(f"{base}{retired_path}", content_type="text/html") != entry:
+            raise RuntimeError(f"{retired_path} did not serve the ordinary entry document")
+    for retired_asset in ("/ui/app.js", "/ui/style.css", "/ui-v2/app.js"):
+        probe(f"{base}{retired_asset}", expected=404, csp=None)
+
+    # A retired versioned API prefix is an unknown JSON route, never the SPA.
+    for retired_api in ("/api/v1/tasks", "/api/v2/tasks"):
+        status, headers, body = request_full(f"{base}{retired_api}")
+        if status != 404 or "application/json" not in headers.get("content-type", ""):
+            raise RuntimeError(f"{retired_api} returned HTTP {status}, expected JSON 404")
+        if b"<html" in body.lower():
+            raise RuntimeError(f"{retired_api} returned the SPA document")
+
+    status, _, _ = request_full(f"{base}/api/auth/principal")
     if status != 401:
         raise RuntimeError(
-            "unauthenticated /api/v1/auth/principal is not denied beside V2 static serving"
+            "unauthenticated /api/auth/principal is not denied beside V2 static serving"
         )
 
 
@@ -595,7 +613,7 @@ try:
     from mediaflow.interfaces.v2_ui import v2_ui_assets
 
     served = v2_ui_assets()
-    if not served or "/ui-v2/" not in served:
+    if not served or "/" not in served:
         found.append("v2-serving-map-empty")
 except Exception:
     found.append("v2-serving-map-error")
@@ -724,19 +742,19 @@ def assert_rbac_and_no_side_effects(
     executor = token_values["executor"]
 
     get("/health", None, expected=200)
-    body = get("/api/v1/tasks?limit=100", None, expected=401)
-    body = get("/api/v1/tasks?limit=100", "invalid-canary-token", expected=401)
+    body = get("/api/tasks?limit=100", None, expected=401)
+    body = get("/api/tasks?limit=100", "invalid-canary-token", expected=401)
     assert_no_canaries(body, canaries, "invalid-token error response")
 
-    body = get("/api/v1/tasks?limit=100", viewer, expected=200)
+    body = get("/api/tasks?limit=100", viewer, expected=200)
     assert json.loads(body)["items"] == []
-    get("/api/v1/tasks?limit=100", auditor, expected=200)
-    get("/api/v1/tasks?limit=100", operator, expected=200)
-    get("/api/v1/tasks?limit=100", executor, expected=200)
-    get("/api/v1/tasks?limit=100", admin, expected=200)
+    get("/api/tasks?limit=100", auditor, expected=200)
+    get("/api/tasks?limit=100", operator, expected=200)
+    get("/api/tasks?limit=100", executor, expected=200)
+    get("/api/tasks?limit=100", admin, expected=200)
 
     status, body = request_bytes(
-        f"{base}/api/v1/tasks",
+        f"{base}/api/tasks",
         method="POST",
         token=viewer,
         body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
@@ -745,15 +763,15 @@ def assert_rbac_and_no_side_effects(
     if status != 404:
         raise RuntimeError(f"retired remote Task submission returned HTTP {status}, expected 404")
 
-    status, body = request_bytes(f"{base}/api/v1/security-audit", token=viewer)
+    status, body = request_bytes(f"{base}/api/security-audit", token=viewer)
     assert_no_canaries(body, canaries, "viewer denied audit response")
     if status != 403:
         raise RuntimeError(f"viewer security-audit returned HTTP {status}, expected 403")
 
-    body = get("/api/v1/security-audit", auditor, expected=200)
+    body = get("/api/security-audit", auditor, expected=200)
     assert_no_canaries(body, canaries, "auditor audit projection")
     status, body = request_bytes(
-        f"{base}/api/v1/tasks",
+        f"{base}/api/tasks",
         method="POST",
         token=auditor,
         body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
@@ -763,7 +781,7 @@ def assert_rbac_and_no_side_effects(
         raise RuntimeError(f"retired remote Task submission returned HTTP {status}, expected 404")
 
     status, body = request_bytes(
-        f"{base}/api/v1/tasks",
+        f"{base}/api/tasks",
         method="POST",
         token=executor,
         body=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode("utf-8"),
@@ -773,12 +791,12 @@ def assert_rbac_and_no_side_effects(
         raise RuntimeError(f"retired remote Task submission returned HTTP {status}, expected 404")
 
     for path in (
-        "/api/v1/configuration/status",
-        "/api/v1/system/status",
+        "/api/configuration/status",
+        "/api/system/status",
     ):
         get(path, admin, expected=200)
 
-    for path in ("/api/v1/tasks?limit=100", "/api/v1/notifications?limit=100"):
+    for path in ("/api/tasks?limit=100", "/api/notifications?limit=100"):
         body = get(path, admin, expected=200)
         document = json.loads(body)
         items = (
@@ -789,7 +807,7 @@ def assert_rbac_and_no_side_effects(
 
     # The retired Job collection is an ordinary bounded not-found: no list,
     # submission, stale projection or requeue alias may still accept work.
-    for path in ("/api/v1/jobs", "/api/v1/jobs/stale", "/api/v1/operations/jobs"):
+    for path in ("/api/jobs", "/api/jobs/stale", "/api/operations/jobs"):
         body = get(path, admin, expected=404)
         if b"token" in body.lower():
             raise RuntimeError(f"retired Job route {path} echoed credential-like content")
@@ -802,29 +820,29 @@ def assert_projection_exports(
     canaries,
 ) -> None:
     paths = (
-        "/api/v1/configuration",
-        "/api/v1/configuration/packages",
-        "/api/v1/configuration/packages/export/configuration",
-        "/api/v1/configuration/packages/export/results?taskId=release-security-task&limit=10",
-        "/api/v1/logs?limit=100",
-        "/api/v1/notifications?limit=100",
-        "/api/v1/system/status",
+        "/api/configuration",
+        "/api/configuration/packages",
+        "/api/configuration/packages/export/configuration",
+        "/api/configuration/packages/export/results?taskId=release-security-task&limit=10",
+        "/api/logs?limit=100",
+        "/api/notifications?limit=100",
+        "/api/system/status",
     )
     for path in paths:
-        token = auditor if path == "/api/v1/security-audit" else admin
+        token = auditor if path == "/api/security-audit" else admin
         status, body = request_bytes(f"{base}{path}", token=token)
         assert_no_canaries(body, canaries, f"API/Web projection {path}")
         if status != 200:
             raise RuntimeError(f"{path} returned HTTP {status}")
 
-    status, body = request_bytes(f"{base}/api/v1/security-audit", token=auditor)
+    status, body = request_bytes(f"{base}/api/security-audit", token=auditor)
     assert_no_canaries(body, canaries, "security audit projection")
     if status != 200:
         raise RuntimeError(f"security audit returned HTTP {status}")
 
     cookie_value = canary_by_env(canaries, "MEDIAFLOW_COOKIE_CANARY")
     status, body = request_bytes(
-        f"{base}/api/v1/tasks?limit=100",
+        f"{base}/api/tasks?limit=100",
         token=admin,
         cookie=cookie_value,
     )
@@ -846,7 +864,7 @@ def _request_intent_plan_via_durable_analysis(
 
     status, analysis = json_request(
         base,
-        f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+        f"/api/operations/organize/intents/{intent['intentId']}/previews",
         admin,
         method="POST",
         body={"expectedVersion": intent["version"]},
@@ -861,7 +879,7 @@ def _request_intent_plan_via_durable_analysis(
     def plan_linked() -> bool:
         status, run = json_request(
             base,
-            f"/api/v1/operations/organize/discoveries/{discovery_id}",
+            f"/api/operations/organize/discoveries/{discovery_id}",
             admin,
         )
         return status == 200 and run.get("previewId") is not None
@@ -869,13 +887,13 @@ def _request_intent_plan_via_durable_analysis(
     wait_until(plan_linked, timeout=120.0, description="manual Organize durable analysis")
     status, run = json_request(
         base,
-        f"/api/v1/operations/organize/discoveries/{discovery_id}",
+        f"/api/operations/organize/discoveries/{discovery_id}",
         admin,
     )
     preview_id = run.get("previewId")
     status, preview = json_request(
         base,
-        f"/api/v1/operations/organize/previews/{preview_id}",
+        f"/api/operations/organize/previews/{preview_id}",
         admin,
     )
     if status != 200:
@@ -904,7 +922,7 @@ def assert_v2_manual_organize(
     unseeded.write_bytes(b"release-security-fail-closed" * 8)
     status, refused = json_request(
         base,
-        "/api/v1/operations/scans",
+        "/api/operations/scans",
         admin,
         method="POST",
         body={"scopeKind": "resourceLibrary", "resourceLibraryId": "source", "mode": "full"},
@@ -954,7 +972,7 @@ with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
 
     status, intent = json_request(
         base,
-        "/api/v1/resource-libraries/source/files/organize",
+        "/api/resource-libraries/source/files/organize",
         admin,
         method="POST",
         body={"paths": [source.name]},
@@ -971,7 +989,7 @@ with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
     intent_item = intent["items"][0]
     status, intent = json_request(
         base,
-        f"/api/v1/operations/organize/intents/{intent['intentId']}"
+        f"/api/operations/organize/intents/{intent['intentId']}"
         f"/items/{intent_item['itemId']}/choice",
         admin,
         method="POST",
@@ -1023,7 +1041,7 @@ with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
         raise RuntimeError("manual Organize Preview item did not produce an exact plan")
     status, execution = json_request(
         base,
-        f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+        f"/api/operations/organize/previews/{preview['previewId']}/execute",
         admin,
         method="POST",
         body={
@@ -1044,7 +1062,7 @@ with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
     def execution_complete() -> bool:
         current_status, detail = json_request(
             base,
-            f"/api/v1/operations/organize/executions/{execution['executionId']}",
+            f"/api/operations/organize/executions/{execution['executionId']}",
             admin,
         )
         return current_status == 200 and detail.get("status") in {
@@ -1056,7 +1074,7 @@ with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
     wait_until(execution_complete, timeout=120.0, description="manual Organize Worker completion")
     status, detail = json_request(
         base,
-        f"/api/v1/operations/organize/executions/{execution['executionId']}",
+        f"/api/operations/organize/executions/{execution['executionId']}",
         admin,
     )
     if status != 200 or detail.get("status") != "completed":
@@ -1093,7 +1111,7 @@ def assert_manual_organize_fails_closed(
     # invented identity must remain unverified at Choice admission.
     status, intent = json_request(
         base,
-        f"/api/v1/resource-libraries/{resource_library_id}/files/organize",
+        f"/api/resource-libraries/{resource_library_id}/files/organize",
         admin,
         method="POST",
         body={"paths": [seeded_path]},
@@ -1103,7 +1121,7 @@ def assert_manual_organize_fails_closed(
     intent_item = intent["items"][0]
     status, body = json_request(
         base,
-        f"/api/v1/operations/organize/intents/{intent['intentId']}"
+        f"/api/operations/organize/intents/{intent['intentId']}"
         f"/items/{intent_item['itemId']}/choice",
         admin,
         method="POST",
@@ -1134,7 +1152,7 @@ def assert_manual_organize_fails_closed(
     # authority leaves the offline pinned-identity path inapplicable.
     status, intent = json_request(
         base,
-        f"/api/v1/resource-libraries/{resource_library_id}/files/organize",
+        f"/api/resource-libraries/{resource_library_id}/files/organize",
         admin,
         method="POST",
         body={"paths": [unseeded_path]},
@@ -1144,7 +1162,7 @@ def assert_manual_organize_fails_closed(
     intent_item = intent["items"][0]
     status, intent = json_request(
         base,
-        f"/api/v1/operations/organize/intents/{intent['intentId']}"
+        f"/api/operations/organize/intents/{intent['intentId']}"
         f"/items/{intent_item['itemId']}/choice",
         admin,
         method="POST",
@@ -1456,7 +1474,7 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
 
                 def management_ready() -> bool:
                     status, management = json_request(
-                        base, "/api/v1/management/readiness", token_values["admin"]
+                        base, "/api/management/readiness", token_values["admin"]
                     )
                     return (
                         status == 200

@@ -277,15 +277,15 @@ class MetadataResolutionTests(unittest.TestCase):
                 for token, path, document in (
                     (
                         "viewer",
-                        f"/api/v1/metadata-reviews/{review.review_id}/resolve",
+                        f"/api/metadata-reviews/{review.review_id}/resolve",
                         {"candidateRank": 1},
                     ),
                     (
                         "operator",
-                        f"/api/v1/metadata-reviews/{review.review_id}/resolve",
+                        f"/api/metadata-reviews/{review.review_id}/resolve",
                         {"candidateRank": 2},
                     ),
-                    ("operator", "/api/v1/metadata-reviews/missing/resolve", {"candidateRank": 1}),
+                    ("operator", "/api/metadata-reviews/missing/resolve", {"candidateRank": 1}),
                 ):
                     with self.subTest(path=path, token=token):
                         status, _ = api_request(
@@ -302,7 +302,7 @@ class MetadataResolutionTests(unittest.TestCase):
                 self.assertFalse(hasattr(repository, "list_jobs"))
                 self.assertFalse(
                     any(
-                        value.route.startswith("/api/v1/metadata-reviews")
+                        value.route.startswith("/api/metadata-reviews")
                         for value in repository.list_security_audit()
                     )
                 )

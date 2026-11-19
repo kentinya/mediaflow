@@ -82,7 +82,7 @@ describe("definition Run once admission", () => {
     expect(result.ok).toBe(true);
     const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(input).toBe(
-      "/api/v1/operations/automation/definitions/nightly/run-once",
+      "/api/operations/automation/definitions/nightly/run-once",
     );
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({
@@ -124,7 +124,7 @@ describe("definition Run once admission", () => {
     expect(result.ok).toBe(true);
     const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(input).toBe(
-      "/api/v1/operations/automation/definitions/nightly/run-once" +
+      "/api/operations/automation/definitions/nightly/run-once" +
         "?admissionRequestId=request-1",
     );
     expect(init.method ?? "GET").toBe("GET");
@@ -151,7 +151,7 @@ describe("records-only outcome API", () => {
     expect(params.get("direction")).toBe("previous");
     expect(init.method).toBe("GET");
     expect(automationRecordsUrl({ status: "failed" })).toBe(
-      "/api/v1/operations/automation/records?status=failed",
+      "/api/operations/automation/records?status=failed",
     );
   });
 });

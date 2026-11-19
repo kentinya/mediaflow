@@ -1,6 +1,6 @@
 /**
  * Frontend-owned entity for the bounded
- * `GET /api/v1/operations/storage-management/inventory` projection used by the
+ * `GET /api/operations/storage-management/inventory` projection used by the
  * V2 Storage management journey (Slice 39, RO-2).
  *
  * It carries only the allowlisted fields needed to present the configured
@@ -365,7 +365,7 @@ function normalizeActiveIdentity(raw: unknown): StorageActiveIdentity | null {
  * string, so an absolute URL, a protocol-relative URL or a protocol/scheme can
  * never travel into an href from this projection.
  */
-const SETUP_ROUTE = /^\/ui-v2\/configuration\/?$/;
+const SETUP_ROUTE = /^\/configuration\/?$/;
 
 function normalizeSetupAuthority(raw: unknown): StorageSetupAuthority {
   const source = readRecord(raw, "inventory.setup");

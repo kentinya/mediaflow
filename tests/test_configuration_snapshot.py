@@ -153,7 +153,7 @@ def submit_organize_job(api, *, limit=None):
     The retired remote ticket boundary is gone; this helper uses the same
     non-interactive kernel admission the supported CLI/Scheduler entrances use,
     under the API's current configuration pin, then reads the Task back through
-    the ordinary ``GET /api/v1/tasks/{id}`` projection.
+    the ordinary ``GET /api/tasks/{id}`` projection.
     """
     from datetime import UTC, datetime
 
@@ -205,7 +205,7 @@ def submit_organize_job(api, *, limit=None):
         )
     except TaskQueueFull:
         return 409, {"error": {"code": "queue_full"}}
-    return request(api, f"/api/v1/tasks/{task.task_id}")
+    return request(api, f"/api/tasks/{task.task_id}")
 
 
 def activate_document(service, document, *, actor="tester"):
@@ -819,7 +819,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     configuration_service=service,
                     bootstrap_document=document,
                 )
-                status, value = request(api, "/api/v1/system/status")
+                status, value = request(api, "/api/system/status")
                 self.assertEqual(status, 200, value)
                 self.assertEqual(
                     value["system"]["configuration_snapshot_id"],
@@ -873,25 +873,25 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     configuration_service=service,
                     bootstrap_document=document,
                 )
-                status, body = request(api, "/api/v1/configuration", token="viewer-token")
+                status, body = request(api, "/api/configuration", token="viewer-token")
                 self.assertEqual(status, 200)
                 self.assertEqual(body["authority"], "MANAGEMENT_BOOTSTRAP")
                 payload = json.dumps({"source": "current"}).encode()
                 status, draft_body = request(
-                    api, "/api/v1/configuration/drafts", method="POST", body=payload
+                    api, "/api/configuration/drafts", method="POST", body=payload
                 )
                 self.assertEqual(status, 201)
                 revision_id = draft_body["revisionId"]
                 status, _ = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/validate",
+                    f"/api/configuration/revisions/{revision_id}/validate",
                     method="POST",
                     body=b"{}",
                 )
                 self.assertEqual(status, 200)
                 status, active_body = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/activate",
+                    f"/api/configuration/revisions/{revision_id}/activate",
                     method="POST",
                     body=json.dumps({"expectedVersion": 1}).encode(),
                 )
@@ -902,7 +902,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(job_body["configuration_snapshot_id"], revision_id)
                 status, _ = request(
                     api,
-                    "/api/v1/configuration/drafts",
+                    "/api/configuration/drafts",
                     method="POST",
                     body=payload,
                     token="viewer-token",
@@ -934,7 +934,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 status, draft = request(
                     api,
-                    "/api/v1/configuration/drafts",
+                    "/api/configuration/drafts",
                     method="POST",
                     body=json.dumps({"document": invalid}).encode(),
                 )
@@ -942,7 +942,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 revision_id = draft["revisionId"]
                 status, validated = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/validate",
+                    f"/api/configuration/revisions/{revision_id}/validate",
                     method="POST",
                     body=b"{}",
                 )
@@ -950,7 +950,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(validated["status"], "draft")
                 status, edited = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}",
+                    f"/api/configuration/revisions/{revision_id}",
                     method="PUT",
                     body=json.dumps(
                         {"document": document, "expectedVersion": validated["version"]}
@@ -959,7 +959,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 status, validated = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/validate",
+                    f"/api/configuration/revisions/{revision_id}/validate",
                     method="POST",
                     body=b"{}",
                 )
@@ -967,7 +967,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(validated["status"], "validated")
                 status, active = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/activate",
+                    f"/api/configuration/revisions/{revision_id}/activate",
                     method="POST",
                     body=json.dumps({"expectedVersion": validated["version"]}).encode(),
                 )
@@ -1210,10 +1210,10 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     configuration_service=service,
                     bootstrap_document=document,
                 )
-                status, body = request(api, "/api/v1/configuration")
+                status, body = request(api, "/api/configuration")
                 self.assertEqual(status, 200)
                 self.assertEqual(body["health"], "UNAVAILABLE")
-                status, readiness = request(api, "/api/v1/management/readiness")
+                status, readiness = request(api, "/api/management/readiness")
                 self.assertEqual(status, 200)
                 self.assertEqual(readiness["health"], "UNAVAILABLE")
                 self.assertTrue(readiness["recoveryRequired"])
@@ -1227,7 +1227,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 replacement["historyPath"] = str(root / "replacement.jsonl")
                 status, draft = request(
                     api,
-                    "/api/v1/configuration/drafts",
+                    "/api/configuration/drafts",
                     method="POST",
                     body=json.dumps({"document": replacement}).encode(),
                 )
@@ -1348,7 +1348,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     ),
                     bootstrap_document=document,
                 )
-                status, details = request(api, "/api/v1/configuration")
+                status, details = request(api, "/api/configuration")
                 self.assertEqual(status, 200)
                 self.assertEqual(details["health"], "UNAVAILABLE")
                 status, body = submit_organize_job(api)
@@ -1395,7 +1395,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     ),
                     bootstrap_document=document,
                 )
-                status, details = request(api, "/api/v1/configuration")
+                status, details = request(api, "/api/configuration")
                 self.assertEqual(status, 200)
                 self.assertEqual(details["health"], "UNAVAILABLE")
                 status, body = submit_organize_job(api)
@@ -1479,7 +1479,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 status, draft = request(
                     api,
-                    "/api/v1/configuration/drafts",
+                    "/api/configuration/drafts",
                     method="POST",
                     body=json.dumps({"document": document}).encode(),
                 )
@@ -1487,7 +1487,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 edit_document = {**document, "historyPath": str(root / "first-history.jsonl")}
                 status, edited = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}",
+                    f"/api/configuration/revisions/{draft['revisionId']}",
                     method="PUT",
                     body=json.dumps(
                         {"document": edit_document, "expectedVersion": draft["version"]}
@@ -1496,7 +1496,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 status, conflict = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}",
+                    f"/api/configuration/revisions/{draft['revisionId']}",
                     method="PUT",
                     body=json.dumps(
                         {
@@ -1611,12 +1611,12 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 changed["metadataPolicies"][0]["language"] = "ja-JP"
                 active = activate_document(service, changed)
 
-                status, system = request(api, "/api/v1/system/status")
+                status, system = request(api, "/api/system/status")
                 self.assertEqual(status, 200)
                 self.assertEqual(system["system"]["configuration_snapshot_id"], active.revision_id)
                 self.assertEqual(system["system"]["maximum_active_jobs"], 7)
                 # The retired schedules surface answers like any unknown route.
-                status, _schedules = request(api, "/api/v1/schedules")
+                status, _schedules = request(api, "/api/schedules")
                 self.assertEqual(status, 404)
                 # An immutable Active may still carry the retired stale-age key;
                 # it is readable with the value ignored and never appears in the
@@ -1625,7 +1625,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     "automation.staleJobAgeSeconds",
                     api._runtime_binding.runtime_settings["settings"],
                 )
-                status, retired = request(api, "/api/v1/jobs/stale")
+                status, retired = request(api, "/api/jobs/stale")
                 self.assertEqual(status, 404)
                 status, job = submit_organize_job(api)
                 self.assertEqual(status, 200)
@@ -1648,26 +1648,26 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 return None
 
             def serve_forever(self):
-                self.configuration_result = request(self.app, "/api/v1/configuration")
+                self.configuration_result = request(self.app, "/api/configuration")
                 self.job_result = submit_organize_job(self.app)
                 replacement = json.loads(self.replacement_document)
                 status, draft = request(
                     self.app,
-                    "/api/v1/configuration/drafts",
+                    "/api/configuration/drafts",
                     method="POST",
                     body=json.dumps({"document": replacement}).encode(),
                 )
                 self.assertions.append((status, draft))
                 status, validated = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}/validate",
+                    f"/api/configuration/revisions/{draft['revisionId']}/validate",
                     method="POST",
                     body=b"{}",
                 )
                 self.assertions.append((status, validated))
                 self.activation_result = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}/activate",
+                    f"/api/configuration/revisions/{draft['revisionId']}/activate",
                     method="POST",
                     body=json.dumps({"expectedVersion": validated["version"]}).encode(),
                 )
@@ -1823,21 +1823,21 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             def serve_forever(self):
                 status, draft = request(
                     self.app,
-                    "/api/v1/configuration/drafts",
+                    "/api/configuration/drafts",
                     method="POST",
                     body=json.dumps({"document": self.invalid_document}).encode(),
                 )
                 self.lifecycle.append((status, draft["status"]))
                 status, validated = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}/validate",
+                    f"/api/configuration/revisions/{draft['revisionId']}/validate",
                     method="POST",
                     body=b"{}",
                 )
                 self.lifecycle.append((status, validated["status"]))
                 status, edited = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}",
+                    f"/api/configuration/revisions/{draft['revisionId']}",
                     method="PUT",
                     body=json.dumps(
                         {
@@ -1849,18 +1849,18 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.lifecycle.append((status, edited["status"]))
                 self.detail_result = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}",
+                    f"/api/configuration/revisions/{draft['revisionId']}",
                 )
                 status, validated = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}/validate",
+                    f"/api/configuration/revisions/{draft['revisionId']}/validate",
                     method="POST",
                     body=b"{}",
                 )
                 self.lifecycle.append((status, validated["status"]))
                 self.active_result = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}/activate",
+                    f"/api/configuration/revisions/{draft['revisionId']}/activate",
                     method="POST",
                     body=json.dumps({"expectedVersion": validated["version"]}).encode(),
                 )
@@ -2234,7 +2234,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             def checked_activate(self, document):
                 status, draft = request(
                     self.app,
-                    "/api/v1/configuration/drafts",
+                    "/api/configuration/drafts",
                     method="POST",
                     body=json.dumps({"document": document}).encode(),
                 )
@@ -2243,7 +2243,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 revision_id = draft["revisionId"]
                 status, validated = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{revision_id}/validate",
+                    f"/api/configuration/revisions/{revision_id}/validate",
                     method="POST",
                     body=b"{}",
                 )
@@ -2251,7 +2251,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     raise AssertionError((status, validated))
                 status, evidence = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{revision_id}/local-setup-check",
+                    f"/api/configuration/revisions/{revision_id}/local-setup-check",
                     method="POST",
                     body=json.dumps(
                         {
@@ -2267,7 +2267,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 for storage_id in ("source-storage", "media-target"):
                     status, storage_evidence = request(
                         self.app,
-                        f"/api/v1/configuration/revisions/{revision_id}/storage-check",
+                        f"/api/configuration/revisions/{revision_id}/storage-check",
                         method="POST",
                         body=json.dumps(
                             {
@@ -2281,7 +2281,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                         raise AssertionError((status, storage_evidence))
                 status, strategy_evidence = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{revision_id}/recognition-strategy-test",
+                    f"/api/configuration/revisions/{revision_id}/recognition-strategy-test",
                     method="POST",
                     body=json.dumps(
                         {
@@ -2296,7 +2296,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     raise AssertionError((status, strategy_evidence))
                 status, destination_evidence = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{revision_id}/destination-precheck",
+                    f"/api/configuration/revisions/{revision_id}/destination-precheck",
                     method="POST",
                     body=json.dumps(
                         {
@@ -2318,7 +2318,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     raise AssertionError((status, destination_evidence))
                 status, active = request(
                     self.app,
-                    f"/api/v1/configuration/revisions/{revision_id}/activate",
+                    f"/api/configuration/revisions/{revision_id}/activate",
                     method="POST",
                     body=json.dumps(
                         {"expectedVersion": validated["version"], "checked": True}
@@ -2351,7 +2351,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 task_id = self.first_job["task_id"]
                 status, self.task_detail = request(
                     self.app,
-                    f"/api/v1/tasks/{task_id}",
+                    f"/api/tasks/{task_id}",
                     query="itemLimit=100&resultLimit=100",
                 )
                 if status != 200:
@@ -2679,7 +2679,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     )
                     api_status, api_task = request(
                         api,
-                        f"/api/v1/tasks/{queued.task_id}",
+                        f"/api/tasks/{queued.task_id}",
                     )
                     self.assertEqual(api_status, 200, api_task)
                     failure = api_task["failure"]

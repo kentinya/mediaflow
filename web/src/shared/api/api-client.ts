@@ -124,7 +124,7 @@ export async function fetchSystemStatus(
   }
   let response: Response;
   try {
-    response = await fetchImpl("/api/v1/system/status", {
+    response = await fetchImpl("/api/system/status", {
       method: "GET",
       headers,
     });
@@ -314,7 +314,7 @@ export function storageFilesUrl(options: StorageFilesQueryOptions): string {
     params.set("cursor", options.cursor);
   }
   const qs = params.toString();
-  return `/api/v1/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}/files${qs ? `?${qs}` : ""}`;
+  return `/api/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}/files${qs ? `?${qs}` : ""}`;
 }
 
 export async function fetchStorageFiles(
@@ -500,7 +500,7 @@ export function mediaLibraryFilesUrl(
     params.set("cursor", options.cursor);
   }
   const qs = params.toString();
-  return `/api/v1/media-libraries/${encodeURIComponent(options.mediaLibraryId)}/files${qs ? `?${qs}` : ""}`;
+  return `/api/media-libraries/${encodeURIComponent(options.mediaLibraryId)}/files${qs ? `?${qs}` : ""}`;
 }
 
 export async function fetchMediaLibraryFiles(
@@ -590,7 +590,7 @@ export async function fetchMediaLibraryList(
   }
   let response: Response;
   try {
-    response = await fetchImpl("/api/v1/media-libraries", {
+    response = await fetchImpl("/api/media-libraries", {
       method: "GET",
       headers,
     });
@@ -771,7 +771,7 @@ export function taskListUrl(options: TaskListQueryOptions): string {
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor) params.set("cursor", options.cursor);
   const qs = params.toString();
-  return `/api/v1/operations/tasks${qs ? `?${qs}` : ""}`;
+  return `/api/operations/tasks${qs ? `?${qs}` : ""}`;
 }
 
 export async function fetchTaskList(
@@ -838,7 +838,7 @@ export function taskDetailUrl(options: TaskDetailQueryOptions): string {
   if (options.itemCursor) params.set("itemCursor", options.itemCursor);
   if (options.resultCursor) params.set("resultCursor", options.resultCursor);
   const qs = params.toString();
-  return `/api/v1/operations/tasks/${encodeURIComponent(options.taskId)}${qs ? `?${qs}` : ""}`;
+  return `/api/operations/tasks/${encodeURIComponent(options.taskId)}${qs ? `?${qs}` : ""}`;
 }
 
 export type TaskDetailRead =
@@ -970,7 +970,7 @@ export async function mutateLifecycle(
   ) {
     return { ok: false, status: 0, code: "invalid_request" };
   }
-  const url = `/api/v1/tasks/${encodeURIComponent(options.objectId)}/${options.action}`;
+  const url = `/api/tasks/${encodeURIComponent(options.objectId)}/${options.action}`;
   let response: Response;
   try {
     response = await fetchImpl(url, {
@@ -1032,7 +1032,7 @@ export async function fetchWorkerReadiness(
 ): Promise<WorkerReadinessModel> {
   let response: Response;
   try {
-    response = await fetchImpl("/api/v1/operations/workers/readiness", {
+    response = await fetchImpl("/api/operations/workers/readiness", {
       method: "GET",
       headers: operationsHeaders(token),
     });
@@ -1102,7 +1102,7 @@ export function runInventoryUrl(options: RunInventoryQueryOptions): string {
   if (options.view) params.set("view", options.view);
   if (options.problem) params.set("problem", options.problem);
   const qs = params.toString();
-  return `/api/v1/operations/runs${qs ? `?${qs}` : ""}`;
+  return `/api/operations/runs${qs ? `?${qs}` : ""}`;
 }
 
 export type RunInventoryRead =
@@ -1163,7 +1163,7 @@ export async function fetchRunOverview(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/runs/${encodeURIComponent(runId)}`,
+      `/api/operations/runs/${encodeURIComponent(runId)}`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -1216,7 +1216,7 @@ export interface RunRecordsQueryOptions {
 }
 
 function runDetailBase(runId: string): string {
-  return `/api/v1/operations/runs/${encodeURIComponent(runId)}`;
+  return `/api/operations/runs/${encodeURIComponent(runId)}`;
 }
 
 export function runItemsUrl(options: RunItemsQueryOptions): string {
@@ -1402,7 +1402,7 @@ export async function fetchTaskItemRecovery(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/recovery`,
+      `/api/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/recovery`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -1423,7 +1423,7 @@ export async function fetchAuthenticatedPrincipal(
   if (token === null) throw new OperationsApiError("unauthorized");
   let response: Response;
   try {
-    response = await fetchImpl("/api/v1/auth/principal", {
+    response = await fetchImpl("/api/auth/principal", {
       method: "GET",
       headers: operationsHeaders(token),
     });
@@ -1559,7 +1559,7 @@ export async function fetchWorkerList(
 ): Promise<WorkerListModel> {
   let response: Response;
   try {
-    response = await fetchImpl("/api/v1/operations/workers", {
+    response = await fetchImpl("/api/operations/workers", {
       method: "GET",
       headers: operationsHeaders(token),
     });
@@ -1797,7 +1797,7 @@ function normalizeRecoveryCommandAck(payload: unknown): RecoveryCommandAck {
 }
 
 function taskItemRecoveryBase(taskId: string, itemId: string): string {
-  return `/api/v1/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/recovery`;
+  return `/api/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/recovery`;
 }
 
 export async function submitTaskItemRecoveryDecision(
@@ -1938,7 +1938,7 @@ export async function submitOrganizeIntent(
   }
   return submitOrganizeMutation(
     token,
-    "/api/v1/operations/organize/intents",
+    "/api/operations/organize/intents",
     body,
     normalizeOrganizeIntent,
     fetchImpl,
@@ -1960,7 +1960,7 @@ export async function fetchOrganizeIntent(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/organize/intents/${encodeURIComponent(intentId)}`,
+      `/api/operations/organize/intents/${encodeURIComponent(intentId)}`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -2057,7 +2057,7 @@ export async function updateOrganizeChoice(
   }
   return submitOrganizeMutation(
     token,
-    `/api/v1/operations/organize/intents/${encodeURIComponent(options.intentId)}/items/${encodeURIComponent(options.itemId)}/choice`,
+    `/api/operations/organize/intents/${encodeURIComponent(options.intentId)}/items/${encodeURIComponent(options.itemId)}/choice`,
     body,
     normalizeOrganizeIntent,
     fetchImpl,
@@ -2088,7 +2088,7 @@ export async function submitOrganizePreview(
   }
   return submitOrganizeMutation(
     token,
-    `/api/v1/operations/organize/intents/${encodeURIComponent(options.intentId)}/previews`,
+    `/api/operations/organize/intents/${encodeURIComponent(options.intentId)}/previews`,
     { expectedVersion: options.expectedVersion },
     normalizeOrganizeIntent,
     fetchImpl,
@@ -2110,7 +2110,7 @@ export async function fetchOrganizePreviewDetail(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/organize/previews/${encodeURIComponent(previewId)}`,
+      `/api/operations/organize/previews/${encodeURIComponent(previewId)}`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -2195,7 +2195,7 @@ export async function executeOrganizePreview(
   }
   return submitOrganizeMutation(
     token,
-    `/api/v1/operations/organize/previews/${encodeURIComponent(options.previewId)}/execute`,
+    `/api/operations/organize/previews/${encodeURIComponent(options.previewId)}/execute`,
     body,
     normalizeOrganizeExecution,
     fetchImpl,
@@ -2251,7 +2251,7 @@ export async function fetchOrganizeAdmissionOutcome(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/organize/previews/${encodeURIComponent(
+      `/api/operations/organize/previews/${encodeURIComponent(
         options.previewId,
       )}/admission?${params.toString()}`,
       { method: "GET", headers: operationsHeaders(token) },
@@ -2314,7 +2314,7 @@ export async function fetchOrganizeExecutions(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/organize/executions?${params.toString()}`,
+      `/api/operations/organize/executions?${params.toString()}`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -2599,7 +2599,7 @@ export async function saveResourceLibrary(
   return submitAutomationMutation(
     token,
     "POST",
-    "/api/v1/resource-libraries",
+    "/api/resource-libraries",
     {
       resourceLibraryId: options.resourceLibraryId,
       name: options.name,
@@ -2728,7 +2728,7 @@ export function fetchResourceLibraryEdit(
 ) {
   return fetchLibraryEditProjection(
     token,
-    `/api/v1/resource-libraries/${encodeURIComponent(id)}/edit`,
+    `/api/resource-libraries/${encodeURIComponent(id)}/edit`,
     fetchImpl,
     "resourceLibrary",
     (value) => {
@@ -2777,7 +2777,7 @@ export function editResourceLibrary(
   return submitAutomationMutation(
     token,
     "PUT",
-    `/api/v1/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}`,
+    `/api/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}`,
     { ...options },
     normalizeResourceLibrarySave,
     fetchImpl,
@@ -2904,7 +2904,7 @@ export async function submitDirectFileCommand(
   }
   return submitDirectCommandThrough(
     token,
-    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/commands`,
+    `/api/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/commands`,
     options,
     fetchImpl,
   );
@@ -2925,7 +2925,7 @@ export async function submitMediaLibraryDirectCommand(
   }
   return submitDirectCommandThrough(
     token,
-    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/commands`,
+    `/api/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/commands`,
     options,
     fetchImpl,
   );
@@ -3005,7 +3005,7 @@ export async function submitFilesDiscovery(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}/files/discoveries`,
+      `/api/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}/files/discoveries`,
       {
         method: "POST",
         headers: {
@@ -3109,7 +3109,7 @@ export async function fetchOrganizeDiscoveries(
 ): Promise<OrganizeDiscoveryListResult> {
   let response: Response;
   try {
-    response = await fetchImpl("/api/v1/operations/organize/discoveries", {
+    response = await fetchImpl("/api/operations/organize/discoveries", {
       headers: { ...operationsHeaders(token) },
     });
   } catch {
@@ -3219,7 +3219,7 @@ export async function fetchFilesOrganizeWork(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}/files/organize-work${
+      `/api/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}/files/organize-work${
         suffix === "" ? "" : `?${suffix}`
       }`,
       { headers: { ...operationsHeaders(token) } },
@@ -3381,7 +3381,7 @@ export async function fetchOrganizeDiscovery(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/organize/discoveries/${encodeURIComponent(discoveryId)}${
+      `/api/operations/organize/discoveries/${encodeURIComponent(discoveryId)}${
         requestId === undefined
           ? ""
           : `?requestId=${encodeURIComponent(requestId)}`
@@ -3450,7 +3450,7 @@ export async function controlOrganizeDiscovery(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/organize/discoveries/${encodeURIComponent(
+      `/api/operations/organize/discoveries/${encodeURIComponent(
         options.discoveryId,
       )}/${options.action}`,
       {
@@ -3528,7 +3528,7 @@ export async function requestOrganizeDiscoveryAnalysis(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/organize/discoveries/${encodeURIComponent(
+      `/api/operations/organize/discoveries/${encodeURIComponent(
         options.discoveryId,
       )}/analyze`,
       {
@@ -3584,7 +3584,7 @@ export async function finalizeOrganizeDiscovery(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/organize/discoveries/${encodeURIComponent(
+      `/api/operations/organize/discoveries/${encodeURIComponent(
         options.discoveryId,
       )}/finalize`,
       {
@@ -3702,7 +3702,7 @@ export async function submitFilesOrganizeIntent(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}/files/organize`,
+      `/api/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}/files/organize`,
       {
         method: "POST",
         headers: {
@@ -3819,7 +3819,7 @@ export async function fetchTextFile(
   }
   return readDirectTextThrough(
     token,
-    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/text`,
+    `/api/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/text`,
     path,
     "resource",
     fetchImpl,
@@ -3838,7 +3838,7 @@ export async function fetchMediaLibraryTextFile(
   }
   return readDirectTextThrough(
     token,
-    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/text`,
+    `/api/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/text`,
     path,
     "media",
     fetchImpl,
@@ -3900,7 +3900,7 @@ export async function fetchDeleteImpact(
   }
   return readDeleteImpactThrough(
     token,
-    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/delete-impact`,
+    `/api/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/delete-impact`,
     paths,
     "resource",
     fetchImpl,
@@ -3919,7 +3919,7 @@ export async function fetchMediaLibraryDeleteImpact(
   }
   return readDeleteImpactThrough(
     token,
-    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/delete-impact`,
+    `/api/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/delete-impact`,
     paths,
     "media",
     fetchImpl,
@@ -3999,7 +3999,7 @@ export function fetchDeleteStatus(
   }
   return readDeleteStatusThrough(
     token,
-    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/deletes/${encodeURIComponent(taskId)}`,
+    `/api/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/deletes/${encodeURIComponent(taskId)}`,
     "resource",
     resourceLibraryId,
     taskId,
@@ -4023,7 +4023,7 @@ export function fetchMediaLibraryDeleteStatus(
   }
   return readDeleteStatusThrough(
     token,
-    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/deletes/${encodeURIComponent(taskId)}`,
+    `/api/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/deletes/${encodeURIComponent(taskId)}`,
     "media",
     mediaLibraryId,
     taskId,
@@ -4090,7 +4090,7 @@ export async function fetchRenameEvidence(
   }
   return readRenameEvidenceThrough(
     token,
-    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/rename-evidence`,
+    `/api/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/rename-evidence`,
     path,
     "resource",
     fetchImpl,
@@ -4109,7 +4109,7 @@ export async function fetchMediaLibraryRenameEvidence(
   }
   return readRenameEvidenceThrough(
     token,
-    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/rename-evidence`,
+    `/api/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/rename-evidence`,
     path,
     "media",
     fetchImpl,
@@ -4161,7 +4161,7 @@ export async function fetchTransferImpact(
   }
   return readTransferImpactThrough(
     token,
-    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}`,
+    `/api/resource-libraries/${encodeURIComponent(resourceLibraryId)}`,
     "resource",
     options,
     fetchImpl,
@@ -4206,7 +4206,7 @@ export async function fetchMediaLibraryTransferImpact(
   }
   return readTransferImpactThrough(
     token,
-    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}`,
+    `/api/media-libraries/${encodeURIComponent(mediaLibraryId)}`,
     "media",
     {
       operation: options.operation,
@@ -4305,7 +4305,7 @@ export async function fetchTransferProjection(
   }
   return readTransferProjectionThrough(
     token,
-    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}`,
+    `/api/resource-libraries/${encodeURIComponent(resourceLibraryId)}`,
     "resource",
     taskId,
     fetchImpl,
@@ -4338,7 +4338,7 @@ export async function fetchMediaLibraryTransferProjection(
   }
   return readTransferProjectionThrough(
     token,
-    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}`,
+    `/api/media-libraries/${encodeURIComponent(mediaLibraryId)}`,
     "media",
     taskId,
     fetchImpl,
@@ -4424,7 +4424,7 @@ export async function mutateTransferLifecycle(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/tasks/${encodeURIComponent(taskId)}/${action}`,
+      `/api/tasks/${encodeURIComponent(taskId)}/${action}`,
       {
         method: "POST",
         headers: operationsMutationHeaders(token),
@@ -4503,7 +4503,7 @@ export async function submitTransfer(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/transfers`,
+    `/api/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/transfers`,
     {
       operation: options.operation,
       paths: [...options.paths],
@@ -4561,7 +4561,7 @@ export async function submitMediaLibraryTransfer(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/transfers`,
+    `/api/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/transfers`,
     {
       operation: options.operation,
       paths: [...options.paths],
@@ -4595,7 +4595,7 @@ export async function fetchResourceLibraryRemovalPreview(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/removal-preview`,
+      `/api/resource-libraries/${encodeURIComponent(resourceLibraryId)}/removal-preview`,
       { headers: directFilesReadHeaders(token) },
     );
   } catch {
@@ -4654,7 +4654,7 @@ export async function removeResourceLibrary(
   return submitAutomationMutation(
     token,
     "DELETE",
-    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}`,
+    `/api/resource-libraries/${encodeURIComponent(resourceLibraryId)}`,
     {
       expectedRevisionId: expected.revisionId,
       expectedVersion: expected.version,
@@ -4703,7 +4703,7 @@ export async function saveMediaLibrary(
   return submitAutomationMutation(
     token,
     "POST",
-    "/api/v1/media-libraries",
+    "/api/media-libraries",
     {
       mediaLibraryId: options.mediaLibraryId,
       name: options.name,
@@ -4723,7 +4723,7 @@ export function fetchMediaLibraryEdit(
 ) {
   return fetchLibraryEditProjection(
     token,
-    `/api/v1/media-libraries/${encodeURIComponent(id)}/edit`,
+    `/api/media-libraries/${encodeURIComponent(id)}/edit`,
     fetchImpl,
     "mediaLibrary",
     (value) => {
@@ -4754,7 +4754,7 @@ export function editMediaLibrary(
   return submitAutomationMutation(
     token,
     "PUT",
-    `/api/v1/media-libraries/${encodeURIComponent(options.mediaLibraryId)}`,
+    `/api/media-libraries/${encodeURIComponent(options.mediaLibraryId)}`,
     { ...options },
     normalizeMediaLibrarySave,
     fetchImpl,
@@ -4780,7 +4780,7 @@ export async function fetchMediaLibraryRemovalPreview(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/removal-preview`,
+      `/api/media-libraries/${encodeURIComponent(mediaLibraryId)}/removal-preview`,
       { headers: directFilesReadHeaders(token) },
     );
   } catch {
@@ -4841,7 +4841,7 @@ export async function removeMediaLibrary(
   return submitAutomationMutation(
     token,
     "DELETE",
-    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}`,
+    `/api/media-libraries/${encodeURIComponent(mediaLibraryId)}`,
     {
       expectedRevisionId: expected.revisionId,
       expectedVersion: expected.version,
@@ -4891,13 +4891,13 @@ export function automationDefinitionsUrl(
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor) params.set("cursor", options.cursor);
   const qs = params.toString();
-  return `/api/v1/operations/automation/task-definitions${qs ? `?${qs}` : ""}`;
+  return `/api/operations/automation/task-definitions${qs ? `?${qs}` : ""}`;
 }
 
 // --- Focused Automation engine settings (Task 43.4) ----------------------
 
 /** The one shared engine-settings read/command URL. */
-export const automationSettingsUrl = "/api/v1/operations/automation/settings";
+export const automationSettingsUrl = "/api/operations/automation/settings";
 
 export type AutomationSettingsRead =
   | { readonly ok: true; readonly model: AutomationSettingsModel }
@@ -5237,7 +5237,7 @@ export async function fetchAutomationMetrics(
 ): Promise<AutomationMetricsRead> {
   let response: Response;
   try {
-    response = await fetchImpl("/api/v1/operations/automation/metrics", {
+    response = await fetchImpl("/api/operations/automation/metrics", {
       method: "GET",
       headers: operationsHeaders(token),
     });
@@ -5300,7 +5300,7 @@ export function automationRecordsUrl(
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor) params.set("cursor", options.cursor);
   const qs = params.toString();
-  return `/api/v1/operations/automation/records${qs ? `?${qs}` : ""}`;
+  return `/api/operations/automation/records${qs ? `?${qs}` : ""}`;
 }
 
 export type AutomationRecordsRead =
@@ -5359,7 +5359,7 @@ export async function fetchAutomationPreview(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/automation/task-definitions/${encodeURIComponent(definitionId)}/previews/${encodeURIComponent(previewId)}`,
+      `/api/operations/automation/task-definitions/${encodeURIComponent(definitionId)}/previews/${encodeURIComponent(previewId)}`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -5412,7 +5412,7 @@ export async function fetchAutomationPreviewItems(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/automation/task-definitions/${encodeURIComponent(definitionId)}/previews/${encodeURIComponent(previewId)}/items?${params.toString()}`,
+      `/api/operations/automation/task-definitions/${encodeURIComponent(definitionId)}/previews/${encodeURIComponent(previewId)}/items?${params.toString()}`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -5473,7 +5473,7 @@ export async function fetchAutomationOccurrences(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/automation/task-definitions/${encodeURIComponent(definitionId)}/occurrences?${params.toString()}`,
+      `/api/operations/automation/task-definitions/${encodeURIComponent(definitionId)}/occurrences?${params.toString()}`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -5521,7 +5521,7 @@ export async function createAutomationDefinition(
   return submitAutomationMutation(
     token,
     "POST",
-    "/api/v1/automation/task-definitions",
+    "/api/automation/task-definitions",
     {
       revisionId: options.revisionId,
       expectedVersion: options.expectedVersion,
@@ -5557,7 +5557,7 @@ export async function validateAutomationDraft(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/validate`,
+    `/api/configuration/revisions/${encodeURIComponent(options.revisionId)}/validate`,
     {},
     (payload) => {
       const source = readRecord(payload, "automation_draft_validation");
@@ -5586,7 +5586,7 @@ export async function createAutomationPreview(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/automation/task-definitions/${encodeURIComponent(options.definitionId)}/preview`,
+    `/api/automation/task-definitions/${encodeURIComponent(options.definitionId)}/preview`,
     {},
     (payload) => {
       const source = readRecord(payload, "automation_preview_created");
@@ -5616,7 +5616,7 @@ export async function fetchNotificationDefinitions(
 ): Promise<NotificationDefinitionsRead> {
   let response: Response;
   try {
-    response = await fetchImpl("/api/v1/operations/notifications/webhooks", {
+    response = await fetchImpl("/api/operations/notifications/webhooks", {
       method: "GET",
       headers: operationsHeaders(token),
     });
@@ -5660,7 +5660,7 @@ export async function fetchNotificationDefinition(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/notifications/webhooks/${encodeURIComponent(webhookId)}`,
+      `/api/operations/notifications/webhooks/${encodeURIComponent(webhookId)}`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -5710,7 +5710,7 @@ export async function fetchNotificationDefinitionDraft(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/notifications/webhooks/${encodeURIComponent(webhookId)}/draft`,
+      `/api/operations/notifications/webhooks/${encodeURIComponent(webhookId)}/draft`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -5766,7 +5766,7 @@ export async function fetchNotificationDeliveries(
   }
   let response: Response;
   try {
-    response = await fetchImpl(`/api/v1/notifications?${params.toString()}`, {
+    response = await fetchImpl(`/api/notifications?${params.toString()}`, {
       method: "GET",
       headers: operationsHeaders(token),
     });
@@ -5810,7 +5810,7 @@ export async function fetchNotificationDeliveryDetail(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/operations/notifications/deliveries/${encodeURIComponent(deliveryId)}`,
+      `/api/operations/notifications/deliveries/${encodeURIComponent(deliveryId)}`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -5863,7 +5863,7 @@ export async function createWebhookDefinition(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks`,
+    `/api/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks`,
     { object: options.object, expectedVersion: options.expectedVersion },
     (payload) =>
       normalizeWebhookDefinitionMutation(payload, {
@@ -5900,7 +5900,7 @@ export async function saveWebhookDefinitionDraft(
   return submitAutomationMutation(
     token,
     "PUT",
-    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}`,
+    `/api/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}`,
     { object: options.object, expectedVersion: options.expectedVersion },
     (payload) =>
       normalizeWebhookDefinitionMutation(payload, {
@@ -5955,7 +5955,7 @@ export async function copyWebhookDefinition(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}/copy`,
+    `/api/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}/copy`,
     body,
     (payload) =>
       normalizeWebhookDefinitionMutation(payload, {
@@ -5993,7 +5993,7 @@ export async function setWebhookDefinitionEnabled(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}/${options.enabled ? "enable" : "disable"}`,
+    `/api/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}/${options.enabled ? "enable" : "disable"}`,
     { expectedVersion: options.expectedVersion },
     (payload) =>
       normalizeWebhookDefinitionMutation(payload, {
@@ -6029,7 +6029,7 @@ export async function testWebhookDefinition(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/operations/notifications/webhooks/${encodeURIComponent(options.webhookId)}/test`,
+    `/api/operations/notifications/webhooks/${encodeURIComponent(options.webhookId)}/test`,
     {
       expectedRevisionId: options.expectedRevisionId,
       expectedVersion: options.expectedVersion,
@@ -6064,7 +6064,7 @@ export async function activateWebhookDraft(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/operations/notifications/webhooks/${encodeURIComponent(options.webhookId)}/activate-draft`,
+    `/api/operations/notifications/webhooks/${encodeURIComponent(options.webhookId)}/activate-draft`,
     {
       expectedRevisionId: options.expectedRevisionId,
       expectedVersion: options.expectedVersion,
@@ -6096,7 +6096,7 @@ export async function requeueDeadLetterDelivery(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/notifications/${encodeURIComponent(options.deliveryId)}/requeue`,
+    `/api/notifications/${encodeURIComponent(options.deliveryId)}/requeue`,
     {
       expectedStatus: options.expectedStatus,
       expectedUpdatedAt: options.expectedUpdatedAt,
@@ -6122,7 +6122,7 @@ export async function resolveStaleDelivery(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/notifications/${encodeURIComponent(options.deliveryId)}/resolve-stale`,
+    `/api/notifications/${encodeURIComponent(options.deliveryId)}/resolve-stale`,
     {
       expectedStatus: options.expectedStatus,
       expectedUpdatedAt: options.expectedUpdatedAt,
@@ -6152,7 +6152,7 @@ export async function createNotificationSuccessorDraft(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/configuration/revisions/${encodeURIComponent(options.activeRevisionId)}/successor`,
+    `/api/configuration/revisions/${encodeURIComponent(options.activeRevisionId)}/successor`,
     { expectedActiveRevisionId: options.activeRevisionId },
     (payload) => {
       const source = readRecord(payload, "notification_successor_draft");
@@ -6166,7 +6166,7 @@ export async function createNotificationSuccessorDraft(
 // V2 Storage management journey (Slice 39, Task 39.1).
 //
 // The reads use the bounded exact-Active operator projections under
-// /api/v1/operations/storage-management/; the explicit Connection/Read check
+// /api/operations/storage-management/; the explicit Connection/Read check
 // reuses the existing zero-mutation Storage check service bound to the exact
 // Active revision the operator inspected. Nothing here submits or accepts a
 // revision digest, a secret value or a write probe.
@@ -6225,7 +6225,7 @@ export function rulesInventoryPath(options: RulesInventoryQuery = {}): string {
   if (typeof options.enabled === "boolean")
     params.set("enabled", String(options.enabled));
   const encoded = params.toString();
-  return `/api/v1/operations/rules/inventory${encoded ? `?${encoded}` : ""}`;
+  return `/api/operations/rules/inventory${encoded ? `?${encoded}` : ""}`;
 }
 
 export async function fetchRulesInventory(
@@ -6255,7 +6255,7 @@ export async function fetchRulesInventory(
   }
 }
 
-const STORAGE_BASE = "/api/v1/operations/storage-management";
+const STORAGE_BASE = "/api/operations/storage-management";
 
 /** The bounded, server-applied Storage inventory search/filter/page request. */
 export interface StorageInventoryQuery {
@@ -6477,7 +6477,7 @@ import {
   type StorageSaveModel,
 } from "../../entities/storage/storage-form";
 
-const STORAGE_COMMAND_BASE = "/api/v1/storages";
+const STORAGE_COMMAND_BASE = "/api/storages";
 
 function storageOptionFields(
   options: StorageSaveCandidate["options"],
@@ -6776,8 +6776,8 @@ export async function removeStorage(
 // V2 rules-workspace typed object command (Slice 41, Task 41.2).
 //
 // The five independently creatable rule families are published through
-// /api/v1/operations/rules/*, which reuses the exact managed application
-// service the V1 configuration UI, `/api/v1/configuration/*` and the CLI drive:
+// /api/operations/rules/*, which reuses the exact managed application
+// service the V1 configuration UI, `/api/configuration/*` and the CLI drive:
 // one explicit Save composes the focused successor from the captured exact
 // Active, validates the whole document, runs the applicable read-only checks and
 // atomically activates it. The browser therefore never performs a separate
@@ -6798,7 +6798,7 @@ import {
   type RuleObjectProjection,
 } from "../../entities/rules/rules-form";
 
-const RULES_BASE = "/api/v1/operations/rules";
+const RULES_BASE = "/api/operations/rules";
 
 export type { ActiveAuthorityIdentity } from "../../entities/rules/rules-form";
 
@@ -7443,7 +7443,7 @@ export async function removeRuleObject(
 
 // --- Focused Automation definition lifecycle -----------------------------
 
-const AUTOMATION_DEFINITIONS_BASE = "/api/v1/operations/automation/definitions";
+const AUTOMATION_DEFINITIONS_BASE = "/api/operations/automation/definitions";
 
 export interface AutomationDefinitionAuthority {
   readonly expectedRevisionId: string;
@@ -7717,7 +7717,7 @@ export async function removeAutomationDefinitionFocused(
 
 // --- Definition-bound Run once --------------------------------------------
 
-const AUTOMATION_RUN_ONCE_BASE = "/api/v1/operations/automation/run-once";
+const AUTOMATION_RUN_ONCE_BASE = "/api/operations/automation/run-once";
 
 export interface AutomationRunOnceReadResult {
   readonly ok: boolean;
@@ -8008,7 +8008,7 @@ function libraryFileOperationsBase(
 ): string {
   const collection =
     kind === "media" ? "media-libraries" : "resource-libraries";
-  return `/api/v1/${collection}/${encodeURIComponent(libraryId)}/file-operations`;
+  return `/api/${collection}/${encodeURIComponent(libraryId)}/file-operations`;
 }
 
 export interface LibraryFileOperationListOptions {
@@ -8209,10 +8209,9 @@ export async function fetchLibraryFileOperationOrigins(
   const query = limit === undefined ? "" : `?limit=${limit}`;
   let response: Response;
   try {
-    response = await fetchImpl(
-      `/api/v1/${collection}/operation-origins${query}`,
-      { headers: directFilesReadHeaders(token) },
-    );
+    response = await fetchImpl(`/api/${collection}/operation-origins${query}`, {
+      headers: directFilesReadHeaders(token),
+    });
   } catch {
     return { ok: false, status: 0, code: "transport_unavailable" };
   }
@@ -8267,7 +8266,7 @@ export async function fetchLibraryFileOperationOrigin(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/files/operation-origin/${encodeURIComponent(taskId)}`,
+      `/api/files/operation-origin/${encodeURIComponent(taskId)}`,
       { headers: directFilesReadHeaders(token) },
     );
   } catch {

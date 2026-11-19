@@ -1,9 +1,9 @@
 /**
  * Local fake API + static server for the minimal Playwright browser path.
  *
- * It serves the built V2 artifact from web/dist under /ui-v2/ and fake
- * /api/v1/explore/*, /api/v1/system/status, /api/v1/file-index and
- * /api/v1/storage/files GET
+ * It serves the built V2 artifact from web/dist at the root and fake
+ * /api/explore/*, /api/system/status, /api/file-index and
+ * /api/storage/files GET
  * documents that mirror the existing Python contracts. Every unsupported
  * method is rejected with 405; no production credentials, media, Storage or
  * external providers are involved, and no token material is ever logged.
@@ -2064,8 +2064,8 @@ function fileIndexDocument(url) {
     status: 200,
     payload: {
       surface: "file_index",
-      fileIndexSurface: "/api/v1/file-index",
-      filesSurface: "/api/v1/storage/files",
+      fileIndexSurface: "/api/file-index",
+      filesSurface: "/api/storage/files",
       items: pageItems,
       limit,
     },
@@ -3013,8 +3013,8 @@ const MANUAL_ITEM_LIMIT_MAX = 100;
 const MANUAL_CURSOR_MAX_LENGTH = 256;
 const MANUAL_REQUEST_FIELD_MAX_LENGTH = 256;
 const MANUAL_REQUEST_BODY_MAX_BYTES = 4096;
-const MANUAL_SCAN_ACTION_PATH = "/api/v1/operations/scans";
-const MANUAL_PREVIEW_ACTION_PATH = "/api/v1/operations/previews";
+const MANUAL_SCAN_ACTION_PATH = "/api/operations/scans";
+const MANUAL_PREVIEW_ACTION_PATH = "/api/operations/previews";
 const MANUAL_FILE_SCOPE = {
   // Scan admission and Organize intent still identify a FileIndex source by
   // ID; the current server-bound Preview derives its
@@ -3353,7 +3353,7 @@ function organizePlanPointerDocument(state, previewId) {
   const document = organizePreviewDocument(state);
   document["previewId"] = previewId;
   document["actions"]["execute"]["path"] =
-    `/api/v1/operations/organize/previews/${previewId}/execute`;
+    `/api/operations/organize/previews/${previewId}/execute`;
   return document;
 }
 
@@ -3368,7 +3368,7 @@ function organizeDiscoveryDocument(discovery) {
       cancel: {
         available: !completed && discovery.status !== "cancelled",
         method: "POST",
-        path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/cancel`,
+        path: `/api/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/cancel`,
         requiresVersion: true,
         sideEffects: "none",
         refusal: null,
@@ -3379,7 +3379,7 @@ function organizeDiscoveryDocument(discovery) {
         durableOutcome:
           "one immutable deduplicated source list is linked to a durable manual intent; a separate exact Preview and confirmed execution are still required",
         method: "POST",
-        path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/finalize`,
+        path: `/api/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/finalize`,
         requiresVersion: true,
         sideEffects: "none",
         refusal: limited ? "discovery_budget_limited" : null,
@@ -3394,7 +3394,7 @@ function organizeDiscoveryDocument(discovery) {
         durableOutcome:
           "the resident Worker re-runs the complete zero-mutation analysis under the same pinned configuration and links a new exact Preview",
         method: "POST",
-        path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/analyze`,
+        path: `/api/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/analyze`,
         requiresVersion: true,
         sideEffects: "none",
         refusal: null,
@@ -3512,7 +3512,7 @@ function organizeIntentDocument(state) {
         method: "POST",
         nextAction:
           "edit one item choice with its current intent and item versions",
-        path: `/api/v1/operations/organize/intents/${ORGANIZE_INTENT_ID}/items/{itemId}/choice`,
+        path: `/api/operations/organize/intents/${ORGANIZE_INTENT_ID}/items/{itemId}/choice`,
         reason: null,
         sideEffects: "none",
       },
@@ -3531,7 +3531,7 @@ function organizeIntentDocument(state) {
         durableOutcome: "a durable zero-mutation Preview revision is stored",
         method: "POST",
         nextAction: "create a fresh exact Preview of the reviewed choices",
-        path: `/api/v1/operations/organize/intents/${ORGANIZE_INTENT_ID}/previews`,
+        path: `/api/operations/organize/intents/${ORGANIZE_INTENT_ID}/previews`,
         reason: null,
         sideEffects: "none",
       },
@@ -3613,7 +3613,7 @@ function organizePreviewDocument(state) {
           "one durable admitted execution and its Processing Worker outcome are stored; only OrganizerExecutor may then mutate Storage",
         method: "POST",
         nextAction: "confirm one Execute action for the selected exact items",
-        path: `/api/v1/operations/organize/previews/${ORGANIZE_PREVIEW_ID}/execute`,
+        path: `/api/operations/organize/previews/${ORGANIZE_PREVIEW_ID}/execute`,
         reason: null,
         requiresConfirmation: true,
         sideEffects: "reported_per_item",
@@ -3623,7 +3623,7 @@ function organizePreviewDocument(state) {
         durableOutcome: null,
         method: "GET",
         nextAction: "reopen the durable intent to change a choice",
-        path: `/api/v1/operations/organize/intents/${ORGANIZE_INTENT_ID}`,
+        path: `/api/operations/organize/intents/${ORGANIZE_INTENT_ID}`,
         reason: null,
         sideEffects: "none",
       },
@@ -3664,7 +3664,7 @@ function organizePreviewDocument(state) {
 function organizeDestructivePreviewDocument(state) {
   const value = organizePreviewDocument(state);
   value.previewId = ORGANIZE_DESTRUCTIVE_PREVIEW_ID;
-  value.actions.execute.path = `/api/v1/operations/organize/previews/${ORGANIZE_DESTRUCTIVE_PREVIEW_ID}/execute`;
+  value.actions.execute.path = `/api/operations/organize/previews/${ORGANIZE_DESTRUCTIVE_PREVIEW_ID}/execute`;
   value.items = value.items.map((item) => ({
     ...item,
     plan: {
@@ -3690,7 +3690,7 @@ function organizeDestructivePreviewDocument(state) {
 function organizeLostPreviewDocument(state) {
   const value = organizePreviewDocument(state);
   value.previewId = ORGANIZE_LOST_PREVIEW_ID;
-  value.actions.execute.path = `/api/v1/operations/organize/previews/${ORGANIZE_LOST_PREVIEW_ID}/execute`;
+  value.actions.execute.path = `/api/operations/organize/previews/${ORGANIZE_LOST_PREVIEW_ID}/execute`;
   return value;
 }
 
@@ -3715,7 +3715,7 @@ function organizeMisboundPreviewDocument(state) {
   misbound["actions"]["execute"]["method"] = "GET";
   misbound["actions"]["execute"]["requiresConfirmation"] = true;
   misbound["actions"]["execute"]["path"] =
-    `/api/v1/organize/previews/another-preview/execute`;
+    `/api/organize/previews/another-preview/execute`;
   return misbound;
 }
 
@@ -3726,14 +3726,14 @@ function organizeSuffixPreviewDocument(state) {
   suffix["actions"]["execute"]["available"] = true;
   suffix["actions"]["execute"]["reason"] = null;
   suffix["actions"]["execute"]["path"] =
-    `/api/v1/operations/organize/previews/${ORGANIZE_SUFFIX_PREVIEW_ID}`;
+    `/api/operations/organize/previews/${ORGANIZE_SUFFIX_PREVIEW_ID}`;
   return suffix;
 }
 
 function organizeLostUnadmittedPreviewDocument(state) {
   const value = organizePreviewDocument(state);
   value.previewId = ORGANIZE_LOST_UNADMITTED_PREVIEW_ID;
-  value.actions.execute.path = `/api/v1/operations/organize/previews/${ORGANIZE_LOST_UNADMITTED_PREVIEW_ID}/execute`;
+  value.actions.execute.path = `/api/operations/organize/previews/${ORGANIZE_LOST_UNADMITTED_PREVIEW_ID}/execute`;
   return value;
 }
 
@@ -3832,7 +3832,7 @@ function organizeExecutionDocument(status, state) {
         nextAction: finished
           ? "inspect the verified per-item Results; no replay is required"
           : "the reviewed work is durably admitted and waits for the resident Processing Worker to claim it",
-        path: `/api/v1/operations/organize/executions/${ORGANIZE_EXECUTION_ID}`,
+        path: `/api/operations/organize/executions/${ORGANIZE_EXECUTION_ID}`,
         reason: null,
         sideEffects: "none",
       },
@@ -3851,7 +3851,7 @@ function organizeExecutionDocument(status, state) {
         durableOutcome: null,
         method: "GET",
         nextAction: "inspect the durable Task and its per-item Results",
-        path: `/api/v1/operations/tasks/${ORGANIZE_TASK_ID}`,
+        path: `/api/operations/tasks/${ORGANIZE_TASK_ID}`,
         reason: null,
         sideEffects: "none",
       },
@@ -4164,7 +4164,7 @@ function manualScanCancelAction(record, permitted = true) {
     nextAction: terminal
       ? "refresh the Scan; a terminal or already cancelled Scan keeps its recorded item outcomes"
       : "request cancellation, then refresh the Scan to read the durable outcome",
-    path: `/api/v1/operations/scans/${record.taskId}/cancel`,
+    path: `/api/operations/scans/${record.taskId}/cancel`,
     retrySafe: false,
     sideEffects: "none",
     unavailableReason,
@@ -4488,7 +4488,7 @@ function manualSession(req) {
  * journey against documented read endpoints only.
  */
 function serveExplore(res, url) {
-  if (url.pathname === "/api/v1/explore/options") {
+  if (url.pathname === "/api/explore/options") {
     const mediaType =
       url.searchParams.get("mediaType") === "tv" ? "tv" : "movie";
     sendJson(res, 200, {
@@ -4499,7 +4499,7 @@ function serveExplore(res, url) {
     });
     return;
   }
-  if (url.pathname === "/api/v1/explore/search") {
+  if (url.pathname === "/api/explore/search") {
     const mediaType =
       url.searchParams.get("mediaType") === "tv" ? "tv" : "movie";
     const query = url.searchParams.get("query") ?? "";
@@ -4518,7 +4518,7 @@ function serveExplore(res, url) {
     );
     return;
   }
-  if (url.pathname === "/api/v1/explore/browse") {
+  if (url.pathname === "/api/explore/browse") {
     const mediaType =
       url.searchParams.get("mediaType") === "tv" ? "tv" : "movie";
     const page = explorePageNumber(url.searchParams.get("page"));
@@ -4564,7 +4564,7 @@ function serveExplore(res, url) {
     return;
   }
   const detailMatch = url.pathname.match(
-    /^\/api\/v1\/explore\/(movie|tv)\/([1-9][0-9]*)$/,
+    /^\/api\/explore\/(movie|tv)\/([1-9][0-9]*)$/,
   );
   if (detailMatch !== null) {
     const mediaType = detailMatch[1];
@@ -4654,7 +4654,7 @@ const CONTENT_TYPES = {
 // Automation journey fake state
 //
 // Mirrors the bounded, digest-free operator documents the real Python API
-// publishes under /api/v1/operations/automation/* (proved by
+// publishes under /api/operations/automation/* (proved by
 // tests/test_v2_automation_operations.py). Mutations reuse the existing
 // backend routes and are optimistic-version bound; the browser never sends or
 // receives a revision digest, fingerprint or plan.
@@ -4672,7 +4672,7 @@ const AUTOMATION_TASK_ID = "automation-task-e2e-001";
 
 /**
  * The typed create-form authority the real Python API serves under
- * /api/v1/operations/automation/definitions. The fake mirrors the bounded
+ * /api/operations/automation/definitions. The fake mirrors the bounded
  * operator document (limits, enabled libraries and the exact Active fence) so
  * the built create dialog can issue only the same reads and the same checked
  * create command the real backend accepts.
@@ -4886,7 +4886,7 @@ function automationAction(overrides = {}) {
     available: true,
     reason: null,
     method: "POST",
-    path: "/api/v1/automation/task-definitions",
+    path: "/api/automation/task-definitions",
     requiresConfirmation: false,
     sideEffects: "none",
     durableOutcome: null,
@@ -4942,7 +4942,7 @@ function notificationAction(overrides = {}) {
     available: true,
     reason: null,
     method: "POST",
-    path: `/api/v1/operations/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/test`,
+    path: `/api/operations/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/test`,
     requiresConfirmation: false,
     sideEffects: "none",
     durableOutcome: null,
@@ -5022,9 +5022,9 @@ function webhookDocument(state, token, overrides = {}) {
 
 function webhookActions(state, token, webhookId = NOTIFICATION_WEBHOOK_ID) {
   const { manage, activate } = notificationPermissions(token);
-  const operationsRoute = `/api/v1/operations/notifications/webhooks/${webhookId}`;
+  const operationsRoute = `/api/operations/notifications/webhooks/${webhookId}`;
   const editPath = state.draftCreated
-    ? `/api/v1/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/objects/webhooks/${webhookId}`
+    ? `/api/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/objects/webhooks/${webhookId}`
     : null;
   const noDraft =
     "an open successor Draft is required to edit this Webhook definition";
@@ -5104,7 +5104,7 @@ function webhookActions(state, token, webhookId = NOTIFICATION_WEBHOOK_ID) {
       reason: manage
         ? null
         : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
-      path: `/api/v1/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor`,
+      path: `/api/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor`,
       durableOutcome:
         "a successor Draft seeded from the immutable Active configuration is stored",
       nextAction:
@@ -5137,7 +5137,7 @@ function notificationDraftActions(state, token) {
       reason: notificationPermissions(token).manage
         ? null
         : "the connected API principal cannot validate configuration (required permission: manage_configuration)",
-      path: `/api/v1/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/validate`,
+      path: `/api/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/validate`,
       durableOutcome:
         "the open Draft is validated without any runtime or Storage effect",
       nextAction: "validate the Draft, then review the validation evidence",
@@ -5218,7 +5218,7 @@ function notificationListDocument(state, token) {
             : "an open successor Draft is required to add a Webhook definition",
         method: "POST",
         path: state.draftCreated
-          ? `/api/v1/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/objects/webhooks`
+          ? `/api/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/objects/webhooks`
           : null,
         durableOutcome:
           "the bounded Webhook definition is stored inside the open successor Draft",
@@ -5230,7 +5230,7 @@ function notificationListDocument(state, token) {
         reason: notificationPermissions(token).manage
           ? null
           : "the connected API principal cannot create a successor Draft (required permission: manage_configuration)",
-        path: `/api/v1/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor`,
         durableOutcome:
           "a successor Draft seeded from the immutable Active configuration is stored",
         nextAction:
@@ -5385,7 +5385,7 @@ function notificationDeliveryDetailDocument(state, token, deliveryId) {
                 ? null
                 : "the connected API principal cannot recover notification deliveries (required permission: manage_configuration)",
               method: "POST",
-              path: `/api/v1/notifications/${deliveryId}/requeue`,
+              path: `/api/notifications/${deliveryId}/requeue`,
               requiresConfirmation: true,
               sideEffects: "delivery_queue_state_only",
               durableOutcome:
@@ -5402,7 +5402,7 @@ function notificationDeliveryDetailDocument(state, token, deliveryId) {
                   ? null
                   : "the connected API principal cannot recover notification deliveries (required permission: manage_configuration)",
                 method: "POST",
-                path: `/api/v1/notifications/${deliveryId}/resolve-stale`,
+                path: `/api/notifications/${deliveryId}/resolve-stale`,
                 requiresConfirmation: true,
                 sideEffects: "delivery_queue_state_only",
                 durableOutcome:
@@ -5449,7 +5449,7 @@ function automationDefinitionActions(state, token) {
     detail: automationAction({
       available: true,
       method: "GET",
-      path: `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}`,
+      path: `/api/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}`,
       durableOutcome: null,
       nextAction:
         "inspect the durable definition, schedule and occurrence state",
@@ -5457,7 +5457,7 @@ function automationDefinitionActions(state, token) {
     occurrences: automationAction({
       available: true,
       method: "GET",
-      path: `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/occurrences`,
+      path: `/api/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/occurrences`,
       durableOutcome: null,
       nextAction: "inspect the bounded occurrence history and its linked work",
     }),
@@ -5469,7 +5469,7 @@ function automationDefinitionActions(state, token) {
       reason: execute
         ? null
         : "the connected API principal cannot execute an organizing Run once",
-      path: `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/run-once`,
+      path: `/api/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/run-once`,
       durableOutcome:
         "a durable organizing task for the saved scope is admitted and executed through the existing Worker after complete scope and plan checks",
       nextAction:
@@ -5482,7 +5482,7 @@ function automationDefinitionActions(state, token) {
           ? null
           : "an open successor Draft is required to copy this definition"
         : "the connected API principal cannot copy Automation Task Definitions",
-      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/copy`,
+      path: `/api/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/copy`,
       durableOutcome:
         "a copied definition is stored inside the open successor Draft",
       nextAction:
@@ -5493,7 +5493,7 @@ function automationDefinitionActions(state, token) {
       reason: manage
         ? null
         : "the connected API principal cannot create a successor Draft",
-      path: `/api/v1/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
+      path: `/api/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
       durableOutcome:
         "a successor Draft seeded from the immutable Active configuration is stored",
       nextAction:
@@ -5632,7 +5632,7 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
       detail: automationAction({
         available: true,
         method: "GET",
-        path: `/api/v1/operations/automation/task-definitions/${definition.id}`,
+        path: `/api/operations/automation/task-definitions/${definition.id}`,
         durableOutcome: null,
         nextAction:
           "inspect the durable definition, schedule and occurrence state",
@@ -5640,7 +5640,7 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
       occurrences: automationAction({
         available: true,
         method: "GET",
-        path: `/api/v1/operations/automation/task-definitions/${definition.id}/occurrences`,
+        path: `/api/operations/automation/task-definitions/${definition.id}/occurrences`,
         durableOutcome: null,
         nextAction:
           "inspect the bounded occurrence history and its linked work",
@@ -5648,7 +5648,7 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
       runOnce: automationAction({
         available: false,
         reason: notActiveReason,
-        path: `/api/v1/operations/automation/task-definitions/${definition.id}/run-once`,
+        path: `/api/operations/automation/task-definitions/${definition.id}/run-once`,
         durableOutcome:
           "a durable organizing task for the saved scope is admitted and executed through the existing Worker after complete scope and plan checks",
         nextAction: "activate the Draft before starting Run once",
@@ -5660,7 +5660,7 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
             ? null
             : "an open successor Draft is required to copy this definition"
           : "the connected API principal cannot copy Automation Task Definitions",
-        path: `/api/v1/automation/task-definitions/${definition.id}/copy`,
+        path: `/api/automation/task-definitions/${definition.id}/copy`,
         durableOutcome:
           "a copied definition is stored inside the open successor Draft",
         nextAction: "copy the definition inside the open successor Draft",
@@ -5670,7 +5670,7 @@ function automationDraftOnlyDefinitionDocument(state, token, definition) {
         reason: manage
           ? null
           : "the connected API principal cannot create a successor Draft",
-        path: `/api/v1/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
         durableOutcome:
           "a successor Draft seeded from the immutable Active configuration is stored",
         nextAction:
@@ -5847,7 +5847,7 @@ function automationListDocument(state, token) {
         reason: manage
           ? null
           : "the connected API principal cannot create Automation Task Definitions",
-        path: "/api/v1/automation/task-definitions",
+        path: "/api/automation/task-definitions",
         durableOutcome:
           "the bounded definition is stored inside the open successor Draft",
         nextAction:
@@ -5858,7 +5858,7 @@ function automationListDocument(state, token) {
         reason: manage
           ? null
           : "the connected API principal cannot create a successor Draft",
-        path: `/api/v1/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
         durableOutcome:
           "a successor Draft seeded from the immutable Active configuration is stored",
         nextAction:
@@ -5935,7 +5935,7 @@ function automationPreviewItem() {
 }
 
 function automationPreviewActions(state, token, previewId) {
-  const base = `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}`;
+  const base = `/api/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}`;
   return {
     detail: automationAction({
       available: true,
@@ -6040,7 +6040,7 @@ function automationOccurrenceDocument() {
       task: automationAction({
         available: true,
         method: "GET",
-        path: `/api/v1/operations/tasks/${AUTOMATION_TASK_ID}`,
+        path: `/api/operations/tasks/${AUTOMATION_TASK_ID}`,
         durableOutcome: null,
         nextAction: "inspect the durable Task and its per-item Results",
       }),
@@ -6092,7 +6092,7 @@ function boundedAutomationBody(fields) {
 // V2 Storage management journey (Slice 39, Task 39.1).
 //
 // Mirrors the bounded, secret-free documents the real Python API publishes
-// under /api/v1/operations/storage-management/* (proved by
+// under /api/operations/storage-management/* (proved by
 // tests/test_v2_storage_operations.py). Fixture values are synthetic; the
 // check is an explicit zero-mutation Connection/Read diagnostic that never
 // writes, scans or probes for write capability.
@@ -6420,7 +6420,7 @@ function storageDetailAction(storage, canManage) {
     reason,
     method: "POST",
     path: available
-      ? `/api/v1/operations/storage-management/storage/${storage.id}/check`
+      ? `/api/operations/storage-management/storage/${storage.id}/check`
       : null,
     sideEffects: "none",
     durableOutcome:
@@ -6978,7 +6978,7 @@ function storageSaveSuccess(state, storage, record) {
       method: existing >= 0 ? "PUT" : "POST",
       objectId: storage.id,
       objectType: "storage_save",
-      path: existing >= 0 ? "/api/v1/storages/:storageId" : "/api/v1/storages",
+      path: existing >= 0 ? "/api/storages/:storageId" : "/api/storages",
     });
   }
   const projected = storageFormDocument(storage);
@@ -7083,7 +7083,7 @@ function storageSetupAuthority(state, session) {
     managedActivation: status.managedActivation === true,
     recoveryRequired: status.recoveryRequired === true,
     health: status.health,
-    setupPath: "/ui-v2/configuration",
+    setupPath: "/configuration",
   };
 }
 
@@ -7260,7 +7260,7 @@ function rulesState(session) {
       reason: null,
       emptyActive: false,
       // The no-Active first-setup lifecycle: `setupDraft` is created by
-      // POST /api/v1/configuration/drafts/first, validated and activated by
+      // POST /api/configuration/drafts/first, validated and activated by
       // the revision routes, and activation publishes an empty managed Active.
       setupDraft: null,
       published: null,
@@ -7296,7 +7296,7 @@ function currentRuleActive(state) {
 
 /**
  * The bounded readiness document. It is the exact shape the Python API
- * publishes on `/api/v1/configuration/status` under `ruleReadiness`, so the
+ * publishes on `/api/configuration/status` under `ruleReadiness`, so the
  * Settings panel is normalized from the same contract in the browser proof.
  */
 function currentRuleReadiness(state) {
@@ -8123,10 +8123,10 @@ const server = createServer(async (req, res) => {
   const recordManualRequestForSession = (entry) =>
     recordManualRequest({ ...entry, session });
   // The same read-only identity projection the real backend serves at
-  // /api/v1/auth/principal: pages that retain a principal-scoped
+  // /api/auth/principal: pages that retain a principal-scoped
   // unknown-outcome context read the exact confirmed identity before an
   // admission can start, so the fake server must model it too.
-  if (url.pathname === "/api/v1/auth/principal" && req.method === "GET") {
+  if (url.pathname === "/api/auth/principal" && req.method === "GET") {
     if (EXPIRED_TOKENS.has(token) || !KNOWN_TOKENS.has(token)) {
       sendJson(res, 401, { error: { code: "unauthorized" } });
       return;
@@ -8139,15 +8139,15 @@ const server = createServer(async (req, res) => {
   }
   // V2 Storage management journey (Slice 39): served on the dedicated
   // operations route BEFORE the generic alias rewrite so the exact path
-  // contract of /api/v1/operations/storage-management/* is what the browser
+  // contract of /api/operations/storage-management/* is what the browser
   // exercises.
   const storageInventoryMatch =
-    url.pathname === "/api/v1/operations/storage-management/inventory";
+    url.pathname === "/api/operations/storage-management/inventory";
   const storageDetailMatch = url.pathname.match(
-    /^\/api\/v1\/operations\/storage-management\/storage\/([^/]+)$/,
+    /^\/api\/operations\/storage-management\/storage\/([^/]+)$/,
   );
   const storageCheckMatch = url.pathname.match(
-    /^\/api\/v1\/operations\/storage-management\/storage\/([^/]+)\/check$/,
+    /^\/api\/operations\/storage-management\/storage\/([^/]+)\/check$/,
   );
   if (storageInventoryMatch || storageDetailMatch || storageCheckMatch) {
     const permissions = storagePermissions(token);
@@ -8296,7 +8296,7 @@ const server = createServer(async (req, res) => {
           method: "POST",
           objectId: storage.id,
           objectType: "storage_read_check",
-          path: "/api/v1/operations/storage-management/storage/:storageId/check",
+          path: "/api/operations/storage-management/storage/:storageId/check",
           body: {
             expectedRevisionId: document.expectedRevisionId,
             expectedVersion: document.expectedVersion,
@@ -8311,7 +8311,7 @@ const server = createServer(async (req, res) => {
         method: "POST",
         objectId: storage.id,
         objectType: "storage_read_check",
-        path: "/api/v1/operations/storage-management/storage/:storageId/check",
+        path: "/api/operations/storage-management/storage/:storageId/check",
         body: {
           expectedRevisionId: document.expectedRevisionId,
           expectedVersion: document.expectedVersion,
@@ -8325,19 +8325,19 @@ const server = createServer(async (req, res) => {
   }
 
   // V2 Storage Add/Edit command (Slice 39, Task 39.2): one page-local typed
-  // command over /api/v1/storages*. The fake mirrors the authoritative Python
+  // command over /api/storages*. The fake mirrors the authoritative Python
   // contract proved by tests/test_storage_page_local_save.py: typed provider
   // validation, immutable ID, optimistic Active fencing, a published immutable
   // Active successor on full success, and bounded secret-free failure
   // documents. It never mutates Storage and never returns a credential value.
   const storageEditMatch = url.pathname.match(
-    /^\/api\/v1\/storages\/([^/]+)\/edit$/,
+    /^\/api\/storages\/([^/]+)\/edit$/,
   );
   const storageLifecycleMatch = url.pathname.match(
-    /^\/api\/v1\/storages\/([^/]+)\/(copy|enable|disable)$/,
+    /^\/api\/storages\/([^/]+)\/(copy|enable|disable)$/,
   );
-  const storageItemMatch = url.pathname.match(/^\/api\/v1\/storages\/([^/]+)$/);
-  const storageCollectionRoute = url.pathname === "/api/v1/storages";
+  const storageItemMatch = url.pathname.match(/^\/api\/storages\/([^/]+)$/);
+  const storageCollectionRoute = url.pathname === "/api/storages";
   if (
     storageEditMatch !== null ||
     storageLifecycleMatch !== null ||
@@ -8745,15 +8745,15 @@ const server = createServer(async (req, res) => {
   }
 
   // V2 Rules workspace and Settings rule readiness (Slice 41, Task 41.5):
-  // served on the dedicated /api/v1/operations/rules/* spellings BEFORE the
+  // served on the dedicated /api/operations/rules/* spellings BEFORE the
   // generic alias rewrite so the browser exercises the real route contract.
   // The documents come from web/tests/fixtures/rules-readiness.json, which is
   // captured from the real Python API by
   // tests/test_v2_settings_rule_readiness.py, so the browser journey cannot
   // drift from the backend shape.
   if (
-    url.pathname === "/api/v1/operations/rules/inventory" ||
-    url.pathname === "/api/v1/configuration/status"
+    url.pathname === "/api/operations/rules/inventory" ||
+    url.pathname === "/api/configuration/status"
   ) {
     if (url.pathname.endsWith("/inventory") && req.method !== "GET") {
       sendJson(res, 405, { error: { code: "method_not_allowed" } });
@@ -8794,7 +8794,7 @@ const server = createServer(async (req, res) => {
   // web/tests/fixtures/rules-form-authority.json (identity fields pinned to
   // the fixture's own constant), so the browser Save journey cannot drift
   // from the backend field authority.
-  if (url.pathname === "/api/v1/operations/rules/form-authority") {
+  if (url.pathname === "/api/operations/rules/form-authority") {
     if (req.method !== "GET") {
       sendJson(res, 405, { error: { code: "method_not_allowed" } });
       return;
@@ -8817,7 +8817,7 @@ const server = createServer(async (req, res) => {
   }
 
   // V2 rules object identity lifecycle (Slice 41, Task 41.6): the same
-  // /api/v1/operations/rules/objects/* contract the real backend serves, with
+  // /api/operations/rules/objects/* contract the real backend serves, with
   // the real backend identifier grammar. The fake keeps one per-session map of
   // objects per family so create → edit → copy → toggle → remove run through
   // exact-Active authority exactly like the Python API. Identity-bearing
@@ -8834,7 +8834,7 @@ const server = createServer(async (req, res) => {
     "organizePolicies",
   ]);
   const rulesObjectsMatch = url.pathname.match(
-    /^\/api\/v1\/operations\/rules\/objects\/([^/]+)(?:\/([^/]+)(?:\/(copy|impact|state\/(?:enable|disable)))?)?$/,
+    /^\/api\/operations\/rules\/objects\/([^/]+)(?:\/([^/]+)(?:\/(copy|impact|state\/(?:enable|disable)))?)?$/,
   );
   if (rulesObjectsMatch) {
     const decodeSegment = (segment) => {
@@ -8903,7 +8903,7 @@ const server = createServer(async (req, res) => {
       RECORDED_MUTATIONS.push({
         method: "POST",
         objectType: "rules_object",
-        path: `/api/v1/operations/rules/objects/${family}`,
+        path: `/api/operations/rules/objects/${family}`,
       });
       state.advance += 1;
       respond(200, {
@@ -9003,7 +9003,7 @@ const server = createServer(async (req, res) => {
       RECORDED_MUTATIONS.push({
         method: "POST",
         objectType: "rules_object_state",
-        path: `/api/v1/operations/rules/objects/${family}/${encodeURIComponent(objectId)}/state/${enabled ? "enable" : "disable"}`,
+        path: `/api/operations/rules/objects/${family}/${encodeURIComponent(objectId)}/state/${enabled ? "enable" : "disable"}`,
       });
       state.advance += 1;
       respond(200, {
@@ -9072,7 +9072,7 @@ const server = createServer(async (req, res) => {
       RECORDED_MUTATIONS.push({
         method: "PUT",
         objectType: "rules_object",
-        path: `/api/v1/operations/rules/objects/${family}/${encodeURIComponent(objectId)}`,
+        path: `/api/operations/rules/objects/${family}/${encodeURIComponent(objectId)}`,
       });
       state.advance += 1;
       respond(200, {
@@ -9104,7 +9104,7 @@ const server = createServer(async (req, res) => {
       RECORDED_MUTATIONS.push({
         method: "DELETE",
         objectType: "rules_object",
-        path: `/api/v1/operations/rules/objects/${family}/${encodeURIComponent(objectId)}`,
+        path: `/api/operations/rules/objects/${family}/${encodeURIComponent(objectId)}`,
       });
       state.advance += 1;
       respond(200, {
@@ -9121,30 +9121,30 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // The V2 Operations workspace reads the bounded /api/v1/operations/* alias;
+  // The V2 Operations workspace reads the bounded /api/operations/* alias;
   // the fake mirrors the authoritative Python contract by serving the same
   // bounded documents for both spellings. The unified run inventory keeps its
-  // own namespace: it is a distinct read family, not an alias of /api/v1/runs.
+  // own namespace: it is a distinct read family, not an alias of /api/runs.
   if (
-    url.pathname.startsWith("/api/v1/operations/") &&
-    !url.pathname.startsWith("/api/v1/operations/runs") &&
-    !url.pathname.startsWith("/api/v1/operations/organize/discoveries") &&
+    url.pathname.startsWith("/api/operations/") &&
+    !url.pathname.startsWith("/api/operations/runs") &&
+    !url.pathname.startsWith("/api/operations/organize/discoveries") &&
     // The focused engine-settings command is served only on its own
     // /operations/automation path, exactly as the real Python API publishes it;
-    // there is no /api/v1/automation/settings alias to fall back to.
-    url.pathname !== "/api/v1/operations/automation/settings" &&
+    // there is no /api/automation/settings alias to fall back to.
+    url.pathname !== "/api/operations/automation/settings" &&
     // The focused create-form authority is published only under its real
     // /operations/automation/definitions path; it has no legacy alias.
-    url.pathname !== "/api/v1/operations/automation/definitions"
+    url.pathname !== "/api/operations/automation/definitions"
   ) {
-    url.pathname = url.pathname.replace("/api/v1/operations/", "/api/v1/");
+    url.pathname = url.pathname.replace("/api/operations/", "/api/");
   }
 
   const explorePath =
-    url.pathname === "/api/v1/explore/options" ||
-    url.pathname === "/api/v1/explore/browse" ||
-    url.pathname === "/api/v1/explore/search" ||
-    /^\/api\/v1\/explore\/(movie|tv)\/[1-9][0-9]*$/.test(url.pathname);
+    url.pathname === "/api/explore/options" ||
+    url.pathname === "/api/explore/browse" ||
+    url.pathname === "/api/explore/search" ||
+    /^\/api\/explore\/(movie|tv)\/[1-9][0-9]*$/.test(url.pathname);
   if (explorePath) {
     if (req.method !== "GET") {
       sendJson(res, 405, { error: { code: "method_not_allowed" } });
@@ -9174,7 +9174,7 @@ const server = createServer(async (req, res) => {
     serveExplore(res, url);
     return;
   }
-  if (url.pathname === "/api/v1/system/status") {
+  if (url.pathname === "/api/system/status") {
     if (req.method !== "GET") {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("GET required");
@@ -9204,7 +9204,7 @@ const server = createServer(async (req, res) => {
     sendJson(res, 200, resourceLibrarySystemStatus(session));
     return;
   }
-  if (url.pathname === "/api/v1/resource-libraries" && req.method === "POST") {
+  if (url.pathname === "/api/resource-libraries" && req.method === "POST") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
       sendJson(res, 401, {
         error: { code: "unauthorized", message: "bearer token required" },
@@ -9300,7 +9300,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const filesOrganizeMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/organize$/,
+    /^\/api\/resource-libraries\/([^/]+)\/files\/organize$/,
   );
   if (filesOrganizeMatch && req.method === "POST") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -9341,7 +9341,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: ORGANIZE_INTENT_ID,
       objectType: "organize_intent",
-      path: "/api/v1/resource-libraries/:id/files/organize",
+      path: "/api/resource-libraries/:id/files/organize",
     });
     if (libraryState.filesOrganizeFailure === "source_missing") {
       sendJson(res, 404, {
@@ -9366,7 +9366,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const discoveryAdmissionMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/discoveries$/,
+    /^\/api\/resource-libraries\/([^/]+)\/files\/discoveries$/,
   );
   if (discoveryAdmissionMatch && req.method === "POST") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -9405,7 +9405,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: ORGANIZE_DISCOVERY_ID,
       objectType: "organize_discovery",
-      path: "/api/v1/resource-libraries/:id/files/discoveries",
+      path: "/api/resource-libraries/:id/files/discoveries",
     });
     const state = resourceLibraryState(session);
     if (state.filesOrganizeFailure === "source_missing") {
@@ -9468,7 +9468,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const discoveryListMatch = url.pathname.match(
-    /^\/api\/v1\/operations\/organize\/discoveries$/,
+    /^\/api\/operations\/organize\/discoveries$/,
   );
   if (discoveryListMatch && req.method === "GET") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -9492,7 +9492,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const discoveryDetailMatch = url.pathname.match(
-    /^\/api\/v1\/operations\/organize\/discoveries\/([^/]+)$/,
+    /^\/api\/operations\/organize\/discoveries\/([^/]+)$/,
   );
   if (discoveryDetailMatch && req.method === "GET") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -9516,7 +9516,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const discoveryControlMatch = url.pathname.match(
-    /^\/api\/v1\/operations\/organize\/discoveries\/([^/]+)\/(cancel|finalize|analyze)$/,
+    /^\/api\/operations\/organize\/discoveries\/([^/]+)\/(cancel|finalize|analyze)$/,
   );
   if (discoveryControlMatch && req.method === "POST") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -9607,7 +9607,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const resourceDeleteStatusMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/deletes\/([^/]+)$/,
+    /^\/api\/resource-libraries\/([^/]+)\/files\/deletes\/([^/]+)$/,
   );
   if (resourceDeleteStatusMatch && req.method === "GET") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -9644,7 +9644,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const directCommandMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/(commands|text|delete-impact|rename-evidence|transfer-impact|transfers)$/,
+    /^\/api\/resource-libraries\/([^/]+)\/files\/(commands|text|delete-impact|rename-evidence|transfer-impact|transfers)$/,
   );
   if (directCommandMatch) {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -10012,7 +10012,7 @@ const server = createServer(async (req, res) => {
     }
   }
   const transferProjectionMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/transfers\/([^/]+)$/,
+    /^\/api\/resource-libraries\/([^/]+)\/files\/transfers\/([^/]+)$/,
   );
   if (transferProjectionMatch && req.method === "GET") {
     if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -10082,7 +10082,7 @@ const server = createServer(async (req, res) => {
           available: !terminal,
           ...(terminal
             ? { reason: "the transfer already reached a terminal state" }
-            : { path: `/api/v1/tasks/${transfer.taskId}/cancel` }),
+            : { path: `/api/tasks/${transfer.taskId}/cancel` }),
         },
       ],
       sideEffects: transfer.status === "QUEUED" ? "none" : "storage_mutations",
@@ -10094,10 +10094,10 @@ const server = createServer(async (req, res) => {
     return;
   }
   const removalPreviewMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/removal-preview$/,
+    /^\/api\/resource-libraries\/([^/]+)\/removal-preview$/,
   );
   const resourceEditMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/edit$/,
+    /^\/api\/resource-libraries\/([^/]+)\/edit$/,
   );
   if (resourceEditMatch && req.method === "GET") {
     const state = resourceLibraryState(session);
@@ -10166,7 +10166,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const removalMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)$/,
+    /^\/api\/resource-libraries\/([^/]+)$/,
   );
   if (removalMatch && req.method === "PUT") {
     const state = resourceLibraryState(session);
@@ -10316,7 +10316,7 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
-  if (url.pathname === "/api/v1/media-libraries" && req.method === "POST") {
+  if (url.pathname === "/api/media-libraries" && req.method === "POST") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
       sendJson(res, 401, {
         error: { code: "unauthorized", message: "bearer token required" },
@@ -10459,10 +10459,10 @@ const server = createServer(async (req, res) => {
     return;
   }
   const mediaRemovalPreviewMatch = url.pathname.match(
-    /^\/api\/v1\/media-libraries\/([^/]+)\/removal-preview$/,
+    /^\/api\/media-libraries\/([^/]+)\/removal-preview$/,
   );
   const mediaEditMatch = url.pathname.match(
-    /^\/api\/v1\/media-libraries\/([^/]+)\/edit$/,
+    /^\/api\/media-libraries\/([^/]+)\/edit$/,
   );
   if (mediaEditMatch && req.method === "GET") {
     const state = mediaLibraryState(session);
@@ -10548,7 +10548,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const mediaRemovalMatch = url.pathname.match(
-    /^\/api\/v1\/media-libraries\/([^/]+)$/,
+    /^\/api\/media-libraries\/([^/]+)$/,
   );
   if (mediaRemovalMatch && req.method === "PUT") {
     const state = mediaLibraryState(session);
@@ -10732,7 +10732,7 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
-  if (url.pathname === "/api/v1/file-index") {
+  if (url.pathname === "/api/file-index") {
     if (req.method !== "GET") {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("GET required");
@@ -10757,7 +10757,7 @@ const server = createServer(async (req, res) => {
     sendJson(res, document.status, document.payload);
     return;
   }
-  if (url.pathname === "/api/v1/media-libraries" && req.method === "GET") {
+  if (url.pathname === "/api/media-libraries" && req.method === "GET") {
     if (LIMITED_TOKENS.has(token)) {
       sendJson(res, 403, {
         error: {
@@ -10777,7 +10777,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const mediaDeleteStatusMatch = url.pathname.match(
-    /^\/api\/v1\/media-libraries\/([^/]+)\/files\/deletes\/([^/]+)$/,
+    /^\/api\/media-libraries\/([^/]+)\/files\/deletes\/([^/]+)$/,
   );
   if (mediaDeleteStatusMatch && req.method === "GET") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -10820,7 +10820,7 @@ const server = createServer(async (req, res) => {
   // command log a browser test can inspect to prove one submission and no
   // automatic replay.  ResourceLibrary routes are untouched.
   const mediaLibraryCommandMatch = url.pathname.match(
-    /^\/api\/v1\/media-libraries\/([^/]+)\/files\/(commands|text|delete-impact|rename-evidence|transfer-impact|transfers)$/,
+    /^\/api\/media-libraries\/([^/]+)\/files\/(commands|text|delete-impact|rename-evidence|transfer-impact|transfers)$/,
   );
   if (mediaLibraryCommandMatch) {
     const action = mediaLibraryCommandMatch[2];
@@ -11519,7 +11519,7 @@ const server = createServer(async (req, res) => {
   }
 
   const mediaTransferProjectionMatch = url.pathname.match(
-    /^\/api\/v1\/media-libraries\/([^/]+)\/files\/transfers\/([^/]+)$/,
+    /^\/api\/media-libraries\/([^/]+)\/files\/transfers\/([^/]+)$/,
   );
   if (mediaTransferProjectionMatch && req.method === "GET") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -11629,7 +11629,7 @@ const server = createServer(async (req, res) => {
           available: !terminal,
           ...(terminal
             ? { reason: "the transfer already reached a terminal state" }
-            : { path: `/api/v1/tasks/${transfer.taskId}/cancel` }),
+            : { path: `/api/tasks/${transfer.taskId}/cancel` }),
         },
       ],
       sideEffects:
@@ -11647,7 +11647,7 @@ const server = createServer(async (req, res) => {
   }
 
   const mediaLibraryFilesMatch = url.pathname.match(
-    /^\/api\/v1\/media-libraries\/([^/]+)\/files$/,
+    /^\/api\/media-libraries\/([^/]+)\/files$/,
   );
   if (mediaLibraryFilesMatch) {
     if (req.method !== "GET") {
@@ -11815,8 +11815,8 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (
-    url.pathname === "/api/v1/storage/files" ||
-    /^\/api\/v1\/resource-libraries\/[^/]+\/files$/.test(url.pathname)
+    url.pathname === "/api/storage/files" ||
+    /^\/api\/resource-libraries\/[^/]+\/files$/.test(url.pathname)
   ) {
     if (req.method !== "GET") {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
@@ -11845,7 +11845,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     const resourceMatch = url.pathname.match(
-      /^\/api\/v1\/resource-libraries\/([^/]+)\/files$/,
+      /^\/api\/resource-libraries\/([^/]+)\/files$/,
     );
     const resourceLibraryId = resourceMatch
       ? decodeURIComponent(resourceMatch[1])
@@ -12054,7 +12054,7 @@ const server = createServer(async (req, res) => {
   // matcher.  An organizing identity and an unknown identity both answer through
   // the origin contract below, not as a missing FileIndex record.
   const detailMatch = url.pathname.match(
-    /^\/api\/v1\/files\/(?!by-source$|operation-origin\/)(.+)$/,
+    /^\/api\/files\/(?!by-source$|operation-origin\/)(.+)$/,
   );
   if (detailMatch !== null) {
     if (req.method !== "GET") {
@@ -12128,7 +12128,7 @@ const server = createServer(async (req, res) => {
     sendJson(res, 200, document);
     return;
   }
-  if (url.pathname === "/api/v1/files/by-source") {
+  if (url.pathname === "/api/files/by-source") {
     if (req.method !== "GET") {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("GET required");
@@ -13188,7 +13188,7 @@ const server = createServer(async (req, res) => {
       action,
       label,
       method: "POST",
-      path: `/api/v1/tasks/{id}/${action}`,
+      path: `/api/tasks/{id}/${action}`,
       available,
       unavailableReason,
       confirmationRequired: false,
@@ -13303,7 +13303,7 @@ const server = createServer(async (req, res) => {
           action: "cancel",
           label: "Cancel Job",
           method: "POST",
-          path: `/api/v1/jobs/{id}/cancel`,
+          path: `/api/jobs/{id}/cancel`,
           available:
             permitted && cancellable && job.cancellation_requested !== true,
           unavailableReason: reason,
@@ -13460,7 +13460,7 @@ const server = createServer(async (req, res) => {
     }));
   }
 
-  if (url.pathname === "/api/v1/tasks" && req.method === "GET") {
+  if (url.pathname === "/api/tasks" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -13537,7 +13537,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const taskDetailMatch = url.pathname.match(/^\/api\/v1\/tasks\/([^/]+)$/);
+  const taskDetailMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
   if (taskDetailMatch && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
@@ -13580,7 +13580,7 @@ const server = createServer(async (req, res) => {
   }
 
   const taskControlMatch = url.pathname.match(
-    /^\/api\/v1\/tasks\/([^/]+)\/cancel$/,
+    /^\/api\/tasks\/([^/]+)\/cancel$/,
   );
   if (taskControlMatch && req.method === "POST") {
     if (!operationsGuard(res)) {
@@ -13665,7 +13665,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === "/api/v1/jobs" && req.method === "GET") {
+  if (url.pathname === "/api/jobs" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -13733,7 +13733,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const jobDetailMatch = url.pathname.match(/^\/api\/v1\/jobs\/([^/]+)$/);
+  const jobDetailMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/);
   if (jobDetailMatch && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
@@ -13748,9 +13748,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const jobCancelMatch = url.pathname.match(
-    /^\/api\/v1\/jobs\/([^/]+)\/cancel$/,
-  );
+  const jobCancelMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/cancel$/);
   if (jobCancelMatch && req.method === "POST") {
     if (!operationsGuard(res)) {
       return;
@@ -13796,7 +13794,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === "/api/v1/workers/readiness" && req.method === "GET") {
+  if (url.pathname === "/api/workers/readiness" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -13817,16 +13815,14 @@ const server = createServer(async (req, res) => {
 
   // --- V2 unified run inventory (Slice 42 RO-1/RO-2) ---
   //
-  // The fake mirrors the authoritative Python `/api/v1/operations/runs`
+  // The fake mirrors the authoritative Python `/api/operations/runs`
   // contract: one deduplicated Job/Task population, server-side
   // text/status/kind/time filters, a filter-bound cursor, and page/total/
   // status-partitions from one consistent read basis. The fake derives the
   // population from the same FAKE_TASKS/FAKE_JOBS the Task/Job lists read,
   // so the inventory can never disagree with the deeper detail surfaces.
-  const runsMatch = url.pathname.match(
-    /^\/api\/v1\/operations\/runs\/([^/]+)$/,
-  );
-  if (url.pathname === "/api/v1/operations/runs" && req.method === "GET") {
+  const runsMatch = url.pathname.match(/^\/api\/operations\/runs\/([^/]+)$/);
+  if (url.pathname === "/api/operations/runs" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -14078,7 +14074,7 @@ const server = createServer(async (req, res) => {
   // (kind, library and source path); anything else is a bounded non-match.  No
   // branch mutates or submits anything.
   const originMatch = url.pathname.match(
-    /^\/api\/v1\/files\/operation-origin\/([^/]+)$/,
+    /^\/api\/files\/operation-origin\/([^/]+)$/,
   );
   if (originMatch && req.method === "GET") {
     if (!operationsGuard(res)) {
@@ -14121,9 +14117,7 @@ const server = createServer(async (req, res) => {
   // cursor minted for another run/filter state are all refused with
   // `invalid_request`).
   if (
-    url.pathname.match(
-      /^\/api\/v1\/operations\/runs\/([^/]+)\/problem-items$/,
-    ) &&
+    url.pathname.match(/^\/api\/operations\/runs\/([^/]+)\/problem-items$/) &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -14131,7 +14125,7 @@ const server = createServer(async (req, res) => {
     }
     const problemRunId = decodeURIComponent(
       url.pathname.match(
-        /^\/api\/v1\/operations\/runs\/([^/]+)\/problem-items$/,
+        /^\/api\/operations\/runs\/([^/]+)\/problem-items$/,
       )[1],
     );
     if (
@@ -14247,7 +14241,7 @@ const server = createServer(async (req, res) => {
   }
 
   const runDetailMatch = url.pathname.match(
-    /^\/api\/v1\/operations\/runs\/([^/]+)\/(items|records|export)(?:\/([^/]+))?$/,
+    /^\/api\/operations\/runs\/([^/]+)\/(items|records|export)(?:\/([^/]+))?$/,
   );
   if (runDetailMatch) {
     if (req.method !== "GET") {
@@ -14529,7 +14523,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === "/api/v1/workers" && req.method === "GET") {
+  if (url.pathname === "/api/workers" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -14553,7 +14547,7 @@ const server = createServer(async (req, res) => {
   }
 
   // --- V2 manual Organize bounded routes ---
-  if (url.pathname === "/api/v1/organize/intents" && req.method === "POST") {
+  if (url.pathname === "/api/organize/intents" && req.method === "POST") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -14582,7 +14576,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: ORGANIZE_INTENT_ID,
       objectType: "organize_intent",
-      path: "/api/v1/organize/intents",
+      path: "/api/organize/intents",
     });
     state.intentVersion = 1;
     state.itemVersion = 1;
@@ -14591,7 +14585,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (
-    url.pathname === `/api/v1/organize/intents/${ORGANIZE_INTENT_ID}` &&
+    url.pathname === `/api/organize/intents/${ORGANIZE_INTENT_ID}` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -14602,7 +14596,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: ORGANIZE_INTENT_ID,
       objectType: "organize_intent",
-      path: "/api/v1/organize/intents/:intentId",
+      path: "/api/organize/intents/:intentId",
     });
     sendJson(res, 200, organizeIntentDocument(state));
     return;
@@ -14610,7 +14604,7 @@ const server = createServer(async (req, res) => {
 
   if (
     url.pathname ===
-      `/api/v1/organize/intents/${ORGANIZE_INTENT_ID}/items/${ORGANIZE_ITEM_ID}/choice` &&
+      `/api/organize/intents/${ORGANIZE_INTENT_ID}/items/${ORGANIZE_ITEM_ID}/choice` &&
     req.method === "POST"
   ) {
     if (!operationsGuard(res)) {
@@ -14634,7 +14628,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: ORGANIZE_ITEM_ID,
       objectType: "organize_choice",
-      path: "/api/v1/organize/intents/:intentId/items/:itemId/choice",
+      path: "/api/organize/intents/:intentId/items/:itemId/choice",
     });
     if (
       fields.expectedVersion !== state.intentVersion ||
@@ -14655,8 +14649,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (
-    url.pathname ===
-      `/api/v1/organize/intents/${ORGANIZE_INTENT_ID}/previews` &&
+    url.pathname === `/api/organize/intents/${ORGANIZE_INTENT_ID}/previews` &&
     req.method === "POST"
   ) {
     if (!operationsGuard(res)) {
@@ -14672,7 +14665,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: ORGANIZE_INTENT_ID,
       objectType: "organize_preview",
-      path: "/api/v1/organize/intents/:intentId/previews",
+      path: "/api/organize/intents/:intentId/previews",
     });
     if (parsed.document.expectedVersion !== state.intentVersion) {
       sendJson(res, 409, {
@@ -14715,7 +14708,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (
-    /^\/api\/v1\/tasks\/[^/]+\/remaining-scope-previews$/.test(url.pathname) &&
+    /^\/api\/tasks\/[^/]+\/remaining-scope-previews$/.test(url.pathname) &&
     req.method === "POST"
   ) {
     if (!operationsGuard(res)) {
@@ -14752,7 +14745,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: ORGANIZE_PREVIEW_ID,
       objectType: "organize_preview",
-      path: "/api/v1/tasks/:taskId/remaining-scope-previews",
+      path: "/api/tasks/:taskId/remaining-scope-previews",
     });
     const document = organizePreviewDocument(state);
     sendJson(res, 201, { ...document, runTaskId: taskId });
@@ -14760,7 +14753,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (
-    url.pathname === `/api/v1/organize/previews/${ORGANIZE_PREVIEW_ID}` &&
+    url.pathname === `/api/organize/previews/${ORGANIZE_PREVIEW_ID}` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -14771,7 +14764,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: ORGANIZE_PREVIEW_ID,
       objectType: "organize_preview",
-      path: "/api/v1/organize/previews/:previewId",
+      path: "/api/organize/previews/:previewId",
     });
     sendJson(res, 200, organizePreviewDocument(state));
     return;
@@ -14779,7 +14772,7 @@ const server = createServer(async (req, res) => {
 
   if (
     url.pathname ===
-      `/api/v1/organize/previews/${ORGANIZE_DESTRUCTIVE_PREVIEW_ID}` &&
+      `/api/organize/previews/${ORGANIZE_DESTRUCTIVE_PREVIEW_ID}` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -14790,7 +14783,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: ORGANIZE_DESTRUCTIVE_PREVIEW_ID,
       objectType: "organize_preview",
-      path: "/api/v1/organize/previews/:previewId",
+      path: "/api/organize/previews/:previewId",
     });
     sendJson(res, 200, organizeDestructivePreviewDocument(state));
     return;
@@ -14801,8 +14794,7 @@ const server = createServer(async (req, res) => {
   // status, so the built artifact must render no Execute control and no
   // hostile value anywhere in the DOM.
   if (
-    url.pathname ===
-      `/api/v1/organize/previews/${ORGANIZE_HOSTILE_PREVIEW_ID}` &&
+    url.pathname === `/api/organize/previews/${ORGANIZE_HOSTILE_PREVIEW_ID}` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -14813,7 +14805,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: ORGANIZE_HOSTILE_PREVIEW_ID,
       objectType: "organize_preview",
-      path: "/api/v1/organize/previews/:previewId",
+      path: "/api/organize/previews/:previewId",
     });
     sendJson(res, 200, organizeHostilePreviewDocument(state));
     return;
@@ -14823,8 +14815,7 @@ const server = createServer(async (req, res) => {
   // a route belonging to another Preview. Both are malformed transports, so
   // the built artifact must render no Execute control and submit nothing.
   if (
-    url.pathname ===
-      `/api/v1/organize/previews/${ORGANIZE_MISBOUND_PREVIEW_ID}` &&
+    url.pathname === `/api/organize/previews/${ORGANIZE_MISBOUND_PREVIEW_ID}` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -14835,7 +14826,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: ORGANIZE_MISBOUND_PREVIEW_ID,
       objectType: "organize_preview",
-      path: "/api/v1/organize/previews/:previewId",
+      path: "/api/organize/previews/:previewId",
     });
     sendJson(res, 200, organizeMisboundPreviewDocument(state));
     return;
@@ -14846,8 +14837,7 @@ const server = createServer(async (req, res) => {
   // exact `/execute` suffix. The route is not this action's transport, so the
   // built artifact must fail closed instead of rendering the Execute control.
   if (
-    url.pathname ===
-      `/api/v1/organize/previews/${ORGANIZE_SUFFIX_PREVIEW_ID}` &&
+    url.pathname === `/api/organize/previews/${ORGANIZE_SUFFIX_PREVIEW_ID}` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -14858,14 +14848,14 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: ORGANIZE_SUFFIX_PREVIEW_ID,
       objectType: "organize_preview",
-      path: "/api/v1/organize/previews/:previewId",
+      path: "/api/organize/previews/:previewId",
     });
     sendJson(res, 200, organizeSuffixPreviewDocument(state));
     return;
   }
 
   if (
-    url.pathname === `/api/v1/organize/previews/${ORGANIZE_LOST_PREVIEW_ID}` &&
+    url.pathname === `/api/organize/previews/${ORGANIZE_LOST_PREVIEW_ID}` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -14876,7 +14866,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: ORGANIZE_LOST_PREVIEW_ID,
       objectType: "organize_preview",
-      path: "/api/v1/organize/previews/:previewId",
+      path: "/api/organize/previews/:previewId",
     });
     sendJson(res, 200, organizeLostPreviewDocument(state));
     return;
@@ -14884,7 +14874,7 @@ const server = createServer(async (req, res) => {
 
   if (
     url.pathname ===
-      `/api/v1/organize/previews/${ORGANIZE_LOST_UNADMITTED_PREVIEW_ID}` &&
+      `/api/organize/previews/${ORGANIZE_LOST_UNADMITTED_PREVIEW_ID}` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -14895,7 +14885,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: ORGANIZE_LOST_UNADMITTED_PREVIEW_ID,
       objectType: "organize_preview",
-      path: "/api/v1/organize/previews/:previewId",
+      path: "/api/organize/previews/:previewId",
     });
     sendJson(res, 200, organizeLostUnadmittedPreviewDocument(state));
     return;
@@ -14904,7 +14894,7 @@ const server = createServer(async (req, res) => {
   // Durable admissions for a Preview are listed before Execute is offered;
   // this makes a page reload fail closed when an ambiguous command had already
   // committed. The projection remains a bounded read, never command authority.
-  if (url.pathname === "/api/v1/organize/executions" && req.method === "GET") {
+  if (url.pathname === "/api/organize/executions" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -14919,7 +14909,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: previewId,
       objectType: "organize_execution_list",
-      path: "/api/v1/organize/executions",
+      path: "/api/organize/executions",
     });
     const matching = state.admitted.filter(
       (entry) => entry.previewId === previewId,
@@ -14961,7 +14951,7 @@ const server = createServer(async (req, res) => {
   // required; unknown keys, repeats and missing pieces rejected), admits no
   // work and replays nothing.
   const admissionMatch = url.pathname.match(
-    /^\/api\/v1\/organize\/previews\/([^/]+)\/admission$/,
+    /^\/api\/organize\/previews\/([^/]+)\/admission$/,
   );
   if (admissionMatch && req.method === "GET") {
     if (!operationsGuard(res)) {
@@ -14973,7 +14963,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: admissionPreviewId,
       objectType: "organize_admission_read",
-      path: "/api/v1/organize/previews/:previewId/admission",
+      path: "/api/organize/previews/:previewId/admission",
     });
     const outcome = organizeAdmissionOutcomeDocument(
       state,
@@ -14985,7 +14975,7 @@ const server = createServer(async (req, res) => {
   }
 
   const organizeExecuteMatch = url.pathname.match(
-    /^\/api\/v1\/organize\/previews\/([^/]+)\/execute$/,
+    /^\/api\/organize\/previews\/([^/]+)\/execute$/,
   );
   if (
     organizeExecuteMatch &&
@@ -15019,7 +15009,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: executePreviewId,
       objectType: "organize_execute",
-      path: "/api/v1/organize/previews/:previewId/execute",
+      path: "/api/organize/previews/:previewId/execute",
     });
     const lostVariant =
       executePreviewId === ORGANIZE_LOST_PREVIEW_ID ||
@@ -15113,7 +15103,7 @@ const server = createServer(async (req, res) => {
   // tests/test_automation_workspace_read_model.py) and is GET-only here, so
   // reading it can never admit work. The inventory's cards travel with the
   // list document itself, exactly as the real backend publishes them.
-  if (url.pathname === "/api/v1/operations/automation/settings") {
+  if (url.pathname === "/api/operations/automation/settings") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -15122,7 +15112,7 @@ const server = createServer(async (req, res) => {
         method: "GET",
         objectId: null,
         objectType: "automation_engine_settings",
-        path: "/api/v1/operations/automation/settings",
+        path: "/api/operations/automation/settings",
         body: null,
       });
       sendJson(res, 200, automationSettingsDocument(session));
@@ -15140,7 +15130,7 @@ const server = createServer(async (req, res) => {
           method: "PUT",
           objectId: null,
           objectType: "automation_engine_settings_reconcile",
-          path: "/api/v1/operations/automation/settings",
+          path: "/api/operations/automation/settings",
           body: { reconcile: true },
         });
         sendJson(res, 200, {
@@ -15270,7 +15260,7 @@ const server = createServer(async (req, res) => {
         method: "PUT",
         objectId: null,
         objectType: "automation_engine_settings_save",
-        path: "/api/v1/operations/automation/settings",
+        path: "/api/operations/automation/settings",
         body: { settings },
       });
       sendJson(res, 201, {
@@ -15293,7 +15283,7 @@ const server = createServer(async (req, res) => {
     sendJson(res, 405, { error: { code: "method_not_allowed" } });
     return;
   }
-  if (url.pathname === "/api/v1/automation/records" && req.method === "GET") {
+  if (url.pathname === "/api/automation/records" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -15304,7 +15294,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: null,
       objectType: "automation_records",
-      path: "/api/v1/operations/automation/records",
+      path: "/api/operations/automation/records",
       body: null,
     });
     sendJson(res, 200, {
@@ -15330,7 +15320,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (
-    url.pathname === "/api/v1/operations/automation/definitions" &&
+    url.pathname === "/api/operations/automation/definitions" &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -15340,14 +15330,14 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: null,
       objectType: "automation_form_authority",
-      path: "/api/v1/operations/automation/definitions",
+      path: "/api/operations/automation/definitions",
       body: null,
     });
     sendJson(res, 200, automationFocusedFormAuthority());
     return;
   }
   if (
-    url.pathname === "/api/v1/automation/task-definitions" &&
+    url.pathname === "/api/automation/task-definitions" &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -15358,14 +15348,14 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: null,
       objectType: "automation_definitions",
-      path: "/api/v1/automation/task-definitions",
+      path: "/api/automation/task-definitions",
       body: null,
     });
     sendJson(res, 200, automationListDocument(state, token));
     return;
   }
   if (
-    url.pathname === "/api/v1/automation/task-definitions" &&
+    url.pathname === "/api/automation/task-definitions" &&
     req.method === "POST"
   ) {
     if (!operationsGuard(res)) {
@@ -15412,7 +15402,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: AUTOMATION_DRAFT_REVISION,
       objectType: "automation_definition_create",
-      path: "/api/v1/automation/task-definitions",
+      path: "/api/automation/task-definitions",
       body: boundedAutomationBody(parsed.document),
     });
     sendJson(res, 200, {
@@ -15434,7 +15424,7 @@ const server = createServer(async (req, res) => {
   }
   if (
     url.pathname ===
-      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/occurrences` &&
+      `/api/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/occurrences` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -15445,7 +15435,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: AUTOMATION_DEFINITION_ID,
       objectType: "automation_occurrences",
-      path: "/api/v1/automation/task-definitions/:definitionId/occurrences",
+      path: "/api/automation/task-definitions/:definitionId/occurrences",
       body: null,
     });
     sendJson(res, 200, {
@@ -15468,7 +15458,7 @@ const server = createServer(async (req, res) => {
   }
   if (
     url.pathname ===
-      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_HOSTILE_PREVIEW_ID}` &&
+      `/api/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_HOSTILE_PREVIEW_ID}` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -15484,7 +15474,7 @@ const server = createServer(async (req, res) => {
       AUTOMATION_HOSTILE_PREVIEW_ID,
     );
     document.actions.definition = automationAction({
-      path: "/api/v1/automation/task-definitions/<task>",
+      path: "/api/automation/task-definitions/<task>",
       durableOutcome: null,
       nextAction: "reopen the durable definition behind this Preview",
     });
@@ -15493,7 +15483,7 @@ const server = createServer(async (req, res) => {
   }
   if (
     url.pathname ===
-      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_MISBOUND_PREVIEW_ID}` &&
+      `/api/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_MISBOUND_PREVIEW_ID}` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -15504,7 +15494,7 @@ const server = createServer(async (req, res) => {
   }
   if (
     url.pathname ===
-      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_PREVIEW_ID}` &&
+      `/api/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_PREVIEW_ID}` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -15515,7 +15505,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: AUTOMATION_PREVIEW_ID,
       objectType: "automation_preview",
-      path: "/api/v1/automation/task-definitions/:definitionId/previews/:previewId",
+      path: "/api/automation/task-definitions/:definitionId/previews/:previewId",
       body: null,
     });
     sendJson(
@@ -15527,7 +15517,7 @@ const server = createServer(async (req, res) => {
   }
   if (
     url.pathname ===
-      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_PREVIEW_ID}/items` &&
+      `/api/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_PREVIEW_ID}/items` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -15538,7 +15528,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: AUTOMATION_PREVIEW_ID,
       objectType: "automation_preview_items",
-      path: "/api/v1/automation/task-definitions/:definitionId/previews/:previewId/items",
+      path: "/api/automation/task-definitions/:definitionId/previews/:previewId/items",
       body: null,
     });
     const items =
@@ -15555,7 +15545,7 @@ const server = createServer(async (req, res) => {
   }
   if (
     url.pathname ===
-      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/preview` &&
+      `/api/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/preview` &&
     req.method === "POST"
   ) {
     if (!operationsGuard(res)) {
@@ -15572,7 +15562,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: AUTOMATION_DEFINITION_ID,
       objectType: "automation_preview_create",
-      path: "/api/v1/automation/task-definitions/:definitionId/preview",
+      path: "/api/automation/task-definitions/:definitionId/preview",
       body: {},
     });
     sendJson(res, 201, {
@@ -15583,7 +15573,7 @@ const server = createServer(async (req, res) => {
   }
   // --- End Automation operator projections ---
 
-  if (url.pathname === "/api/v1/scans" && req.method === "POST") {
+  if (url.pathname === "/api/scans" && req.method === "POST") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -15631,7 +15621,7 @@ const server = createServer(async (req, res) => {
         method: "POST",
         objectId: fileId,
         objectType: "scan",
-        path: "/api/v1/scans",
+        path: "/api/scans",
       });
       sendJson(res, 409, {
         details: { fileId, resourceLibraryId, scopeKind },
@@ -15651,7 +15641,7 @@ const server = createServer(async (req, res) => {
         method: "POST",
         objectId: resourceLibraryId,
         objectType: "scan",
-        path: "/api/v1/scans",
+        path: "/api/scans",
       });
       sendJson(res, 409, {
         details: { resourceLibraryId, scopeKind },
@@ -15674,7 +15664,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: record.taskId,
       objectType: "scan",
-      path: "/api/v1/scans",
+      path: "/api/scans",
     });
     sendJson(
       res,
@@ -15685,7 +15675,7 @@ const server = createServer(async (req, res) => {
   }
 
   const manualScanCancelMatch = url.pathname.match(
-    /^\/api\/v1\/scans\/([^/]+)\/cancel$/,
+    /^\/api\/scans\/([^/]+)\/cancel$/,
   );
   if (manualScanCancelMatch && req.method === "POST") {
     if (!operationsGuard(res)) {
@@ -15705,7 +15695,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: taskId,
       objectType: "scan",
-      path: `/api/v1/scans/${taskId}/cancel`,
+      path: `/api/scans/${taskId}/cancel`,
     });
     if (
       MANUAL_TERMINAL_SCAN_STATUSES.has(record.status) ||
@@ -15729,9 +15719,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const manualScanDetailMatch = url.pathname.match(
-    /^\/api\/v1\/scans\/([^/]+)$/,
-  );
+  const manualScanDetailMatch = url.pathname.match(/^\/api\/scans\/([^/]+)$/);
   if (manualScanDetailMatch && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
@@ -15753,7 +15741,7 @@ const server = createServer(async (req, res) => {
         method: "GET",
         objectId: taskId,
         objectType: "scan",
-        path: `/api/v1/scans/${taskId}`,
+        path: `/api/scans/${taskId}`,
       });
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
@@ -15772,7 +15760,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: taskId,
       objectType: "scan",
-      path: `/api/v1/scans/${taskId}`,
+      path: `/api/scans/${taskId}`,
     });
     sendJson(
       res,
@@ -15782,7 +15770,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === "/api/v1/previews" && req.method === "POST") {
+  if (url.pathname === "/api/previews" && req.method === "POST") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -15831,7 +15819,7 @@ const server = createServer(async (req, res) => {
         method: "POST",
         objectId: resourceLibraryId,
         objectType: "preview",
-        path: "/api/v1/previews",
+        path: "/api/previews",
       });
       sendJson(res, 409, {
         details: { relativePath, resourceLibraryId, scopeKind },
@@ -15851,7 +15839,7 @@ const server = createServer(async (req, res) => {
         method: "POST",
         objectId: resourceLibraryId,
         objectType: "preview",
-        path: "/api/v1/previews",
+        path: "/api/previews",
       });
       sendJson(res, 409, {
         details: { resourceLibraryId, scopeKind },
@@ -15880,13 +15868,13 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: document.previewId,
       objectType: "preview",
-      path: "/api/v1/previews",
+      path: "/api/previews",
     });
     sendJson(res, 201, document);
     return;
   }
 
-  if (url.pathname === "/api/v1/previews" && req.method === "GET") {
+  if (url.pathname === "/api/previews" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -15924,7 +15912,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: scopeId,
       objectType: "preview_list",
-      path: "/api/v1/previews",
+      path: "/api/previews",
     });
     sendJson(
       res,
@@ -15935,7 +15923,7 @@ const server = createServer(async (req, res) => {
   }
 
   const manualPreviewDetailMatch = url.pathname.match(
-    /^\/api\/v1\/previews\/([^/]+)$/,
+    /^\/api\/previews\/([^/]+)$/,
   );
   if (manualPreviewDetailMatch && req.method === "GET") {
     if (!operationsGuard(res)) {
@@ -15946,7 +15934,7 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: previewId,
       objectType: "preview",
-      path: `/api/v1/previews/${previewId}`,
+      path: `/api/previews/${previewId}`,
     });
     const document = MANUAL_PREVIEWS.get(previewId);
     if (document === undefined) {
@@ -15960,10 +15948,7 @@ const server = createServer(async (req, res) => {
   // -------------------------------------------------------------------------
   // V2 Notification journey (bounded Webhook definitions, tests, deliveries).
 
-  if (
-    url.pathname === "/api/v1/notifications/webhooks" &&
-    req.method === "GET"
-  ) {
+  if (url.pathname === "/api/notifications/webhooks" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -15972,14 +15957,14 @@ const server = createServer(async (req, res) => {
       method: "GET",
       objectId: null,
       objectType: "notification_definitions",
-      path: "/api/v1/operations/notifications/webhooks",
+      path: "/api/operations/notifications/webhooks",
       body: null,
     });
     sendJson(res, 200, notificationListDocument(state, token));
     return;
   }
   const notificationWebhookMatch = url.pathname.match(
-    /^\/api\/v1\/notifications\/webhooks\/([^/]+)$/,
+    /^\/api\/notifications\/webhooks\/([^/]+)$/,
   );
   if (notificationWebhookMatch && req.method === "GET") {
     if (!operationsGuard(res)) {
@@ -16000,7 +15985,7 @@ const server = createServer(async (req, res) => {
   }
   if (
     url.pathname ===
-      `/api/v1/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/draft` &&
+      `/api/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/draft` &&
     req.method === "GET"
   ) {
     if (!operationsGuard(res)) {
@@ -16012,7 +15997,7 @@ const server = createServer(async (req, res) => {
   }
   if (
     url.pathname ===
-      `/api/v1/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/test` &&
+      `/api/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/test` &&
     req.method === "POST"
   ) {
     if (!operationsGuard(res)) {
@@ -16061,7 +16046,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: NOTIFICATION_WEBHOOK_ID,
       objectType: "notification_webhook_test",
-      path: "/api/v1/operations/notifications/webhooks/:webhookId/test",
+      path: "/api/operations/notifications/webhooks/:webhookId/test",
       body: {
         expectedRevisionId: expectedRevisionId,
         expectedVersion: expectedVersion,
@@ -16130,7 +16115,7 @@ const server = createServer(async (req, res) => {
   }
   if (
     url.pathname ===
-      `/api/v1/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/activate-draft` &&
+      `/api/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/activate-draft` &&
     req.method === "POST"
   ) {
     if (!operationsGuard(res)) {
@@ -16158,7 +16143,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: NOTIFICATION_WEBHOOK_ID,
       objectType: "notification_webhook_activation",
-      path: "/api/v1/operations/notifications/webhooks/:webhookId/activate-draft",
+      path: "/api/operations/notifications/webhooks/:webhookId/activate-draft",
       body: {
         expectedRevisionId: document.expectedRevisionId,
         expectedVersion: document.expectedVersion,
@@ -16201,7 +16186,7 @@ const server = createServer(async (req, res) => {
   }
   if (
     url.pathname ===
-      `/api/v1/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor` &&
+      `/api/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor` &&
     req.method === "POST"
   ) {
     if (!operationsGuard(res)) {
@@ -16216,7 +16201,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: NOTIFICATION_ACTIVE_REVISION,
       objectType: "notification_successor_draft",
-      path: "/api/v1/configuration/revisions/:revisionId/successor",
+      path: "/api/configuration/revisions/:revisionId/successor",
       body: {},
     });
     sendJson(res, 201, {
@@ -16238,7 +16223,7 @@ const server = createServer(async (req, res) => {
   }
   if (
     url.pathname ===
-      `/api/v1/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/validate` &&
+      `/api/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/validate` &&
     req.method === "POST"
   ) {
     if (!operationsGuard(res)) {
@@ -16251,7 +16236,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: NOTIFICATION_DRAFT_REVISION,
       objectType: "notification_draft_validate",
-      path: "/api/v1/configuration/revisions/:revisionId/validate",
+      path: "/api/configuration/revisions/:revisionId/validate",
       body: {},
     });
     sendJson(res, 200, {
@@ -16263,7 +16248,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const notificationCreateMatch = url.pathname.match(
-    /^\/api\/v1\/configuration\/revisions\/([^/]+)\/objects\/webhooks$/,
+    /^\/api\/configuration\/revisions\/([^/]+)\/objects\/webhooks$/,
   );
   if (
     notificationCreateMatch &&
@@ -16298,7 +16283,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: createdId,
       objectType: "notification_webhook_create",
-      path: "/api/v1/configuration/revisions/:revisionId/objects/webhooks",
+      path: "/api/configuration/revisions/:revisionId/objects/webhooks",
       body: { id: createdId, expectedVersion: document.expectedVersion },
     });
     if (state.hostile) {
@@ -16321,7 +16306,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const notificationEditMatch = url.pathname.match(
-    /^\/api\/v1\/configuration\/revisions\/([^/]+)\/objects\/webhooks\/([^/]+)$/,
+    /^\/api\/configuration\/revisions\/([^/]+)\/objects\/webhooks\/([^/]+)$/,
   );
   if (
     notificationEditMatch &&
@@ -16346,7 +16331,7 @@ const server = createServer(async (req, res) => {
       method: "PUT",
       objectId: notificationEditMatch[2],
       objectType: "notification_webhook_save",
-      path: "/api/v1/configuration/revisions/:revisionId/objects/webhooks/:webhookId",
+      path: "/api/configuration/revisions/:revisionId/objects/webhooks/:webhookId",
       body: {
         webhookId: notificationEditMatch[2],
         expectedVersion: document.expectedVersion,
@@ -16371,7 +16356,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const notificationObjectActionMatch = url.pathname.match(
-    /^\/api\/v1\/configuration\/revisions\/([^/]+)\/objects\/webhooks\/([^/]+)\/(copy|enable|disable)$/,
+    /^\/api\/configuration\/revisions\/([^/]+)\/objects\/webhooks\/([^/]+)\/(copy|enable|disable)$/,
   );
   if (
     notificationObjectActionMatch &&
@@ -16402,7 +16387,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId,
       objectType: `notification_webhook_${action}`,
-      path: "/api/v1/configuration/revisions/:revisionId/objects/webhooks/:webhookId/:action",
+      path: "/api/configuration/revisions/:revisionId/objects/webhooks/:webhookId/:action",
       body: {
         webhookId: notificationObjectActionMatch[2],
         action,
@@ -16449,7 +16434,7 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
-  if (url.pathname === "/api/v1/notifications" && req.method === "GET") {
+  if (url.pathname === "/api/notifications" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
@@ -16477,7 +16462,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const notificationDeliveryMatch = url.pathname.match(
-    /^\/api\/v1\/notifications\/deliveries\/([^/]+)$/,
+    /^\/api\/notifications\/deliveries\/([^/]+)$/,
   );
   if (notificationDeliveryMatch && req.method === "GET") {
     if (!operationsGuard(res)) {
@@ -16500,7 +16485,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const notificationRecoveryMatch = url.pathname.match(
-    /^\/api\/v1\/notifications\/([^/]+)\/(requeue|resolve-stale)$/,
+    /^\/api\/notifications\/([^/]+)\/(requeue|resolve-stale)$/,
   );
   if (notificationRecoveryMatch && req.method === "POST") {
     if (!operationsGuard(res)) {
@@ -16534,7 +16519,7 @@ const server = createServer(async (req, res) => {
       method: "POST",
       objectId: deliveryId,
       objectType: "notification_delivery_recovery",
-      path: "/api/v1/notifications/:deliveryId/:action",
+      path: "/api/notifications/:deliveryId/:action",
       body: {
         deliveryId,
         action,
@@ -17029,9 +17014,9 @@ const server = createServer(async (req, res) => {
   // checked activation of the exact validated version.
   if (
     SETTINGS_STATES.has(session ?? "shared") &&
-    (url.pathname === "/api/v1/system/settings" ||
-      url.pathname === "/api/v1/configuration/packages/export/configuration" ||
-      /^\/api\/v1\/configuration\/revisions\/[^/]+(?:\/(?:validate|activate|objects|storage-check|recognition-strategy-test|destination-precheck))?$/.test(
+    (url.pathname === "/api/system/settings" ||
+      url.pathname === "/api/configuration/packages/export/configuration" ||
+      /^\/api\/configuration\/revisions\/[^/]+(?:\/(?:validate|activate|objects|storage-check|recognition-strategy-test|destination-precheck))?$/.test(
         url.pathname,
       ))
   ) {
@@ -17050,7 +17035,7 @@ const server = createServer(async (req, res) => {
     }
 
     const revisionMatch = url.pathname.match(
-      /^\/api\/v1\/configuration\/revisions\/([^/]+)(?:\/objects)?$/,
+      /^\/api\/configuration\/revisions\/([^/]+)(?:\/objects)?$/,
     );
     if (revisionMatch && req.method === "GET") {
       if (state.failRead) {
@@ -17098,7 +17083,7 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (url.pathname === "/api/v1/system/settings" && req.method === "GET") {
+    if (url.pathname === "/api/system/settings" && req.method === "GET") {
       if (state.failRead) {
         settingsReadFailure(res, "the settings projection read is unavailable");
         return;
@@ -17137,7 +17122,7 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (url.pathname === "/api/v1/system/settings" && req.method === "PUT") {
+    if (url.pathname === "/api/system/settings" && req.method === "PUT") {
       const parsed = await readBoundedJsonBody(req, res);
       if (!parsed.ok) return;
       const document = parsed.document ?? {};
@@ -17278,7 +17263,7 @@ const server = createServer(async (req, res) => {
     }
 
     const validateMatch = url.pathname.match(
-      /^\/api\/v1\/configuration\/revisions\/([^/]+)\/validate$/,
+      /^\/api\/configuration\/revisions\/([^/]+)\/validate$/,
     );
     if (validateMatch && req.method === "POST") {
       if (!state.draft || state.draft.revisionId !== validateMatch[1]) {
@@ -17298,7 +17283,7 @@ const server = createServer(async (req, res) => {
     // Exact-revision publish checks. They record read-only evidence only; the
     // shapes match the real endpoints so the page binds version/digest itself.
     const storageCheckMatch = url.pathname.match(
-      /^\/api\/v1\/configuration\/revisions\/([^/]+)\/storage-check$/,
+      /^\/api\/configuration\/revisions\/([^/]+)\/storage-check$/,
     );
     if (storageCheckMatch && req.method === "POST") {
       const parsed = await readBoundedJsonBody(req, res);
@@ -17351,7 +17336,7 @@ const server = createServer(async (req, res) => {
     }
 
     const strategyTestMatch = url.pathname.match(
-      /^\/api\/v1\/configuration\/revisions\/([^/]+)\/recognition-strategy-test$/,
+      /^\/api\/configuration\/revisions\/([^/]+)\/recognition-strategy-test$/,
     );
     if (strategyTestMatch && req.method === "POST") {
       const parsed = await readBoundedJsonBody(req, res);
@@ -17393,7 +17378,7 @@ const server = createServer(async (req, res) => {
     }
 
     const destinationPrecheckMatch = url.pathname.match(
-      /^\/api\/v1\/configuration\/revisions\/([^/]+)\/destination-precheck$/,
+      /^\/api\/configuration\/revisions\/([^/]+)\/destination-precheck$/,
     );
     if (destinationPrecheckMatch && req.method === "POST") {
       const parsed = await readBoundedJsonBody(req, res);
@@ -17441,7 +17426,7 @@ const server = createServer(async (req, res) => {
     }
 
     const activateMatch = url.pathname.match(
-      /^\/api\/v1\/configuration\/revisions\/([^/]+)\/activate$/,
+      /^\/api\/configuration\/revisions\/([^/]+)\/activate$/,
     );
     if (activateMatch && req.method === "POST") {
       const parsed = await readBoundedJsonBody(req, res);
@@ -17533,7 +17518,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (
-      url.pathname === "/api/v1/configuration/packages/export/configuration" &&
+      url.pathname === "/api/configuration/packages/export/configuration" &&
       req.method === "GET"
     ) {
       if (state.failExport) {
@@ -17582,7 +17567,7 @@ const server = createServer(async (req, res) => {
   // journey can prove the originating-family return through an actual
   // create-first-Draft → validate → checked-activate publication. Every write
   // is permission-gated, explicit, and recorded as a mutation.
-  if (url.pathname === "/api/v1/configuration/drafts/first") {
+  if (url.pathname === "/api/configuration/drafts/first") {
     if (req.method !== "POST") {
       sendJson(res, 405, { error: { code: "method_not_allowed" } });
       return;
@@ -17629,7 +17614,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const rulesSetupRevisionMatch = url.pathname.match(
-    /^\/api\/v1\/configuration\/revisions\/([^/]+)(?:\/objects)?$/,
+    /^\/api\/configuration\/revisions\/([^/]+)(?:\/objects)?$/,
   );
   if (rulesSetupRevisionMatch && req.method === "GET") {
     const emptyCheckProjection = {
@@ -17685,7 +17670,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const rulesSetupValidateMatch = url.pathname.match(
-    /^\/api\/v1\/configuration\/revisions\/([^/]+)\/validate$/,
+    /^\/api\/configuration\/revisions\/([^/]+)\/validate$/,
   );
   if (rulesSetupValidateMatch && req.method === "POST") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -17715,7 +17700,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const rulesSetupActivateMatch = url.pathname.match(
-    /^\/api\/v1\/configuration\/revisions\/([^/]+)\/activate$/,
+    /^\/api\/configuration\/revisions\/([^/]+)\/activate$/,
   );
   if (rulesSetupActivateMatch && req.method === "POST") {
     const parsed = await readBoundedJsonBody(req, res);
@@ -17772,7 +17757,7 @@ const server = createServer(async (req, res) => {
     sendJson(res, 200, { ...currentRuleActive(state), activated: true });
     return;
   }
-  if (url.pathname === "/api/v1/system/settings" && req.method === "GET") {
+  if (url.pathname === "/api/system/settings" && req.method === "GET") {
     const state = rulesState(session);
     const requested = url.searchParams.get("revisionId");
     const draft = state.setupDraft;
@@ -17831,7 +17816,7 @@ const server = createServer(async (req, res) => {
     res.end("GET required");
     return;
   }
-  if (url.pathname === "/ui-v2" || url.pathname === "/ui-v2/") {
+  if (url.pathname === "/") {
     const index = await readArtifact("index.html");
     if (index === null) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -17841,8 +17826,8 @@ const server = createServer(async (req, res) => {
     sendFile(res, index, CONTENT_TYPES[".html"]);
     return;
   }
-  if (url.pathname.startsWith("/ui-v2/")) {
-    const relative = url.pathname.slice("/ui-v2/".length);
+  if (url.pathname.startsWith("/")) {
+    const relative = url.pathname.slice(1);
     // The same narrow rules-edit exception the production Python boundary
     // serves: the identity segment of the allowlisted rules edit route is
     // operator data published by the backend (dots included, file-like shapes
@@ -17857,10 +17842,10 @@ const server = createServer(async (req, res) => {
       // below rejects them just as the production WSGI route does.
     }
     const rulesEditShape = decodedPathname.match(
-      /^\/ui-v2\/rules\/edit\/([^/]+)\/([^/]+)$/,
+      /^\/rules\/edit\/([^/]+)\/([^/]+)$/,
     );
     const rulesEditMatch = decodedPathname.match(
-      /^\/ui-v2\/rules\/edit\/(recognitionRules|typeBindings|recognitionTypes|metadataPolicies|namingPolicies|classificationPolicies|organizePolicies)\/([^/]+)$/,
+      /^\/rules\/edit\/(recognitionRules|typeBindings|recognitionTypes|metadataPolicies|namingPolicies|classificationPolicies|organizePolicies)\/([^/]+)$/,
     );
     const isRulesEditEntry =
       rulesEditMatch !== null &&
@@ -17905,5 +17890,5 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`fake V2 server listening on http://${HOST}:${PORT}/ui-v2/`);
+  console.log(`fake V2 server listening on http://${HOST}:${PORT}/`);
 });

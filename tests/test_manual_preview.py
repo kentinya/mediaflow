@@ -488,7 +488,7 @@ class ManualPreviewTests(unittest.TestCase):
                 with self.subTest(token=token):
                     status, document = request(
                         api,
-                        "/api/v1/operations/previews",
+                        "/api/operations/previews",
                         token=token,
                         method="POST",
                         body=payload,

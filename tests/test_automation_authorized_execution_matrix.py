@@ -542,40 +542,38 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
 
                 api_trace: list[str] = []
                 repository._connection.set_trace_callback(api_trace.append)
-                status, listing = request("/api/v1/automation/task-definitions")
+                status, listing = request("/api/automation/task-definitions")
                 self.assertEqual(status, 200, listing)
-                status, detail = request("/api/v1/automation/task-definitions/definition-summary")
+                status, detail = request("/api/automation/task-definitions/definition-summary")
                 self.assertEqual(status, 200, detail)
                 status, occurrences = request(
-                    "/api/v1/automation/task-definitions/definition-summary/occurrences",
+                    "/api/automation/task-definitions/definition-summary/occurrences",
                     "limit=10",
                 )
                 self.assertEqual(status, 200, occurrences)
                 status, task_history = request(
-                    "/api/v1/tasks/task-api-summary",
+                    "/api/tasks/task-api-summary",
                     "itemLimit=10&resultLimit=10",
                 )
                 self.assertEqual(status, 200, task_history)
-                status, checkpoint_history = request(
-                    "/api/v1/tasks/task-api-summary/items/api-failed"
-                )
+                status, checkpoint_history = request("/api/tasks/task-api-summary/items/api-failed")
                 self.assertEqual(status, 200, checkpoint_history)
                 status, refreshed_detail = request(
-                    "/api/v1/automation/task-definitions/definition-summary"
+                    "/api/automation/task-definitions/definition-summary"
                 )
                 self.assertEqual(status, 200, refreshed_detail)
                 status, refreshed_occurrences = request(
-                    "/api/v1/automation/task-definitions/definition-summary/occurrences",
+                    "/api/automation/task-definitions/definition-summary/occurrences",
                     "limit=10",
                 )
                 self.assertEqual(status, 200, refreshed_occurrences)
                 status, refreshed_task_history = request(
-                    "/api/v1/tasks/task-api-summary",
+                    "/api/tasks/task-api-summary",
                     "itemLimit=10&resultLimit=10",
                 )
                 self.assertEqual(status, 200, refreshed_task_history)
                 status, refreshed_checkpoint_history = request(
-                    "/api/v1/tasks/task-api-summary/items/api-failed"
+                    "/api/tasks/task-api-summary/items/api-failed"
                 )
                 self.assertEqual(status, 200, refreshed_checkpoint_history)
                 repository._connection.set_trace_callback(None)
@@ -641,9 +639,9 @@ class AuthorizedOccurrenceProjectionTests(unittest.TestCase):
                 denied_api._configuration_service = api._configuration_service
                 denied_api._configuration_objects = api._configuration_objects
                 for path, query in (
-                    ("/api/v1/automation/task-definitions/definition-summary", ""),
+                    ("/api/automation/task-definitions/definition-summary", ""),
                     (
-                        "/api/v1/automation/task-definitions/definition-summary/occurrences",
+                        "/api/automation/task-definitions/definition-summary/occurrences",
                         "limit=10",
                     ),
                 ):

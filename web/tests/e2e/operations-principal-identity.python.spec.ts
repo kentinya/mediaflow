@@ -19,7 +19,7 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   page,
   request,
 }) => {
-  const identity = await request.get(`${BASE}/api/v1/auth/principal`, {
+  const identity = await request.get(`${BASE}/api/auth/principal`, {
     headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
   });
   expect(identity.status()).toBe(200);
@@ -28,7 +28,7 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   const api: { method: string; path: string }[] = [];
   page.on("request", (browserRequest) => {
     const url = new URL(browserRequest.url());
-    if (url.pathname.startsWith("/api/v1/")) {
+    if (url.pathname.startsWith("/api/")) {
       api.push({ method: browserRequest.method(), path: url.pathname });
     }
   });
@@ -44,12 +44,12 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   );
   expect(registered.ok()).toBeTruthy();
 
-  await page.goto(`${BASE}/ui-v2/`);
+  await page.goto(`${BASE}/`);
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
   await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await page
     .getByRole("button", { name: /source/ })
     .first()
@@ -87,7 +87,7 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   // then aborts the client response.
   let droppedExecuteResponse = false;
   await page.route(
-    /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/,
+    /\/api\/operations\/organize\/previews\/[^/]+\/execute$/,
     async (route) => {
       if (droppedExecuteResponse) {
         await route.continue();
@@ -109,7 +109,7 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   ).toEqual({ sourceExists: true, destinationTargets: [] });
 
   await page.getByRole("button", { name: "核对提交结果" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
@@ -133,7 +133,7 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   expect(
     await (
-      await request.get(`${BASE}/api/v1/auth/principal`, {
+      await request.get(`${BASE}/api/auth/principal`, {
         headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
       })
     ).json(),

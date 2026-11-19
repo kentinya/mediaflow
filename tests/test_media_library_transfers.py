@@ -1023,7 +1023,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
 
             status, impact = request(
                 api,
-                "/api/v1/media-libraries/movies/files/transfer-impact"
+                "/api/media-libraries/movies/files/transfer-impact"
                 "?path=a.mkv&to=tv&toPath=&operation=copy&conflict=fail",
             )
             self.assertEqual(status, 200)
@@ -1039,14 +1039,14 @@ class MediaLibraryTransferTests(unittest.TestCase):
             # permission, so admission is refused.
             viewer_status, _ = request(
                 api,
-                "/api/v1/media-libraries/movies/files/transfer-impact"
+                "/api/media-libraries/movies/files/transfer-impact"
                 "?path=a.mkv&to=tv&toPath=&operation=copy&conflict=fail",
                 token="viewer-token",
             )
             self.assertEqual(viewer_status, 200)
             forbidden, _ = request(
                 api,
-                "/api/v1/media-libraries/movies/files/transfers",
+                "/api/media-libraries/movies/files/transfers",
                 method="POST",
                 token="viewer-token",
                 body={
@@ -1062,7 +1062,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
 
             created, result = request(
                 api,
-                "/api/v1/media-libraries/movies/files/transfers",
+                "/api/media-libraries/movies/files/transfers",
                 method="POST",
                 body={
                     "operation": "copy",
@@ -1083,20 +1083,20 @@ class MediaLibraryTransferTests(unittest.TestCase):
             # serve this media Task (nor the reverse).
             read_status, projection = request(
                 api,
-                f"/api/v1/media-libraries/movies/files/transfers/{result['taskId']}",
+                f"/api/media-libraries/movies/files/transfers/{result['taskId']}",
             )
             self.assertEqual(read_status, 200)
             self.assertEqual(projection["mediaLibraryId"], "movies")
             cross_status, _ = request(
                 api,
-                f"/api/v1/resource-libraries/movies/files/transfers/{result['taskId']}",
+                f"/api/resource-libraries/movies/files/transfers/{result['taskId']}",
             )
             self.assertEqual(cross_status, 404)
 
             # A ResourceLibrary ID supplied to the media route fails closed.
             not_found, _ = request(
                 api,
-                f"/api/v1/media-libraries/{SHARED_ID}/files/transfer-impact"
+                f"/api/media-libraries/{SHARED_ID}/files/transfer-impact"
                 "?path=a.mkv&to=tv&toPath=&operation=copy&conflict=fail",
             )
             self.assertEqual(not_found, 404)
@@ -1110,7 +1110,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
 
             status, impact = request(
                 api,
-                "/api/v1/resource-libraries/vault/files/transfer-impact"
+                "/api/resource-libraries/vault/files/transfer-impact"
                 "?path=a.mkv&to=vault&toPath=Dst&operation=copy&conflict=fail",
             )
             self.assertEqual(status, 200)
@@ -1122,7 +1122,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
 
             created, result = request(
                 api,
-                "/api/v1/resource-libraries/vault/files/transfers",
+                "/api/resource-libraries/vault/files/transfers",
                 method="POST",
                 body={
                     "operation": "copy",
@@ -1195,13 +1195,13 @@ class MediaLibraryTransferTests(unittest.TestCase):
 
             _status, impact = request(
                 api,
-                "/api/v1/media-libraries/movies/files/transfer-impact"
+                "/api/media-libraries/movies/files/transfer-impact"
                 "?path=m.mkv&to=tv&toPath=&operation=copy&conflict=fail",
             )
             self.assertEqual(_status, 200, impact)
             status, admitted = request(
                 api,
-                "/api/v1/media-libraries/movies/files/transfers",
+                "/api/media-libraries/movies/files/transfers",
                 method="POST",
                 body={
                     "operation": "copy",
@@ -1218,7 +1218,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
 
             restarted = self._restart_api(root, runtime)
             status, progress = request(
-                restarted, f"/api/v1/media-libraries/movies/files/transfers/{task_id}"
+                restarted, f"/api/media-libraries/movies/files/transfers/{task_id}"
             )
             self.assertEqual(status, 200, progress)
             self.assertEqual(progress["taskId"], task_id)
@@ -1238,24 +1238,24 @@ class MediaLibraryTransferTests(unittest.TestCase):
             # Cross-kind isolation survives the restart: this media Task is
             # never readable through the ResourceLibrary route.
             cross, _body = request(
-                restarted, f"/api/v1/resource-libraries/movies/files/transfers/{task_id}"
+                restarted, f"/api/resource-libraries/movies/files/transfers/{task_id}"
             )
             self.assertEqual(cross, 404)
             # The other kind's durable read cannot serve a media Task either
             # way, and an unknown identity keeps its 404.
             missing, _body = request(
-                restarted, "/api/v1/media-libraries/movies/files/transfers/no-such-task"
+                restarted, "/api/media-libraries/movies/files/transfers/no-such-task"
             )
             self.assertEqual(missing, 404)
             denied, _body = request(
                 restarted,
-                f"/api/v1/media-libraries/movies/files/transfers/{task_id}",
+                f"/api/media-libraries/movies/files/transfers/{task_id}",
                 token="viewer-token",
             )
             self.assertEqual(denied, 200)
             forbidden, _body = request(
                 restarted,
-                f"/api/v1/media-libraries/movies/files/transfers/{task_id}",
+                f"/api/media-libraries/movies/files/transfers/{task_id}",
                 token="nope-token",
             )
             self.assertEqual(forbidden, 401)
@@ -1263,7 +1263,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
             # New media admission during the outage still fails closed.
             refused, _body = request(
                 restarted,
-                "/api/v1/media-libraries/movies/files/transfers",
+                "/api/media-libraries/movies/files/transfers",
                 method="POST",
                 body={
                     "operation": "copy",
@@ -1278,7 +1278,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
 
             # A refresh changes nothing: one media Task, no Storage effect.
             status, again = request(
-                restarted, f"/api/v1/media-libraries/movies/files/transfers/{task_id}"
+                restarted, f"/api/media-libraries/movies/files/transfers/{task_id}"
             )
             self.assertEqual(status, 200, again)
             self.assertEqual(again["version"], progress["version"])
@@ -1293,7 +1293,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
             # Repaired Active converges the same Task to real execution.
             self._set_active_status(restarted, active.revision_id, "active")
             status, repaired = request(
-                restarted, f"/api/v1/media-libraries/movies/files/transfers/{task_id}"
+                restarted, f"/api/media-libraries/movies/files/transfers/{task_id}"
             )
             self.assertEqual(status, 200, repaired)
             self.assertEqual(repaired["status"], "QUEUED")
@@ -1308,7 +1308,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
             finished = worker.run_next()
             self.assertIsNotNone(finished)
             status, done = request(
-                restarted, f"/api/v1/media-libraries/movies/files/transfers/{task_id}"
+                restarted, f"/api/media-libraries/movies/files/transfers/{task_id}"
             )
             self.assertEqual(status, 200, done)
             self.assertTrue(done["terminal"], done)
@@ -1675,7 +1675,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
         version = runtime.get_task(task_id).updated_at.isoformat()
         status, body = request(
             api,
-            f"/api/v1/tasks/{task_id}/pause",
+            f"/api/tasks/{task_id}/pause",
             method="POST",
             body={"expectedUpdatedAt": version},
         )
@@ -1723,7 +1723,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
             # refuses with no effect and performs no Storage work.
             status, body = request(
                 api,
-                f"/api/v1/tasks/{task_id}/resume",
+                f"/api/tasks/{task_id}/resume",
                 method="POST",
                 body={"expectedUpdatedAt": runtime.get_task(task_id).updated_at.isoformat()},
             )
@@ -1765,7 +1765,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
 
             status, body = request(
                 api,
-                f"/api/v1/tasks/{task_id}/resume",
+                f"/api/tasks/{task_id}/resume",
                 method="POST",
                 body={"expectedUpdatedAt": runtime.get_task(task_id).updated_at.isoformat()},
             )

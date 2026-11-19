@@ -17,7 +17,7 @@ const VIEWER_TOKEN = "e2e-viewer-token";
 const READ_ONLY_TOKEN = "e2e-readonly-token";
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -48,7 +48,7 @@ async function openStorageManagement(page: Page) {
   await page
     .getByRole("link", { name: "Storage management", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/storage$/);
+  await expect(page).toHaveURL(/\/storage$/);
   await expect(page.getByRole("heading", { name: "存储管理" })).toBeVisible();
 }
 
@@ -306,7 +306,7 @@ test.describe("Storage management", () => {
     // opening the Files page shows its own placeholder and an empty value.
     await search.fill("存储残留");
     await page.getByRole("link", { name: "Files", exact: true }).click();
-    await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+    await expect(page).toHaveURL(/\/resourcelib\/files/);
     const filesSearch = page.getByRole("searchbox", {
       name: "搜索文件、文件夹或媒体库",
     });
@@ -501,7 +501,7 @@ test.describe("Storage management", () => {
     // fixed same-origin route with an allowlisted return target.
     await expect(
       page.getByRole("link", { name: "去完成设置" }),
-    ).toHaveAttribute("href", "/ui-v2/configuration?returnTo=storage");
+    ).toHaveAttribute("href", "/configuration?returnTo=storage");
   });
 
   test("the setup handoff reaches native Settings, explicitly creates or resumes Draft, and returns to refreshed inventory", async ({
@@ -515,14 +515,14 @@ test.describe("Storage management", () => {
     page.on("request", (request) => {
       if (
         request.method() !== "GET" &&
-        request.url().includes("/api/v1/configuration")
+        request.url().includes("/api/configuration")
       )
         setupWrites.push(
           `${request.method()} ${new URL(request.url()).pathname}`,
         );
     });
     await page.getByRole("link", { name: "去完成设置" }).click();
-    await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
+    await expect(page).toHaveURL(/\/configuration\?returnTo=storage$/);
     const statusSummary = page.getByRole("region", {
       name: "配置状态摘要",
     });
@@ -544,13 +544,13 @@ test.describe("Storage management", () => {
         name: /恢复草稿（编辑版本 \d+）/,
       }),
     ).toBeVisible();
-    expect(setupWrites).toEqual(["POST /api/v1/configuration/drafts/first"]);
+    expect(setupWrites).toEqual(["POST /api/configuration/drafts/first"]);
     await page.getByRole("link", { name: "返回上一页" }).click();
-    await expect(page).toHaveURL(/\/ui-v2\/storage$/);
+    await expect(page).toHaveURL(/\/storage$/);
     await expect(page.getByText(/继续已有的设置草稿/)).toBeVisible();
     await expect(page.getByRole("table")).toHaveCount(0);
     await page.getByRole("link", { name: "去完成设置" }).click();
-    await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
+    await expect(page).toHaveURL(/\/configuration\?returnTo=storage$/);
     await expect(
       statusSummary.getByText("已有草稿待恢复", { exact: true }),
     ).toBeVisible();
@@ -559,7 +559,7 @@ test.describe("Storage management", () => {
         name: /恢复草稿（编辑版本 \d+）/,
       }),
     ).toBeVisible();
-    expect(setupWrites).toEqual(["POST /api/v1/configuration/drafts/first"]);
+    expect(setupWrites).toEqual(["POST /api/configuration/drafts/first"]);
   });
 
   test("setup navigation and return start no configuration or media work", async ({
@@ -578,9 +578,9 @@ test.describe("Storage management", () => {
     await openStorageManagement(page);
 
     await page.getByRole("link", { name: "去完成设置" }).click();
-    await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
+    await expect(page).toHaveURL(/\/configuration\?returnTo=storage$/);
     await page.getByRole("link", { name: "返回上一页" }).click();
-    await expect(page).toHaveURL(/\/ui-v2\/storage$/);
+    await expect(page).toHaveURL(/\/storage$/);
     // Reading the recovery state and navigating to it issues no configuration
     // command, so it can never create a duplicate Draft, repeat a Save,
     // activate, or start a scan, Task or Storage write.
@@ -641,11 +641,11 @@ test.describe("Storage management", () => {
     page,
   }) => {
     await resetStorage(page);
-    await page.goto("/ui-v2/storage");
-    await expect(page).toHaveURL(/\/ui-v2\/$/);
+    await page.goto("/storage");
+    await expect(page).toHaveURL(/\/$/);
     await page.getByLabel("API token").fill(VIEWER_TOKEN);
     await page.getByRole("button", { name: "Connect" }).click();
-    await expect(page).toHaveURL(/\/ui-v2\/storage$/);
+    await expect(page).toHaveURL(/\/storage$/);
     await expect(page.getByRole("heading", { name: "存储管理" })).toBeVisible();
   });
 
@@ -775,7 +775,7 @@ test.describe("Storage management", () => {
     page.on("request", (request) => {
       if (
         request.method() === "POST" &&
-        request.url().endsWith("/api/v1/storages")
+        request.url().endsWith("/api/storages")
       ) {
         posts.push(request.postDataJSON() as Record<string, unknown>);
       }
@@ -880,7 +880,7 @@ test.describe("Storage management", () => {
     page.on("request", (request) => {
       if (
         request.method() === "PUT" &&
-        request.url().includes("/api/v1/storages/")
+        request.url().includes("/api/storages/")
       ) {
         puts.push(request.postDataJSON() as Record<string, unknown>);
       }
@@ -947,7 +947,7 @@ test.describe("Storage management", () => {
     page.on("request", (request) => {
       if (
         request.method() === "POST" &&
-        request.url().endsWith("/api/v1/storages")
+        request.url().endsWith("/api/storages")
       ) {
         posts.push(1);
       }
@@ -1047,7 +1047,7 @@ test.describe("Storage management", () => {
     page.on("request", (request) => {
       if (
         request.method() === "POST" &&
-        request.url().endsWith("/api/v1/storages")
+        request.url().endsWith("/api/storages")
       ) {
         submits.push(1);
       }
@@ -1122,7 +1122,7 @@ test.describe("Storage management", () => {
     await expect(page.getByRole("link", { name: "去完成设置" })).toHaveCount(0);
     await expect(
       page.getByRole("link", { name: "查看设置页面" }),
-    ).toHaveAttribute("href", "/ui-v2/configuration?returnTo=storage");
+    ).toHaveAttribute("href", "/configuration?returnTo=storage");
     await expect(
       page.getByRole("button", { name: "+ 添加存储" }),
     ).toBeDisabled();

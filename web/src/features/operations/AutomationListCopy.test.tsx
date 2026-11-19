@@ -144,33 +144,33 @@ function definitionDocument(
     actions: {
       detail: action({
         method: "GET",
-        path: `/api/v1/operations/automation/task-definitions/${id}`,
+        path: `/api/operations/automation/task-definitions/${id}`,
       }),
       occurrences: action({
         method: "GET",
-        path: `/api/v1/operations/automation/task-definitions/${id}/occurrences`,
+        path: `/api/operations/automation/task-definitions/${id}/occurrences`,
       }),
       runOnce: action({
         method: "POST",
-        path: `/api/v1/operations/automation/task-definitions/${id}/run-once`,
+        path: `/api/operations/automation/task-definitions/${id}/run-once`,
       }),
       grantState: action({
         method: "GET",
-        path: `/api/v1/automation/task-definitions/${id}/grant-state`,
+        path: `/api/automation/task-definitions/${id}/grant-state`,
       }),
       grant: action({
-        path: `/api/v1/automation/task-definitions/${id}/grant`,
+        path: `/api/automation/task-definitions/${id}/grant`,
         requiresConfirmation: true,
       }),
       revoke: action({
-        path: `/api/v1/automation/task-definitions/${id}/revoke`,
+        path: `/api/automation/task-definitions/${id}/revoke`,
       }),
       copy: action({
         method: "POST",
-        path: `/api/v1/automation/task-definitions/${id}/copy`,
+        path: `/api/automation/task-definitions/${id}/copy`,
       }),
       draftCreate: action({
-        path: `/api/v1/configuration/revisions/${activeRevisionId}/successor`,
+        path: `/api/configuration/revisions/${activeRevisionId}/successor`,
       }),
     },
     ...overrides,
@@ -264,10 +264,10 @@ function listDocument(
     actions: {
       create: action({
         method: "POST",
-        path: "/api/v1/automation/task-definitions",
+        path: "/api/automation/task-definitions",
       }),
       createDraft: action({
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
       }),
     },
   };
@@ -379,14 +379,14 @@ function principalResponse(): Response {
 
 function baseResponder(list: Record<string, unknown> = listDocument()) {
   return (call: Call): Response | undefined => {
-    if (call.url === "/api/v1/auth/principal") return principalResponse();
+    if (call.url === "/api/auth/principal") return principalResponse();
     if (
-      call.url === "/api/v1/operations/automation/definitions" &&
+      call.url === "/api/operations/automation/definitions" &&
       call.method === "GET"
     ) {
       return jsonResponse(formAuthority());
     }
-    if (call.url.startsWith("/api/v1/operations/automation/task-definitions?"))
+    if (call.url.startsWith("/api/operations/automation/task-definitions?"))
       return jsonResponse(list);
     return undefined;
   };
@@ -394,7 +394,7 @@ function baseResponder(list: Record<string, unknown> = listDocument()) {
 
 async function renderConnected() {
   authStore.setToken(TOKEN);
-  const { router } = renderApp("/ui-v2/operations/automation");
+  const { router } = renderApp("/operations/automation");
   const table = await screen.findByRole("table", { name: "自动化任务" });
   return { table: within(table), router };
 }
@@ -433,9 +433,7 @@ describe("Automation list Copy", () => {
         ];
         return pending.promise;
       }
-      if (
-        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
-      )
+      if (call.url.startsWith("/api/operations/automation/task-definitions?"))
         return jsonResponse(listDocument(items));
       return baseResponder()(call);
     });
@@ -453,7 +451,7 @@ describe("Automation list Copy", () => {
     );
     expect(posts).toHaveLength(1);
     expect(posts[0]?.url).toBe(
-      `/api/v1/operations/automation/definitions/${DEFINITION_ID}/copy`,
+      `/api/operations/automation/definitions/${DEFINITION_ID}/copy`,
     );
     expect(posts[0]?.body).toMatchObject({
       expectedRevisionId: ACTIVE_REVISION,
@@ -535,9 +533,7 @@ describe("Automation list Copy", () => {
           }),
         );
       }
-      if (
-        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
-      )
+      if (call.url.startsWith("/api/operations/automation/task-definitions?"))
         return jsonResponse(listDocument(items));
       return baseResponder()(call);
     });
@@ -614,9 +610,7 @@ describe("Automation list Copy", () => {
           409,
         );
       }
-      if (
-        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
-      )
+      if (call.url.startsWith("/api/operations/automation/task-definitions?"))
         return jsonResponse(listDocument(items));
       return baseResponder()(call);
     });
@@ -658,9 +652,7 @@ describe("Automation list Copy", () => {
           409,
         );
       }
-      if (
-        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
-      ) {
+      if (call.url.startsWith("/api/operations/automation/task-definitions?")) {
         listReads += 1;
         return jsonResponse(listDocument());
       }
@@ -720,7 +712,7 @@ describe("Automation list Copy", () => {
     const calls = recordingFetch((call) => {
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/automation/definitions"
+        call.url === "/api/operations/automation/definitions"
       ) {
         return jsonResponse(
           formAuthority({
@@ -749,9 +741,7 @@ describe("Automation list Copy", () => {
         }
         return jsonResponse(copyPublication());
       }
-      if (
-        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
-      ) {
+      if (call.url.startsWith("/api/operations/automation/task-definitions?")) {
         return jsonResponse(
           listDocument(current === "new" ? [newItem, newTask] : [oldItem]),
         );
@@ -810,7 +800,7 @@ describe("Automation list Copy", () => {
     const calls = recordingFetch((call) => {
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/automation/definitions"
+        call.url === "/api/operations/automation/definitions"
       ) {
         authorityReads += 1;
         return authorityReads === 1
@@ -825,9 +815,7 @@ describe("Automation list Copy", () => {
         posts += 1;
         return jsonResponse(copyPublication());
       }
-      if (
-        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
-      ) {
+      if (call.url.startsWith("/api/operations/automation/task-definitions?")) {
         return jsonResponse(
           listDocument(
             current === "new"
@@ -917,9 +905,7 @@ describe("Automation list Copy", () => {
           }),
         );
       }
-      if (
-        call.url.startsWith("/api/v1/operations/automation/task-definitions?")
-      )
+      if (call.url.startsWith("/api/operations/automation/task-definitions?"))
         return jsonResponse(listDocument(items));
       return baseResponder()(call);
     });
@@ -1110,7 +1096,7 @@ describe("Automation list Copy", () => {
   it("shows no Copy entry without backend permission and explains an unreadable authority", async () => {
     const denied = recordingFetch((call) => {
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(formAuthority({ actions: { copy: false } }));
@@ -1127,7 +1113,7 @@ describe("Automation list Copy", () => {
 
     const unreadable = recordingFetch((call) => {
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse({ error: { code: "unavailable" } }, 503);

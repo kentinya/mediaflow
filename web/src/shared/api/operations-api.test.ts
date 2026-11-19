@@ -48,7 +48,7 @@ const lifecycle = {
       action: "cancel",
       label: "Cancel",
       method: "POST",
-      path: "/api/v1/tasks/{id}/cancel",
+      path: "/api/tasks/{id}/cancel",
       available: true,
       unavailableReason: null,
       confirmationRequired: false,
@@ -88,12 +88,12 @@ describe("task collection URLs", () => {
         cursor: "c1",
       }),
     ).toBe(
-      "/api/v1/operations/tasks?status=failed&command=preview&limit=20&cursor=c1",
+      "/api/operations/tasks?status=failed&command=preview&limit=20&cursor=c1",
     );
-    expect(taskListUrl({})).toBe("/api/v1/operations/tasks");
+    expect(taskListUrl({})).toBe("/api/operations/tasks");
     expect(
       taskDetailUrl({ taskId: "task-1", itemLimit: 20, resultLimit: 20 }),
-    ).toBe("/api/v1/operations/tasks/task-1?itemLimit=20&resultLimit=20");
+    ).toBe("/api/operations/tasks/task-1?itemLimit=20&resultLimit=20");
   });
 });
 
@@ -108,7 +108,7 @@ describe("mutateLifecycle", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/v1/tasks/task-1/cancel");
+    expect(url).toBe("/api/tasks/task-1/cancel");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({
       expectedUpdatedAt: "2026-08-22T12:00:00+00:00",

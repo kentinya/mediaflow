@@ -514,7 +514,7 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
                 )
                 draft = managed.import_draft(document, actor="operator")
                 collection = (
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/objects/organizePolicies"
+                    f"/api/configuration/revisions/{draft.revision_id}/objects/organizePolicies"
                 )
                 for label, candidate, expected_message in invalid_policies():
                     with self.subTest(label=label):
@@ -532,7 +532,7 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
                         self.assertIsNone(repository.get_organize_authority(draft.revision_id))
                 status, evidence = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/organize-authority",
+                    f"/api/configuration/revisions/{draft.revision_id}/organize-authority",
                     method="POST",
                     body={
                         "expectedVersion": draft.version,
@@ -545,7 +545,7 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
                 stored = repository.get_organize_authority(draft.revision_id).document()
                 status, stale = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/organize-authority",
+                    f"/api/configuration/revisions/{draft.revision_id}/organize-authority",
                     method="POST",
                     body={
                         "expectedVersion": draft.version + 1,

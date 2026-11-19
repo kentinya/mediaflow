@@ -603,9 +603,9 @@ class Stack:
         service methods.
         """
 
-        draft = self.json_api("/api/v1/configuration/drafts/first", method="POST", body={})
+        draft = self.json_api("/api/configuration/drafts/first", method="POST", body={})
         saved = self.json_api(
-            f"/api/v1/configuration/revisions/{draft['revisionId']}",
+            f"/api/configuration/revisions/{draft['revisionId']}",
             method="PUT",
             body={"document": document, "expectedVersion": draft["version"]},
         )
@@ -619,13 +619,13 @@ class Stack:
         services must adopt without restarting.
         """
 
-        status = self.json_api("/api/v1/configuration")
+        status = self.json_api("/api/configuration")
         active_id = status["active"]["revisionId"]
-        detail = self.json_api(f"/api/v1/configuration/revisions/{active_id}")
+        detail = self.json_api(f"/api/configuration/revisions/{active_id}")
         document = _bind_deployment_authority(detail["document"], self.database, self.token_env)
         mutate(document)
         imported = self.json_api(
-            "/api/v1/configuration/drafts",
+            "/api/configuration/drafts",
             method="POST",
             body={"document": document},
         )
@@ -641,11 +641,11 @@ class Stack:
         """
 
         validated = self.json_api(
-            f"/api/v1/configuration/revisions/{revision_id}/validate", method="POST", body={}
+            f"/api/configuration/revisions/{revision_id}/validate", method="POST", body={}
         )
         self.run_applicable_checks(revision_id, validated)
         return self.json_api(
-            f"/api/v1/configuration/revisions/{revision_id}/activate",
+            f"/api/configuration/revisions/{revision_id}/activate",
             method="POST",
             body={"expectedVersion": validated["version"], "checked": True},
         )
@@ -659,7 +659,7 @@ class Stack:
         fabricated, and an empty candidate needs no checks at all.
         """
 
-        detail = self.json_api(f"/api/v1/configuration/revisions/{revision_id}")
+        detail = self.json_api(f"/api/configuration/revisions/{revision_id}")
         document = detail["document"]
         base = {
             "expectedVersion": validated["version"],
@@ -669,7 +669,7 @@ class Stack:
             if not isinstance(storage, dict) or not storage.get("enabled", True):
                 continue
             self.json_api(
-                f"/api/v1/configuration/revisions/{revision_id}/storage-check",
+                f"/api/configuration/revisions/{revision_id}/storage-check",
                 method="POST",
                 body={**base, "storageId": storage["id"]},
             )
@@ -677,7 +677,7 @@ class Stack:
             if not isinstance(library, dict) or not library.get("enabled", True):
                 continue
             self.json_api(
-                f"/api/v1/configuration/revisions/{revision_id}/recognition-strategy-test",
+                f"/api/configuration/revisions/{revision_id}/recognition-strategy-test",
                 method="POST",
                 body={
                     **base,
@@ -690,7 +690,7 @@ class Stack:
         if document.get("classificationPolicies"):
             for recognition in document.get("recognitionTypes", []):
                 self.json_api(
-                    f"/api/v1/configuration/revisions/{revision_id}/destination-precheck",
+                    f"/api/configuration/revisions/{revision_id}/destination-precheck",
                     method="POST",
                     body={
                         **base,
@@ -815,7 +815,7 @@ def assert_real_web_status(stack: Stack) -> None:
         const browser = await chromium.launch({headless:true});
         try {
             const page = await browser.newPage({viewport:{width:390,height:844}});
-            await page.goto(process.env.MF_TEST_BASE + '/ui-v2/operations');
+            await page.goto(process.env.MF_TEST_BASE + '/operations');
             await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
             await page.getByRole('button', {name:'Connect', exact:true}).click();
             await expect(page.getByRole('button', {name:'全部任务'})).toBeVisible();
@@ -855,7 +855,7 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
             page.on('request', request => {
                 const method = request.method();
                 const path = new URL(request.url()).pathname;
-                if (method !== 'GET' && path.includes('/api/v1/configuration'))
+                if (method !== 'GET' && path.includes('/api/configuration'))
                     writes.push(`${method} ${path}`);
                 if (method !== 'GET' &&
                     /\/(tasks|jobs|scan|preview|organize)(\/|$)/.test(path))
@@ -875,7 +875,7 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
                 if (path.endsWith('/activate'))
                     activated = await response.json();
             });
-            await page.goto(process.env.MF_TEST_BASE + '/ui-v2/configuration');
+            await page.goto(process.env.MF_TEST_BASE + '/configuration');
             await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
             await page.getByRole('button', {name:'Connect', exact:true}).click();
             await expect(page.getByText('需要首次设置', {exact:true})).toBeVisible();
@@ -928,7 +928,7 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
                 activated.version !== validated.version)
                 throw new Error('activation response did not identify the exact Active revision');
             if (writes.some(path =>
-                !path.startsWith('POST /api/v1/configuration/drafts/first') &&
+                !path.startsWith('POST /api/configuration/drafts/first') &&
                 !/^POST \/api\/v1\/configuration\/revisions\/[^/]+\/(validate|activate)$/
                     .test(path)))
                 throw new Error('the settings journey wrote outside its explicit actions');
@@ -1019,7 +1019,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         stack.wait_api()
         print("   all four services healthy without a media mount")
 
-        readiness = stack.json_api("/api/v1/management/readiness")
+        readiness = stack.json_api("/api/management/readiness")
         if readiness["runtimeConfigured"]:
             raise RuntimeError("a fresh media-free deployment reported a configured runtime")
         if readiness["managementReady"] is not True:
@@ -1040,7 +1040,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
 
         print("   activating an empty baseline through the real Python-served Web...")
         activate_empty_baseline_through_web(stack)
-        status = stack.json_api("/api/v1/configuration")
+        status = stack.json_api("/api/configuration")
         if not status["emptyActive"]:
             raise RuntimeError("empty baseline activation did not publish an empty Active")
         if "配置已激活，媒体业务尚未配置" not in (status.get("nextAction") or ""):
@@ -1150,7 +1150,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         retries = []
 
         def has_retry():
-            retries[:] = stack.json_api("/api/v1/notifications?status=retry")["items"]
+            retries[:] = stack.json_api("/api/notifications?status=retry")["items"]
             return bool(retries)
 
         wait_until(has_retry, timeout=90, description="real transport retry")
@@ -1162,7 +1162,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         )
         receiver.response_status = 200
         time.sleep(12)
-        current = stack.json_api("/api/v1/notifications/" + saved["deliveryId"])
+        current = stack.json_api("/api/notifications/" + saved["deliveryId"])
         if current["status"] != "retry" or current["retrySafe"] is not False:
             raise RuntimeError("changed target did not preserve its blocked durable retry")
         if any(
@@ -1173,8 +1173,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         stack.successor(lambda document: document["webhooks"][0].update(url=webhook_url))
         wait_until(
             lambda: (
-                stack.json_api("/api/v1/notifications/" + saved["deliveryId"])["status"]
-                == "delivered"
+                stack.json_api("/api/notifications/" + saved["deliveryId"])["status"] == "delivered"
             ),
             timeout=90,
             description="restored original recipient recovery",
@@ -1215,7 +1214,7 @@ def wait_task(stack: Stack, admitted: dict) -> None:
     identifier = admitted["taskId"]
 
     def complete():
-        current = stack.json_api(f"/api/v1/tasks/{identifier}")
+        current = stack.json_api(f"/api/tasks/{identifier}")
         status = current["status"]
         if status in {"failed", "cancelled"}:
             raise RuntimeError(f"admitted {current.get('command')} failed: {current}")
@@ -1227,7 +1226,7 @@ def wait_task(stack: Stack, admitted: dict) -> None:
 def complete_transfer(
     stack: Stack, kind: str, source: str, destination: str, path: str, destination_field: str
 ) -> None:
-    prefix = f"/api/v1/{kind}/{source}/files"
+    prefix = f"/api/{kind}/{source}/files"
     query = urllib.parse.urlencode(
         {"path": path, "to": destination, "toPath": "", "operation": "copy", "conflict": "fail"}
     )
@@ -1293,7 +1292,7 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
         stack.wait_api()
         identities = stack.process_ids()
         stack.activate(empty_baseline_document(stack))
-        status = stack.json_api("/api/v1/configuration")
+        status = stack.json_api("/api/configuration")
         if not status["emptyActive"]:
             raise RuntimeError("media stack did not reach a valid empty Active")
         print("   media stack reached an empty Active with mounts present")
@@ -1352,7 +1351,7 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
         print("   published a ResourceLibrary over the confined media mount")
 
         before = stack.container_ids()
-        stack.json_api("/api/v1/configuration")
+        stack.json_api("/api/configuration")
         if stack.container_ids() != before:
             raise RuntimeError("reading configuration state replaced the media containers")
         print("   reading configuration state recreated no container")
@@ -1364,7 +1363,7 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
         source_file = stack.source_root / "movies" / "Acceptance.Movie.2025.mkv"
         source_file.parent.mkdir(exist_ok=True)
         source_file.write_bytes(b"not-real-media")
-        status = stack.json_api("/api/v1/configuration")
+        status = stack.json_api("/api/configuration")
         if not status.get("runtimeConfigured"):
             raise RuntimeError("the populated library configuration is not runtime-configured")
         capabilities = status.get("capabilities", {})
@@ -1380,7 +1379,7 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
 
         wait_until(
             lambda: (
-                stack.json_api("/api/v1/workers/readiness")
+                stack.json_api("/api/workers/readiness")
                 .get("workReadiness", {})
                 .get("resourceFilesTransfer", {})
                 .get("ready")
@@ -1422,7 +1421,7 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
         if len(organized) != 1 or organized[0].read_bytes() != source_file.read_bytes():
             raise RuntimeError(
                 "Organize did not produce exactly the authorized file copy: "
-                + json.dumps(stack.json_api("/api/v1/tasks"))
+                + json.dumps(stack.json_api("/api/tasks"))
                 + " files="
                 + str(list(stack.target_root.rglob("*")))
             )

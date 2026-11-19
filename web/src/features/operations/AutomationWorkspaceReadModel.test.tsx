@@ -132,33 +132,33 @@ function definitionDocument(overrides: Json = {}): Json {
     actions: {
       detail: action({
         method: "GET",
-        path: "/api/v1/operations/automation/task-definitions/auto-task",
+        path: "/api/operations/automation/task-definitions/auto-task",
       }),
       occurrences: action({
         method: "GET",
-        path: "/api/v1/operations/automation/task-definitions/auto-task/occurrences",
+        path: "/api/operations/automation/task-definitions/auto-task/occurrences",
       }),
       runOnce: action({
         method: "POST",
-        path: "/api/v1/operations/automation/task-definitions/auto-task/run-once",
+        path: "/api/operations/automation/task-definitions/auto-task/run-once",
       }),
       grantState: action({
         method: "GET",
-        path: "/api/v1/automation/task-definitions/auto-task/grant-state",
+        path: "/api/automation/task-definitions/auto-task/grant-state",
       }),
       grant: action({
-        path: "/api/v1/automation/task-definitions/auto-task/grant",
+        path: "/api/automation/task-definitions/auto-task/grant",
         requiresConfirmation: true,
       }),
       revoke: action({
-        path: "/api/v1/automation/task-definitions/auto-task/revoke",
+        path: "/api/automation/task-definitions/auto-task/revoke",
       }),
       copy: action({
         method: "POST",
-        path: "/api/v1/automation/task-definitions/auto-task/copy",
+        path: "/api/automation/task-definitions/auto-task/copy",
       }),
       draftCreate: action({
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
       }),
     },
     ...overrides,
@@ -286,10 +286,10 @@ function listDocument(overrides: Json = {}): Json {
     actions: {
       create: action({
         method: "POST",
-        path: "/api/v1/automation/task-definitions",
+        path: "/api/automation/task-definitions",
       }),
       createDraft: action({
-        path: `/api/v1/configuration/revisions/${ACTIVE_REVISION}/successor`,
+        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
       }),
     },
     ...overrides,
@@ -416,10 +416,10 @@ function recordDocument(overrides: Json = {}): Json {
         "results and every recovery command belong to that exact Task Center run",
       taskCenter: {
         runId: "task-1",
-        path: "/api/v1/operations/runs/task-1",
+        path: "/api/operations/runs/task-1",
       },
-      job: { jobId: "run-1", path: "/api/v1/operations/jobs/run-1" },
-      definitionSettings: "/ui-v2/operations/automation/definition/auto-task",
+      job: { jobId: "run-1", path: "/api/operations/jobs/run-1" },
+      definitionSettings: "/operations/automation/definition/auto-task",
       supportedCommand: null,
       supportedCommandPath: null,
       startAgainAllowed: false,
@@ -456,7 +456,7 @@ function recordsDocument(overrides: Json = {}): Json {
 }
 
 const LIST_URL =
-  "/api/v1/operations/automation/task-definitions?sort=name&limit=20";
+  "/api/operations/automation/task-definitions?sort=name&limit=20";
 
 // Every fixture below is proven to satisfy the real normalizers: a malformed
 // document must fail closed in the client, so the journeys assert behaviour and
@@ -491,7 +491,7 @@ describe("V2 Automation workspace read model", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation");
+    renderApp("/operations/automation");
 
     await screen.findByRole("heading", { name: "自动化" });
     await waitFor(() => expect(calls.length).toBeGreaterThan(0));
@@ -546,7 +546,7 @@ describe("V2 Automation workspace read model", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation");
+    renderApp("/operations/automation");
     await screen.findByRole("heading", { name: "自动化" });
     expect(await screen.findByText("无工作完成")).toBeVisible();
     expect(screen.queryByText(/已整理 0 项/)).toBeNull();
@@ -568,7 +568,7 @@ describe("V2 Automation workspace read model", () => {
       call.url === LIST_URL ? jsonResponse(page) : undefined,
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation");
+    renderApp("/operations/automation");
 
     await screen.findByRole("heading", { name: "自动化" });
     expect(await screen.findByText("最近结果不可用")).toBeVisible();
@@ -589,7 +589,7 @@ describe("V2 Automation workspace read model", () => {
         : undefined,
     );
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation");
+    renderApp("/operations/automation");
 
     await screen.findByRole("heading", { name: "自动化" });
     expect(await screen.findByText("尚无执行")).toBeVisible();
@@ -604,13 +604,13 @@ describe("V2 Automation workspace read model", () => {
       if (call.url === LIST_URL) {
         return jsonResponse(listDocument());
       }
-      if (call.url.startsWith("/api/v1/operations/automation/records")) {
+      if (call.url.startsWith("/api/operations/automation/records")) {
         return jsonResponse(recordsDocument());
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation?tab=records");
+    renderApp("/operations/automation?tab=records");
 
     const region = await screen.findByRole("region", {
       name: "自动化执行记录",
@@ -682,13 +682,13 @@ describe("V2 Automation workspace read model", () => {
       if (call.url === LIST_URL) {
         return jsonResponse(listDocument());
       }
-      if (call.url.startsWith("/api/v1/operations/automation/records")) {
+      if (call.url.startsWith("/api/operations/automation/records")) {
         return jsonResponse(prestartRecords);
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation?tab=records");
+    renderApp("/operations/automation?tab=records");
 
     const region = await screen.findByRole("region", {
       name: "自动化执行记录",
@@ -735,7 +735,7 @@ describe("V2 Automation workspace read model", () => {
     // creates an execution/mutation request.
     const recordsCalls = (): number =>
       calls.filter((call) =>
-        call.url.startsWith("/api/v1/operations/automation/records"),
+        call.url.startsWith("/api/operations/automation/records"),
       ).length;
     const beforeRefresh = recordsCalls();
     // The header refresh entry is gone; the records outcome filter is the
@@ -752,7 +752,7 @@ describe("V2 Automation workspace read model", () => {
       expect(within(filteredRegion).getByText(/共 2 条执行记录/)).toBeVisible(),
     );
     for (const call of calls.filter((call) =>
-      call.url.startsWith("/api/v1/operations/automation/records"),
+      call.url.startsWith("/api/operations/automation/records"),
     )) {
       expect(call.method).toBe("GET");
     }
@@ -766,7 +766,7 @@ describe("V2 Automation workspace read model", () => {
   it("pages backwards with the cursor's own direction", async () => {
     const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
-      if (call.url.startsWith("/api/v1/operations/automation/records")) {
+      if (call.url.startsWith("/api/operations/automation/records")) {
         if (call.url.includes("cursor=page-2")) {
           return jsonResponse(
             recordsDocument({
@@ -783,7 +783,7 @@ describe("V2 Automation workspace read model", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/automation?tab=records");
+    renderApp("/operations/automation?tab=records");
 
     const region = await screen.findByRole("region", {
       name: "自动化执行记录",
@@ -823,7 +823,7 @@ describe("V2 Automation workspace read model", () => {
   it("keeps the submitted tab, filters and page in the URL across a reload", async () => {
     const user = userEvent.setup();
     recordingFetch((call) => {
-      if (call.url.startsWith("/api/v1/operations/automation/records")) {
+      if (call.url.startsWith("/api/operations/automation/records")) {
         return jsonResponse(
           recordsDocument({
             definition: "auto-task",
@@ -838,7 +838,7 @@ describe("V2 Automation workspace read model", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations/automation?tab=records");
+    const { router } = renderApp("/operations/automation?tab=records");
     const searchOf = (): string =>
       JSON.stringify(router.state.location.search ?? {});
 
@@ -860,7 +860,7 @@ describe("V2 Automation workspace read model", () => {
     // rather than the workspace default.
     cleanup();
     renderApp(
-      `/ui-v2/operations/automation?tab=records&rdefinition=auto-task` +
+      `/operations/automation?tab=records&rdefinition=auto-task` +
         "&rtrigger=scheduled",
     );
     const restored = await screen.findByRole("region", {
@@ -898,7 +898,7 @@ describe("V2 Automation workspace read model", () => {
     "shows the original %s result without raw or follow-up details",
     async (status, label, reason, nextStep) => {
       const { calls } = recordingFetch((call) => {
-        if (call.url.startsWith("/api/v1/operations/automation/records"))
+        if (call.url.startsWith("/api/operations/automation/records"))
           return jsonResponse(
             recordsDocument({
               items: [
@@ -935,7 +935,7 @@ describe("V2 Automation workspace read model", () => {
         return undefined;
       });
       authStore.setToken(TOKEN);
-      renderApp("/ui-v2/operations/automation?tab=records");
+      renderApp("/operations/automation?tab=records");
       const region = await screen.findByRole("region", {
         name: "自动化执行记录",
       });
@@ -966,14 +966,14 @@ describe("V2 Automation workspace read model", () => {
   it("uses the records outcome filter and resets mismatched cursors", async () => {
     const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
-      if (call.url.startsWith("/api/v1/operations/automation/records"))
+      if (call.url.startsWith("/api/operations/automation/records"))
         return jsonResponse(recordsDocument({ outcome: "failed" }));
       if (call.url === LIST_URL) return jsonResponse(listDocument());
       return undefined;
     });
     authStore.setToken(TOKEN);
     const { router } = renderApp(
-      "/ui-v2/operations/automation?tab=records&rstatus=failed&cursor=original&dir=previous",
+      "/operations/automation?tab=records&rstatus=failed&cursor=original&dir=previous",
     );
     const region = await screen.findByRole("region", {
       name: "自动化执行记录",
@@ -1024,7 +1024,7 @@ describe("V2 Automation workspace read model", () => {
 
   it("rejects an old unsupported result URL and lets the operator clear it", async () => {
     const { calls } = recordingFetch((call) => {
-      if (call.url.startsWith("/api/v1/operations/automation/records")) {
+      if (call.url.startsWith("/api/operations/automation/records")) {
         return call.url.includes("outcome=partial_success")
           ? jsonResponse({ error: { code: "invalid_request" } }, 400)
           : jsonResponse(recordsDocument());
@@ -1033,9 +1033,7 @@ describe("V2 Automation workspace read model", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp(
-      "/ui-v2/operations/automation?tab=records&rstatus=partial_success",
-    );
+    renderApp("/operations/automation?tab=records&rstatus=partial_success");
     const clear = await screen.findByRole("button", { name: "清除筛选" });
     expect(screen.queryByRole("table", { name: "自动化执行记录" })).toBeNull();
     await userEvent.setup().click(clear);

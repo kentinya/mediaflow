@@ -75,7 +75,7 @@ const inventoryPayload = {
     managedActivation: true,
     recoveryRequired: false,
     health: "HEALTHY",
-    setupPath: "/ui-v2/configuration",
+    setupPath: "/configuration",
   },
 };
 
@@ -153,7 +153,7 @@ describe("Storage management API", () => {
       string,
       RequestInit,
     ];
-    expect(url).toBe("/api/v1/operations/storage-management/inventory");
+    expect(url).toBe("/api/operations/storage-management/inventory");
     expect((init.headers as Record<string, string>).Authorization).toBe(
       "Bearer inventory-token",
     );
@@ -173,14 +173,14 @@ describe("Storage management API", () => {
     });
     const [url] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string];
     expect(url).toBe(
-      "/api/v1/operations/storage-management/inventory" +
+      "/api/operations/storage-management/inventory" +
         "?q=r2.example&family=s3&after=r2-media",
     );
     // An empty selection keeps the exact original request path.
     fetchMock.mockClear();
     await fetchStorageInventory("inventory-token", {});
     const [plain] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string];
-    expect(plain).toBe("/api/v1/operations/storage-management/inventory");
+    expect(plain).toBe("/api/operations/storage-management/inventory");
   });
 
   it("clamps the bounded page limit and drops unset optional fields", async () => {
@@ -194,9 +194,7 @@ describe("Storage management API", () => {
       after: "",
     });
     const [url] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string];
-    expect(url).toBe(
-      "/api/v1/operations/storage-management/inventory?limit=100",
-    );
+    expect(url).toBe("/api/operations/storage-management/inventory?limit=100");
   });
 
   it("decodes a saved OpenList object with an empty provider root", async () => {
@@ -270,7 +268,7 @@ describe("Storage management API", () => {
             managedActivation: false,
             recoveryRequired: false,
             health: "SETUP_REQUIRED",
-            setupPath: "/ui-v2/configuration",
+            setupPath: "/configuration",
           },
           actions: {},
         }),
@@ -282,7 +280,7 @@ describe("Storage management API", () => {
     // The permission is backend-authoritative: the page may not invent the
     // ability to start setup for a principal that cannot.
     expect(model.canStartSetup).toBe(true);
-    expect(model.setup.setupPath).toBe("/ui-v2/configuration");
+    expect(model.setup.setupPath).toBe("/configuration");
   });
 
   it("still reports an unrelated malformed response as malformed", async () => {
@@ -347,7 +345,7 @@ describe("Storage management API", () => {
             available: true,
             reason: null,
             method: "POST",
-            path: "/api/v1/operations/storage-management/storage/local-source/check",
+            path: "/api/operations/storage-management/storage/local-source/check",
             sideEffects: "none",
             durableOutcome: null,
             nextAction: "run the read-only check",
@@ -361,9 +359,7 @@ describe("Storage management API", () => {
     expect(detail.storage.id).toBe("local-source");
     expect(detail.actions.check.available).toBe(true);
     const [url] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string];
-    expect(url).toBe(
-      "/api/v1/operations/storage-management/storage/local-source",
-    );
+    expect(url).toBe("/api/operations/storage-management/storage/local-source");
   });
 
   it("rejects unsafe detail IDs client-side", async () => {
@@ -409,7 +405,7 @@ describe("Storage management API", () => {
       RequestInit,
     ];
     expect(url).toBe(
-      "/api/v1/operations/storage-management/storage/local-source/check",
+      "/api/operations/storage-management/storage/local-source/check",
     );
     expect(init.method).toBe("POST");
     const body = JSON.parse(String(init.body));
@@ -549,7 +545,7 @@ describe("Storage Add/Edit command API", () => {
       string,
       RequestInit,
     ];
-    expect(url).toBe("/api/v1/storages/nas-media/edit");
+    expect(url).toBe("/api/storages/nas-media/edit");
     expect(init.method).toBe("GET");
     expect((init.headers as Record<string, string>).Authorization).toBe(
       "Bearer edit-token",
@@ -587,7 +583,7 @@ describe("Storage Add/Edit command API", () => {
       string,
       RequestInit,
     ];
-    expect(url).toBe("/api/v1/storages");
+    expect(url).toBe("/api/storages");
     expect(init.method).toBe("POST");
     const body = JSON.parse(String(init.body));
     expect(Object.keys(body).sort()).toEqual(
@@ -645,7 +641,7 @@ describe("Storage Add/Edit command API", () => {
       string,
       RequestInit,
     ];
-    expect(url).toBe("/api/v1/storages/nas-media");
+    expect(url).toBe("/api/storages/nas-media");
     expect(init.method).toBe("PUT");
     const body = JSON.parse(String(init.body));
     expect(body).toMatchObject({
@@ -794,7 +790,7 @@ describe("Storage lifecycle command API", () => {
     }));
     expect(requests).toEqual([
       {
-        url: "/api/v1/storages/nas-media/copy",
+        url: "/api/storages/nas-media/copy",
         method: "POST",
         body: {
           newStorageId: "nas-copy",
@@ -803,12 +799,12 @@ describe("Storage lifecycle command API", () => {
         },
       },
       {
-        url: "/api/v1/storages/nas-media/disable",
+        url: "/api/storages/nas-media/disable",
         method: "POST",
         body: { enabled: false, ...storageAuthority },
       },
       {
-        url: "/api/v1/storages/nas-media",
+        url: "/api/storages/nas-media",
         method: "DELETE",
         body: storageAuthority,
       },

@@ -49,7 +49,7 @@ function recordApiCalls(page: Page): { method: string; path: string }[] {
   const api: { method: string; path: string }[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname.startsWith("/api/v1/")) {
+    if (url.pathname.startsWith("/api/")) {
       api.push({ method: request.method(), path: url.pathname });
     }
   });
@@ -216,7 +216,7 @@ test("creates one disabled definition from the list card and keeps the list cont
   page,
 }) => {
   const api = recordApiCalls(page);
-  await connectOn(page, "/ui-v2/operations/automation?sort=name");
+  await connectOn(page, "/operations/automation?sort=name");
   await page.getByRole("link", { name: "新建自动化任务" }).click();
   await openCreateCard(page);
 
@@ -248,7 +248,7 @@ test("creates one disabled definition from the list card and keeps the list cont
     page.getByRole("heading", { name: "新建自动化任务" }),
   ).toHaveCount(0);
   // The list's sort/filter context survives the create round trip.
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  await expect(page).toHaveURL(/\/operations\/automation\?.*sort=name/);
 
   const state = await harnessState(page);
   expect(state.definitions).toHaveLength(1);
@@ -275,7 +275,7 @@ test("creates one disabled definition from the list card and keeps the list cont
     api.filter(
       (call) =>
         call.method === "POST" &&
-        call.path === "/api/v1/operations/automation/definitions",
+        call.path === "/api/operations/automation/definitions",
     ),
   ).toHaveLength(1);
   expect(
@@ -286,7 +286,7 @@ test("creates one disabled definition from the list card and keeps the list cont
   ).toEqual([
     {
       method: "POST",
-      path: "/api/v1/operations/automation/definitions",
+      path: "/api/operations/automation/definitions",
     },
   ]);
 });
@@ -297,13 +297,13 @@ test("restores the default list position after cancelling the create card", asyn
   await page.setViewportSize({ width: 390, height: 844 });
   const before = await harnessState(page);
   const api = recordApiCalls(page);
-  await openCreateFromScrolledList(page, "/ui-v2/operations/automation");
+  await openCreateFromScrolledList(page, "/operations/automation");
 
   await page.getByRole("button", { name: "取消" }).click();
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
   ).toHaveCount(0);
-  await expectListPositionRestored(page, "/ui-v2/operations/automation");
+  await expectListPositionRestored(page, "/operations/automation");
 
   const after = await harnessState(page);
   expect(after.activeRevisionId).toBe(before.activeRevisionId);
@@ -318,7 +318,7 @@ test("restores the filtered list position after discarding typed input", async (
   await page.setViewportSize({ width: 390, height: 844 });
   const before = await harnessState(page);
   const api = recordApiCalls(page);
-  const path = "/ui-v2/operations/automation?q=Harness&sort=name";
+  const path = "/operations/automation?q=Harness&sort=name";
   await openCreateFromScrolledList(page, path);
 
   await page.getByLabel(/任务名称/).fill("保留列表位置放弃");
@@ -342,8 +342,7 @@ test("restores an explicit-default list context after creating", async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const before = await harnessState(page);
-  const path =
-    "/ui-v2/operations/automation?tab=definitions&sort=name&dir=next";
+  const path = "/operations/automation?tab=definitions&sort=name&dir=next";
   await openCreateFromScrolledList(page, path);
 
   await page.getByLabel(/任务名称/).fill("滚动位置创建任务");
@@ -374,13 +373,13 @@ test("opening and cancelling the canonical create deep link creates nothing", as
 }) => {
   const api = recordApiCalls(page);
   const before = await harnessState(page);
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await openCreateCard(page);
   await expect(
     page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
   ).toBeVisible();
   await page.getByRole("button", { name: "取消" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
 
   const after = await harnessState(page);
   expect(after.activeRevisionId).toBe(before.activeRevisionId);
@@ -392,7 +391,7 @@ test("opening and cancelling the canonical create deep link creates nothing", as
 test("browses a confined directory, surfaces read failure, and submits the chosen scope", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await openCreateCard(page);
   await page.getByLabel(/任务名称/).fill("目录范围任务");
   await page.getByLabel(/资源库/).selectOption("source");
@@ -401,7 +400,7 @@ test("browses a confined directory, surfaces read failure, and submits the chose
   // A provider read failure is visible and never turns the unknown scope into
   // the ResourceLibrary root.
   await page.route(
-    "**/api/v1/resource-libraries/*/files*",
+    "**/api/resource-libraries/*/files*",
     (route) =>
       route.fulfill({
         status: 503,
@@ -452,13 +451,13 @@ test("browses a confined directory, surfaces read failure, and submits the chose
 test("retains a lost create response and reconciles after reload without resubmitting", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await openCreateCard(page);
   await page.getByLabel(/任务名称/).fill("丢响应任务");
   await page.getByLabel(/资源库/).selectOption("source");
   const api = recordApiCalls(page);
   await page.route(
-    "**/api/v1/operations/automation/definitions",
+    "**/api/operations/automation/definitions",
     async (route) => {
       if (route.request().method() !== "POST") {
         await route.continue();
@@ -479,7 +478,7 @@ test("retains a lost create response and reconciles after reload without resubmi
 
   // A real reload keeps the principal-scoped command identity and offers only
   // reconciliation. No second create command is issued.
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await openCreateCard(page);
   await expect(page.getByText("上次创建结果待核对")).toBeVisible();
   await page.getByRole("button", { name: "核对本次创建" }).click();
@@ -491,7 +490,7 @@ test("retains a lost create response and reconciles after reload without resubmi
     api.filter(
       (call) =>
         call.method === "POST" &&
-        call.path === "/api/v1/operations/automation/definitions",
+        call.path === "/api/operations/automation/definitions",
     ),
   ).toHaveLength(1);
 
@@ -506,7 +505,7 @@ test("fits narrow screens, reduced motion and keyboard focus", async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await connectOn(page, "/ui-v2/operations/automation?sort=name");
+  await connectOn(page, "/operations/automation?sort=name");
   await page.getByRole("link", { name: "新建自动化任务" }).click();
   await openCreateCard(page);
 
@@ -573,7 +572,7 @@ test("keeps the close choice reachable from every close entry", async ({
   await page.setViewportSize({ width: 1440, height: 900 });
   const before = await harnessState(page);
   const api = recordApiCalls(page);
-  await connectOn(page, "/ui-v2/operations/automation?sort=name");
+  await connectOn(page, "/operations/automation?sort=name");
   await page.getByRole("link", { name: "新建自动化任务" }).click();
   await openCreateCard(page);
   await page.getByLabel(/任务名称/).fill("未保存的关闭实验");
@@ -606,7 +605,7 @@ test("keeps the close choice reachable from every close entry", async ({
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\/lifecycle/);
+  await expect(page).toHaveURL(/\/operations\/automation\/lifecycle/);
 
   // Discarding returns to the original list context with the create entry
   // focused, and nothing was published.
@@ -616,7 +615,7 @@ test("keeps the close choice reachable from every close entry", async ({
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
   ).toHaveCount(0);
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?.*sort=name/);
+  await expect(page).toHaveURL(/\/operations\/automation\?.*sort=name/);
   await expect(
     page.getByRole("link", { name: "新建自动化任务" }),
   ).toBeFocused();
@@ -634,14 +633,14 @@ test("keeps one in-flight create state and blocks leaving until the real result"
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await openCreateCard(page);
   await page.getByLabel(/任务名称/).fill("进行中的真实创建");
   await page.getByLabel(/资源库/).selectOption("source");
   const api = recordApiCalls(page);
 
   await page.route(
-    "**/api/v1/operations/automation/definitions",
+    "**/api/operations/automation/definitions",
     async (route) => {
       if (route.request().method() !== "POST") {
         await route.continue();
@@ -696,7 +695,7 @@ test("keeps one in-flight create state and blocks leaving until the real result"
     api.filter(
       (call) =>
         call.method === "POST" &&
-        call.path === "/api/v1/operations/automation/definitions",
+        call.path === "/api/operations/automation/definitions",
     ),
   ).toHaveLength(1);
 });
@@ -706,7 +705,7 @@ test("explains an invalid Cron, keeps Active unchanged and creates the corrected
 }) => {
   const before = await harnessState(page);
   const api = recordApiCalls(page);
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await openCreateCard(page);
   await page.getByLabel(/任务名称/).fill("时间计划纠正任务");
   await page.getByLabel(/资源库/).selectOption("source");
@@ -726,7 +725,7 @@ test("explains an invalid Cron, keeps Active unchanged and creates the corrected
     api.filter(
       (call) =>
         call.method === "POST" &&
-        call.path === "/api/v1/operations/automation/definitions",
+        call.path === "/api/operations/automation/definitions",
     ),
   ).toHaveLength(0);
   const rejected = await harnessState(page);
@@ -736,7 +735,7 @@ test("explains an invalid Cron, keeps Active unchanged and creates the corrected
   // A backend rejection of the same time plan is explained at the schedule
   // area with a reachable next action, never as a raw code alone.
   await page.route(
-    "**/api/v1/operations/automation/definitions",
+    "**/api/operations/automation/definitions",
     async (route) => {
       if (route.request().method() !== "POST") {
         await route.continue();
@@ -780,7 +779,7 @@ test("explains an invalid Cron, keeps Active unchanged and creates the corrected
   expect(rejectedState.definitions).toEqual(before.definitions);
 
   // The corrected plan publishes exactly one disabled definition and no run.
-  await page.unroute("**/api/v1/operations/automation/definitions");
+  await page.unroute("**/api/operations/automation/definitions");
   await page.getByRole("button", { name: "创建任务" }).click();
   await expect(
     page.getByRole("heading", { name: "创建成功，尚未启用" }),
@@ -800,7 +799,7 @@ test("explains an invalid Cron, keeps Active unchanged and creates the corrected
     api.filter(
       (call) =>
         call.method === "POST" &&
-        call.path === "/api/v1/operations/automation/definitions",
+        call.path === "/api/operations/automation/definitions",
     ),
   ).toHaveLength(2);
 });
@@ -821,18 +820,18 @@ test("a proved create reconciliation reports the current saved state after a pee
     if (
       request.method() === "POST" &&
       new URL(request.url()).pathname ===
-        "/api/v1/operations/automation/definitions"
+        "/api/operations/automation/definitions"
     ) {
       createPosts += 1;
     }
   });
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await openCreateCard(page);
   await page.getByLabel(/任务名称/).fill("核对当前状态任务");
   await page.getByLabel(/资源库/).selectOption("source");
   await page.getByLabel("启用定时计划").check();
   await page.route(
-    "**/api/v1/operations/automation/definitions",
+    "**/api/operations/automation/definitions",
     async (route) => {
       if (route.request().method() !== "POST") {
         await route.continue();
@@ -858,14 +857,14 @@ test("a proved create reconciliation reports the current saved state after a pee
   // The peer disables the definition through the real row edit entry.
   const peerContext = await browser.newContext();
   const peer = await peerContext.newPage();
-  await connectOn(peer, "/ui-v2/operations/automation");
+  await connectOn(peer, "/operations/automation");
   await peer.getByRole("button", { name: "编辑", exact: true }).first().click();
   await expect(
     peer.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
   await peer.getByLabel("启用定时计划").uncheck();
   await peer.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(peer).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(peer).toHaveURL(/\/operations\/automation(\?.*)?$/);
   const durable = await harnessState(page);
   expect(durable.definitions[0]?.enabled).toBe(false);
   await peerContext.close();
@@ -907,7 +906,7 @@ test("opens create and edit cards from a scrolled list without moving or resizin
       body: "html{overflow-y:scroll!important;scrollbar-gutter:stable}::-webkit-scrollbar{width:15px;height:15px}::-webkit-scrollbar-thumb{background:#c8d2e0}",
     });
   });
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await page.evaluate(() => {
     const link = document.createElement("link");
     link.rel = "stylesheet";
@@ -972,7 +971,7 @@ test("opens create and edit cards from a scrolled list without moving or resizin
 
   // A slow, real authority read keeps the card/background stable.
   await page.route(
-    "**/api/v1/operations/automation/definitions",
+    "**/api/operations/automation/definitions",
     async (route) => {
       if (route.request().method() === "GET") {
         await new Promise((resolve) => setTimeout(resolve, 450));
@@ -1022,16 +1021,16 @@ test("opens create and edit cards from a scrolled list without moving or resizin
   ).toBe(true);
 
   await page.getByRole("button", { name: "取消" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
   await expect(entry).toBeFocused();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(targetY);
-  await page.unroute("**/api/v1/operations/automation/definitions");
+  await page.unroute("**/api/operations/automation/definitions");
 
   // Edit uses the same overlay guarantee with a slow real definition read and
   // reduced motion; the already-scrolled list must not move at all.
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.route(
-    /\/api\/v1\/operations\/automation\/definitions\/[^/]+$/,
+    /\/api\/operations\/automation\/definitions\/[^/]+$/,
     async (route) => {
       if (route.request().method() === "GET") {
         await new Promise((resolve) => setTimeout(resolve, 450));
@@ -1075,7 +1074,7 @@ test("opens create and edit cards from a scrolled list without moving or resizin
   ).toBe(1);
 
   await page.getByRole("button", { name: "取消" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(targetY);
   await expect(
     page.getByRole("button", { name: "编辑", exact: true }).first(),
@@ -1086,7 +1085,7 @@ test("renders the shared enable switch on the limit control row at both widths",
   page,
 }) => {
   await page.setViewportSize({ width: 1536, height: 900 });
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await openCreateCard(page);
 
   const toggle = page.getByRole("switch", { name: "启用定时计划" });

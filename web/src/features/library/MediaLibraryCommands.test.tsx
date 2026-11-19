@@ -14,7 +14,7 @@ import { renderApp } from "../../../tests/utils";
  * Component/router proof for the Task 38.3 MediaLibrary bounded direct file
  * maintenance journey (Slice 38 RO-5/RO-6/RO-7): Create Folder, Create supported
  * Text File, single-item Rename, bounded text Open/Edit/Save and Delete, driven
- * from `/ui-v2/medialib/files`.
+ * from `/medialib/files`.
  *
  * Every payload mirrors the real Python contract in
  * `tests/test_media_library_direct_commands.py`; no production service,
@@ -377,8 +377,8 @@ function stubCommandSurface(
     const url = String(input);
     const extra = options.extra?.(url, init);
     if (extra !== null && extra !== undefined) return extra;
-    if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
-    if (url === "/api/v1/system/status") {
+    if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
+    if (url === "/api/system/status") {
       return jsonResponse({
         authority: "MANAGED",
         configurationActive: true,
@@ -493,7 +493,7 @@ function queryPath(url: string): string {
 
 async function openPage(): Promise<void> {
   authStore.setToken(TOKEN);
-  renderApp("/ui-v2/medialib/files");
+  renderApp("/medialib/files");
   expect(await screen.findByRole("heading", { name: "媒体库" })).toBeVisible();
   await screen.findByRole("table");
 }
@@ -539,7 +539,7 @@ describe("MediaLibrary Files command surface", () => {
     await user.click(within(dialog).getByRole("button", { name: "创建" }));
     await waitFor(() => expect(commandPosts(fetchMock)).toHaveLength(1));
     const post = commandPosts(fetchMock)[0];
-    expect(post.url).toBe("/api/v1/media-libraries/movies/files/commands");
+    expect(post.url).toBe("/api/media-libraries/movies/files/commands");
     expect(JSON.parse(post.body)).toEqual({
       operation: "create_directory",
       parentPath: "",
@@ -1100,7 +1100,7 @@ describe("MediaLibrary Files command surface", () => {
     let release: (response: Response) => void = () => {};
     const fetchMock = stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
       if (url.includes("/files/commands")) {
         return new Promise<Response>((resolve) => {
           release = resolve;
@@ -1143,12 +1143,12 @@ describe("MediaLibrary Files command surface", () => {
     expect(fileRequests.length).toBeGreaterThan(1);
     expect(
       fileRequests.every((request) =>
-        request.url.startsWith("/api/v1/media-libraries"),
+        request.url.startsWith("/api/media-libraries"),
       ),
     ).toBe(true);
     expect(
       requestsOf(fetchMock).some((request) =>
-        request.url.startsWith("/api/v1/resource-libraries"),
+        request.url.startsWith("/api/resource-libraries"),
       ),
     ).toBe(false);
   });

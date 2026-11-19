@@ -3,12 +3,12 @@ import { expect, test, type Page } from "@playwright/test";
 /**
  * Files browse/context built-artifact browser proof for the library workspace.
  *
- * The legacy FileIndex catalog/detail routes (`/ui-v2/library/file-index*`)
+ * The legacy FileIndex catalog/detail routes (`/library/file-index*`)
  * are retired: the router has no such routes, no supported page offers a
  * FileIndex catalog entry, and the Files workspace derives every physical
  * listing and every Files-originated continuation from live Storage. These
  * tests prove the current supported Files journey at
- * `/ui-v2/resourcelib/files` — browse, bounded context restoration, read-only
+ * `/resourcelib/files` — browse, bounded context restoration, read-only
  * zero-mutation behavior, bounded not-found/401/403 states and narrow-viewport
  * usability — plus the truthful not-found state a retired FileIndex URL now
  * renders.
@@ -45,7 +45,7 @@ async function resetResourceLibrary(page: Page): Promise<void> {
 }
 
 async function openFiles(page: Page, search = ""): Promise<void> {
-  await page.goto("/ui-v2/resourcelib/files" + search);
+  await page.goto("/resourcelib/files" + search);
   await connectAs(page);
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
@@ -112,12 +112,10 @@ test("Files listing is live-Storage bounded evidence with a safe directory conte
     true,
   );
   expect(
-    requests.filter((request) => request.url.includes("/api/v1/file-index")),
+    requests.filter((request) => request.url.includes("/api/file-index")),
   ).toHaveLength(0);
   expect(
-    requests.filter((request) =>
-      request.url.includes("/api/v1/files/by-source"),
-    ),
+    requests.filter((request) => request.url.includes("/api/files/by-source")),
   ).toHaveLength(0);
 });
 
@@ -125,13 +123,12 @@ test("direct Files deep link and refresh retain memory-only auth continuation", 
   page,
 }) => {
   await resetResourceLibrary(page);
-  const target =
-    "/ui-v2/resourcelib/files?resourceLibraryId=resources&path=Movies";
+  const target = "/resourcelib/files?resourceLibraryId=resources&path=Movies";
   await page.goto(target);
-  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await expect(page).toHaveURL(/\/$/);
   await connectAs(page);
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=resources&path=Movies/,
+    /\/resourcelib\/files\?resourceLibraryId=resources&path=Movies/,
   );
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
@@ -139,7 +136,7 @@ test("direct Files deep link and refresh retain memory-only auth continuation", 
   await expect(page.getByRole("table")).toBeVisible();
 
   await page.reload();
-  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   // Memory-only authority: no Web storage and no bearer token ever lands in
   // a cookie. The fake's own evidence-session cookie is the only value a
@@ -154,7 +151,7 @@ test("direct Files deep link and refresh retain memory-only auth continuation", 
   expect(storage.cookie).not.toContain(VIEWER_TOKEN);
   await connectAs(page);
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=resources&path=Movies/,
+    /\/resourcelib\/files\?resourceLibraryId=resources&path=Movies/,
   );
   await expect(page.getByRole("table")).toBeVisible();
 });
@@ -180,7 +177,7 @@ test("Files failure, 401 and 403 states remain bounded", async ({ page }) => {
 
   // A limited principal is refused by the backend authority, not by a hidden
   // control, and the token is never rendered.
-  await page.goto("/ui-v2/resourcelib/files");
+  await page.goto("/resourcelib/files");
   await page.getByLabel("API token").fill(LIMITED_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
@@ -188,10 +185,10 @@ test("Files failure, 401 and 403 states remain bounded", async ({ page }) => {
 
   // An unknown token restarts at the memory-only entry without an API read.
   const apiRequests = apiRequestsOf(page);
-  await page.goto("/ui-v2/resourcelib/files?resourceLibraryId=resources");
+  await page.goto("/resourcelib/files?resourceLibraryId=resources");
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await expect(
-    apiRequests.filter((request) => request.url.includes("/api/v1/")),
+    apiRequests.filter((request) => request.url.includes("/api/")),
   ).toHaveLength(0);
 });
 
@@ -201,7 +198,7 @@ test("retired FileIndex catalog and detail routes render the bounded not-found s
   // The route is retired, not hidden: a deep link receives the shared shell's
   // bounded not-found state with a recovery path, and offers no fabricated
   // FileIndex surface, no credential input and no leaked authority value.
-  await page.goto("/ui-v2/library/file-index/file-index-example");
+  await page.goto("/library/file-index/file-index-example");
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();

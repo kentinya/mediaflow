@@ -22,7 +22,7 @@ const DEFINITION_ID = "automation-def-e2e-001";
 const ACTIVE_REVISION = "automation-active-rev-e2e-001";
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -45,12 +45,12 @@ async function connectOn(
 
 async function openAutomation(page: Page) {
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
   await page
     .getByRole("link", { name: "Automation", exact: true })
     .first()
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
   // The workspace heading is the retained Chinese section title; the shell
   // navigation uses its own English route label.
   await expect(
@@ -121,7 +121,7 @@ test("the Operations landing links the Automation workspace with cards, tabs and
   await expect(create).toBeVisible();
   await expect(create).toHaveAttribute(
     "href",
-    /\/ui-v2\/operations\/automation\/lifecycle\?(.*&)?tab=definitions(&|$)/,
+    /\/operations\/automation\/lifecycle\?(.*&)?tab=definitions(&|$)/,
   );
 
   // The name is ordinary readable text: there is no "打开" button and no
@@ -146,7 +146,7 @@ test("the read-only execution records tab reads an honest empty history", async 
   await openAutomation(page);
   const tabs = page.getByRole("navigation", { name: "自动化分区" });
   await tabs.getByRole("button", { name: "执行记录" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?tab=records$/);
+  await expect(page).toHaveURL(/\/operations\/automation\?tab=records$/);
 
   const region = page.getByRole("region", { name: "自动化执行记录" });
   await expect(region).toBeVisible();
@@ -171,7 +171,7 @@ test("the read-only execution records tab reads an honest empty history", async 
 test("system runtime settings render three fields and an honest adoption readback", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
 
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
@@ -206,7 +206,7 @@ test("system runtime settings render three fields and an honest adoption readbac
 test("the system runtime settings form publishes exactly the three fields once", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
 
@@ -233,7 +233,7 @@ test("the system runtime settings form publishes exactly the three fields once",
 test("a fractional integer is sent as-is and rejected without coercion", async ({
   page,
 }) => {
-  await connectOn(page, "/ui-v2/configuration");
+  await connectOn(page, "/configuration");
   const panel = page.getByRole("region", { name: "系统运行设置" });
   const jobs = panel.getByLabel(/整理任务队列上限|并行任务上限/);
   await jobs.fill("3.5");
@@ -249,7 +249,7 @@ test("a fractional integer is sent as-is and rejected without coercion", async (
 test("the retired Automation create address is an ordinary not-found page", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/operations/automation/new");
+  await page.goto("/operations/automation/new");
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
@@ -265,10 +265,7 @@ test("the retired Automation create address is an ordinary not-found page", asyn
 test("occurrence history links the exact Task without emitting work", async ({
   page,
 }) => {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
-  );
+  await connectOn(page, `/operations/automation/occurrences/${DEFINITION_ID}`);
   await expect(
     page.getByRole("heading", { name: "Automation occurrences" }),
   ).toBeVisible();
@@ -283,7 +280,7 @@ test("occurrence history links the exact Task without emitting work", async ({
     .getByRole("link", { name: "Open the exact run in the Task Center" })
     .click();
   await expect(page).toHaveURL(
-    new RegExp("/ui-v2/operations\\?run=automation-task-e2e-001$"),
+    new RegExp("/operations\\?run=automation-task-e2e-001$"),
   );
 
   // Reading the history is GET-only: nothing was emitted or submitted.
@@ -294,9 +291,7 @@ test("occurrence history links the exact Task without emitting work", async ({
       .every((item) => item.method === "GET"),
   ).toBe(true);
   expect(
-    evidence.items.some((item) =>
-      item.path.includes("/api/v1/operations/jobs"),
-    ),
+    evidence.items.some((item) => item.path.includes("/api/operations/jobs")),
   ).toBe(false);
 });
 
@@ -336,8 +331,8 @@ test("the retired definition and editor addresses are ordinary not-found pages",
   page,
 }) => {
   for (const path of [
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}?returnTab=definitions`,
-    `/ui-v2/operations/automation/editor/${DEFINITION_ID}?returnTab=definitions`,
+    `/operations/automation/definition/${DEFINITION_ID}?returnTab=definitions`,
+    `/operations/automation/editor/${DEFINITION_ID}?returnTab=definitions`,
   ]) {
     await page.goto(path);
     await expect(
@@ -367,15 +362,12 @@ test("the retired definition and editor addresses are ordinary not-found pages",
 test("occurrence history returns to the definition-filtered execution records", async ({
   page,
 }) => {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
-  );
+  await connectOn(page, `/operations/automation/occurrences/${DEFINITION_ID}`);
   await expect(
     page.getByRole("heading", { name: "Automation occurrences" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Back to execution records" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\?/);
+  await expect(page).toHaveURL(/\/operations\/automation\?/);
   await expect
     .poll(() => new URL(page.url()).searchParams.get("tab"))
     .toBe("records");

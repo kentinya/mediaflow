@@ -389,7 +389,7 @@ class ManagedClassificationPolicyJourneyTests(unittest.TestCase):
                 )
                 draft = managed.import_draft(document, actor="operator")
                 collection = (
-                    f"/api/v1/configuration/revisions/{draft.revision_id}"
+                    f"/api/configuration/revisions/{draft.revision_id}"
                     "/objects/classificationPolicies"
                 )
                 invalid_values = []
@@ -445,7 +445,7 @@ class ManagedClassificationPolicyJourneyTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 status, evidence = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/classification-preview",
+                    f"/api/configuration/revisions/{draft.revision_id}/classification-preview",
                     method="POST",
                     body={
                         "expectedVersion": created["version"],
@@ -459,7 +459,7 @@ class ManagedClassificationPolicyJourneyTests(unittest.TestCase):
                 stored = repository.get_classification_preview(draft.revision_id).document()
                 status, stale = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/classification-preview",
+                    f"/api/configuration/revisions/{draft.revision_id}/classification-preview",
                     method="POST",
                     body={
                         "expectedVersion": draft.version,

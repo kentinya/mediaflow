@@ -18,7 +18,7 @@ function cancel(
     action: "cancel",
     label: "Cancel",
     method: "POST",
-    path: "/api/v1/tasks/{id}/cancel",
+    path: "/api/tasks/{id}/cancel",
     available,
     unavailableReason: reason,
     confirmationRequired: false,

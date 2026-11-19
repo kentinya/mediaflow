@@ -52,7 +52,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfi
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
-BASE = "/api/v1/operations/rules"
+BASE = "/api/operations/rules"
 INVENTORY = f"{BASE}/inventory"
 FORM_AUTHORITY = f"{BASE}/form-authority"
 

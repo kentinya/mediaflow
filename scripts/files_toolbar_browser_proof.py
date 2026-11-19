@@ -7,7 +7,7 @@ temporary Local Storage roots, a throwaway API token and the current built V2
 artifact served by the real ``mediaflow.interfaces.v2_ui`` boundary — and drives
 a real Chromium browser through Slice 44 RO-5:
 
-* both ``/ui-v2/resourcelib/files`` and ``/ui-v2/medialib/files`` keep the
+* both ``/resourcelib/files`` and ``/medialib/files`` keep the
   complete Create Folder/Text File, Refresh and list/grid controls usable while
   a real long multilevel path is displayed;
 * the breadcrumbs stay on one line inside their own bounded region, elide one
@@ -609,11 +609,11 @@ def route_cases() -> list[dict]:
             "name": "resourcelib",
             "crumbLabel": "资源库面包屑",
             "homeLabel": "返回资源库根目录",
-            "deepLink": f"/ui-v2/resourcelib/files?path={encoded(DEEP_PATH)}",
-            "tailLink": f"/ui-v2/resourcelib/files?path={encoded(TAIL_PATH)}",
-            "prefixLink": f"/ui-v2/resourcelib/files?path={encoded(PREFIX_PATH + '/nested')}",
-            "missingLink": "/ui-v2/resourcelib/files?path=missing-directory",
-            "shortLink": "/ui-v2/resourcelib/files?path=Shows/nested",
+            "deepLink": f"/resourcelib/files?path={encoded(DEEP_PATH)}",
+            "tailLink": f"/resourcelib/files?path={encoded(TAIL_PATH)}",
+            "prefixLink": f"/resourcelib/files?path={encoded(PREFIX_PATH + '/nested')}",
+            "missingLink": "/resourcelib/files?path=missing-directory",
+            "shortLink": "/resourcelib/files?path=Shows/nested",
             "crumbs": [{"name": name} for name in deep_names],
             "accessibleNames": deep_names,
             "tailCrumbs": [{"name": name} for name in tail_names],
@@ -628,11 +628,11 @@ def route_cases() -> list[dict]:
             "name": "medialib",
             "crumbLabel": "媒体库面包屑",
             "homeLabel": "返回媒体库根目录",
-            "deepLink": f"/ui-v2/medialib/files?path={encoded(DEEP_PATH)}",
-            "tailLink": f"/ui-v2/medialib/files?path={encoded(TAIL_PATH)}",
-            "prefixLink": f"/ui-v2/medialib/files?path={encoded(PREFIX_PATH + '/nested')}",
-            "missingLink": "/ui-v2/medialib/files?path=missing-directory",
-            "shortLink": "/ui-v2/medialib/files?path=Shows/nested",
+            "deepLink": f"/medialib/files?path={encoded(DEEP_PATH)}",
+            "tailLink": f"/medialib/files?path={encoded(TAIL_PATH)}",
+            "prefixLink": f"/medialib/files?path={encoded(PREFIX_PATH + '/nested')}",
+            "missingLink": "/medialib/files?path=missing-directory",
+            "shortLink": "/medialib/files?path=Shows/nested",
             "crumbs": [{"name": name} for name in deep_names],
             "accessibleNames": deep_names,
             "tailCrumbs": [{"name": name} for name in tail_names],
@@ -834,7 +834,7 @@ def main() -> int:
         print("== real Python-served long-path Files toolbar proof ==")
 
         database_path = root / "runtime.sqlite3"
-        active_before = api("GET", "/api/v1/operations/rules/form-authority")["active"]
+        active_before = api("GET", "/api/operations/rules/form-authority")["active"]
         activations_before = _activation_count(database_path)
         work_before = _executable_work(database_path)
 
@@ -863,7 +863,7 @@ def main() -> int:
             )
         print("   " + result.stdout.strip().splitlines()[-1])
 
-        active_after = api("GET", "/api/v1/operations/rules/form-authority")["active"]
+        active_after = api("GET", "/api/operations/rules/form-authority")["active"]
         activations_after = _activation_count(database_path)
         work_after = _executable_work(database_path)
         if active_before["revisionId"] != active_after["revisionId"]:

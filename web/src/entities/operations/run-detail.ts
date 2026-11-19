@@ -2,7 +2,7 @@
  * Frontend-owned models for the selected-run detail reads (Slice 42 RO-3).
  *
  * The backend publishes one bounded, secret-free projection per surface:
- * `GET /api/v1/operations/runs/{id}` (overview + progress),
+ * `GET /api/operations/runs/{id}` (overview + progress),
  * `.../items` (server-filtered, server-paged primary items with
  * population totals), `.../records` (the exactly-linked operation-record
  * stream) and `.../items/{itemId}` (one item's durable evidence).

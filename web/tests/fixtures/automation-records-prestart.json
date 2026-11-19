@@ -30,7 +30,7 @@
         "unresolvedItems": 0
       },
       "handoff": {
-        "definitionSettings": "/ui-v2/operations/automation/lifecycle/healthy",
+        "definitionSettings": "/operations/automation/lifecycle/healthy",
         "durableState": "formal_execution_exists",
         "explanation": "a durable organizing Task exists for this run; its plan, per-item results and every recovery command belong to that exact Task Center run",
         "formalExecution": true,
@@ -40,7 +40,7 @@
         "supportedCommand": null,
         "supportedCommandPath": null,
         "taskCenter": {
-          "path": "/api/v1/operations/runs/task-healthy",
+          "path": "/api/operations/runs/task-healthy",
           "runId": "task-healthy"
         }
       },
@@ -155,7 +155,7 @@
         "unresolvedItems": 0
       },
       "handoff": {
-        "definitionSettings": "/ui-v2/operations/automation/lifecycle/missing",
+        "definitionSettings": "/operations/automation/lifecycle/missing",
         "durableState": "formal_execution_exists",
         "explanation": "a durable organizing Task exists for this run; its plan, per-item results and every recovery command belong to that exact Task Center run",
         "formalExecution": true,
@@ -165,7 +165,7 @@
         "supportedCommand": null,
         "supportedCommandPath": null,
         "taskCenter": {
-          "path": "/api/v1/operations/runs/task-missing",
+          "path": "/api/operations/runs/task-missing",
           "runId": "task-missing"
         }
       },

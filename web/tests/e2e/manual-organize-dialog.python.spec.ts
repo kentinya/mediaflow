@@ -35,7 +35,7 @@ interface RecordedCommand {
 }
 
 async function connect(page: Page): Promise<void> {
-  await page.goto(`${BASE}/ui-v2/`);
+  await page.goto(`${BASE}/`);
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -45,7 +45,7 @@ function recordCommands(page: Page): RecordedCommand[] {
   const commands: RecordedCommand[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (!url.pathname.startsWith("/api/v1/")) return;
+    if (!url.pathname.startsWith("/api/")) return;
     let body: Record<string, unknown> | null;
     try {
       body = request.postDataJSON() as Record<string, unknown>;
@@ -67,7 +67,7 @@ async function openDialogDirectory(
   expectedFile: string = DIALOG_FILE(1),
 ): Promise<void> {
   await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await page
     .getByRole("button", { name: /source/ })
     .first()
@@ -333,7 +333,7 @@ test("ten per-file candidate decisions lead to one exact ten-item Task handoff",
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByText(/将整理 10 项/)).toBeVisible();
   await page.getByRole("button", { name: "确认整理 10 项" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -379,7 +379,7 @@ test("an unknown Execute response is reconciled into the exact Task without a re
   // browser-visible response: the operator cannot know whether it was accepted.
   let dropped = false;
   await page.route(
-    /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/,
+    /\/api\/operations\/organize\/previews\/[^/]+\/execute$/,
     async (route) => {
       if (dropped) {
         await route.continue();
@@ -410,7 +410,7 @@ test("an unknown Execute response is reconciled into the exact Task without a re
   expect(executePosts()).toHaveLength(1);
 
   await page.getByRole("button", { name: /核对提交结果/ }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -489,7 +489,7 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByText(/将整理 1 项/)).toBeVisible();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -589,7 +589,7 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByText(/将整理 1 项/)).toBeVisible();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -919,7 +919,7 @@ test("a missing metadata candidate is corrected on the current file and confirme
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByText(/将整理 1 项/)).toBeVisible();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -1014,7 +1014,7 @@ test("keeps the exact admitted preparation across a cancelled browser Back and a
   await expect
     .poll(() => new URL(page.url()).searchParams.get("organizeDiscovery"))
     .toBe(discoveryId);
-  expect(new URL(page.url()).pathname).toBe("/ui-v2/resourcelib/files");
+  expect(new URL(page.url()).pathname).toBe("/resourcelib/files");
   await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
     { timeout: 30_000 },
   );
@@ -1037,7 +1037,7 @@ test("keeps the exact admitted preparation across a cancelled browser Back and a
   await expect
     .poll(() => new URL(page.url()).searchParams.get("organizeDiscovery"))
     .toBeNull();
-  expect(new URL(page.url()).pathname).toBe("/ui-v2/resourcelib/files");
+  expect(new URL(page.url()).pathname).toBe("/resourcelib/files");
   expect(admissions()).toHaveLength(1);
   expect(decisions()).toHaveLength(0);
   expect(executions()).toHaveLength(0);
@@ -1105,7 +1105,7 @@ test("an unknown original submission is reconciled under a newer sibling summary
   // browser-visible response: the operator cannot know the outcome.
   let dropped = false;
   await page.route(
-    /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/,
+    /\/api\/operations\/organize\/previews\/[^/]+\/execute$/,
     async (route) => {
       if (dropped) {
         await route.continue();
@@ -1169,14 +1169,12 @@ test("an unknown original submission is reconciled under a newer sibling summary
   ).toBeVisible({ timeout: 30_000 });
 
   // Drive the real Worker until the newer exact summary is linked and read.
-  const summaryReadPath = `/api/v1/operations/organize/previews/${executePreviewId}`;
+  const summaryReadPath = `/api/operations/organize/previews/${executePreviewId}`;
   const newerSummaryReads = () =>
     commands.filter(
       (command) =>
         command.method === "GET" &&
-        /^\/api\/v1\/operations\/organize\/previews\/[^/]+$/.test(
-          command.path,
-        ) &&
+        /^\/api\/operations\/organize\/previews\/[^/]+$/.test(command.path) &&
         command.path !== summaryReadPath,
     );
   for (let pass = 0; pass < 20 && newerSummaryReads().length === 0; pass += 1) {
@@ -1205,7 +1203,7 @@ test("an unknown original submission is reconciled under a newer sibling summary
   // One bounded read of the original request proves `known` and opens the
   // exact original Task; the newer summary is never the lookup target.
   await card.getByRole("button", { name: "核对提交结果" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/, {
+  await expect(page).toHaveURL(/\/operations\?.*run=/, {
     timeout: 30_000,
   });
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
@@ -1221,7 +1219,7 @@ test("an unknown original submission is reconciled under a newer sibling summary
     );
   expect(admissionGets()).toHaveLength(1);
   expect(admissionGets()[0]?.path).toBe(
-    `/api/v1/operations/organize/previews/${executePreviewId}/admission`,
+    `/api/operations/organize/previews/${executePreviewId}/admission`,
   );
 
   // Item-by-item identity: every admission parameter equals the original

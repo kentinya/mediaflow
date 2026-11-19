@@ -441,24 +441,24 @@ class ClassificationReviewTests(unittest.TestCase):
                 )
                 api = MediaFlowApi(repository, principals=principals)
                 for token, path, method, document, query in (
-                    ("operator", "/api/v1/classification-reviews", "GET", None, "limit=10"),
+                    ("operator", "/api/classification-reviews", "GET", None, "limit=10"),
                     (
                         "operator",
-                        f"/api/v1/classification-reviews/{review.review_id}",
+                        f"/api/classification-reviews/{review.review_id}",
                         "GET",
                         None,
                         "",
                     ),
                     (
                         "viewer",
-                        f"/api/v1/classification-reviews/{review.review_id}/resolve",
+                        f"/api/classification-reviews/{review.review_id}/resolve",
                         "POST",
                         {"choiceRank": 1},
                         "",
                     ),
                     (
                         "operator",
-                        "/api/v1/classification-reviews/missing/resolve",
+                        "/api/classification-reviews/missing/resolve",
                         "POST",
                         {"choiceRank": 1, "path": "Injected", "execute": True},
                         "",
@@ -481,7 +481,7 @@ class ClassificationReviewTests(unittest.TestCase):
                 self.assertFalse(hasattr(repository, "list_jobs"))
                 self.assertFalse(
                     any(
-                        value.route.startswith("/api/v1/classification-reviews")
+                        value.route.startswith("/api/classification-reviews")
                         for value in repository.list_security_audit()
                     )
                 )

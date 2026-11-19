@@ -82,7 +82,7 @@ describe("request construction", () => {
       RequestInit,
     ];
     expect(url).toBe(
-      "/api/v1/explore/browse?mediaType=tv&sort=rating&genreId=18&originalLanguage=zh&year=2020&minRating=7&minVotes=300&page=3",
+      "/api/explore/browse?mediaType=tv&sort=rating&genreId=18&originalLanguage=zh&year=2020&minRating=7&minVotes=300&page=3",
     );
     expect(new Headers(init.headers).get("Authorization")).toBe(
       `Bearer ${TOKEN}`,
@@ -98,9 +98,7 @@ describe("request construction", () => {
     await fetchExploreBrowse(TOKEN, { ...filters, page: 1 });
 
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
-    expect(url).toBe(
-      "/api/v1/explore/browse?mediaType=movie&sort=popular&page=1",
-    );
+    expect(url).toBe("/api/explore/browse?mediaType=movie&sort=popular&page=1");
   });
 
   it("never issues an authority header without a working token at the query level", () => {
@@ -255,6 +253,6 @@ describe("client-side guards", () => {
     const options = await fetchExploreOptions(TOKEN, "movie");
     expect(options.genres).toHaveLength(3);
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
-    expect(url).toBe("/api/v1/explore/options?mediaType=movie");
+    expect(url).toBe("/api/explore/options?mediaType=movie");
   });
 });

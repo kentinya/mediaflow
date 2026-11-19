@@ -746,13 +746,13 @@ class FileMediaDetailTests(unittest.TestCase):
                 )
                 status, recognition = api_request(
                     api,
-                    f"/api/v1/tasks/{task.task_id}/items/{recognition_item.item_id}",
+                    f"/api/tasks/{task.task_id}/items/{recognition_item.item_id}",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(recognition["source_path"], "Recognition.mkv")
                 status, correction = api_request(
                     api,
-                    f"/api/v1/tasks/{task.task_id}/items/{correction_item.item_id}",
+                    f"/api/tasks/{task.task_id}/items/{correction_item.item_id}",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(correction["source_path"], "Correction.mkv")

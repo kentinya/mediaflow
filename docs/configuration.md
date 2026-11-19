@@ -60,7 +60,7 @@ The generated input omits the database locator and API principal identity, so im
 receiving deployment's own authority. Unrelated empty families are legal and create no
 capability/defaults; populated references that point at missing objects fail validation.
 
-Import never publishes. Open `系统设置` (`/ui-v2/configuration`), select the same Draft under
+Import never publishes. Open `系统设置` (`/configuration`), select the same Draft under
 `高级配置 → 查看配置`, run `验证草稿`, and complete the `发布前检查` the page lists for that
 exact version: read-only checks for every referenced enabled Storage, the offline recognition
 strategy test, and the destination precheck. A failed check keeps the Draft and any prior Active
@@ -173,7 +173,7 @@ restart-only values; another snapshot's values cannot be labelled consumed.
 
 ## System Settings Web
 
-Open `系统设置` (`/ui-v2/configuration`) from the sidebar or a business page's setup/recovery
+Open `系统设置` (`/configuration`) from the sidebar or a business page's setup/recovery
 link. The page starts with a compact configuration summary and the three system runtime settings.
 Published values and actual process adoption remain separate; instance details can be expanded.
 Command readiness, rule-family counts, exact snapshot identities and consumption evidence are in
@@ -204,7 +204,7 @@ goes back to the allowlisted source page and reads its current state.
 
 ## Native V2 organizing-rules management
 
-`/ui-v2/rules` reads Overview and seven family inventories from exact Active without creating Drafts.
+`/rules` reads Overview and seven family inventories from exact Active without creating Drafts.
 Use the content header's `刷新` to read current configuration; a successful refresh keeps the family,
 keyword, state filter and unsaved input. Overview has no inventory search; each family has one local
 search and its existing state filter. Changing family clears the keyword. Overview keeps real counts,
@@ -269,7 +269,7 @@ by exact-summary confirmation before execution. Candidate browsing does not impl
 
 ### CURRENT — Three system runtime settings (Slice47 PASS / CLOSED)
 
-Under `V2-TASK-011`, use the existing `/ui-v2/configuration` System Settings page as the ordinary
+Under `V2-TASK-011`, use the existing `/configuration` System Settings page as the ordinary
 editor for the remaining three fields. Remove Automation's settings tab/form and duplicate ordinary
 editors; its old settings links navigate to System Settings. Reuse the focused settings API and
 checked publication; the historical API/key names do not make these Automation-only settings.
@@ -294,11 +294,11 @@ This accepted contract replaces the Automation-only/four-field plan; prior accep
 
 ### Checked publication and actual adoption
 
-The existing `/ui-v2/configuration` System Settings page renders the one three-field form and
+The existing `/configuration` System Settings page renders the one three-field form and
 readback (`AutomationSettingsPanel`); the Automation workspace no longer has a settings tab, and
 `?tab=settings` is an ordinary unknown Automation tab with no redirect, special handling or work
-submission. System Settings is reached from its current `/ui-v2/configuration` navigation entry.
-No second store or editor exists. `GET/PUT /api/v1/operations/automation/settings` serves the
+submission. System Settings is reached from its current `/configuration` navigation entry.
+No second store or editor exists. `GET/PUT /api/operations/automation/settings` serves the
 projection and the checked Save with READ / MANAGE_CONFIGURATION enforcement.
 
 The compact form keeps each field's meaning and backend constraints beside its input. Published
@@ -311,7 +311,7 @@ from the observed immutable Active. Other settings, definitions and open
 Drafts are preserved byte-identically, the whole candidate is validated, and the runtime binding is
 prepared before atomic activation. An unchanged save publishes nothing. Out-of-scope keys, booleans,
 fractional integers, non-finite and out-of-range values are rejected before a Draft exists. The
-generic `/api/v1/system/settings` Draft editor and its separate validate/activate journey are
+generic `/api/system/settings` Draft editor and its separate validate/activate journey are
 unchanged and remain available for the wider field set.
 
 Publication and adoption are reported as separate outcomes. Each live resident instance publishes
@@ -375,7 +375,7 @@ The V2 Storage workspace accepts and displays both values through Save, Active i
 Edit, including entries saved before this correction. A failed list read remains a read/presentation
 failure and does not imply that Save rolled back; verify current Active state before any explicit
 new submission. For genuine setup-required state, the Storage page offers the current System
-Settings (`/ui-v2/configuration`) first-Draft handoff and returns to refreshed Storage truth. No
+Settings (`/configuration`) first-Draft handoff and returns to refreshed Storage truth. No
 direct database edit, configuration reset or physical-file migration is required.
 
 [config/alist.example.json](../config/alist.example.json) is the secret-free OpenList Storage

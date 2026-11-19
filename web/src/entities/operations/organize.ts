@@ -166,10 +166,10 @@ export type OrganizeActionKind =
  */
 type OrganizeActionContract = ActionTransportContract;
 
-const INTENT_ROUTE = "/api/v1/operations/organize/intents/";
-const PREVIEW_ROUTE = "/api/v1/operations/organize/previews/";
-const EXECUTION_ROUTE = "/api/v1/operations/organize/executions/";
-const TASK_ROUTE = "/api/v1/operations/tasks/";
+const INTENT_ROUTE = "/api/operations/organize/intents/";
+const PREVIEW_ROUTE = "/api/operations/organize/previews/";
+const EXECUTION_ROUTE = "/api/operations/organize/executions/";
+const TASK_ROUTE = "/api/operations/tasks/";
 
 /**
  * The exact transport contract the backend publishes per action kind.

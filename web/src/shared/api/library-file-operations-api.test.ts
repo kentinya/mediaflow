@@ -98,9 +98,7 @@ describe("fetchLibraryFileOperations", () => {
     expect(result.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe(
-      "/api/v1/resource-libraries/source/file-operations?limit=20",
-    );
+    expect(url).toBe("/api/resource-libraries/source/file-operations?limit=20");
     expect((init as RequestInit).headers).toMatchObject({
       Authorization: `Bearer ${TOKEN}`,
     });
@@ -116,7 +114,7 @@ describe("fetchLibraryFileOperations", () => {
     });
     expect(result.ok).toBe(true);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/v1/media-libraries/movies/file-operations",
+      "/api/media-libraries/movies/file-operations",
     );
   });
 
@@ -133,7 +131,7 @@ describe("fetchLibraryFileOperations", () => {
       cursor: "abc-DEF_123",
     });
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/v1/resource-libraries/source/file-operations?limit=5&cursor=abc-DEF_123",
+      "/api/resource-libraries/source/file-operations?limit=5&cursor=abc-DEF_123",
     );
     const refused = await fetchLibraryFileOperations(TOKEN, {
       kind: "resource",
@@ -203,7 +201,7 @@ describe("fetchLibraryFileOperationDetail", () => {
     );
     expect(result.ok).toBe(true);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/v1/media-libraries/movies/files/operations/task-1",
+      "/api/media-libraries/movies/files/operations/task-1",
     );
   });
 
@@ -242,7 +240,7 @@ describe("fetchLibraryFileOperationDetail", () => {
     );
     expect(read.ok).toBe(true);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/v1/resource-libraries/source/files/operations/task-1?limit=50&cursor=cursor-2",
+      "/api/resource-libraries/source/files/operations/task-1?limit=50&cursor=cursor-2",
     );
 
     // A cursor or limit outside the backend's bound is refused locally: no
@@ -286,7 +284,7 @@ describe("fetchLibraryFileOperationOrigin", () => {
     const result = await fetchLibraryFileOperationOrigin(TOKEN, "task-1");
     expect(result.ok).toBe(true);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/v1/files/operation-origin/task-1",
+      "/api/files/operation-origin/task-1",
     );
     if (result.ok) {
       expect(result.model).toMatchObject({
@@ -355,7 +353,7 @@ describe("fetchLibraryFileOperationOrigins", () => {
     });
     expect(result.ok).toBe(true);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/v1/resource-libraries/operation-origins?limit=20",
+      "/api/resource-libraries/operation-origins?limit=20",
     );
     if (result.ok) {
       expect(result.model.items).toEqual([

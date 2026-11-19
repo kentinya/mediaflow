@@ -1,6 +1,6 @@
 # 文档导航与职责
 
-Slice55 已通过独立终审。当前 Web 入口为 `/ui-v2/`，有效的 V2 数据可继续使用。
+Slice55 已通过独立终审。当前 Web 入口为 `/`，有效的 V2 数据可继续使用。
 大版本状态和验收范围见 [Roadmap](roadmap.md) 与 [Progress](progress.md)。
 当前实施状态见 [TASK.md](../TASK.md)。
 

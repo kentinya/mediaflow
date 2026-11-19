@@ -282,12 +282,12 @@ class MetadataReviewTests(unittest.TestCase):
                     for role in ("viewer", "operator", "executor", "auditor", "admin")
                 )
                 api = MediaFlowApi(repository, principals=principals)
-                self.assertEqual(api_request(api, "/api/v1/metadata-reviews", token=None)[0], 401)
+                self.assertEqual(api_request(api, "/api/metadata-reviews", token=None)[0], 401)
                 for role in ("viewer", "operator", "executor", "auditor", "admin"):
                     self.assertEqual(
                         api_request(
                             api,
-                            "/api/v1/metadata-reviews",
+                            "/api/metadata-reviews",
                             token=f"{role}-token",
                             query="limit=1",
                         )[0],
@@ -296,18 +296,18 @@ class MetadataReviewTests(unittest.TestCase):
                 self.assertEqual(
                     api_request(
                         api,
-                        f"/api/v1/metadata-reviews/{review.review_id}",
+                        f"/api/metadata-reviews/{review.review_id}",
                         token="viewer-token",
                     )[0],
                     404,
                 )
                 self.assertEqual(
-                    api_request(api, "/api/v1/metadata-reviews/unknown", token="viewer-token")[0],
+                    api_request(api, "/api/metadata-reviews/unknown", token="viewer-token")[0],
                     404,
                 )
                 self.assertFalse(
                     any(
-                        value.route.startswith("/api/v1/metadata-reviews")
+                        value.route.startswith("/api/metadata-reviews")
                         for value in repository.list_security_audit(limit=50)
                     )
                 )

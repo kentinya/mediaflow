@@ -320,7 +320,7 @@ class NotificationTests(unittest.TestCase):
                 statuses = []
                 environ = {
                     "REQUEST_METHOD": "GET",
-                    "PATH_INFO": "/api/v1/notifications",
+                    "PATH_INFO": "/api/notifications",
                     "CONTENT_LENGTH": "0",
                     "HTTP_AUTHORIZATION": "Bearer api-secret",
                     "wsgi.input": io.BytesIO(),
@@ -474,7 +474,7 @@ class TerminalTaskNotificationTests(_DiscoveryFixture):
     def _admit(self, value, path: str):
         return self.request(
             value,
-            "/api/v1/resource-libraries/library/files/discoveries",
+            "/api/resource-libraries/library/files/discoveries",
             "POST",
             {"paths": [path], "autoPrepare": True},
         )
@@ -495,19 +495,19 @@ class TerminalTaskNotificationTests(_DiscoveryFixture):
         return code, output.getvalue(), errors.getvalue()
 
     def _confirm_summary(self, value, task_id: str, item_id: str):
-        status, detail = self.request(value, f"/api/v1/tasks/{task_id}/items/{item_id}/recovery")
+        status, detail = self.request(value, f"/api/tasks/{task_id}/items/{item_id}/recovery")
         self.assertEqual(200, status, detail)
         preparation = detail["manualRecoveryPreparation"]
         self.assertIsNotNone(preparation, detail)
         status, preview = self.request(
-            value, f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+            value, f"/api/operations/organize/previews/{preparation['preview_id']}"
         )
         self.assertEqual(200, status, preview)
         ready = [item["itemId"] for item in preview["items"] if item["status"] == "previewed"]
         self.assertEqual(1, len(ready), preview)
         status, confirmed = self.request(
             value,
-            f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+            f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
             "POST",
             {
                 "preparationId": preparation["preparation_id"],
@@ -557,7 +557,7 @@ class TerminalTaskNotificationTests(_DiscoveryFixture):
             self.publish_policy(value, document=document)
             status, admitted = self.request(
                 value,
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                "/api/operations/automation/task-definitions/nightly/run-once",
                 "POST",
                 {"admissionRequestId": "terminal-1"},
             )

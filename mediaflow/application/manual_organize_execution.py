@@ -2826,7 +2826,7 @@ class ManualOrganizeExecutionService:
             except (LookupError, ValueError):
                 checkpoint = None
             item["checkpoint"] = checkpoint.document() if checkpoint is not None else None
-            item["checkpointPath"] = f"/api/v1/tasks/{value.task_id}/items/{task_item_id}"
+            item["checkpointPath"] = f"/api/tasks/{value.task_id}/items/{task_item_id}"
         audit_reader = getattr(self._repository, "list_manual_execution_authorization_audit", None)
         if callable(audit_reader):
             item = document.get("authorizationId")
@@ -2969,7 +2969,7 @@ class ManualOrganizeExecutionService:
                     "taskItemId": item.task_item_id,
                     "status": item.status.value,
                     "resultId": item.result_id,
-                    "checkpointPath": f"/api/v1/tasks/{item.task_id}/items/{item.task_item_id}",
+                    "checkpointPath": f"/api/tasks/{item.task_id}/items/{item.task_item_id}",
                 }
                 for item in value.items
             ],
@@ -2982,12 +2982,12 @@ class ManualOrganizeExecutionService:
     @staticmethod
     def _authorization_links(value: ManualExecutionAuthorization) -> dict[str, str]:
         links = {
-            "preview": (f"/api/v1/operations/organize/previews/{quote(value.preview_id, safe='')}"),
-            "intent": (f"/api/v1/operations/organize/intents/{quote(value.intent_id, safe='')}"),
+            "preview": (f"/api/operations/organize/previews/{quote(value.preview_id, safe='')}"),
+            "intent": (f"/api/operations/organize/intents/{quote(value.intent_id, safe='')}"),
         }
         if value.execution_id:
             links["execution"] = (
-                f"/api/v1/operations/organize/executions/{quote(value.execution_id, safe='')}"
+                f"/api/operations/organize/executions/{quote(value.execution_id, safe='')}"
             )
         return links
 
@@ -2995,11 +2995,11 @@ class ManualOrganizeExecutionService:
     def _execution_links(value: ManualExecution) -> dict[str, str]:
         links = {
             "execution": (
-                f"/api/v1/operations/organize/executions/{quote(value.execution_id, safe='')}"
+                f"/api/operations/organize/executions/{quote(value.execution_id, safe='')}"
             ),
-            "preview": (f"/api/v1/operations/organize/previews/{quote(value.preview_id, safe='')}"),
-            "intent": f"/api/v1/operations/organize/intents/{quote(value.intent_id, safe='')}",
-            "task": f"/api/v1/tasks/{quote(value.task_id, safe='')}",
+            "preview": (f"/api/operations/organize/previews/{quote(value.preview_id, safe='')}"),
+            "intent": f"/api/operations/organize/intents/{quote(value.intent_id, safe='')}",
+            "task": f"/api/tasks/{quote(value.task_id, safe='')}",
         }
         if value.status in {ManualExecutionStatus.ADMITTED, ManualExecutionStatus.RUNNING}:
             query = urlencode(
@@ -3011,7 +3011,7 @@ class ManualOrganizeExecutionService:
                 }
             )
             links["reconcile"] = (
-                "/api/v1/operations/organize/previews/"
+                "/api/operations/organize/previews/"
                 f"{quote(value.preview_id, safe='')}/admission?{query}"
             )
         return links

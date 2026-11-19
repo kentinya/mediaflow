@@ -619,7 +619,7 @@ class _DiscoveryFixture(unittest.TestCase):
         if result is None:
             raise AssertionError("discovery was not claimable")
         status, document = self.request(
-            value, f"/api/v1/operations/organize/discoveries/{result.discovery_id}"
+            value, f"/api/operations/organize/discoveries/{result.discovery_id}"
         )
         if status != 200:
             raise AssertionError(document)
@@ -644,7 +644,7 @@ class _DiscoveryFixture(unittest.TestCase):
         else:
             raise AssertionError("discovery did not settle within the bounded step budget")
         status, document = self.request(
-            value, f"/api/v1/operations/organize/discoveries/{result.discovery_id}"
+            value, f"/api/operations/organize/discoveries/{result.discovery_id}"
         )
         if status != 200:
             raise AssertionError(document)
@@ -704,7 +704,7 @@ class RetainedTaskKernelFilesJourneyTests(_DiscoveryFixture):
             body["requestId"] = request_id
         return self.request(
             value,
-            "/api/v1/resource-libraries/library/files/discoveries",
+            "/api/resource-libraries/library/files/discoveries",
             "POST",
             body,
         )
@@ -728,7 +728,7 @@ class RetainedTaskKernelFilesJourneyTests(_DiscoveryFixture):
 
     def _projection(self, value, discovery_id):
         status, document = self.request(
-            value, f"/api/v1/operations/organize/discoveries/{discovery_id}"
+            value, f"/api/operations/organize/discoveries/{discovery_id}"
         )
         self.assertEqual(200, status, document)
         return document
@@ -796,7 +796,7 @@ class RetainedTaskKernelFilesJourneyTests(_DiscoveryFixture):
 
             status, refused = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/finalize",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/finalize",
                 "POST",
                 {"expectedVersion": settled["version"]},
             )
@@ -926,7 +926,7 @@ class RetainedTaskKernelFilesJourneyTests(_DiscoveryFixture):
             self.assertEqual([source_path], [item.source.path for item in preview.items])
             status, preview_document = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{settled['previewId']}",
+                f"/api/operations/organize/previews/{settled['previewId']}",
             )
             self.assertEqual(200, status, preview_document)
             ready = [
@@ -937,7 +937,7 @@ class RetainedTaskKernelFilesJourneyTests(_DiscoveryFixture):
             self.assertEqual(1, len(ready), preview_document)
             status, admitted_execution = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{settled['previewId']}/execute",
+                f"/api/operations/organize/previews/{settled['previewId']}/execute",
                 "POST",
                 {
                     "confirmation": True,

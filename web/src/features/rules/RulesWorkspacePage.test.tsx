@@ -39,7 +39,7 @@ function stubRules(
         status,
         headers: { "Content-Type": "application/json" },
       });
-    if (url.endsWith("/api/v1/auth/principal"))
+    if (url.endsWith("/api/auth/principal"))
       return json({ principal_id: "rules-principal-a" });
     if (url.endsWith("/operations/rules/inventory"))
       return json(
@@ -72,7 +72,7 @@ function stubRules(
   return { mock, calls };
 }
 
-const inventoryPath = "/api/v1/operations/rules/inventory";
+const inventoryPath = "/api/operations/rules/inventory";
 
 describe("RulesWorkspacePage", () => {
   it.each([401, 403, 500])(
@@ -93,7 +93,7 @@ describe("RulesWorkspacePage", () => {
         },
       });
       authStore.setToken("rules-token");
-      renderApp("/ui-v2/rules?section=recognitionTypes");
+      renderApp("/rules?section=recognitionTypes");
       await screen.findByRole("heading", {
         name:
           status === 401
@@ -126,7 +126,7 @@ describe("RulesWorkspacePage", () => {
     };
     holdInventory();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=recognitionTypes");
+    renderApp("/rules?section=recognitionTypes");
     await screen.findByText("正在读取 Active 规则...");
     expect(screen.getAllByRole("heading", { name: "整理规则" })).toHaveLength(
       1,
@@ -161,7 +161,7 @@ describe("RulesWorkspacePage", () => {
   it("deep-links to a full-width inventory with no drawer or editor open", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     expect(
       await screen.findByRole("navigation", { name: "规则分类" }),
     ).toBeVisible();
@@ -184,7 +184,7 @@ describe("RulesWorkspacePage", () => {
   it("row selection, search, filter, tab change and refresh never open an editor or write", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -224,7 +224,7 @@ describe("RulesWorkspacePage", () => {
   it("only the explicit Add action opens the create drawer", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -244,7 +244,7 @@ describe("RulesWorkspacePage", () => {
   it("one explicit save publishes the successor with the captured Active identity", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -287,7 +287,7 @@ describe("RulesWorkspacePage", () => {
   it("tests the exact create candidate locally without publishing it", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -353,7 +353,7 @@ describe("RulesWorkspacePage", () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const method = (init?.method ?? "GET").toUpperCase();
         const url = String(input);
-        if (url.endsWith("/api/v1/auth/principal"))
+        if (url.endsWith("/api/auth/principal"))
           return new Response(
             JSON.stringify({ principal_id: "rules-principal-a" }),
             {
@@ -384,7 +384,7 @@ describe("RulesWorkspacePage", () => {
     );
     vi.stubGlobal("fetch", failing);
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -414,7 +414,7 @@ describe("RulesWorkspacePage", () => {
           posts += 1;
           throw new TypeError("connection reset");
         }
-        if (url.endsWith("/api/v1/auth/principal"))
+        if (url.endsWith("/api/auth/principal"))
           return new Response(
             JSON.stringify({ principal_id: "rules-principal-a" }),
             {
@@ -440,7 +440,7 @@ describe("RulesWorkspacePage", () => {
     );
     vi.stubGlobal("fetch", flaky);
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -496,7 +496,7 @@ describe("RulesWorkspacePage", () => {
   it("warns before discarding unsaved input; a repeated close never discards", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -540,7 +540,7 @@ describe("RulesWorkspacePage", () => {
   it("edit opens the same card over its family inventory with an immutable ID", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    const { router } = renderApp("/ui-v2/rules");
+    const { router } = renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -591,7 +591,7 @@ describe("RulesWorkspacePage", () => {
   it("enable/disable and remove need explicit final intent and reference impact", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -628,7 +628,7 @@ describe("RulesWorkspacePage", () => {
     // and offer the explicit reread recovery.
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -711,7 +711,7 @@ describe("RulesWorkspacePage", () => {
     for (const outcome of ["forbidden", "transport"] as const) {
       const { calls } = stubRules();
       authStore.setToken("rules-token");
-      renderApp("/ui-v2/rules");
+      renderApp("/rules");
       await screen.findByRole("navigation", { name: "规则分类" });
       expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
       const user = userEvent.setup();
@@ -763,7 +763,7 @@ describe("RulesWorkspacePage", () => {
       inventory: { ...rulesPayload, canManage: false },
     });
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -797,7 +797,7 @@ describe("RulesWorkspacePage", () => {
       },
     });
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -835,7 +835,7 @@ describe("RulesWorkspacePage", () => {
   it("stays operable by keyboard and narrow layout on the drawer path", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("navigation", { name: "规则分类" });
     expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
@@ -898,7 +898,7 @@ describe("RulesWorkspacePage", () => {
       },
     });
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     expect(
       await screen.findByRole("heading", { name: "尚无 Active 配置" }),
     ).toBeVisible();
@@ -906,7 +906,7 @@ describe("RulesWorkspacePage", () => {
     // no identity, no revision and no token.
     expect(
       screen.getByRole("link", { name: "前往系统设置查看配置状态" }),
-    ).toHaveAttribute("href", "/ui-v2/configuration?returnTo=rules");
+    ).toHaveAttribute("href", "/configuration?returnTo=rules");
     expect(screen.queryByRole("button", { name: /^添加/ })).toBeNull();
   });
 
@@ -951,7 +951,7 @@ describe("RulesWorkspacePage", () => {
       },
     });
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=metadataPolicies");
+    renderApp("/rules?section=metadataPolicies");
     expect(
       await screen.findByRole("heading", { name: "尚无 Active 配置" }),
     ).toBeVisible();
@@ -959,7 +959,7 @@ describe("RulesWorkspacePage", () => {
       screen.getByRole("link", { name: "前往系统设置查看配置状态" }),
     ).toHaveAttribute(
       "href",
-      "/ui-v2/configuration?returnTo=rules&returnSection=metadataPolicies",
+      "/configuration?returnTo=rules&returnSection=metadataPolicies",
     );
     // The family route never opens the editor even without an Active.
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -1007,7 +1007,7 @@ describe("RulesWorkspacePage", () => {
       },
     });
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=metadataPolicies");
+    renderApp("/rules?section=metadataPolicies");
     expect(
       await screen.findByRole("heading", { name: "尚无 Active 配置" }),
     ).toBeVisible();
@@ -1015,7 +1015,7 @@ describe("RulesWorkspacePage", () => {
       screen.getByRole("link", { name: "前往系统设置查看配置状态" }),
     ).toHaveAttribute(
       "href",
-      "/ui-v2/configuration?returnTo=rules&returnSection=metadataPolicies",
+      "/configuration?returnTo=rules&returnSection=metadataPolicies",
     );
     // The family route never opens the editor even without an Active.
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -1027,7 +1027,7 @@ describe("RulesWorkspacePage", () => {
       inventory: { ...rulesPayload, sections: {} },
     });
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     expect(
       await screen.findByRole("heading", { name: "整理规则暂不可用" }),
     ).toBeVisible();
@@ -1054,7 +1054,7 @@ describe("RulesWorkspacePage section state", () => {
   it("deep-links to the named family with no selected object or editor", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=recognitionTypes");
+    renderApp("/rules?section=recognitionTypes");
     expect(
       await screen.findByRole("heading", { name: "识别类型" }),
     ).toBeVisible();
@@ -1072,7 +1072,7 @@ describe("RulesWorkspacePage section state", () => {
   it("keeps the section in the URL, and survives Back, Forward and refresh", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    const { router } = renderApp("/ui-v2/rules");
+    const { router } = renderApp("/rules");
     await screen.findByRole("heading", { name: "规则关系概览" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "命名规则" }));
@@ -1113,7 +1113,7 @@ describe("RulesWorkspacePage section state", () => {
       "?section=typeBindings&section=storage",
     ]) {
       cleanup();
-      renderApp(`/ui-v2/rules${search}`);
+      renderApp(`/rules${search}`);
       expect(
         await screen.findByRole("heading", { name: "规则关系概览" }),
       ).toBeVisible();
@@ -1128,7 +1128,7 @@ describe("RulesWorkspacePage section state", () => {
     // keys ride along; those keys are never read, echoed or turned into
     // authority by the workspace.
     cleanup();
-    renderApp("/ui-v2/rules?section=recognitionTypes&token=secret");
+    renderApp("/rules?section=recognitionTypes&token=secret");
     expect(
       await screen.findByRole("heading", { name: "识别类型" }),
     ).toBeVisible();
@@ -1152,11 +1152,11 @@ describe("RulesWorkspacePage section state", () => {
       },
     });
     authStore.setToken("rules-token");
-    const { router } = renderApp("/ui-v2/rules");
+    const { router } = renderApp("/rules");
     await screen.findByRole("heading", { name: "规则关系概览" });
     const user = userEvent.setup();
     const action = await screen.findByRole("link", { name: "查看类型策略" });
-    expect(action).toHaveAttribute("href", "/ui-v2/rules?section=typeBindings");
+    expect(action).toHaveAttribute("href", "/rules?section=typeBindings");
     await user.click(action);
     expect(
       await screen.findByRole("heading", { name: "类型策略" }),
@@ -1187,7 +1187,7 @@ describe("RulesWorkspacePage section state", () => {
       },
     });
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("heading", { name: "规则关系概览" });
     const path = screen.getByRole("heading", { name: "按依赖顺序补齐" });
     expect(path).toBeVisible();
@@ -1231,7 +1231,7 @@ describe("RulesWorkspacePage section state", () => {
       },
     });
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules");
+    renderApp("/rules");
     await screen.findByRole("heading", { name: "规则关系概览" });
     const user = userEvent.setup();
     // The gap action is a real link, so it is reachable and activatable by
@@ -1264,12 +1264,12 @@ describe("RulesWorkspacePage section state", () => {
   it("keeps normal Settings in the sidebar without a permanent workspace handoff", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=classificationPolicies");
+    renderApp("/rules?section=classificationPolicies");
     await screen.findByRole("heading", { name: "分类规则" });
     expect(screen.queryByRole("link", { name: "前往系统设置" })).toBeNull();
     expect(screen.getByRole("link", { name: "Configuration" })).toHaveAttribute(
       "href",
-      "/ui-v2/configuration",
+      "/configuration",
     );
     expect(screen.queryByText(/Active · 序号/)).toBeNull();
   });
@@ -1277,7 +1277,7 @@ describe("RulesWorkspacePage section state", () => {
   it("keeps correctable input when a tab would leave the editing context", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=recognitionTypes");
+    renderApp("/rules?section=recognitionTypes");
     await screen.findByRole("heading", { name: "识别类型" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "添加识别类型" }));
@@ -1300,7 +1300,7 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
   it("renders the eight navigation cards in reference order with the active card marked", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=classificationPolicies");
+    renderApp("/rules?section=classificationPolicies");
     await screen.findByRole("heading", { name: "分类规则" });
 
     const nav = screen.getByRole("navigation", { name: "规则分类" });
@@ -1330,7 +1330,7 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
   it("uses one local keyword input and clears it without changing the inventory scope", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=recognitionTypes");
+    renderApp("/rules?section=recognitionTypes");
     await screen.findByRole("heading", { name: "识别类型" });
 
     expect(screen.getAllByRole("searchbox")).toHaveLength(1);
@@ -1357,7 +1357,7 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
   it("keeps the inventory title/description and the left-Add/right-filter row distinct", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=recognitionTypes");
+    renderApp("/rules?section=recognitionTypes");
     await screen.findByRole("heading", { name: "识别类型" });
 
     // The title/description row is separate from the action row.
@@ -1391,7 +1391,7 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
   it("gives every family a purpose-built form with a multiline description and an applicable enable switch", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=recognitionTypes");
+    renderApp("/rules?section=recognitionTypes");
     await screen.findByRole("heading", { name: "识别类型" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "添加识别类型" }));
@@ -1421,7 +1421,7 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
   it("never invents an enable switch for the family whose domain has no enable state", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=organizePolicies");
+    renderApp("/rules?section=organizePolicies");
     await screen.findByRole("heading", { name: "整理策略" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "添加整理策略" }));
@@ -1442,7 +1442,7 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
   it("keeps Classification's internal rules compact with an inner Add distinct from the outer Add", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=classificationPolicies");
+    renderApp("/rules?section=classificationPolicies");
     await screen.findByRole("heading", { name: "分类规则" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "添加分类规则" }));
@@ -1473,7 +1473,7 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
   it("names the closed Classification rule and its retained error when Save is refused", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=classificationPolicies");
+    renderApp("/rules?section=classificationPolicies");
     await screen.findByRole("heading", { name: "分类规则" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "添加分类规则" }));
@@ -1538,7 +1538,7 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
   it("states the same refusal on the copy surface of a Classification policy", async () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=classificationPolicies");
+    renderApp("/rules?section=classificationPolicies");
     await screen.findByRole("heading", { name: "分类规则" });
     const user = userEvent.setup();
     // Copy is an explicit row action, never an automatic editor open.
@@ -1577,7 +1577,7 @@ describe("RulesWorkspacePage purpose-built family forms", () => {
     it(`${item.label} keeps its real fields available through purposeful sections`, async () => {
       stubRules();
       authStore.setToken("rules-token");
-      renderApp(`/ui-v2/rules?section=${item.family}`);
+      renderApp(`/rules?section=${item.family}`);
       await screen.findByRole("heading", { name: item.label });
       const user = userEvent.setup();
       await user.click(screen.getByRole("button", { name: item.add }));
@@ -1605,7 +1605,7 @@ describe("RulesWorkspacePage purpose-built family forms", () => {
   it("Recognition Rules preserves AND/OR/NOT, paired priority/score and output type", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=recognitionRules");
+    renderApp("/rules?section=recognitionRules");
     await screen.findByRole("heading", { name: "识别规则" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "添加识别规则" }));
@@ -1633,7 +1633,7 @@ describe("RulesWorkspacePage purpose-built family forms", () => {
   it("Naming keeps the actual Movie/TV template families and variable hints", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=namingPolicies");
+    renderApp("/rules?section=namingPolicies");
     await screen.findByRole("heading", { name: "命名规则" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "添加命名规则" }));
@@ -1656,7 +1656,7 @@ describe("RulesWorkspacePage purpose-built family forms", () => {
   it("Metadata keeps Provider/media type, paired language/region and the bounded request controls", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=metadataPolicies");
+    renderApp("/rules?section=metadataPolicies");
     await screen.findByRole("heading", { name: "元数据策略" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "添加元数据策略" }));
@@ -1689,7 +1689,7 @@ describe("RulesWorkspacePage purpose-built family forms", () => {
   it("Type strategy keeps the four policy selectors, applicable enable state and required identity", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=typeBindings");
+    renderApp("/rules?section=typeBindings");
     await screen.findByRole("heading", { name: "类型策略" });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "添加类型策略" }));
@@ -1715,7 +1715,7 @@ describe("RulesWorkspacePage mode-scoped correctable drafts", () => {
   it("keeps one object's Edit draft out of its Copy card, and Create out of both", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=recognitionTypes");
+    renderApp("/rules?section=recognitionTypes");
     await screen.findByRole("navigation", { name: "规则分类" });
     const user = userEvent.setup();
     // 甲 edits object C, replaces the name and "refreshes" without an
@@ -1736,7 +1736,7 @@ describe("RulesWorkspacePage mode-scoped correctable drafts", () => {
     // Copy of the same object holds the backend copy candidate — its new ID,
     // its own name and the default disabled state — never the Edit draft.
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=recognitionTypes");
+    renderApp("/rules?section=recognitionTypes");
     await screen.findByRole("navigation", { name: "规则分类" });
     const copyUser = userEvent.setup();
     const copyRow = await screen.findByRole("row", { name: /Special/ });
@@ -1789,7 +1789,7 @@ describe("RulesWorkspacePage mode-scoped correctable drafts", () => {
     cleanup();
 
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules?section=recognitionTypes");
+    renderApp("/rules?section=recognitionTypes");
     await screen.findByRole("navigation", { name: "规则分类" });
     const reopen = userEvent.setup();
     const editRowWhileCreateDrafted = await screen.findByRole("row", {
@@ -1829,7 +1829,7 @@ describe("RulesWorkspacePage mode-scoped correctable drafts", () => {
   it("Continuing a blocked browser Back cancels the leave and keeps the exact card address", async () => {
     stubRules();
     authStore.setToken("rules-token");
-    const { router } = renderApp("/ui-v2/rules?section=recognitionTypes");
+    const { router } = renderApp("/rules?section=recognitionTypes");
     await screen.findByRole("navigation", { name: "规则分类" });
     const user = userEvent.setup();
     const row = await screen.findByRole("row", { name: /Special/ });

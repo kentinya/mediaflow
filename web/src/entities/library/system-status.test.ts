@@ -4,7 +4,7 @@ import {
   normalizeSystemStatus,
 } from "./system-status";
 
-/** Wire shape matching the allowlisted Python `/api/v1/system/status` projection. */
+/** Wire shape matching the allowlisted Python `/api/system/status` projection. */
 const systemStatusPayload = {
   system: {
     configuration_valid: true,

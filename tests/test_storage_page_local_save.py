@@ -27,8 +27,8 @@ from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_configuration_objects import example_document, request
 
-SAVE_ROUTE = "/api/v1/storages"
-INVENTORY_ROUTE = "/api/v1/operations/storage-management/inventory"
+SAVE_ROUTE = "/api/storages"
+INVENTORY_ROUTE = "/api/operations/storage-management/inventory"
 
 # Sentinel credential values.  They are injected only to prove that no response,
 # audit record, validation error or log ever carries a secret value: the Storage
@@ -1006,12 +1006,12 @@ class StoragePageLocalSaveTests(unittest.TestCase):
         self.assertTrue(records)
         routes = {record.route for record in records}
         self.assertIn(SAVE_ROUTE, routes)
-        self.assertIn("/api/v1/storages/{id}", routes)
-        self.assertIn("/api/v1/storages/{id}/edit", routes)
+        self.assertIn("/api/storages/{id}", routes)
+        self.assertIn("/api/storages/{id}/edit", routes)
         self.assertFalse(any("openlist-audit" in route for route in routes))
 
         # The refreshed Active is consumed by the existing browse authority.
-        status, browse = request(self.api, "/api/v1/resource-libraries/source/files")
+        status, browse = request(self.api, "/api/resource-libraries/source/files")
         self.assertEqual(status, 200, browse)
         self.assertEqual(self.source.mutations, [])
 
@@ -1385,7 +1385,7 @@ class StoragePageLocalSaveTests(unittest.TestCase):
         self.assertNotEqual(active["revisionSequence"], active["version"])
         status, evidence = request(
             self.api,
-            "/api/v1/operations/storage-management/storage/source-storage/check",
+            "/api/operations/storage-management/storage/source-storage/check",
             method="POST",
             body={
                 "expectedRevisionId": active["revisionId"],
@@ -1604,7 +1604,7 @@ class StoragePageLocalSaveTests(unittest.TestCase):
         # Detail binds the same empty root to the exact Active configuration.
         status, detail = request(
             self.api,
-            "/api/v1/operations/storage-management/storage/openlist-empty-root",
+            "/api/operations/storage-management/storage/openlist-empty-root",
         )
         self.assertEqual(status, 200, detail)
         self.assertEqual(detail["storage"]["location"]["rootPath"], "")

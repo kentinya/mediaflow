@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 /**
  * MediaLibrary bounded Copy/Move browser proof for Slice 38 (RO-5/RO-6/RO-7,
- * Task 38.4), driven entirely from `/ui-v2/medialib/files`.
+ * Task 38.4), driven entirely from `/medialib/files`.
  *
  * Runs against the built V2 artifact plus the local fake API only. Every token
  * is a throwaway non-secret value; no production service, credential, user
@@ -32,7 +32,7 @@ async function openMediaLibrary(
   search = "",
   token = VIEWER_TOKEN,
 ): Promise<void> {
-  await page.goto("/ui-v2/medialib/files" + search);
+  await page.goto("/medialib/files" + search);
   await connectAs(page, token);
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
@@ -136,12 +136,12 @@ test("a bounded MediaLibrary copy completes through the media route and reports 
   expect(transferRequests.length).toBeGreaterThan(0);
   expect(
     transferRequests.every((request) =>
-      request.url.includes("/api/v1/media-libraries/"),
+      request.url.includes("/api/media-libraries/"),
     ),
   ).toBe(true);
   expect(
     transferRequests.every(
-      (request) => !request.url.includes("/api/v1/resource-libraries/"),
+      (request) => !request.url.includes("/api/resource-libraries/"),
     ),
   ).toBe(true);
   // A terminal transfer closes through its own result state.
@@ -254,7 +254,7 @@ test("a read-only principal can browse but the media transfer route denies it wi
   page,
 }) => {
   await resetMediaTransfers(page);
-  await page.goto("/ui-v2/medialib/files");
+  await page.goto("/medialib/files");
   await connectAs(page, READ_ONLY_TOKEN);
   // The read-only principal reaches the page and its live listing.
   await expect(page.getByRole("table")).toBeVisible();
@@ -301,7 +301,7 @@ test("a cancelled media transfer's retired resume is an ordinary not-found with 
   await expect(dialog.getByRole("button", { name: "继续传输" })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "请求暂停" })).toHaveCount(0);
 
-  const refused = await page.request.post(`/api/v1/tasks/${taskId}/resume`, {
+  const refused = await page.request.post(`/api/tasks/${taskId}/resume`, {
     headers: { Authorization: `Bearer ${VIEWER_TOKEN}` },
     data: {},
   });
@@ -324,7 +324,7 @@ test("a cancelled transfer's retired Task deep link is an ordinary not-found wit
   page.on("request", (request) => {
     if (request.url().includes("/api/")) apiRequests.push(request.url());
   });
-  await page.goto(`/ui-v2/operations/tasks/${taskId}`);
+  await page.goto(`/operations/tasks/${taskId}`);
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();

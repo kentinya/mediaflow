@@ -108,7 +108,7 @@ async function servePosters(page: Page): Promise<PosterControls> {
 
 async function connect(page: Page): Promise<PosterControls> {
   const posters = await servePosters(page);
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -169,7 +169,7 @@ async function setFailure(page: Page, mode: string): Promise<void> {
 test("the static CSP keeps every directive and adds only the fixed TMDB image source", async ({
   page,
 }) => {
-  const response = await page.request.get(`${HARNESS}/ui-v2/explore`);
+  const response = await page.request.get(`${HARNESS}/explore`);
   expect(response.ok()).toBe(true);
   const csp = response.headers()["content-security-policy"] ?? "";
   expect(csp).toContain("default-src 'self'");
@@ -203,7 +203,7 @@ test("desktop: browse, filter, search round trip, paging and exact detail with f
   expect(await firstPoster.getAttribute("src")).toMatch(
     /^https:\/\/image\.tmdb\.org\/t\/p\/w342\/[A-Za-z0-9._-]+\.jpg$/,
   );
-  await expect(page).toHaveURL(/\/ui-v2\/explore$/);
+  await expect(page).toHaveURL(/\/explore$/);
 
   // A real condition group reaches the Provider and is echoed back.
   await page
@@ -453,7 +453,7 @@ test("the retired dashboard address is a client not-found and the whole journey 
   // Layered proof: the Python static layer answers the address (SPA
   // compatibility only), the React layer owns the removal with not-found and
   // no read starts. It is never mistaken for a still-supported page.
-  const fallback = await page.request.get(`${HARNESS}/ui-v2/dashboard`);
+  const fallback = await page.request.get(`${HARNESS}/dashboard`);
   expect(fallback.status()).toBe(200);
   expect(fallback.headers()["content-type"]).toContain("text/html");
   // Across this navigation no explore read may start: the browse count and
@@ -462,7 +462,7 @@ test("the retired dashboard address is a client not-found and the whole journey 
     entry.includes("explore/browse"),
   ).length;
   const requestsAtNotFound = (await stats(page)).tmdbRequests;
-  await page.goto("/ui-v2/dashboard");
+  await page.goto("/dashboard");
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
@@ -474,7 +474,7 @@ test("the retired dashboard address is a client not-found and the whole journey 
   ).toHaveLength(browseBefore);
   expect((await stats(page)).tmdbRequests).toBe(requestsAtNotFound);
   expect(
-    apiRequests.filter((entry) => entry.includes("/api/v1/explore/")).length,
+    apiRequests.filter((entry) => entry.includes("/api/explore/")).length,
   ).toBeGreaterThan(0);
 
   // Only readable, GET-only explore requests were made, with the authority
@@ -656,7 +656,7 @@ test("zero-page: empty filters and searches recover in place at desktop and 390p
   page.on("response", async (response) => {
     const url = response.url();
     if (
-      !url.includes("/api/v1/explore/") ||
+      !url.includes("/api/explore/") ||
       response.request().method() !== "GET"
     ) {
       return;
@@ -751,7 +751,7 @@ test("zero-page: empty filters and searches recover in place at desktop and 390p
   const emptyBrowse = apiResponses.filter((entry) => {
     const params = new URL(entry.url).searchParams;
     return (
-      entry.url.includes("/api/v1/explore/browse") &&
+      entry.url.includes("/api/explore/browse") &&
       params.get("originalLanguage") === "fr"
     );
   });
@@ -777,7 +777,7 @@ test("zero-page: empty filters and searches recover in place at desktop and 390p
   const zeroSearches = apiResponses.filter((entry) => {
     const params = new URL(entry.url).searchParams;
     return (
-      entry.url.includes("/api/v1/explore/search") &&
+      entry.url.includes("/api/explore/search") &&
       params.get("query") === "不存在的银河"
     );
   });
@@ -1670,7 +1670,7 @@ test("PATCH-20261108-1 a non-top detail keeps the background anchored through lo
   // Hold the real movie-detail answer only while the loading frame is
   // observed; the response still comes from the real Python harness.
   let releaseDetail: (() => void) | null = null;
-  await page.route("**/api/v1/explore/movie/*", async (route) => {
+  await page.route("**/api/explore/movie/*", async (route) => {
     await new Promise<void>((resolve) => {
       releaseDetail = resolve;
     });

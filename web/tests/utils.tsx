@@ -12,7 +12,7 @@ import { AppProviders } from "../src/app/providers";
 import { createAppRouter } from "../src/routes/router";
 
 /**
- * Render the real route tree under the documented /ui-v2/ base path with a
+ * Render the real route tree from the documented Web root with a
  * fresh query cache per call. The router mounts asynchronously, so tests must
  * use `findBy*` queries before interacting with the rendered content. The
  * router is returned so a test can assert the real URL/search state and drive

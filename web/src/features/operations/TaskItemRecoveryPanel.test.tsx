@@ -44,7 +44,7 @@ function previewDocument(): Record<string, unknown> {
   (value["selection"] as Record<string, unknown>)["unselectedItemIds"] = [];
   const actions = value["actions"] as Record<string, Record<string, unknown>>;
   actions["execute"]!["path"] =
-    "/api/v1/operations/organize/previews/preview-1/execute";
+    "/api/operations/organize/previews/preview-1/execute";
   return value;
 }
 
@@ -219,7 +219,7 @@ function withPrincipalEndpoint(
   return async (input: RequestInfo | URL, init?: RequestInit) => {
     if (
       (init?.method ?? "GET") === "GET" &&
-      String(input) === "/api/v1/auth/principal"
+      String(input) === "/api/auth/principal"
     ) {
       return new Response(JSON.stringify({ principal_id: "admin" }), {
         status: 200,
@@ -428,13 +428,13 @@ describe("TaskItemRecoveryPanel", () => {
         const method = init?.method ?? "GET";
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), { status: 200 });
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/metadata-search"
+          url === "/api/tasks/task-1/items/item-1/recovery/metadata-search"
         ) {
           const body = JSON.parse(String(init?.body ?? "{}")) as Record<
             string,
@@ -469,7 +469,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           decisionBodies.push(
             JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
@@ -479,7 +479,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+          url === "/api/tasks/task-1/items/item-1/recovery/continue"
         ) {
           return new Response(
             JSON.stringify({
@@ -582,7 +582,7 @@ describe("TaskItemRecoveryPanel", () => {
         const method = init?.method ?? "GET";
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(metadataCorrectionRecovery()), {
             status: 200,
@@ -590,7 +590,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/metadata-search"
+          url === "/api/tasks/task-1/items/item-1/recovery/metadata-search"
         ) {
           const body = JSON.parse(String(init?.body ?? "{}")) as Record<
             string,
@@ -644,7 +644,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           decisionBodies.push(
             JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
@@ -653,7 +653,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+          url === "/api/tasks/task-1/items/item-1/recovery/continue"
         ) {
           continueBodies.push(JSON.parse(String(init?.body ?? "{}")));
           return new Response(
@@ -748,20 +748,20 @@ describe("TaskItemRecoveryPanel", () => {
         });
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), { status: 200 });
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           currentRecovery = recognitionRecovery(true);
           return new Response(JSON.stringify(currentRecovery), { status: 200 });
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+          url === "/api/tasks/task-1/items/item-1/recovery/continue"
         ) {
           return new Response(
             JSON.stringify({
@@ -808,8 +808,8 @@ describe("TaskItemRecoveryPanel", () => {
       expect(
         calls.filter((call) => call.method === "POST").map((call) => call.path),
       ).toEqual([
-        "/api/v1/tasks/task-1/items/item-1/recovery/decision",
-        "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+        "/api/tasks/task-1/items/item-1/recovery/decision",
+        "/api/tasks/task-1/items/item-1/recovery/continue",
       ]);
     });
     expect(
@@ -836,7 +836,7 @@ describe("TaskItemRecoveryPanel", () => {
         calls.push({ method, path: url });
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(conflictRecovery()), {
             status: 200,
@@ -844,7 +844,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           return new Response(
             JSON.stringify({ error: { code: "stale_checkpoint" } }),
@@ -878,7 +878,7 @@ describe("TaskItemRecoveryPanel", () => {
     expect(await within(panel).findByText(/条目已变化/)).toBeVisible();
     expect(
       calls.filter((call) => call.method === "POST").map((call) => call.path),
-    ).toEqual(["/api/v1/tasks/task-1/items/item-1/recovery/decision"]);
+    ).toEqual(["/api/tasks/task-1/items/item-1/recovery/decision"]);
     expect(calls.some((call) => call.path.includes("/execute"))).toBe(false);
   });
 
@@ -897,7 +897,7 @@ describe("TaskItemRecoveryPanel", () => {
         calls.push({ method, path: url });
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), {
             status: 200,
@@ -905,7 +905,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           currentRecovery = conflictRecovery(true);
           return new Response(JSON.stringify(currentRecovery), {
@@ -914,7 +914,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+          url === "/api/tasks/task-1/items/item-1/recovery/continue"
         ) {
           return new Response(
             JSON.stringify({ error: { code: "queue_full" } }),
@@ -955,8 +955,8 @@ describe("TaskItemRecoveryPanel", () => {
     expect(
       calls.filter((call) => call.method === "POST").map((call) => call.path),
     ).toEqual([
-      "/api/v1/tasks/task-1/items/item-1/recovery/decision",
-      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+      "/api/tasks/task-1/items/item-1/recovery/decision",
+      "/api/tasks/task-1/items/item-1/recovery/continue",
     ]);
     expect(calls.some((call) => call.path.includes("/execute"))).toBe(false);
   });
@@ -974,20 +974,20 @@ describe("TaskItemRecoveryPanel", () => {
         const method = init?.method ?? "GET";
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), { status: 200 });
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           currentRecovery = recognitionRecovery(true);
           return new Response(JSON.stringify(currentRecovery), { status: 200 });
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+          url === "/api/tasks/task-1/items/item-1/recovery/continue"
         ) {
           // The Task-engine answer names the same Task's own linked analysis:
           // no continuation_id, no job_id, no child Task.
@@ -1057,7 +1057,7 @@ describe("TaskItemRecoveryPanel", () => {
         });
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), {
             status: 200,
@@ -1065,7 +1065,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "GET" &&
-          url === "/api/v1/operations/organize/previews/preview-1"
+          url === "/api/operations/organize/previews/preview-1"
         ) {
           return new Response(JSON.stringify(previewDocument()), {
             status: 200,
@@ -1073,7 +1073,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/prepare-summary"
+          url === "/api/tasks/task-1/items/item-1/recovery/prepare-summary"
         ) {
           currentRecovery = completedRecovery({
             preparation_id: "preparation-1",
@@ -1113,7 +1113,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/operations/organize/previews/preview-1/execute"
+          url === "/api/operations/organize/previews/preview-1/execute"
         ) {
           return new Response(JSON.stringify(executionDocument()), {
             status: 202,
@@ -1168,8 +1168,8 @@ describe("TaskItemRecoveryPanel", () => {
       expect(
         calls.filter((call) => call.method === "POST").map((call) => call.path),
       ).toEqual([
-        "/api/v1/tasks/task-1/items/item-1/recovery/prepare-summary",
-        "/api/v1/operations/organize/previews/preview-1/execute",
+        "/api/tasks/task-1/items/item-1/recovery/prepare-summary",
+        "/api/operations/organize/previews/preview-1/execute",
       ]);
     });
     expect(
@@ -1213,13 +1213,13 @@ describe("TaskItemRecoveryPanel", () => {
         calls.push({ method, path: url });
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(durable), { status: 200 });
         }
         if (
           method === "GET" &&
-          url === "/api/v1/operations/organize/previews/preview-1"
+          url === "/api/operations/organize/previews/preview-1"
         ) {
           return new Response(JSON.stringify(previewDocument()), {
             status: 200,
@@ -1284,7 +1284,7 @@ describe("TaskItemRecoveryPanel", () => {
         const method = init?.method ?? "GET";
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), {
             status: 200,
@@ -1292,7 +1292,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "GET" &&
-          url === "/api/v1/operations/organize/previews/preview-1"
+          url === "/api/operations/organize/previews/preview-1"
         ) {
           return new Response(JSON.stringify(previewDocument()), {
             status: 200,
@@ -1300,7 +1300,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/prepare-summary"
+          url === "/api/tasks/task-1/items/item-1/recovery/prepare-summary"
         ) {
           currentRecovery = completedRecovery({
             preparation_id: "preparation-1",
@@ -1341,7 +1341,7 @@ describe("TaskItemRecoveryPanel", () => {
         if (
           method === "GET" &&
           url.startsWith(
-            "/api/v1/operations/organize/previews/preview-1/admission?",
+            "/api/operations/organize/previews/preview-1/admission?",
           )
         ) {
           return new Response(JSON.stringify(admissionOutcome()), {
@@ -1350,7 +1350,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/operations/organize/previews/preview-1/execute"
+          url === "/api/operations/organize/previews/preview-1/execute"
         ) {
           confirmAttempts += 1;
           // The admission really committed, but the response is lost.
@@ -1454,14 +1454,14 @@ describe("TaskItemRecoveryPanel", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const method = init?.method ?? "GET";
-        if (method === "GET" && url === "/api/v1/auth/principal") {
+        if (method === "GET" && url === "/api/auth/principal") {
           return new Response(JSON.stringify({ principal_id: "admin" }), {
             status: 200,
           });
         }
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), {
             status: 200,
@@ -1469,7 +1469,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "GET" &&
-          url === "/api/v1/operations/organize/previews/preview-1"
+          url === "/api/operations/organize/previews/preview-1"
         ) {
           return new Response(JSON.stringify(twoItemPreviewDocument()), {
             status: 200,
@@ -1478,7 +1478,7 @@ describe("TaskItemRecoveryPanel", () => {
         if (
           method === "GET" &&
           url.startsWith(
-            "/api/v1/operations/organize/previews/preview-1/admission?",
+            "/api/operations/organize/previews/preview-1/admission?",
           )
         ) {
           admissionReads += 1;
@@ -1499,7 +1499,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/operations/organize/previews/preview-1/execute"
+          url === "/api/operations/organize/previews/preview-1/execute"
         ) {
           confirmAttempts += 1;
           submittedBody = JSON.parse(String(init?.body));
@@ -1603,14 +1603,14 @@ describe("TaskItemRecoveryPanel", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const method = init?.method ?? "GET";
-        if (method === "GET" && url === "/api/v1/auth/principal") {
+        if (method === "GET" && url === "/api/auth/principal") {
           return new Response(JSON.stringify({ principal_id: "admin" }), {
             status: 200,
           });
         }
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), {
             status: 200,
@@ -1618,7 +1618,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "GET" &&
-          url === "/api/v1/operations/organize/previews/preview-1"
+          url === "/api/operations/organize/previews/preview-1"
         ) {
           return new Response(JSON.stringify(twoItemPreviewDocument()), {
             status: 200,
@@ -1627,7 +1627,7 @@ describe("TaskItemRecoveryPanel", () => {
         if (
           method === "GET" &&
           url.startsWith(
-            "/api/v1/operations/organize/previews/preview-1/admission?",
+            "/api/operations/organize/previews/preview-1/admission?",
           )
         ) {
           const params = new URL(url, "http://localhost").searchParams;
@@ -1647,7 +1647,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/operations/organize/previews/preview-1/execute"
+          url === "/api/operations/organize/previews/preview-1/execute"
         ) {
           confirmAttempts += 1;
           // The admission committed; this browser never sees the 202.
@@ -1751,14 +1751,14 @@ describe("TaskItemRecoveryPanel", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const method = init?.method ?? "GET";
-        if (method === "GET" && url === "/api/v1/auth/principal") {
+        if (method === "GET" && url === "/api/auth/principal") {
           return new Response(JSON.stringify({ principal_id: "admin" }), {
             status: 200,
           });
         }
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), {
             status: 200,
@@ -1766,7 +1766,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "GET" &&
-          url === "/api/v1/operations/organize/previews/preview-1"
+          url === "/api/operations/organize/previews/preview-1"
         ) {
           return new Response(JSON.stringify(previewDocument()), {
             status: 200,
@@ -1775,7 +1775,7 @@ describe("TaskItemRecoveryPanel", () => {
         if (
           method === "GET" &&
           url.startsWith(
-            "/api/v1/operations/organize/previews/preview-1/admission?",
+            "/api/operations/organize/previews/preview-1/admission?",
           )
         ) {
           return new Response(JSON.stringify(admissionOutcome()), {
@@ -1784,7 +1784,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/operations/organize/previews/preview-1/execute"
+          url === "/api/operations/organize/previews/preview-1/execute"
         ) {
           confirmAttempts += 1;
           await confirmGate;
@@ -1889,7 +1889,7 @@ describe("TaskItemRecoveryPanel", () => {
         const method = init?.method ?? "GET";
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), {
             status: 200,
@@ -1897,7 +1897,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "GET" &&
-          url === "/api/v1/operations/organize/previews/preview-1"
+          url === "/api/operations/organize/previews/preview-1"
         ) {
           return new Response(JSON.stringify(previewDocument()), {
             status: 200,
@@ -1905,7 +1905,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/prepare-summary"
+          url === "/api/tasks/task-1/items/item-1/recovery/prepare-summary"
         ) {
           currentRecovery = completedRecovery({
             preparation_id: "preparation-1",
@@ -2022,13 +2022,13 @@ describe("TaskItemRecoveryPanel", () => {
         calls.push({ method, path: url });
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(durable), { status: 200 });
         }
         if (
           method === "GET" &&
-          url === "/api/v1/operations/organize/previews/preview-1"
+          url === "/api/operations/organize/previews/preview-1"
         ) {
           return new Response(JSON.stringify(previewDocument()), {
             status: 200,
@@ -2080,7 +2080,7 @@ describe("TaskItemRecoveryPanel", () => {
           const method = init?.method ?? "GET";
           if (
             method === "GET" &&
-            url === "/api/v1/tasks/task-1/items/item-1/recovery"
+            url === "/api/tasks/task-1/items/item-1/recovery"
           ) {
             return new Response(
               JSON.stringify(queuedAnalysisRecovery(status)),
@@ -2132,20 +2132,20 @@ describe("TaskItemRecoveryPanel", () => {
         calls.push({ method, path: url });
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), { status: 200 });
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           currentRecovery = recognitionRecovery(true);
           return new Response(JSON.stringify(currentRecovery), { status: 200 });
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+          url === "/api/tasks/task-1/items/item-1/recovery/continue"
         ) {
           continuationAttempts += 1;
           if (continuationAttempts === 1) {
@@ -2206,9 +2206,9 @@ describe("TaskItemRecoveryPanel", () => {
     expect(
       calls.filter((call) => call.method === "POST").map((call) => call.path),
     ).toEqual([
-      "/api/v1/tasks/task-1/items/item-1/recovery/decision",
-      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
-      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+      "/api/tasks/task-1/items/item-1/recovery/decision",
+      "/api/tasks/task-1/items/item-1/recovery/continue",
+      "/api/tasks/task-1/items/item-1/recovery/continue",
     ]);
     expect(calls.some((call) => call.path.includes("/execute"))).toBe(false);
   });
@@ -2229,18 +2229,18 @@ describe("TaskItemRecoveryPanel", () => {
         const method = init?.method ?? "GET";
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), { status: 200 });
         }
-        if (method === "GET" && url === "/api/v1/operations/runs/task-1") {
+        if (method === "GET" && url === "/api/operations/runs/task-1") {
           return new Response(JSON.stringify(runOverviewDocument("pending")), {
             status: 200,
           });
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           posts.push(url);
           currentRecovery = recognitionRecovery(true);
@@ -2248,7 +2248,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+          url === "/api/tasks/task-1/items/item-1/recovery/continue"
         ) {
           posts.push(url);
           continuationAttempts += 1;
@@ -2322,8 +2322,8 @@ describe("TaskItemRecoveryPanel", () => {
       ).toBeNull(),
     );
     expect(posts).toEqual([
-      "/api/v1/tasks/task-1/items/item-1/recovery/decision",
-      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+      "/api/tasks/task-1/items/item-1/recovery/decision",
+      "/api/tasks/task-1/items/item-1/recovery/continue",
     ]);
   });
 
@@ -2338,7 +2338,7 @@ describe("TaskItemRecoveryPanel", () => {
         const method = init?.method ?? "GET";
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           // The decision is durably saved and its analysis was refused, so
           // the checkpoint still offers retry and has no legacy continuation.
@@ -2346,7 +2346,7 @@ describe("TaskItemRecoveryPanel", () => {
             status: 200,
           });
         }
-        if (method === "GET" && url === "/api/v1/operations/runs/task-1") {
+        if (method === "GET" && url === "/api/operations/runs/task-1") {
           // The overall Task flow still reads running while the operator is
           // only human-waiting; that status is not analysis admission proof.
           return new Response(JSON.stringify(runOverviewDocument("running")), {
@@ -2355,7 +2355,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+          url === "/api/tasks/task-1/items/item-1/recovery/continue"
         ) {
           posts.push(url);
           return new Response(
@@ -2372,7 +2372,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           posts.push(url);
         }
@@ -2402,9 +2402,7 @@ describe("TaskItemRecoveryPanel", () => {
     expect(
       await within(panel).findByText(/原 Task 已重新排入零变更分析/),
     ).toBeVisible();
-    expect(posts).toEqual([
-      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
-    ]);
+    expect(posts).toEqual(["/api/tasks/task-1/items/item-1/recovery/continue"]);
   });
 
   it("re-enables only the same analysis action after a read proves non-admission", async () => {
@@ -2422,18 +2420,18 @@ describe("TaskItemRecoveryPanel", () => {
         const method = init?.method ?? "GET";
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), { status: 200 });
         }
-        if (method === "GET" && url === "/api/v1/operations/runs/task-1") {
+        if (method === "GET" && url === "/api/operations/runs/task-1") {
           return new Response(JSON.stringify(runOverviewDocument("running")), {
             status: 200,
           });
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+          url === "/api/tasks/task-1/items/item-1/recovery/continue"
         ) {
           posts.push(url);
           return new Response(
@@ -2443,7 +2441,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           posts.push(url);
         }
@@ -2489,8 +2487,8 @@ describe("TaskItemRecoveryPanel", () => {
     await user.click(retry);
     expect(await within(panel).findByText(/服务响应无法确认/)).toBeVisible();
     expect(posts).toEqual([
-      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
-      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+      "/api/tasks/task-1/items/item-1/recovery/continue",
+      "/api/tasks/task-1/items/item-1/recovery/continue",
     ]);
   });
 
@@ -2510,18 +2508,18 @@ describe("TaskItemRecoveryPanel", () => {
         const method = init?.method ?? "GET";
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), { status: 200 });
         }
-        if (method === "GET" && url === "/api/v1/operations/runs/task-1") {
+        if (method === "GET" && url === "/api/operations/runs/task-1") {
           return new Response(JSON.stringify(runOverviewDocument("running")), {
             status: 200,
           });
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+          url === "/api/tasks/task-1/items/item-1/recovery/continue"
         ) {
           posts.push(url);
           currentRecovery = recognitionRecovery(true);
@@ -2543,7 +2541,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           posts.push(url);
         }
@@ -2582,9 +2580,7 @@ describe("TaskItemRecoveryPanel", () => {
     expect(
       within(reopened).queryByRole("button", { name: "保存并重新分析" }),
     ).toBeNull();
-    expect(posts).toEqual([
-      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
-    ]);
+    expect(posts).toEqual(["/api/tasks/task-1/items/item-1/recovery/continue"]);
   });
 
   it("reconciles an unknown analysis against the same Task before unlocking the action", async () => {
@@ -2601,18 +2597,18 @@ describe("TaskItemRecoveryPanel", () => {
         const method = init?.method ?? "GET";
         if (
           method === "GET" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+          url === "/api/tasks/task-1/items/item-1/recovery"
         ) {
           return new Response(JSON.stringify(currentRecovery), { status: 200 });
         }
-        if (method === "GET" && url === "/api/v1/operations/runs/task-1") {
+        if (method === "GET" && url === "/api/operations/runs/task-1") {
           return new Response(JSON.stringify(runOverviewDocument(runStatus)), {
             status: 200,
           });
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/decision"
+          url === "/api/tasks/task-1/items/item-1/recovery/decision"
         ) {
           posts.push(url);
           currentRecovery = recognitionRecovery(true);
@@ -2620,7 +2616,7 @@ describe("TaskItemRecoveryPanel", () => {
         }
         if (
           method === "POST" &&
-          url === "/api/v1/tasks/task-1/items/item-1/recovery/continue"
+          url === "/api/tasks/task-1/items/item-1/recovery/continue"
         ) {
           posts.push(url);
           continuationAttempts += 1;
@@ -2677,8 +2673,8 @@ describe("TaskItemRecoveryPanel", () => {
     ).toBeNull();
     expect(continuationAttempts).toBe(1);
     expect(posts).toEqual([
-      "/api/v1/tasks/task-1/items/item-1/recovery/decision",
-      "/api/v1/tasks/task-1/items/item-1/recovery/continue",
+      "/api/tasks/task-1/items/item-1/recovery/decision",
+      "/api/tasks/task-1/items/item-1/recovery/continue",
     ]);
   });
 });

@@ -126,7 +126,7 @@ def wait_for_api(base: str, token: str) -> None:
     wait_until(ready, description="production API health endpoint")
 
     def authenticated() -> bool:
-        status, _ = http_request(f"{base}/api/v1/tasks?limit=100", token=token)
+        status, _ = http_request(f"{base}/api/tasks?limit=100", token=token)
         return status == 200
 
     wait_until(authenticated, description="authenticated API Tasks endpoint")
@@ -270,7 +270,7 @@ def smoke(project: str, image: str, keep: bool) -> None:
             wait_for_api(base, token)
             activation = json.loads(activation_file.read_text(encoding="utf-8"))
             status, draft_body = http_request(
-                f"{base}/api/v1/configuration/drafts",
+                f"{base}/api/configuration/drafts",
                 method="POST",
                 token=token,
                 body=json.dumps({"document": activation}).encode(),
@@ -279,7 +279,7 @@ def smoke(project: str, image: str, keep: bool) -> None:
                 raise RuntimeError(f"configuration Draft import returned HTTP {status}")
             revision = json.loads(draft_body)["revisionId"]
             status, validated_body = http_request(
-                f"{base}/api/v1/configuration/revisions/{revision}/validate",
+                f"{base}/api/configuration/revisions/{revision}/validate",
                 method="POST",
                 token=token,
                 body=b"{}",
@@ -288,7 +288,7 @@ def smoke(project: str, image: str, keep: bool) -> None:
             if status != 200 or validated.get("status") != "validated":
                 raise RuntimeError(f"configuration validation failed: {validated}")
             status, active_body = http_request(
-                f"{base}/api/v1/configuration/revisions/{revision}/activate",
+                f"{base}/api/configuration/revisions/{revision}/activate",
                 method="POST",
                 token=token,
                 body=json.dumps({"expectedVersion": validated["version"]}).encode(),
@@ -297,7 +297,7 @@ def smoke(project: str, image: str, keep: bool) -> None:
             if status != 200 or active.get("status") != "active":
                 raise RuntimeError(f"configuration activation failed: {active}")
 
-            status, body = http_request(f"{base}/ui-v2/")
+            status, body = http_request(f"{base}/")
             if status != 200 or b'<div id="root">' not in body:
                 raise RuntimeError("current V2 Web shell was not reachable")
             # The retired V1 static product is an ordinary unknown route.
@@ -307,7 +307,7 @@ def smoke(project: str, image: str, keep: bool) -> None:
                     raise RuntimeError(
                         f"retired V1 Web path {retired_path} returned HTTP {status}, expected 404"
                     )
-            status, tasks = http_request(f"{base}/api/v1/tasks?limit=100", token=token)
+            status, tasks = http_request(f"{base}/api/tasks?limit=100", token=token)
             if status != 200:
                 raise RuntimeError(f"authenticated API Tasks list returned HTTP {status}")
             tasks_document = json.loads(tasks)
@@ -318,7 +318,7 @@ def smoke(project: str, image: str, keep: bool) -> None:
 
             # The independent Job collection is retired: an old client URL is an
             # ordinary bounded not-found and creates no work.
-            status, retired = http_request(f"{base}/api/v1/jobs", token=token)
+            status, retired = http_request(f"{base}/api/jobs", token=token)
             if status != 404:
                 raise RuntimeError(f"retired Job collection returned HTTP {status}, expected 404")
 
@@ -326,7 +326,7 @@ def smoke(project: str, image: str, keep: bool) -> None:
             run([*compose, *project_flag, "restart", "api"], environment=environment)
             wait_for_api(base, token)
             status, durable = http_request(
-                f"{base}/api/v1/tasks?limit=100",
+                f"{base}/api/tasks?limit=100",
                 token=token,
             )
             if status != 200:
@@ -336,7 +336,7 @@ def smoke(project: str, image: str, keep: bool) -> None:
             if json.loads(durable).get("items") != tasks_document.get("items"):
                 raise RuntimeError("API restart changed the durable Task collection")
 
-            status, logs = http_request(f"{base}/api/v1/tasks?limit=100", token=token)
+            status, logs = http_request(f"{base}/api/tasks?limit=100", token=token)
             if status != 200 or token.encode() in logs:
                 raise RuntimeError("API projection leaked the bearer token")
             identity = run(

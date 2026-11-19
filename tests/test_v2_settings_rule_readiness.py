@@ -23,8 +23,8 @@ from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfi
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
-STATUS_ROUTE = "/api/v1/configuration/status"
-INVENTORY_ROUTE = "/api/v1/operations/rules/inventory"
+STATUS_ROUTE = "/api/configuration/status"
+INVENTORY_ROUTE = "/api/operations/rules/inventory"
 
 FAMILIES = {
     "typeBindings",

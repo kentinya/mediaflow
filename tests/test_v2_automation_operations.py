@@ -3,13 +3,13 @@
 These regressions drive the real ``MediaFlowApi`` against a real managed
 configuration runtime, real LocalStorage roots and the real definition
 occurrence/Run once services. They prove the new
-``/api/v1/operations/automation/*`` read projections are bounded operator
+``/api/operations/automation/*`` read projections are bounded operator
 documents — no revision digests, definition fingerprints, source fingerprints
 or raw organize plans — with backend-authoritative actions and Draft state;
 that the Draft → Validate → checked-Activate journey composes the existing
 managed-configuration routes atomically and starts no work; that a definition
 Run once keeps its exact admitted scope and zero-mutation analysis; and that
-the existing ``/api/v1/automation`` and configuration surfaces remain
+the existing ``/api/automation`` and configuration surfaces remain
 untouched for V1 clients.
 """
 
@@ -45,7 +45,7 @@ ADMIN_TOKEN = "automation-admin-token"
 VIEWER_TOKEN = "automation-viewer-token"
 MANAGER_TOKEN = "automation-manager-token"
 
-OPERATIONS_ROUTE = "/api/v1/operations/automation/task-definitions"
+OPERATIONS_ROUTE = "/api/operations/automation/task-definitions"
 
 _DEFINITION = {
     "id": "auto-task",
@@ -405,7 +405,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
 
         with self._journey() as value:
             self._seed_retained_analysis_plan(value)
-            grant_path = f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant"
+            grant_path = f"/api/automation/task-definitions/{_DEFINITION['id']}/grant"
             for method, body in (
                 ("POST", {"revisionId": value.active.revision_id, "confirmation": True}),
                 ("POST", {}),
@@ -415,12 +415,12 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 self.assertEqual(body_out["error"]["code"], "not_found")
             status, state = _request(
                 value.api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant-state",
+                f"/api/automation/task-definitions/{_DEFINITION['id']}/grant-state",
             )
             self.assertEqual(status, 404, state)
             status, revoked = _request(
                 value.api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/revoke",
+                f"/api/automation/task-definitions/{_DEFINITION['id']}/revoke",
                 method="POST",
                 body={"reason": "bounds no longer wanted"},
             )
@@ -494,7 +494,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
 
         from unittest.mock import patch
 
-        metrics_route = "/api/v1/operations/automation/metrics"
+        metrics_route = "/api/operations/automation/metrics"
         with self._journey() as value:
             status, metrics = _request(value.api, metrics_route)
             self.assertEqual(200, status, metrics)
@@ -563,7 +563,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertTrue(create_action["available"])
             self.assertEqual(
                 create_action["path"],
-                f"/api/v1/configuration/revisions/{value.active.revision_id}/successor",
+                f"/api/configuration/revisions/{value.active.revision_id}/successor",
             )
             for name in ("save", "validate", "activate"):
                 self.assertFalse(self._action(draft, name)["available"])
@@ -589,7 +589,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertEqual(save_action["method"], "PUT")
             self.assertEqual(
                 save_action["path"],
-                f"/api/v1/configuration/revisions/{revision_id}/objects/"
+                f"/api/configuration/revisions/{revision_id}/objects/"
                 f"automationTaskDefinitions/{_DEFINITION['id']}",
             )
             activate_action = self._action(draft, "activate")
@@ -725,15 +725,15 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             for method, path in (
                 (
                     "POST",
-                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/preview",
+                    f"/api/automation/task-definitions/{_DEFINITION['id']}/preview",
                 ),
                 (
                     "GET",
-                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/previews",
+                    f"/api/automation/task-definitions/{_DEFINITION['id']}/previews",
                 ),
                 (
                     "GET",
-                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/previews/p-1",
+                    f"/api/automation/task-definitions/{_DEFINITION['id']}/previews/p-1",
                 ),
                 (
                     "GET",
@@ -745,7 +745,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 ),
                 (
                     "POST",
-                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/preview-analyses",
+                    f"/api/automation/task-definitions/{_DEFINITION['id']}/preview-analyses",
                 ),
             ):
                 with self.subTest(method=method, path=path):
@@ -830,7 +830,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertNotIn("job", occurrence["actions"])
             self.assertEqual(
                 occurrence["actions"]["task"]["path"],
-                f"/api/v1/operations/tasks/{emitted[0].task_id}",
+                f"/api/operations/tasks/{emitted[0].task_id}",
             )
             self.assertEqual(occurrence["configurationRevisionId"], value.active.revision_id)
             self.assertNotIn("digest", json.dumps(occurrence))
@@ -843,7 +843,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
 
             _status, _preview = _request(
                 value.api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/preview",
+                f"/api/automation/task-definitions/{_DEFINITION['id']}/preview",
                 method="POST",
             )
             status, draft = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft")
@@ -872,7 +872,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
 
     def test_v1_automation_surfaces_remain_compatible(self) -> None:
         with self._journey() as value:
-            status, legacy = _request(value.api, "/api/v1/automation/task-definitions")
+            status, legacy = _request(value.api, "/api/automation/task-definitions")
             self.assertEqual(status, 200)
             self.assertIn("configuration", legacy)
             self.assertIn("digest", legacy["configuration"])
@@ -880,13 +880,13 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertIn("definitionFingerprint", legacy["items"][0])
 
             status, legacy_detail = _request(
-                value.api, f"/api/v1/automation/task-definitions/{_DEFINITION['id']}"
+                value.api, f"/api/automation/task-definitions/{_DEFINITION['id']}"
             )
             self.assertEqual(status, 200)
             self.assertIn("configuration", legacy_detail)
             self.assertIn("definitionFingerprint", legacy_detail["definition"])
 
-            status, jobs = _request(value.api, "/api/v1/jobs")
+            status, jobs = _request(value.api, "/api/jobs")
             self.assertEqual(status, 404)
 
     def test_real_draft_document_satisfies_frontend_action_contract(self) -> None:
@@ -895,7 +895,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
         Mirrors the relevant ``AUTOMATION_ACTION_CONTRACTS`` bindings from
         ``web/src/entities/operations/automation.ts``: the checked activation
         is advertised only as the dedicated
-        ``/api/v1/operations/automation/task-definitions/<id>/activate-draft``
+        ``/api/operations/automation/task-definitions/<id>/activate-draft``
         POST with confirmation, and the draft-save/validate/create transports
         keep their exact owned routes. A real document that stops matching the
         frontend normalizer fails here before any browser can observe it.
@@ -909,7 +909,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertEqual(create_draft["method"], "POST")
             self.assertEqual(
                 create_draft["path"],
-                f"/api/v1/configuration/revisions/{value.active.revision_id}/successor",
+                f"/api/configuration/revisions/{value.active.revision_id}/successor",
             )
             for name in ("save", "validate", "activate"):
                 self.assertFalse(actions[name]["available"])
@@ -935,14 +935,14 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertEqual(save["method"], "PUT")
             self.assertEqual(
                 save["path"],
-                f"/api/v1/configuration/revisions/{draft['draft']['revisionId']}/objects/"
+                f"/api/configuration/revisions/{draft['draft']['revisionId']}/objects/"
                 f"automationTaskDefinitions/{_DEFINITION['id']}",
             )
             validate = actions["validate"]
             self.assertEqual(validate["method"], "POST")
             self.assertEqual(
                 validate["path"],
-                f"/api/v1/configuration/revisions/{draft['draft']['revisionId']}/validate",
+                f"/api/configuration/revisions/{draft['draft']['revisionId']}/validate",
             )
 
             status, detail = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}")
@@ -963,7 +963,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             # Two successor Drafts are staged from the same Active base, both
             # containing the definition at the same optimistic version — the
             # same-version/different-revision concurrency shape.
-            successor = f"/api/v1/configuration/revisions/{value.active.revision_id}/successor"
+            successor = f"/api/configuration/revisions/{value.active.revision_id}/successor"
             status, first = _request(
                 value.api,
                 successor,
@@ -1053,7 +1053,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             changed_policy["name"] = "Unrelated rename"
             status, _updated = _request(
                 value.api,
-                f"/api/v1/configuration/revisions/{draft_id}/objects/namingPolicies/{policy['id']}",
+                f"/api/configuration/revisions/{draft_id}/objects/namingPolicies/{policy['id']}",
                 method="PUT",
                 body={"object": changed_policy, "expectedVersion": saved["version"]},
             )
@@ -1083,7 +1083,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             # A clean automation-only successor Draft still activates exactly.
             status, fresh = _request(
                 value.api,
-                f"/api/v1/configuration/revisions/{value.active.revision_id}/successor",
+                f"/api/configuration/revisions/{value.active.revision_id}/successor",
                 method="POST",
                 body={"expectedActiveRevisionId": value.active.revision_id},
             )
@@ -1140,7 +1140,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             sibling["name"] = "Sibling automation"
             status, _mutation = _request(
                 value.api,
-                "/api/v1/automation/task-definitions",
+                "/api/automation/task-definitions",
                 method="POST",
                 body={
                     "revisionId": created["revisionId"],
@@ -1227,7 +1227,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             extra["name"] = "Extra automation"
             status, _mutation = _request(
                 value.api,
-                "/api/v1/automation/task-definitions",
+                "/api/automation/task-definitions",
                 method="POST",
                 body={
                     "revisionId": draft_id,
@@ -1291,7 +1291,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             status, _updated = _request(
                 value.api,
                 (
-                    f"/api/v1/configuration/revisions/{draft_id}/objects/"
+                    f"/api/configuration/revisions/{draft_id}/objects/"
                     "automationTaskDefinitions/sibling-task"
                 ),
                 method="PUT",
@@ -1353,7 +1353,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             }
             status, mutation = _request(
                 value.api,
-                "/api/v1/automation/task-definitions",
+                "/api/automation/task-definitions",
                 method="POST",
                 body={
                     "revisionId": draft_id,
@@ -1447,7 +1447,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             status, draft = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft")
             status, copied = _request(
                 value.api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/copy",
+                f"/api/automation/task-definitions/{_DEFINITION['id']}/copy",
                 method="POST",
                 body={
                     "revisionId": created["revisionId"],
@@ -1491,7 +1491,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             }
             status, _mutation = _request(
                 value.api,
-                "/api/v1/automation/task-definitions",
+                "/api/automation/task-definitions",
                 method="POST",
                 body={
                     "revisionId": draft_id,
@@ -1555,7 +1555,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             )
             status, _mutation = _request(
                 value.api,
-                "/api/v1/automation/task-definitions",
+                "/api/automation/task-definitions",
                 method="POST",
                 body={
                     "revisionId": created["revisionId"],
@@ -1604,7 +1604,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             status, draft = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft")
             status, copied = _request(
                 value.api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/copy",
+                f"/api/automation/task-definitions/{_DEFINITION['id']}/copy",
                 method="POST",
                 body={
                     "revisionId": draft_id,
@@ -1665,7 +1665,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             status, draft = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft")
             status, copied = _request(
                 value.api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/copy",
+                f"/api/automation/task-definitions/{_DEFINITION['id']}/copy",
                 method="POST",
                 body={
                     "revisionId": created["revisionId"],
@@ -1729,7 +1729,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 bulk["name"] = f"Bulk automation {index}"
                 status, _mutation = _request(
                     value.api,
-                    "/api/v1/automation/task-definitions",
+                    "/api/automation/task-definitions",
                     method="POST",
                     body={
                         "revisionId": created["revisionId"],
@@ -1766,7 +1766,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             )
             status, mutation = _request(
                 value.api,
-                "/api/v1/automation/task-definitions",
+                "/api/automation/task-definitions",
                 method="POST",
                 body={
                     "revisionId": created["revisionId"],

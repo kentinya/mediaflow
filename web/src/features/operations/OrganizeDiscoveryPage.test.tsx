@@ -34,7 +34,7 @@ function action(
   return {
     available,
     method: "POST",
-    path: `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/${path}`,
+    path: `/api/operations/organize/discoveries/${DISCOVERY_ID}/${path}`,
     requiresVersion: true,
     sideEffects: "none",
     refusal,
@@ -156,7 +156,7 @@ describe("bounded discovery refusal journey", () => {
         visitedEntries: 20,
       }),
     );
-    renderApp(`/ui-v2/operations/organize/discovery/${DISCOVERY_ID}`);
+    renderApp(`/operations/organize/discovery/${DISCOVERY_ID}`);
 
     await screen.findByRole("heading", { name: "整理发现" });
     // The durable material refusal is explained even though the current
@@ -213,7 +213,7 @@ describe("bounded discovery refusal journey", () => {
       return jsonResponse(completed);
     });
     vi.stubGlobal("fetch", fetchMock);
-    renderApp(`/ui-v2/operations/organize/discovery/${DISCOVERY_ID}`);
+    renderApp(`/operations/organize/discovery/${DISCOVERY_ID}`);
 
     const button = await screen.findByRole("button", {
       name: "冻结来源并继续整理",
@@ -258,7 +258,7 @@ describe("bounded discovery refusal journey", () => {
     (stale.actions as Record<string, unknown>).pause = action("pause", true);
     (stale.actions as Record<string, unknown>).resume = action("resume", true);
     stubFetch(stale);
-    renderApp(`/ui-v2/operations/organize/discovery/${DISCOVERY_ID}`);
+    renderApp(`/operations/organize/discovery/${DISCOVERY_ID}`);
 
     await screen.findByRole("heading", { name: "整理发现" });
     expect(screen.queryByRole("button", { name: "暂停发现" })).toBeNull();

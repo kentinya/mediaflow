@@ -1,7 +1,7 @@
 """Focused proof for Task 46.4 — the organizing-only Task Center (RO-4).
 
 These tests exercise the real SQLite repository, the shared read projection and
-the authenticated ``/api/v1/operations/runs`` API against the current legal
+the authenticated ``/api/operations/runs`` API against the current legal
 production assemblies:
 
 - AC-1 the eight sibling views are independent, deep-linkable server queries
@@ -307,7 +307,7 @@ class _TaskCenterTestCase(unittest.TestCase):
         )
 
     def _page(self, query: str = "", token: str = "viewer-token") -> dict:
-        code, page = request(self.api, "GET", "/api/v1/operations/runs", token=token, query=query)
+        code, page = request(self.api, "GET", "/api/operations/runs", token=token, query=query)
         self.assertEqual(200, code)
         return page
 
@@ -427,7 +427,7 @@ class TaskCenterViewTests(_TaskCenterTestCase):
                 self.assertEqual(expected, page["total"])
         # The retired fifth view is a rejected filter, never a silently
         # different population and never a resurrected recovery page.
-        code, body = request(self.api, "GET", "/api/v1/operations/runs", query="view=failure")
+        code, body = request(self.api, "GET", "/api/operations/runs", query="view=failure")
         self.assertEqual(400, code)
         self.assertEqual("invalid_request", body["error"]["code"])
         # The recovery view always applies its own problem predicate even when
@@ -578,13 +578,13 @@ class TaskCenterViewTests(_TaskCenterTestCase):
             f"view=metadata&problem=conflict&limit=1&cursor={cursor}",
         ):
             with self.subTest(query=mismatched):
-                code, _body = request(self.api, "GET", "/api/v1/operations/runs", query=mismatched)
+                code, _body = request(self.api, "GET", "/api/operations/runs", query=mismatched)
                 self.assertEqual(400, code)
         # The minting principal pages normally; another principal is refused.
         code, _body = request(
             self.api,
             "GET",
-            "/api/v1/operations/runs",
+            "/api/operations/runs",
             token="other-token",
             query=f"view=metadata&limit=1&cursor={cursor}",
         )
@@ -632,7 +632,7 @@ class TaskCenterViewTests(_TaskCenterTestCase):
     def test_invalid_view_and_problem_values_reject_safely(self) -> None:
         for query in ("view=teleported", "problem=unknown", "view=recognition&view=metadata"):
             with self.subTest(query=query):
-                code, body = request(self.api, "GET", "/api/v1/operations/runs", query=query)
+                code, body = request(self.api, "GET", "/api/operations/runs", query=query)
                 self.assertEqual(400, code)
                 self.assertEqual("invalid_request", body["error"]["code"])
 
@@ -654,7 +654,7 @@ class TaskCenterViewTests(_TaskCenterTestCase):
             code, files = request(
                 self.api,
                 "GET",
-                f"/api/v1/operations/runs/{mixed.task_id}/problem-items",
+                f"/api/operations/runs/{mixed.task_id}/problem-items",
                 query=f"problem={problem}",
             )
             self.assertEqual(200, code)
@@ -700,14 +700,14 @@ class TaskCenterViewTests(_TaskCenterTestCase):
         # The retired failure view and any other out-of-contract view are
         # rejected reads that still create no work and no media effect.
         for query in ("view=failure", "view=teleported", "problem=failure"):
-            code, _body = request(self.api, "GET", "/api/v1/operations/runs", query=query)
+            code, _body = request(self.api, "GET", "/api/operations/runs", query=query)
             self.assertEqual(400, code)
         self.assertEqual(before_tasks, len(self.repository.list_tasks()))
         # Reads never create queue, delivery or media work either.
         self.assertEqual(0, self.repository.count_scheduled_capacity_use())
         self.assertEqual((), self.repository.list_deliveries())
         # An unauthenticated read is refused, never an empty population.
-        code, _body = request(self.api, "GET", "/api/v1/operations/runs", token="denied")
+        code, _body = request(self.api, "GET", "/api/operations/runs", token="denied")
         self.assertEqual(401, code)
 
 
@@ -766,7 +766,7 @@ class FilesPreparationLinkTests(_TaskCenterTestCase):
         # The exact Task's own durable preparation identity is published, with
         # the backend continuation eligibility of the same flow (a running
         # Task's preparation stays continuable).
-        code, body = request(self.api, "GET", f"/api/v1/operations/runs/{prepared.task_id}")
+        code, body = request(self.api, "GET", f"/api/operations/runs/{prepared.task_id}")
         self.assertEqual(200, code)
         self.assertEqual(
             {
@@ -777,11 +777,11 @@ class FilesPreparationLinkTests(_TaskCenterTestCase):
             body["filesPreparation"],
         )
         # A sibling Task's preparation is never borrowed.
-        code, body = request(self.api, "GET", f"/api/v1/operations/runs/{sibling.task_id}")
+        code, body = request(self.api, "GET", f"/api/operations/runs/{sibling.task_id}")
         self.assertEqual(200, code)
         self.assertEqual("prep_sibling", body["filesPreparation"]["discoveryId"])
         # A Task that owns no Files preparation exposes no entry at all.
-        code, body = request(self.api, "GET", f"/api/v1/operations/runs/{unlinked.task_id}")
+        code, body = request(self.api, "GET", f"/api/operations/runs/{unlinked.task_id}")
         self.assertEqual(200, code)
         self.assertIsNone(body["filesPreparation"])
         # Inventory rows carry no preparation projection: the list never loads
@@ -795,14 +795,14 @@ class FilesPreparationLinkTests(_TaskCenterTestCase):
         self._link_preparation(prepared.task_id, discovery_id="prep_read")
         before = len(self.repository.list_media_discoveries(limit=10))
         # The ordinary READ principal can read the exact link...
-        code, body = request(self.api, "GET", f"/api/v1/operations/runs/{prepared.task_id}")
+        code, body = request(self.api, "GET", f"/api/operations/runs/{prepared.task_id}")
         self.assertEqual(200, code)
         self.assertEqual("prep_read", body["filesPreparation"]["discoveryId"])
         # ...and the same run detail read is still refused without a principal.
         code, _body = request(
             self.api,
             "GET",
-            f"/api/v1/operations/runs/{prepared.task_id}",
+            f"/api/operations/runs/{prepared.task_id}",
             token="denied",
         )
         self.assertEqual(401, code)
@@ -845,7 +845,7 @@ class RecoveryListTests(_TaskCenterTestCase):
 
         # The retired failure view is rejected, and no center read derives a
         # failure statistic from the technical failure.
-        code, _body = request(self.api, "GET", "/api/v1/operations/runs", query="view=failure")
+        code, _body = request(self.api, "GET", "/api/operations/runs", query="view=failure")
         self.assertEqual(400, code)
         summary = self._page()["summary"]
         self.assertNotIn("failure", summary["problem_tasks"])
@@ -900,7 +900,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         code, first = request(
             self.api,
             "GET",
-            f"/api/v1/operations/runs/{task.task_id}/problem-items",
+            f"/api/operations/runs/{task.task_id}/problem-items",
             query="problem=recognition&limit=2",
         )
         self.assertEqual(200, code)
@@ -913,7 +913,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         code, second = request(
             self.api,
             "GET",
-            f"/api/v1/operations/runs/{task.task_id}/problem-items",
+            f"/api/operations/runs/{task.task_id}/problem-items",
             query=f"problem=recognition&limit=2&cursor={first['next_cursor']}",
         )
         self.assertEqual(200, code)
@@ -927,7 +927,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         code, conflicts = request(
             self.api,
             "GET",
-            f"/api/v1/operations/runs/{task.task_id}/problem-items",
+            f"/api/operations/runs/{task.task_id}/problem-items",
             query="problem=conflict",
         )
         self.assertEqual(200, code)
@@ -937,7 +937,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         code, _body = request(
             self.api,
             "GET",
-            f"/api/v1/operations/runs/{task.task_id}/problem-items",
+            f"/api/operations/runs/{task.task_id}/problem-items",
             query="problem=failure",
         )
         self.assertEqual(400, code)
@@ -949,7 +949,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         code, first = request(
             self.api,
             "GET",
-            f"/api/v1/operations/runs/{task.task_id}/problem-items",
+            f"/api/operations/runs/{task.task_id}/problem-items",
             query="problem=recognition&limit=1",
         )
         cursor = first["next_cursor"]
@@ -957,14 +957,14 @@ class RecoveryListTests(_TaskCenterTestCase):
         code, _body = request(
             self.api,
             "GET",
-            f"/api/v1/operations/runs/{task.task_id}/problem-items",
+            f"/api/operations/runs/{task.task_id}/problem-items",
             query=f"problem=conflict&limit=1&cursor={cursor}",
         )
         self.assertEqual(400, code)
         code, _body = request(
             self.api,
             "GET",
-            f"/api/v1/operations/runs/{task.task_id}/problem-items",
+            f"/api/operations/runs/{task.task_id}/problem-items",
             token="other-token",
             query=f"problem=recognition&limit=1&cursor={cursor}",
         )
@@ -974,7 +974,7 @@ class RecoveryListTests(_TaskCenterTestCase):
                 code, _body = request(
                     self.api,
                     "GET",
-                    f"/api/v1/operations/runs/{task.task_id}/problem-items",
+                    f"/api/operations/runs/{task.task_id}/problem-items",
                     query=invalid,
                 )
                 self.assertEqual(400, code)
@@ -1026,13 +1026,13 @@ class TaskCenterPopulationTests(_TaskCenterTestCase):
 
         # An exact-ID center read of an ordinary row is a 404, never a
         # re-labelled organizing run.
-        code, body = request(self.api, "GET", "/api/v1/operations/runs/files_transfer")
+        code, body = request(self.api, "GET", "/api/operations/runs/files_transfer")
         self.assertEqual(404, code)
         self.assertEqual("not_found", body["error"]["code"])
         # A cursor minted over the organizing population cannot be replayed to
         # reach an ordinary row either: the population is decided server-side.
         code, filtered = request(
-            self.api, "GET", "/api/v1/operations/runs", query="command=files_transfer"
+            self.api, "GET", "/api/operations/runs", query="command=files_transfer"
         )
         self.assertEqual(200, code)
         self.assertEqual(0, filtered["total"])
@@ -1070,7 +1070,7 @@ class TaskCenterPopulationTests(_TaskCenterTestCase):
         self.repository._connection.commit()
         page = self._page()
         self.assertEqual(0, page["total"], page)
-        code, body = request(self.api, "GET", "/api/v1/operations/runs/plain-analysis")
+        code, body = request(self.api, "GET", "/api/operations/runs/plain-analysis")
         self.assertEqual(404, code)
 
     def test_mixed_population_beyond_one_page_counts_and_pages_consistently(self) -> None:
@@ -1141,7 +1141,7 @@ class TaskCenterPopulationTests(_TaskCenterTestCase):
             "conflict",
         ):
             self.assertEqual(0, self._page(f"view={view}")["total"], view)
-        code, body = request(self.api, "GET", f"/api/v1/operations/runs/{analysed.task_id}")
+        code, body = request(self.api, "GET", f"/api/operations/runs/{analysed.task_id}")
         self.assertEqual(404, code)
         self.assertEqual("not_found", body["error"]["code"])
         # Nothing was deleted: the durable analysis Task and its item remain.
@@ -1204,7 +1204,7 @@ class TaskCenterPopulationTests(_TaskCenterTestCase):
         code, page = request(
             self.api,
             "GET",
-            f"/api/v1/operations/runs/{task.task_id}/items",
+            f"/api/operations/runs/{task.task_id}/items",
             query="limit=100",
         )
         self.assertEqual(200, code)

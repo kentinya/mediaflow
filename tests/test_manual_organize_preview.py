@@ -1174,18 +1174,18 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                 }
                 for path, method, request_body, token in (
                     (
-                        f"/api/v1/manual-intents/{intent.intent_id}/preview",
+                        f"/api/manual-intents/{intent.intent_id}/preview",
                         "POST",
                         body,
                         "operator-token",
                     ),
                     (
-                        f"/api/v1/manual-intents/{intent.intent_id}/previews?limit=10",
+                        f"/api/manual-intents/{intent.intent_id}/previews?limit=10",
                         "GET",
                         None,
                         "viewer-token",
                     ),
-                    ("/api/v1/manual-previews/preview-id", "GET", None, "viewer-token"),
+                    ("/api/manual-previews/preview-id", "GET", None, "viewer-token"),
                 ):
                     with self.subTest(path=path):
                         status, document = request(

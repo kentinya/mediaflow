@@ -186,7 +186,7 @@ def admit_organize_job(api, *, limit: int = 1):
         display=RunDisplayContext(source_scope=None, origin_kind="remote-organize"),
     )
     task_id = task.task_id
-    status, document = request(api, f"/api/v1/tasks/{task_id}")
+    status, document = request(api, f"/api/tasks/{task_id}")
     assert status == 200, (status, document)
     return task_id, document
 
@@ -413,7 +413,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 first_root = str(root / "first root")
                 status, created = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/objects/storages",
+                    f"/api/configuration/revisions/{draft.revision_id}/objects/storages",
                     method="POST",
                     body={
                         "expectedVersion": draft.version,
@@ -429,7 +429,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 second_root = str(root / "second root")
                 target_path = (
-                    f"/api/v1/configuration/revisions/{draft.revision_id}"
+                    f"/api/configuration/revisions/{draft.revision_id}"
                     "/objects/storages/guided-local"
                 )
                 status, updated = request(
@@ -450,7 +450,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(updated["version"], created["version"] + 1)
                 status, guided = request(
-                    api, f"/api/v1/configuration/revisions/{draft.revision_id}/objects"
+                    api, f"/api/configuration/revisions/{draft.revision_id}/objects"
                 )
                 self.assertEqual(status, 200)
                 stored = next(
@@ -476,7 +476,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 draft = service.import_draft(document, actor="tester")
                 target_path = (
-                    f"/api/v1/configuration/revisions/{draft.revision_id}"
+                    f"/api/configuration/revisions/{draft.revision_id}"
                     "/objects/storages/source-storage"
                 )
                 before = service.require(draft.revision_id)
@@ -1150,12 +1150,12 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     actor="tester",
                 )
                 endpoint = (
-                    f"/api/v1/configuration/revisions/{validated.revision_id}/"
+                    f"/api/configuration/revisions/{validated.revision_id}/"
                     "recognition-strategy-test"
                 )
                 status, _detail = request(
                     api,
-                    f"/api/v1/configuration/revisions/{validated.revision_id}/objects",
+                    f"/api/configuration/revisions/{validated.revision_id}/objects",
                 )
                 self.assertEqual(status, 200)
                 base_body = {
@@ -1212,7 +1212,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 status, evidence = request(
                     api,
-                    f"/api/v1/configuration/revisions/{validated.revision_id}/"
+                    f"/api/configuration/revisions/{validated.revision_id}/"
                     "recognition-strategy-test",
                     method="POST",
                     body={
@@ -1239,7 +1239,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
 
                 status, detail = request(
                     api,
-                    f"/api/v1/configuration/revisions/{validated.revision_id}/objects",
+                    f"/api/configuration/revisions/{validated.revision_id}/objects",
                 )
                 self.assertEqual(status, 200)
                 reloaded = detail["recognitionStrategyTest"]
@@ -1271,7 +1271,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     service.import_draft(document, actor="tester").revision_id,
                     actor="tester",
                 )
-                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                base = f"/api/configuration/revisions/{validated.revision_id}"
                 status, not_found = request(
                     api,
                     f"{base}/recognition-strategy-test",
@@ -1357,7 +1357,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     service.import_draft(document, actor="tester").revision_id,
                     actor="tester",
                 )
-                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                base = f"/api/configuration/revisions/{validated.revision_id}"
                 _status, not_found = request(
                     api,
                     f"{base}/recognition-strategy-test",
@@ -1424,7 +1424,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     service.import_draft(document, actor="tester").revision_id,
                     actor="tester",
                 )
-                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                base = f"/api/configuration/revisions/{validated.revision_id}"
                 _status, evidence = request(
                     api,
                     f"{base}/recognition-strategy-test",
@@ -1490,7 +1490,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     service.import_draft(document, actor="tester").revision_id,
                     actor="tester",
                 )
-                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                base = f"/api/configuration/revisions/{validated.revision_id}"
 
                 def run_test(live):
                     return request(
@@ -1567,7 +1567,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     service.import_draft(document, actor="tester").revision_id,
                     actor="tester",
                 )
-                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                base = f"/api/configuration/revisions/{validated.revision_id}"
                 _status, not_found = request(
                     api,
                     f"{base}/recognition-strategy-test",
@@ -1658,7 +1658,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                             service.import_draft(document, actor="tester").revision_id,
                             actor="tester",
                         )
-                        base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                        base = f"/api/configuration/revisions/{validated.revision_id}"
                         _status, not_found = request(
                             api,
                             f"{base}/recognition-strategy-test",
@@ -1783,7 +1783,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     managed_one.import_draft(document, actor="tester").revision_id,
                     actor="tester",
                 )
-                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                base = f"/api/configuration/revisions/{validated.revision_id}"
                 _status, not_found = request(
                     api_one,
                     f"{base}/recognition-strategy-test",
@@ -1867,7 +1867,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     managed_one.import_draft(document, actor="tester").revision_id,
                     actor="tester",
                 )
-                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                base = f"/api/configuration/revisions/{validated.revision_id}"
                 _status, not_found = request(
                     api,
                     f"{base}/recognition-strategy-test",
@@ -1962,7 +1962,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     service.import_draft(document, actor="tester").revision_id,
                     actor="tester",
                 )
-                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                base = f"/api/configuration/revisions/{validated.revision_id}"
                 status, ambiguous = request(
                     api,
                     f"{base}/recognition-strategy-test",
@@ -2066,7 +2066,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     service.import_draft(document, actor="tester").revision_id,
                     actor="tester",
                 )
-                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                base = f"/api/configuration/revisions/{validated.revision_id}"
                 status, ambiguous = request(
                     api,
                     f"{base}/recognition-strategy-test",
@@ -2183,7 +2183,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                             managed_one.import_draft(document, actor="tester").revision_id,
                             actor="tester",
                         )
-                        base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                        base = f"/api/configuration/revisions/{validated.revision_id}"
                         status, ambiguous = request(
                             api_one,
                             f"{base}/recognition-strategy-test",
@@ -2322,7 +2322,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                             managed_one.import_draft(document, actor="tester").revision_id,
                             actor="tester",
                         )
-                        base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                        base = f"/api/configuration/revisions/{validated.revision_id}"
                         status, ambiguous = request(
                             api,
                             f"{base}/recognition-strategy-test",
@@ -2446,7 +2446,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     service.import_draft(document, actor="tester").revision_id,
                     actor="tester",
                 )
-                base = f"/api/v1/configuration/revisions/{validated.revision_id}"
+                base = f"/api/configuration/revisions/{validated.revision_id}"
                 status, ambiguous = request(
                     api,
                     f"{base}/recognition-strategy-test",
@@ -2510,7 +2510,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 status, evidence = request(
                     api,
-                    f"/api/v1/configuration/revisions/{validated.revision_id}/"
+                    f"/api/configuration/revisions/{validated.revision_id}/"
                     "recognition-strategy-test",
                     method="POST",
                     body={
@@ -2526,7 +2526,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(evidence["result"]["metadata"]["identity"]["providerId"], "42")
                 status, detail = request(
                     api,
-                    f"/api/v1/configuration/revisions/{validated.revision_id}/objects",
+                    f"/api/configuration/revisions/{validated.revision_id}/objects",
                 )
                 self.assertEqual(status, 200)
                 reloaded = detail["recognitionStrategyTest"]
@@ -2665,7 +2665,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     ):
                         status, evidence = request(
                             api,
-                            f"/api/v1/configuration/revisions/{validated.revision_id}/"
+                            f"/api/configuration/revisions/{validated.revision_id}/"
                             "recognition-strategy-test",
                             method="POST",
                             body={
@@ -2678,7 +2678,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     self.assertEqual(status, 200)
                     status, detail = request(
                         api,
-                        f"/api/v1/configuration/revisions/{validated.revision_id}/objects",
+                        f"/api/configuration/revisions/{validated.revision_id}/objects",
                     )
                     self.assertEqual(status, 200)
                     reloaded = detail["recognitionStrategyTest"]
@@ -2974,7 +2974,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 draft = service.import_draft(document, actor="tester")
                 collection = (
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/objects/metadataPolicies"
+                    f"/api/configuration/revisions/{draft.revision_id}/objects/metadataPolicies"
                 )
                 status, created = request(
                     api,
@@ -3013,7 +3013,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 status, detail = request(
-                    api, f"/api/v1/configuration/revisions/{draft.revision_id}/objects"
+                    api, f"/api/configuration/revisions/{draft.revision_id}/objects"
                 )
                 self.assertEqual(status, 200)
                 stored = next(
@@ -3481,7 +3481,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 ):
                     status, response = request(
                         api,
-                        f"/api/v1/configuration/revisions/{validated.revision_id}/local-setup-check",
+                        f"/api/configuration/revisions/{validated.revision_id}/local-setup-check",
                         method="POST",
                         body={
                             "expectedVersion": validated.version,
@@ -3722,7 +3722,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 ):
                     status, response = request(
                         api,
-                        f"/api/v1/configuration/revisions/{validated.revision_id}/local-setup-check",
+                        f"/api/configuration/revisions/{validated.revision_id}/local-setup-check",
                         method="POST",
                         body={
                             "expectedVersion": validated.version,
@@ -3804,7 +3804,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     configuration_service=service,
                     bootstrap_document=document,
                 )
-                detail_path = f"/api/v1/configuration/revisions/{revision_id}/objects"
+                detail_path = f"/api/configuration/revisions/{revision_id}/objects"
                 status, reloaded = request(api, detail_path)
                 self.assertEqual(status, 200)
                 evidence = reloaded["localSetupCheck"]
@@ -3825,8 +3825,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 resource["storagePath"] = "incoming"
                 status, edited = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/"
-                    "resourceLibraries/source",
+                    f"/api/configuration/revisions/{revision_id}/objects/resourceLibraries/source",
                     method="PUT",
                     body={"object": resource, "expectedVersion": failed_version},
                 )
@@ -3838,7 +3837,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
 
                 status, revalidated = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/validate",
+                    f"/api/configuration/revisions/{revision_id}/validate",
                     method="POST",
                     body={},
                 )
@@ -3855,7 +3854,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 ):
                     status, passed = request(
                         api,
-                        f"/api/v1/configuration/revisions/{revision_id}/local-setup-check",
+                        f"/api/configuration/revisions/{revision_id}/local-setup-check",
                         method="POST",
                         body={
                             "expectedVersion": current.version,
@@ -4621,7 +4620,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     )
                 )
                 target_path = (
-                    f"/api/v1/configuration/revisions/{draft.revision_id}"
+                    f"/api/configuration/revisions/{draft.revision_id}"
                     f"/objects/mediaLibraries/{target_id}"
                 )
                 before = service.require(draft.revision_id)
@@ -4642,7 +4641,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(
                     len(config_repository.list_revision_audits(draft.revision_id)), before_audits
                 )
-                status, raw = request(api, f"/api/v1/configuration/revisions/{draft.revision_id}")
+                status, raw = request(api, f"/api/configuration/revisions/{draft.revision_id}")
                 self.assertEqual(status, 200)
                 # The revision JSON response carries the shared bounded managed
                 # projection: every managed family is preserved while the
@@ -4666,14 +4665,14 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 ]
                 status, saved = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}",
+                    f"/api/configuration/revisions/{draft.revision_id}",
                     method="PUT",
                     body={"document": corrected, "expectedVersion": draft.version},
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(saved["version"], draft.version + 1)
                 status, guided = request(
-                    api, f"/api/v1/configuration/revisions/{draft.revision_id}/objects"
+                    api, f"/api/configuration/revisions/{draft.revision_id}/objects"
                 )
                 self.assertEqual(status, 200)
                 self.assertIn(
@@ -4744,7 +4743,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 before_audits = len(config_repository.list_revision_audits(draft.revision_id))
                 status, response = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/objects/storages/{target_id}",
+                    f"/api/configuration/revisions/{draft.revision_id}/objects/storages/{target_id}",
                     method="DELETE",
                     body={"expectedVersion": draft.version},
                 )
@@ -4798,12 +4797,12 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     bootstrap_document=document,
                 )
                 status, draft = request(
-                    api, "/api/v1/configuration/drafts", method="POST", body={"document": document}
+                    api, "/api/configuration/drafts", method="POST", body={"document": document}
                 )
                 self.assertEqual(status, 201)
                 status, conflict = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}/objects/storages/reference-target",
+                    f"/api/configuration/revisions/{draft['revisionId']}/objects/storages/reference-target",
                     method="DELETE",
                     body={"expectedVersion": draft["version"]},
                 )
@@ -4813,7 +4812,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertTrue(details["referencesTruncated"])
                 status, first = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}/objects/storages",
+                    f"/api/configuration/revisions/{draft['revisionId']}/objects/storages",
                     method="POST",
                     body={
                         "expectedVersion": draft["version"],
@@ -4829,7 +4828,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 status, stale = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}/objects/storages",
+                    f"/api/configuration/revisions/{draft['revisionId']}/objects/storages",
                     method="POST",
                     body={
                         "expectedVersion": draft["version"],
@@ -4868,7 +4867,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 draft = service.import_draft(document, actor="tester")
                 status, response = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/objects/mediaLibraries/movies",
+                    f"/api/configuration/revisions/{draft.revision_id}/objects/mediaLibraries/movies",
                     method="PUT",
                     body={
                         "expectedVersion": draft.version,
@@ -4987,13 +4986,13 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 target["name"] = "Last changed"
                 status, changed = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/objects/mediaLibraries/{target['id']}",
+                    f"/api/configuration/revisions/{draft.revision_id}/objects/mediaLibraries/{target['id']}",
                     method="PUT",
                     body={"expectedVersion": draft.version, "object": target},
                 )
                 self.assertEqual(status, 200)
                 status, detail = request(
-                    api, f"/api/v1/configuration/revisions/{draft.revision_id}/objects"
+                    api, f"/api/configuration/revisions/{draft.revision_id}/objects"
                 )
                 self.assertEqual(status, 200)
                 values = detail["objects"]["mediaLibraries"]
@@ -5020,7 +5019,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     bootstrap_document=document,
                 )
                 status, draft = request(
-                    api, "/api/v1/configuration/drafts", method="POST", body={"document": document}
+                    api, "/api/configuration/drafts", method="POST", body={"document": document}
                 )
                 self.assertEqual(status, 201)
                 body = {
@@ -5037,7 +5036,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 def edit() -> tuple[int, dict]:
                     return request(
                         api,
-                        f"/api/v1/configuration/revisions/{draft['revisionId']}/objects/mediaLibraries/movies",
+                        f"/api/configuration/revisions/{draft['revisionId']}/objects/mediaLibraries/movies",
                         method="PUT",
                         body=body,
                     )
@@ -5070,18 +5069,16 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     bootstrap_document=document,
                 )
                 status, draft = request(
-                    api, "/api/v1/configuration/drafts", method="POST", body={"document": document}
+                    api, "/api/configuration/drafts", method="POST", body={"document": document}
                 )
                 self.assertEqual(status, 201)
                 revision_id = draft["revisionId"]
-                status, detail = request(
-                    api, f"/api/v1/configuration/revisions/{revision_id}/objects"
-                )
+                status, detail = request(api, f"/api/configuration/revisions/{revision_id}/objects")
                 self.assertEqual(status, 200)
                 self.assertEqual(detail["objects"]["resourceLibraries"][0]["id"], "source")
                 status, created = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages",
                     method="POST",
                     body={
                         "expectedVersion": draft["version"],
@@ -5097,7 +5094,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 status, updated = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages/extra",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages/extra",
                     method="PUT",
                     body={
                         "expectedVersion": created["version"],
@@ -5113,21 +5110,21 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 status, deleted = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages/extra",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages/extra",
                     method="DELETE",
                     body={"expectedVersion": updated["version"]},
                 )
                 self.assertEqual(status, 200)
                 status, validated = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/validate",
+                    f"/api/configuration/revisions/{revision_id}/validate",
                     method="POST",
                     body={},
                 )
                 self.assertEqual(status, 200)
                 status, evidence = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/local-setup-check",
+                    f"/api/configuration/revisions/{revision_id}/local-setup-check",
                     method="POST",
                     body={
                         "expectedVersion": validated["version"],
@@ -5141,7 +5138,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 for storage_id in ("source-storage", "media-target"):
                     status, storage_evidence = request(
                         api,
-                        f"/api/v1/configuration/revisions/{revision_id}/storage-check",
+                        f"/api/configuration/revisions/{revision_id}/storage-check",
                         method="POST",
                         body={
                             "storageId": storage_id,
@@ -5153,7 +5150,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     self.assertEqual(storage_evidence["status"], "passed")
                 status, active = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/recognition-strategy-test",
+                    f"/api/configuration/revisions/{revision_id}/recognition-strategy-test",
                     method="POST",
                     body={
                         "expectedVersion": validated["version"],
@@ -5166,7 +5163,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(active["status"], "completed")
                 status, precheck = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/destination-precheck",
+                    f"/api/configuration/revisions/{revision_id}/destination-precheck",
                     method="POST",
                     body={
                         "expectedVersion": validated["version"],
@@ -5185,7 +5182,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(precheck["status"], "completed")
                 status, active = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/activate",
+                    f"/api/configuration/revisions/{revision_id}/activate",
                     method="POST",
                     body={"expectedVersion": validated["version"], "checked": True},
                 )

@@ -1761,7 +1761,7 @@ def task_lifecycle_document(
     cancel = _action(
         action="cancel",
         label="Cancel Task",
-        path=f"/api/v1/tasks/{task.task_id}/cancel",
+        path=f"/api/tasks/{task.task_id}/cancel",
         available=(
             permitted
             and cancelable

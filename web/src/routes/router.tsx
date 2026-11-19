@@ -281,7 +281,6 @@ export function createAppRouter(
 ) {
   return createRouter({
     routeTree,
-    basepath: "/ui-v2",
     history,
     defaultPreload: "intent",
   });

@@ -6,7 +6,7 @@ import { expect, test, type Page } from "@playwright/test";
  *
  * The Node fake API remains the authority for the surrounding files; this
  * spec only substitutes representative read-only `source_scope` values on the
- * existing `/api/v1/operations/runs` documents so the layout can be checked
+ * existing `/api/operations/runs` documents so the layout can be checked
  * with short names, one continuous long path and same-prefix/different-ending
  * paths. No endpoint, command or authority is invented.
  */
@@ -29,7 +29,7 @@ const REPRESENTATIVE_SCOPES: Readonly<Record<string, string>> = {
 
 async function installRepresentativeScopes(page: Page): Promise<void> {
   await page.route(
-    /\/api\/v1\/operations\/runs(?:\/[^/?]+)?(?:\?.*)?$/,
+    /\/api\/operations\/runs(?:\/[^/?]+)?(?:\?.*)?$/,
     async (route) => {
       if (route.request().method() !== "GET") {
         await route.continue();
@@ -81,7 +81,7 @@ async function installRepresentativeScopes(page: Page): Promise<void> {
 }
 
 async function connect(page: Page): Promise<void> {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -91,7 +91,7 @@ async function openOperations(page: Page): Promise<void> {
   const menu = page.getByRole("button", { name: "Open menu", exact: true });
   if (await menu.isVisible()) await menu.click();
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
@@ -274,18 +274,18 @@ test("shared sidebar Files stays ordinary from default, filtered and selected ce
   await openOperations(page);
 
   const filesLink = page.getByRole("link", { name: "Files", exact: true });
-  await expect(filesLink).toHaveAttribute("href", "/ui-v2/resourcelib/files");
+  await expect(filesLink).toHaveAttribute("href", "/resourcelib/files");
   await filesLink.click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files$/);
+  await expect(page).toHaveURL(/\/resourcelib\/files$/);
   await expect(page.getByRole("link", { name: "返回任务中心" })).toHaveCount(0);
 
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
   await page.getByLabel("开始日期").fill("2026-08-01");
   await expect(page).toHaveURL(/from=2026-08-01/);
-  await expect(filesLink).toHaveAttribute("href", "/ui-v2/resourcelib/files");
+  await expect(filesLink).toHaveAttribute("href", "/resourcelib/files");
   await filesLink.click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files$/);
+  await expect(page).toHaveURL(/\/resourcelib\/files$/);
   await expect(page.getByRole("link", { name: "返回任务中心" })).toHaveCount(0);
 
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
@@ -296,11 +296,11 @@ test("shared sidebar Files stays ordinary from default, filtered and selected ce
   await expect(detail).toBeVisible();
   // The open card overlays the page; the sidebar link keeps its ordinary
   // destination, and closing the card (Escape) restores ordinary navigation.
-  await expect(filesLink).toHaveAttribute("href", "/ui-v2/resourcelib/files");
+  await expect(filesLink).toHaveAttribute("href", "/resourcelib/files");
   await page.keyboard.press("Escape");
   await expect(detail).toHaveCount(0);
   await filesLink.click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files$/);
+  await expect(page).toHaveURL(/\/resourcelib\/files$/);
   await expect(page.getByRole("link", { name: "返回任务中心" })).toHaveCount(0);
 });
 
@@ -310,7 +310,7 @@ test("an explicit Files return context still works and same-route sidebar Files 
   await installRepresentativeScopes(page);
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.goto(
-    "/ui-v2/resourcelib/files?returnOps=view%3Dended%26status%3Dfailed%26run%3Dtask-source",
+    "/resourcelib/files?returnOps=view%3Dended%26status%3Dfailed%26run%3Dtask-source",
   );
   if (await page.getByLabel("API token").isVisible()) {
     await page.getByLabel("API token").fill(VIEWER_TOKEN);
@@ -331,9 +331,9 @@ test("an explicit Files return context still works and same-route sidebar Files 
   // the same-route source instead of leaving a mount-time return surface.
   await expect(
     page.getByRole("link", { name: "Files", exact: true }),
-  ).toHaveAttribute("href", "/ui-v2/resourcelib/files");
+  ).toHaveAttribute("href", "/resourcelib/files");
   await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files$/);
+  await expect(page).toHaveURL(/\/resourcelib\/files$/);
   await expect(returnLink).toHaveCount(0);
 });
 
@@ -468,7 +468,7 @@ for (const viewport of [
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await page.route(/\/api\/v1\/operations\/runs\?/, async (route) => {
+    await page.route(/\/api\/operations\/runs\?/, async (route) => {
       await gate;
       await route.continue();
     });
@@ -602,7 +602,7 @@ const LONG_ITEM_SOURCE =
 
 async function installLongItemSource(page: Page): Promise<void> {
   await page.route(
-    /\/api\/v1\/operations\/runs\/[^/]+\/items(?:\?|$)/,
+    /\/api\/operations\/runs\/[^/]+\/items(?:\?|$)/,
     async (route) => {
       const response = await route.fetch();
       if (!response.ok()) {
@@ -648,7 +648,7 @@ test("the detail card item table keeps every column in its own reading area", as
   // stays usable without its entry animation (AC-11).
   await page.emulateMedia({ reducedMotion: "reduce" });
   // The exact selected-run link is one of the card's real entrances.
-  await page.goto("/ui-v2/operations?run=task-001");
+  await page.goto("/operations?run=task-001");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   const detail = page.getByRole("dialog", { name: "运行详情" });
@@ -708,7 +708,7 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
   await installRepresentativeScopes(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/ui-v2/operations?run=task-001");
+  await page.goto("/operations?run=task-001");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   const detail = page.getByRole("dialog", { name: "运行详情" });

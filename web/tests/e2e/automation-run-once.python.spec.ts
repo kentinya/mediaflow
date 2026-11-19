@@ -82,7 +82,7 @@ function recordApiCalls(page: Page): { method: string; path: string }[] {
   const api: { method: string; path: string }[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname.startsWith("/api/v1/")) {
+    if (url.pathname.startsWith("/api/")) {
       api.push({ method: request.method(), path: url.pathname });
     }
   });
@@ -98,7 +98,7 @@ async function publishRunOnceDefinition(
   } = {},
 ): Promise<void> {
   const name = options.name ?? "Harness run once";
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
   ).toBeVisible();
@@ -131,17 +131,14 @@ async function publishRunOnceDefinition(
 }
 
 async function openLifecycleEdit(page: Page): Promise<void> {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
-  );
+  await connectOn(page, `/operations/automation/lifecycle/${DEFINITION_ID}`);
   await expect(
     page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
 }
 
 async function openAutomationList(page: Page): Promise<void> {
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await expect(
     page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
   ).toBeVisible();
@@ -170,7 +167,7 @@ async function runOnceFromList(
   const taskId = new URL(href, page.url()).searchParams.get("run");
   if (!taskId) throw new Error("admitted list link has no Task identity");
   expect(taskId).toMatch(/^[0-9a-f-]{36}$/);
-  expect(page.url()).toContain("/ui-v2/operations/automation");
+  expect(page.url()).toContain("/operations/automation");
   return taskId;
 }
 
@@ -224,7 +221,7 @@ test("a disabled published definition runs once from the list without a file pic
   // Keep the real request/response pair but make the in-flight state visible
   // long enough to inspect the actual submission feedback.
   await page.route(
-    "**/api/v1/operations/automation/definitions/*/run-once",
+    "**/api/operations/automation/definitions/*/run-once",
     async (route) => {
       if (route.request().method() === "POST") {
         await new Promise((resolve) => setTimeout(resolve, 450));
@@ -234,7 +231,7 @@ test("a disabled published definition runs once from the list without a file pic
   );
   await page.keyboard.press("Enter");
   await expect(runButton).toHaveText("正在提交…");
-  expect(page.url()).toContain("/ui-v2/operations/automation");
+  expect(page.url()).toContain("/operations/automation");
   await page.screenshot({
     path: testInfo.outputPath("list-run-once-submitting.png"),
     fullPage: true,
@@ -265,7 +262,7 @@ test("a disabled published definition runs once from the list without a file pic
   if (!href) throw new Error("admitted row has no Task Center link");
   const id = new URL(href, page.url()).searchParams.get("run") ?? "";
   expect(id).toMatch(/[0-9a-f-]{36}/);
-  await page.unroute("**/api/v1/operations/automation/definitions/*/run-once");
+  await page.unroute("**/api/operations/automation/definitions/*/run-once");
 
   // The submitted response already ended the busy state; the Worker has not
   // run yet.  The link opens the existing Task Center detail, not a new page or
@@ -292,7 +289,7 @@ test("a disabled published definition runs once from the list without a file pic
     before.activeRevisionId,
   );
   expect((await lifecycleState(page)).definitions[0]?.enabled).toBe(false);
-  await connectOn(page, `/ui-v2/operations/automation/run-once/${id}`);
+  await connectOn(page, `/operations/automation/run-once/${id}`);
   await expect(
     page.getByRole("heading", { name: "运行一次整理任务" }),
   ).toBeVisible();
@@ -317,7 +314,7 @@ test("list feedback distinguishes a proved refusal from an unknown submission", 
   const row = definitionRow(page);
   let posts = 0;
   await page.route(
-    "**/api/v1/operations/automation/definitions/*/run-once",
+    "**/api/operations/automation/definitions/*/run-once",
     async (route) => {
       if (route.request().method() !== "POST") {
         await route.continue();
@@ -405,7 +402,7 @@ test("a repeated list Run once shows its own lost reply and reconciles that Task
   // a 503 at the browser boundary, so this is the genuine lost-response entry.
   let secondTask = "";
   await page.route(
-    "**/api/v1/operations/automation/definitions/*/run-once",
+    "**/api/operations/automation/definitions/*/run-once",
     async (route) => {
       if (route.request().method() !== "POST") {
         await route.continue();
@@ -517,7 +514,7 @@ test("the exact Run once remains durable across restart without replay", async (
   );
   const before = await runOnceState(page, id);
   await page.request.post("/__harness__/restart");
-  await connectOn(page, `/ui-v2/operations/automation/run-once/${id}`);
+  await connectOn(page, `/operations/automation/run-once/${id}`);
   await expect(
     page.getByRole("heading", { name: "运行一次整理任务" }),
   ).toBeVisible();
@@ -582,7 +579,7 @@ for (const technicalSibling of [false, true]) {
     ).json();
     await connectOn(
       page,
-      `/ui-v2/operations?run=${state.taskId}&item=${conflict.itemId}`,
+      `/operations?run=${state.taskId}&item=${conflict.itemId}`,
     );
     const recovery = page.getByRole("region", { name: "条目审核与恢复" });
     await expect(
@@ -690,7 +687,7 @@ test("an over-bound ceiling runs once when the actual manifest fits the bound", 
   await page.getByLabel("处理上限").fill("150");
   await page.getByRole("button", { name: "保存", exact: true }).click();
   // The confirmed Save returns to the workspace list.
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(page).toHaveURL(/\/operations\/automation(\?.*)?$/);
   const id = await runOnceFromList(page);
   expect((await runOnceState(page, id)).effectivePrimaryLimit).toBe(100);
   const result = await page.request.post(

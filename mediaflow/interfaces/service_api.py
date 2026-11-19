@@ -193,7 +193,7 @@ from mediaflow.interfaces.pagination import (
     decode_directional_cursor,
     encode_cursor,
 )
-from mediaflow.interfaces.v2_ui import V2_UI_PREFIX, v2_ui_asset
+from mediaflow.interfaces.v2_ui import v2_ui_asset
 
 # A submitted Task command filter is a bounded work-kind token; the repository
 # matches it against the exact command and its own ``<kind>:<identity>``
@@ -209,6 +209,14 @@ _AUTOMATION_DEFINITION_FILTER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 # The current V2 static security policy. Its posters are loaded directly from
 # the fixed TMDB image host and nothing else; every other directive keeps the
 # shared static hardening.
+# The current HTTP API shares one unversioned namespace: the segments after
+# ``/api`` identify the resource family directly, and those same segments drive
+# dispatch, Active/permission decisions and audit classification. A retired
+# versioned prefix is an ordinary unknown route: it ends with the JSON 404
+# before authentication, so no old client can reach a business service.
+_API_ROOT = "/api"
+_RETIRED_API_NAMESPACES = frozenset({"v1", "v2"})
+
 _V2_STATIC_CSP = (
     "default-src 'self'; connect-src 'self'; "
     "script-src 'self'; style-src 'self'; img-src 'self' https://image.tmdb.org; "
@@ -710,46 +718,53 @@ class MediaFlowApi:
                     200,
                     {"status": "ok", "processAlive": True},
                 )
-            if path == V2_UI_PREFIX or path.startswith(V2_UI_PREFIX + "/"):
-                if method != "GET":
-                    return self._error(start_response, 405, "method_not_allowed", "GET required")
-                v2_asset = v2_ui_asset(path)
-                if v2_asset is None:
+            if path == _API_ROOT or path.startswith(_API_ROOT + "/"):
+                if self._is_retired_api_path(path):
                     return self._error(start_response, 404, "not_found", "route was not found")
-                content_type, body = v2_asset
-                return self._static_response(
-                    start_response,
-                    content_type,
-                    body,
-                    content_security_policy=_V2_STATIC_CSP,
+                principal = self._authenticate(environ)
+                if principal is None:
+                    self._audit(
+                        environ, request_id, None, method, path, "authenticate", "denied", 401
+                    )
+                    return self._error(start_response, 401, "unauthorized", "bearer token required")
+                if not self._suppress_file_detail_audit(path, method, principal):
+                    self._audit(
+                        environ, request_id, principal, method, path, "request", "started", 0
+                    )
+                statuses = []
+
+                def capture(status, headers):
+                    statuses.append(int(status.split()[0]))
+                    return start_response(status, headers)
+
+                result = self._dispatch(method, path, environ, capture, principal)
+                status = statuses[0] if statuses else 500
+                self._safe_audit(
+                    environ,
+                    request_id,
+                    principal,
+                    method,
+                    path,
+                    "request",
+                    "allowed" if status < 400 else "denied",
+                    status,
                 )
-            if not path.startswith("/api/v1"):
+                return result
+            # Web navigation and built static assets share the canonical root.
+            # Nothing here authenticates or resolves configuration: the SPA
+            # boundary only ever returns built artifact bytes.
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            ui_asset = v2_ui_asset(path)
+            if ui_asset is None:
                 return self._error(start_response, 404, "not_found", "route was not found")
-            principal = self._authenticate(environ)
-            if principal is None:
-                self._audit(environ, request_id, None, method, path, "authenticate", "denied", 401)
-                return self._error(start_response, 401, "unauthorized", "bearer token required")
-            if not self._suppress_file_detail_audit(path, method, principal):
-                self._audit(environ, request_id, principal, method, path, "request", "started", 0)
-            statuses = []
-
-            def capture(status, headers):
-                statuses.append(int(status.split()[0]))
-                return start_response(status, headers)
-
-            result = self._dispatch(method, path, environ, capture, principal)
-            status = statuses[0] if statuses else 500
-            self._safe_audit(
-                environ,
-                request_id,
-                principal,
-                method,
-                path,
-                "request",
-                "allowed" if status < 400 else "denied",
-                status,
+            content_type, body = ui_asset
+            return self._static_response(
+                start_response,
+                content_type,
+                body,
+                content_security_policy=_V2_STATIC_CSP,
             )
-            return result
         except ApiPermissionDenied as error:
             self._safe_audit(
                 environ,
@@ -1073,7 +1088,7 @@ class MediaFlowApi:
                     "resumeAction": (
                         {
                             "method": "GET",
-                            "path": (f"/api/v1/configuration/revisions/{error.revision_id}"),
+                            "path": (f"/api/configuration/revisions/{error.revision_id}"),
                         }
                         if error.revision_id
                         else None
@@ -1521,17 +1536,17 @@ class MediaFlowApi:
         parts = [part for part in path.split("/") if part]
         operations_projection = False
         if (
-            len(parts) >= 4
-            and parts[:3] == ["api", "v1", "operations"]
-            and parts[3] in {"tasks", "workers"}
+            len(parts) >= 3
+            and parts[:2] == ["api", "operations"]
+            and parts[2] in {"tasks", "workers"}
         ):
             # The V2 Operations workspace reads one explicit bounded operator
-            # projection.  The pre-existing /api/v1/tasks, /api/v1/jobs and
-            # /api/v1/workers compatibility documents keep their historical
-            # fields for existing clients; this alias never publishes a raw
-            # durable error, a fingerprint value or a configured display root.
+            # projection.  The current /api/tasks and /api/workers reads keep
+            # their own documents with their historical fields; this alias
+            # never publishes a raw durable error, a fingerprint value or a
+            # configured display root.
             operations_projection = True
-            parts = ["api", "v1", *parts[3:]]
+            parts = ["api", *parts[2:]]
         # Unknown namespaces never resolve Active configuration or adapters.
         supported_roots = {
             "auth",
@@ -1562,76 +1577,71 @@ class MediaFlowApi:
             "storage-management",
         }
         if (
-            len(parts) < 3
-            or parts[2] not in supported_roots
+            len(parts) < 2
+            or parts[1] not in supported_roots
             or (
-                parts[2] == "operations"
-                and (len(parts) < 4 or parts[3] not in supported_operations)
+                parts[1] == "operations"
+                and (len(parts) < 3 or parts[2] not in supported_operations)
             )
         ):
             return self._error(start_response, 404, "not_found", "route was not found")
-        configuration_route = parts[:3] == ["api", "v1", "configuration"]
-        automation_definition_route = parts[:4] == [
+        configuration_route = parts[:2] == ["api", "configuration"]
+        automation_definition_route = parts[:3] == [
             "api",
-            "v1",
             "automation",
             "task-definitions",
         ]
-        management_readiness_route = parts == ["api", "v1", "management", "readiness"]
-        task_read_route = parts[:3] == ["api", "v1", "tasks"] and method == "GET"
+        management_readiness_route = parts == ["api", "management", "readiness"]
+        task_read_route = parts[:2] == ["api", "tasks"] and method == "GET"
         # The unified run inventory reads durable repository rows only: it
         # resolves no configuration, so a missing or unreadable current Active
         # must never hide historical runs.  Like the Task read it shares the
         # same durable basis, it skips the Active refresh entirely instead of
         # failing closed on a route that needs no binding.
         operations_runs_read_route = (
-            len(parts) >= 4
-            and parts[:3] == ["api", "v1", "operations"]
-            and parts[3] == "runs"
+            len(parts) >= 3
+            and parts[:2] == ["api", "operations"]
+            and parts[2] == "runs"
             and method == "GET"
         )
-        worker_route = parts[:3] == ["api", "v1", "workers"]
+        worker_route = parts[:2] == ["api", "workers"]
         # The originating library's ordinary file-operation history, one exact
         # operation and the deep-link origin resolution are durable reads of
         # already-admitted work: they resolve no configuration, so a missing,
         # unreadable, disabled or removed current Active must never hide them.
         library_file_operation_route = method == "GET" and (
             (
-                len(parts) == 5
-                and tuple(parts[:3])
-                in {
-                    ("api", "v1", "resource-libraries"),
-                    ("api", "v1", "media-libraries"),
-                }
-                and parts[4] == "file-operations"
-            )
-            or (
-                len(parts) == 7
-                and tuple(parts[:3])
-                in {
-                    ("api", "v1", "resource-libraries"),
-                    ("api", "v1", "media-libraries"),
-                }
-                and parts[4:6] == ["files", "operations"]
-            )
-            or (
-                len(parts) == 5
-                and parts[:3] == ["api", "v1", "files"]
-                and parts[3] == "operation-origin"
-            )
-            or (
                 len(parts) == 4
-                and tuple(parts[:3])
+                and tuple(parts[:2])
                 in {
-                    ("api", "v1", "resource-libraries"),
-                    ("api", "v1", "media-libraries"),
+                    ("api", "resource-libraries"),
+                    ("api", "media-libraries"),
                 }
-                and parts[3] == "operation-origins"
+                and parts[3] == "file-operations"
+            )
+            or (
+                len(parts) == 6
+                and tuple(parts[:2])
+                in {
+                    ("api", "resource-libraries"),
+                    ("api", "media-libraries"),
+                }
+                and parts[3:5] == ["files", "operations"]
+            )
+            or (
+                len(parts) == 4 and parts[:2] == ["api", "files"] and parts[2] == "operation-origin"
+            )
+            or (
+                len(parts) == 3
+                and tuple(parts[:2])
+                in {
+                    ("api", "resource-libraries"),
+                    ("api", "media-libraries"),
+                }
+                and parts[2] == "operation-origins"
             )
         )
-        resource_library_save_route = (
-            parts == ["api", "v1", "resource-libraries"] and method == "POST"
-        )
+        resource_library_save_route = parts == ["api", "resource-libraries"] and method == "POST"
         if (
             self._is_management_only_setup()
             and self._is_workflow_producing_route(method, parts)
@@ -1654,12 +1664,12 @@ class MediaFlowApi:
             # other workflow routes still refresh and fail closed normally.
             transfer_observation = (
                 method == "GET"
-                and len(parts) in {7}
-                and parts[4:6] == ["files", "transfers"]
-                and tuple(parts[:3])
+                and len(parts) in {6}
+                and parts[3:5] == ["files", "transfers"]
+                and tuple(parts[:2])
                 in {
-                    ("api", "v1", "resource-libraries"),
-                    ("api", "v1", "media-libraries"),
+                    ("api", "resource-libraries"),
+                    ("api", "media-libraries"),
                 }
             )
             if not transfer_observation:
@@ -1678,8 +1688,8 @@ class MediaFlowApi:
         # --- V2 Preview operations routes (bounded, server-bound) ---
         # --- V2 Operations: manual Organize intent, exact Preview, one Execute action ---
         if (
-            len(parts) == 6
-            and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
+            len(parts) == 5
+            and parts[:4] == ["api", "operations", "organize", "intents"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -1692,17 +1702,17 @@ class MediaFlowApi:
                 )
             self._require_empty_query(environ, "operations organize intent detail")
             try:
-                intent = self._manual_intents.get(parts[5])
+                intent = self._manual_intents.get(parts[4])
             except ManualIntentError as error:
                 return self._manual_step_error(start_response, error)
             return self._response(
                 start_response, 200, self._organize_intent_document(intent, principal)
             )
         if (
-            len(parts) == 9
-            and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
-            and parts[6] == "items"
-            and parts[8] == "choice"
+            len(parts) == 8
+            and parts[:4] == ["api", "operations", "organize", "intents"]
+            and parts[5] == "items"
+            and parts[7] == "choice"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
@@ -1761,8 +1771,8 @@ class MediaFlowApi:
                 raise ValueError("operations organize choice requires at least one choice field")
             try:
                 intent = self._manual_intents.update_choice(
-                    parts[5],
-                    parts[7],
+                    parts[4],
+                    parts[6],
                     patch,
                     expected_version=expected_version,
                     actor=principal.principal_id,
@@ -1774,33 +1784,33 @@ class MediaFlowApi:
             operator_document["previewRequired"] = True
             return self._response(start_response, 200, operator_document)
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6] == "recovery"
+            len(parts) == 6
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "items"
+            and parts[5] == "recovery"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "task item recovery detail")
-            value = self._task_item_recovery.detail(parts[3], parts[5])
+            value = self._task_item_recovery.detail(parts[2], parts[4])
             if self._manual_recovery is not None:
                 value["manualRecoveryPreparation"] = (
-                    self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
+                    self._manual_recovery.discovery_for_preparation(parts[2], parts[4])
                 )
                 value["manualRecoveryAvailable"] = self._manual_recovery.supports_source_item(
-                    parts[3], parts[5]
+                    parts[2], parts[4]
                 )
                 value["manualRecoveryAnalysisReady"] = (
-                    self._manual_recovery.analysis_summary_available(parts[3], parts[5])
+                    self._manual_recovery.analysis_summary_available(parts[2], parts[4])
                 )
             else:
                 value["manualRecoveryAvailable"] = False
                 value["manualRecoveryAnalysisReady"] = False
             return self._response(start_response, 200, redact_manual_value(value))
         if (
-            len(parts) == 7
-            and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
-            and parts[6] == "previews"
+            len(parts) == 6
+            and parts[:4] == ["api", "operations", "organize", "intents"]
+            and parts[5] == "previews"
             and method == "POST"
         ):
             # The intent-page analysis entry.  The request only records one
@@ -1851,7 +1861,7 @@ class MediaFlowApi:
                 )
             try:
                 service.begin_intent_analysis(
-                    parts[5],
+                    parts[4],
                     actor=principal.principal_id,
                     expected_intent_version=expected_version,
                 )
@@ -1860,14 +1870,14 @@ class MediaFlowApi:
             except ManualIntentError as error:
                 return self._manual_step_error(start_response, error)
             try:
-                intent = self._manual_intents.get(parts[5])
+                intent = self._manual_intents.get(parts[4])
             except ManualIntentError as error:
                 return self._manual_step_error(start_response, error)
             operator_document = self._organize_intent_document(intent, principal)
             return self._response(start_response, 201, operator_document)
         if (
-            len(parts) == 6
-            and parts[:5] == ["api", "v1", "operations", "organize", "previews"]
+            len(parts) == 5
+            and parts[:4] == ["api", "operations", "organize", "previews"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -1880,16 +1890,16 @@ class MediaFlowApi:
                 )
             self._require_empty_query(environ, "operations organize Preview detail")
             try:
-                preview = self._manual_previews.get_readonly(parts[5])
+                preview = self._manual_previews.get_readonly(parts[4])
             except ManualPreviewError as error:
                 return self._manual_step_error(start_response, error)
             return self._response(
                 start_response, 200, self._organize_preview_document(preview, principal)
             )
         if (
-            len(parts) == 7
-            and parts[:5] == ["api", "v1", "operations", "organize", "previews"]
-            and parts[6] == "execute"
+            len(parts) == 6
+            and parts[:4] == ["api", "operations", "organize", "previews"]
+            and parts[5] == "execute"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
@@ -1970,7 +1980,7 @@ class MediaFlowApi:
                         )
                     execution = self._manual_recovery.confirm_from_execute(
                         preparation_id,
-                        preview_id=parts[5],
+                        preview_id=parts[4],
                         item_ids=item_ids,
                         expected_intent_version=expected_version,
                         actor=principal.principal_id,
@@ -1981,7 +1991,7 @@ class MediaFlowApi:
                     )
                 else:
                     execution = self._manual_execution.begin_web_execution(
-                        parts[5],
+                        parts[4],
                         item_ids,
                         expected_intent_version=expected_version,
                         actor=principal.principal_id,
@@ -1997,9 +2007,9 @@ class MediaFlowApi:
                 self._organize_execution_document(execution),
             )
         if (
-            len(parts) == 7
-            and parts[:5] == ["api", "v1", "operations", "organize", "previews"]
-            and parts[6] == "admission"
+            len(parts) == 6
+            and parts[:4] == ["api", "operations", "organize", "previews"]
+            and parts[5] == "admission"
             and method == "GET"
         ):
             # The exact admission-outcome reconciliation read for one reviewed
@@ -2070,7 +2080,7 @@ class MediaFlowApi:
                 effects[name] = raw == "true"
             try:
                 document = self._manual_execution.admission_outcome(
-                    parts[5],
+                    parts[4],
                     item_ids=item_ids,
                     intent_version=expected_intent_version,
                     actor=principal.principal_id,
@@ -2081,7 +2091,7 @@ class MediaFlowApi:
                 return self._manual_step_error(start_response, error)
             document["journey"] = "organize"
             return self._response(start_response, 200, document)
-        if parts == ["api", "v1", "operations", "organize", "executions"] and method == "GET":
+        if parts == ["api", "operations", "organize", "executions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._manual_execution is None:
                 return self._error(
@@ -2131,10 +2141,10 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6:8] == ["recovery", "decision"]
+            len(parts) == 7
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "items"
+            and parts[5:7] == ["recovery", "decision"]
             and method == "POST"
         ):
             self._require_empty_query(environ, "task item review decision")
@@ -2193,23 +2203,23 @@ class MediaFlowApi:
                 if key not in {"kind", "expectedCheckpointVersion"}
             }
             result = self._task_item_recovery.resolve(
-                parts[3],
-                parts[5],
+                parts[2],
+                parts[4],
                 kind=kind,
                 expected_checkpoint_version=expected,
                 actor=principal.principal_id,
                 decision=decision,
             )
-            recovery = self._task_item_recovery.detail(parts[3], parts[5])
+            recovery = self._task_item_recovery.detail(parts[2], parts[4])
             if self._manual_recovery is not None:
                 recovery["manualRecoveryPreparation"] = (
-                    self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
+                    self._manual_recovery.discovery_for_preparation(parts[2], parts[4])
                 )
                 recovery["manualRecoveryAvailable"] = self._manual_recovery.supports_source_item(
-                    parts[3], parts[5]
+                    parts[2], parts[4]
                 )
                 recovery["manualRecoveryAnalysisReady"] = (
-                    self._manual_recovery.analysis_summary_available(parts[3], parts[5])
+                    self._manual_recovery.analysis_summary_available(parts[2], parts[4])
                 )
             else:
                 recovery["manualRecoveryAvailable"] = False
@@ -2226,10 +2236,10 @@ class MediaFlowApi:
                 ),
             )
         if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6:8] == ["recovery", "metadata-search"]
+            len(parts) == 7
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "items"
+            and parts[5:7] == ["recovery", "metadata-search"]
             and method == "POST"
         ):
             self._require(principal, ApiPermission.RESOLVE_METADATA_REVIEW)
@@ -2244,8 +2254,8 @@ class MediaFlowApi:
             ):
                 raise ValueError("task item Metadata search fields are invalid")
             value = self._task_item_recovery.metadata_search(
-                parts[3],
-                parts[5],
+                parts[2],
+                parts[4],
                 expected_checkpoint_version=document["expectedCheckpointVersion"],
                 query=document["query"],
                 media_type=document["mediaType"],
@@ -2253,8 +2263,8 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, redact_manual_value(value))
         if (
-            len(parts) == 6
-            and parts[:5] == ["api", "v1", "operations", "organize", "executions"]
+            len(parts) == 5
+            and parts[:4] == ["api", "operations", "organize", "executions"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -2267,11 +2277,11 @@ class MediaFlowApi:
                 )
             self._require_empty_query(environ, "operations organize execution detail")
             try:
-                execution = self._manual_execution.get(parts[5])
+                execution = self._manual_execution.get(parts[4])
             except ManualExecutionError as error:
                 return self._manual_step_error(start_response, error)
             return self._response(start_response, 200, self._organize_execution_document(execution))
-        if parts == ["api", "v1", "operations", "organize", "discoveries"] and method == "GET":
+        if parts == ["api", "operations", "organize", "discoveries"] and method == "GET":
             # The bounded operator list of this principal's own admitted
             # discoveries.  It never publishes a claim token, a configuration
             # digest or a raw Storage path.
@@ -2296,8 +2306,8 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 6
-            and parts[:5] == ["api", "v1", "operations", "organize", "discoveries"]
+            len(parts) == 5
+            and parts[:4] == ["api", "operations", "organize", "discoveries"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -2318,7 +2328,7 @@ class MediaFlowApi:
             if service is None:
                 return self._discovery_unavailable(start_response)
             try:
-                value = service.get(parts[5])
+                value = service.get(parts[4])
             except DiscoveryError as error:
                 return self._discovery_step_error(start_response, error)
             return self._response(
@@ -2327,9 +2337,9 @@ class MediaFlowApi:
                 self._discovery_document(value, principal, binding, requested_by=request_id),
             )
         if (
-            len(parts) == 7
-            and parts[:5] == ["api", "v1", "operations", "organize", "discoveries"]
-            and parts[6] == "cancel"
+            len(parts) == 6
+            and parts[:4] == ["api", "operations", "organize", "discoveries"]
+            and parts[5] == "cancel"
             and method == "POST"
         ):
             # Cooperative, versioned control.  Cancellation records a request
@@ -2348,7 +2358,7 @@ class MediaFlowApi:
                 )
             try:
                 value = service.request_cancel(
-                    parts[5],
+                    parts[4],
                     actor=principal.principal_id,
                     expected_version=document["expectedVersion"],
                 )
@@ -2358,9 +2368,9 @@ class MediaFlowApi:
                 start_response, 200, self._discovery_document(value, principal, binding)
             )
         if (
-            len(parts) == 7
-            and parts[:5] == ["api", "v1", "operations", "organize", "discoveries"]
-            and parts[6] == "finalize"
+            len(parts) == 6
+            and parts[:4] == ["api", "operations", "organize", "discoveries"]
+            and parts[5] == "finalize"
             and method == "POST"
         ):
             # Freeze the durable discovered source list and hand it to the
@@ -2379,7 +2389,7 @@ class MediaFlowApi:
                 )
             try:
                 value = service.finalize(
-                    parts[5],
+                    parts[4],
                     actor=principal.principal_id,
                     expected_version=document["expectedVersion"],
                 )
@@ -2389,9 +2399,9 @@ class MediaFlowApi:
                 start_response, 201, self._discovery_document(value, principal, binding)
             )
         if (
-            len(parts) == 7
-            and parts[:5] == ["api", "v1", "operations", "organize", "discoveries"]
-            and parts[6] == "analyze"
+            len(parts) == 6
+            and parts[:4] == ["api", "operations", "organize", "discoveries"]
+            and parts[5] == "analyze"
             and method == "POST"
         ):
             # Re-enter the durable analysis stage after an operator correction
@@ -2411,7 +2421,7 @@ class MediaFlowApi:
                 )
             try:
                 value = service.request_analysis(
-                    parts[5],
+                    parts[4],
                     actor=principal.principal_id,
                     expected_version=document["expectedVersion"],
                 )
@@ -2421,9 +2431,9 @@ class MediaFlowApi:
                 start_response, 200, self._discovery_document(value, principal, binding)
             )
         if (
-            len(parts) == 7
-            and parts[:5] == ["api", "v1", "operations", "automation", "task-definitions"]
-            and parts[6] == "run-once"
+            len(parts) == 6
+            and parts[:4] == ["api", "operations", "automation", "task-definitions"]
+            and parts[5] == "run-once"
             and method in {"GET", "POST"}
         ):
             # Definition-bound Run once on the V2 operator surface.  The POST
@@ -2433,12 +2443,12 @@ class MediaFlowApi:
             # manifest, so no file picker and no hand-selected subset is
             # involved, and no execution authority is created here.
             return self._automation_run_once_projection(
-                parts[5], method, environ, start_response, principal
+                parts[4], method, environ, start_response, principal
             )
         if (
-            len(parts) == 5
-            and parts[:4] == ["api", "v1", "operations", "automation"]
-            and parts[4] == "run-once"
+            len(parts) == 4
+            and parts[:3] == ["api", "operations", "automation"]
+            and parts[3] == "run-once"
             and method == "GET"
         ):
             # The bounded list of this principal's own definition-bound Run
@@ -2474,25 +2484,25 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "operations", "automation"]
-            and parts[4] == "run-once"
+            len(parts) == 5
+            and parts[:3] == ["api", "operations", "automation"]
+            and parts[3] == "run-once"
             and method == "GET"
         ):
             return self._automation_run_once_detail_projection(
-                parts[5], None, method, environ, start_response, principal
+                parts[4], None, method, environ, start_response, principal
             )
         if (
-            len(parts) == 7
-            and parts[:4] == ["api", "v1", "operations", "automation"]
-            and parts[4] == "run-once"
+            len(parts) == 6
+            and parts[:3] == ["api", "operations", "automation"]
+            and parts[3] == "run-once"
             and method == "POST"
-            and parts[6] in {"cancel", "finalize"}
+            and parts[5] in {"cancel", "finalize"}
         ):
             return self._automation_run_once_detail_projection(
-                parts[5], parts[6], method, environ, start_response, principal
+                parts[4], parts[5], method, environ, start_response, principal
             )
-        if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
+        if parts == ["api", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._configuration_service is None or self._configuration_objects is None:
                 return self._error(
@@ -2525,8 +2535,8 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 5
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            len(parts) == 4
+            and parts[:3] == ["api", "automation", "task-definitions"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -2539,13 +2549,13 @@ class MediaFlowApi:
                 )
             active = self._automation_revision(environ)
             if active is None:
-                raise LookupError(f"automationTaskDefinitions {parts[4]!r} was not found")
+                raise LookupError(f"automationTaskDefinitions {parts[3]!r} was not found")
             detail = self._configuration_objects.revision_detail(active.revision_id)
             item = next(
                 (
                     candidate
                     for candidate in detail["objects"].get("automationTaskDefinitions", [])
-                    if candidate.get("id") == parts[4]
+                    if candidate.get("id") == parts[3]
                 ),
                 None,
             )
@@ -2558,14 +2568,14 @@ class MediaFlowApi:
                 # restart and never substitutes an unpublished Draft candidate.
                 projection = (
                     self._automation_workspace.historical_definition(
-                        parts[4],
-                        occurrence=self._automation_occurrences.latest(parts[4]),
+                        parts[3],
+                        occurrence=self._automation_occurrences.latest(parts[3]),
                     )
                     if self._automation_workspace is not None
                     else None
                 )
                 if projection is None:
-                    raise LookupError(f"automationTaskDefinitions {parts[4]!r} was not found")
+                    raise LookupError(f"automationTaskDefinitions {parts[3]!r} was not found")
                 item = projection.get("definition")
                 historical = True
             item = self._automation_occurrences.project_definition(
@@ -2581,9 +2591,9 @@ class MediaFlowApi:
                 {"configuration": active.summary(), "definition": item},
             )
         if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "occurrences"
+            len(parts) == 5
+            and parts[:3] == ["api", "automation", "task-definitions"]
+            and parts[4] == "occurrences"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -2596,13 +2606,13 @@ class MediaFlowApi:
                 )
             active = self._automation_revision({**environ, "QUERY_STRING": ""})
             if active is None:
-                raise LookupError(f"automationTaskDefinitions {parts[4]!r} was not found")
+                raise LookupError(f"automationTaskDefinitions {parts[3]!r} was not found")
             detail = self._configuration_objects.revision_detail(active.revision_id)
             definition = next(
                 (
                     candidate
                     for candidate in detail["objects"].get("automationTaskDefinitions", [])
-                    if candidate.get("id") == parts[4]
+                    if candidate.get("id") == parts[3]
                 ),
                 None,
             )
@@ -2612,22 +2622,22 @@ class MediaFlowApi:
                 # unpublished Draft candidate.
                 projection = (
                     self._automation_workspace.historical_definition(
-                        parts[4],
-                        occurrence=self._automation_occurrences.latest(parts[4]),
+                        parts[3],
+                        occurrence=self._automation_occurrences.latest(parts[3]),
                     )
                     if self._automation_workspace is not None
                     else None
                 )
                 if projection is None:
-                    raise LookupError(f"automationTaskDefinitions {parts[4]!r} was not found")
+                    raise LookupError(f"automationTaskDefinitions {parts[3]!r} was not found")
             limit, cursor = self._scoped_page_query(
                 environ,
                 "automation_definition_occurrences",
-                parts[4],
+                parts[3],
                 "automation occurrence",
             )
             values = self._list_page(
-                lambda **kwargs: self._automation_occurrences.list(parts[4], **kwargs),
+                lambda **kwargs: self._automation_occurrences.list(parts[3], **kwargs),
                 limit,
                 cursor,
             )
@@ -2636,7 +2646,7 @@ class MediaFlowApi:
                 start_response,
                 200,
                 {
-                    "definitionId": parts[4],
+                    "definitionId": parts[3],
                     "historicalState": "removed" if definition is None else None,
                     "configuration": active.summary(),
                     "items": self._automation_occurrences.project_occurrences(page),
@@ -2647,18 +2657,18 @@ class MediaFlowApi:
                         page,
                         has_previous,
                         CursorDirection.PREVIOUS,
-                        scope=parts[4],
+                        scope=parts[3],
                     ),
                     "next_cursor": self._page_cursor(
                         "automation_definition_occurrences",
                         page,
                         has_next,
                         CursorDirection.NEXT,
-                        scope=parts[4],
+                        scope=parts[3],
                     ),
                 },
             )
-        if parts == ["api", "v1", "automation", "task-definitions"] and method == "POST":
+        if parts == ["api", "automation", "task-definitions"] and method == "POST":
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             if self._configuration_objects is None:
                 return self._error(
@@ -2695,8 +2705,8 @@ class MediaFlowApi:
             response["automationTaskDefinition"] = values[-1] if values else None
             return self._response(start_response, 200, response)
         if (
-            len(parts) == 5
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            len(parts) == 4
+            and parts[:3] == ["api", "automation", "task-definitions"]
             and method == "PUT"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -2724,7 +2734,7 @@ class MediaFlowApi:
             revision = self._configuration_objects.mutate(
                 revision_id,
                 ConfigurationObjectKind.SCHEDULE,
-                object_id=parts[4],
+                object_id=parts[3],
                 value=value,
                 expected_version=expected,
                 actor=principal.principal_id,
@@ -2733,7 +2743,7 @@ class MediaFlowApi:
                 (
                     item
                     for item in revision.document.get("automationTaskDefinitions", [])
-                    if item.get("id") == parts[4]
+                    if item.get("id") == parts[3]
                 ),
                 None,
             )
@@ -2742,9 +2752,9 @@ class MediaFlowApi:
             response["automationTaskDefinition"] = definition
             return self._response(start_response, 200, response)
         if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] in {"copy", "enable", "disable"}
+            len(parts) == 5
+            and parts[:3] == ["api", "automation", "task-definitions"]
+            and parts[4] in {"copy", "enable", "disable"}
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -2762,7 +2772,7 @@ class MediaFlowApi:
                 raise ValueError("Automation Task Definition revisionId is required")
             if isinstance(expected, bool) or not isinstance(expected, int):
                 raise ValueError("configuration expectedVersion must be an integer")
-            action = parts[5]
+            action = parts[4]
             if action == "copy":
                 allowed = {"revisionId", "expectedVersion", "newId", "id", "newName", "name"}
                 if set(document).difference(allowed):
@@ -2775,7 +2785,7 @@ class MediaFlowApi:
                     raise ValueError("Automation Task Definition copied name must be a string")
                 revision = self._configuration_objects.copy_definition(
                     revision_id,
-                    object_id=parts[4],
+                    object_id=parts[3],
                     new_object_id=new_id,
                     new_name=new_name,
                     expected_version=expected,
@@ -2789,13 +2799,13 @@ class MediaFlowApi:
                     )
                 revision = self._configuration_objects.set_definition_enabled(
                     revision_id,
-                    object_id=parts[4],
+                    object_id=parts[3],
                     enabled=action == "enable",
                     expected_version=expected,
                     actor=principal.principal_id,
                 )
             definitions = revision.document.get("automationTaskDefinitions", [])
-            target_id = parts[4] if action != "copy" else None
+            target_id = parts[3] if action != "copy" else None
             definition = (
                 next((item for item in definitions if item.get("id") == target_id), None)
                 if target_id is not None
@@ -2805,17 +2815,16 @@ class MediaFlowApi:
             response["configurationRevisionId"] = revision.revision_id
             response["automationTaskDefinition"] = definition
             return self._response(start_response, 200, response)
-        if parts[:5] in (
-            ["api", "v1", "operations", "automation", "task-definitions"],
-            ["api", "v1", "operations", "automation", "metrics"],
-            ["api", "v1", "operations", "automation", "records"],
+        if parts[:4] in (
+            ["api", "operations", "automation", "task-definitions"],
+            ["api", "operations", "automation", "metrics"],
+            ["api", "operations", "automation", "records"],
         ) and method in {"GET", "POST", "PUT", "DELETE"}:
             return self._automation_operations_projection(
                 parts, method, environ, start_response, principal
             )
-        if parts[:5] == [
+        if parts[:4] == [
             "api",
-            "v1",
             "operations",
             "automation",
             "definitions",
@@ -2825,7 +2834,6 @@ class MediaFlowApi:
             )
         if parts == [
             "api",
-            "v1",
             "operations",
             "automation",
             "settings",
@@ -2833,29 +2841,29 @@ class MediaFlowApi:
             return self._automation_engine_settings_projection(
                 method, environ, start_response, principal
             )
-        if parts[:4] == ["api", "v1", "operations", "notifications"] and method in {
+        if parts[:3] == ["api", "operations", "notifications"] and method in {
             "GET",
             "POST",
         }:
             return self._notification_operations_projection(
                 parts, method, environ, start_response, principal
             )
-        if parts[:4] == ["api", "v1", "operations", "storage-management"] and method in {
+        if parts[:3] == ["api", "operations", "storage-management"] and method in {
             "GET",
             "POST",
         }:
             return self._storage_operations_projection(
                 parts, method, environ, start_response, principal
             )
-        if parts[:4] == ["api", "v1", "operations", "runs"]:
+        if parts[:3] == ["api", "operations", "runs"]:
             return self._operations_runs_projection(
                 parts, method, environ, start_response, principal
             )
-        if parts[:4] == ["api", "v1", "operations", "rules"]:
+        if parts[:3] == ["api", "operations", "rules"]:
             return self._rules_operations_projection(
                 parts, method, environ, start_response, principal
             )
-        if parts == ["api", "v1", "management", "readiness"]:
+        if parts == ["api", "management", "readiness"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
             self._require_empty_query(environ, "management readiness")
@@ -2865,7 +2873,7 @@ class MediaFlowApi:
                 200,
                 self._management_readiness_document(principal),
             )
-        if parts == ["api", "v1", "workers", "readiness"]:
+        if parts == ["api", "workers", "readiness"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
             self._require_empty_query(environ, "worker readiness")
@@ -2882,7 +2890,7 @@ class MediaFlowApi:
                 200,
                 self._worker_readiness_document(principal, bounded=operations_projection),
             )
-        if parts == ["api", "v1", "workers"]:
+        if parts == ["api", "workers"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
             limit = self._parse_bounded_limit(
@@ -2904,7 +2912,7 @@ class MediaFlowApi:
                 200,
                 self._workers_document(principal, limit=limit, bounded=operations_projection),
             )
-        if parts == ["api", "v1", "configuration", "status"]:
+        if parts == ["api", "configuration", "status"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
             self._require_empty_query(environ, "configuration status")
@@ -2921,7 +2929,7 @@ class MediaFlowApi:
                 200,
                 self._configuration_status_document(principal),
             )
-        if parts == ["api", "v1", "configuration", "drafts", "first"]:
+        if parts == ["api", "configuration", "drafts", "first"]:
             if method != "POST":
                 return self._error(start_response, 405, "method_not_allowed", "POST required")
             self._require_empty_query(environ, "first setup Draft")
@@ -2946,7 +2954,7 @@ class MediaFlowApi:
                 "open the setup Draft and complete guided setup before validation and activation"
             )
             return self._response(start_response, 201, response)
-        if parts == ["api", "v1", "configuration", "drafts", "successor"]:
+        if parts == ["api", "configuration", "drafts", "successor"]:
             if method != "POST":
                 return self._error(start_response, 405, "method_not_allowed", "POST required")
             self._require_empty_query(environ, "successor Draft")
@@ -2988,7 +2996,7 @@ class MediaFlowApi:
                 "open the successor Draft, edit configuration objects, validate, and activate"
             )
             return self._response(start_response, 201, response)
-        if parts == ["api", "v1", "configuration"]:
+        if parts == ["api", "configuration"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
             self._require(principal, ApiPermission.READ)
@@ -3002,7 +3010,7 @@ class MediaFlowApi:
             return self._response(
                 start_response, 200, self._configuration_status_document(principal)
             )
-        if parts[:4] == ["api", "v1", "configuration", "packages"]:
+        if parts[:3] == ["api", "configuration", "packages"]:
             if self._package_exchange is None:
                 return self._error(
                     start_response,
@@ -3016,7 +3024,7 @@ class MediaFlowApi:
                         "nextAction": ("restore the managed configuration service, then retry"),
                     },
                 )
-            if parts == ["api", "v1", "configuration", "packages"]:
+            if parts == ["api", "configuration", "packages"]:
                 if method == "GET":
                     self._require_empty_query(environ, "package exchange status")
                     self._require(principal, ApiPermission.READ)
@@ -3041,7 +3049,7 @@ class MediaFlowApi:
                 return self._error(
                     start_response, 405, "method_not_allowed", "GET or POST required"
                 )
-            if len(parts) == 6 and parts[4:6] == ["export", "configuration"] and method == "GET":
+            if len(parts) == 5 and parts[3:5] == ["export", "configuration"] and method == "GET":
                 self._require(principal, ApiPermission.READ)
                 values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
                 if set(values).difference({"revisionId"}) or any(
@@ -3058,7 +3066,7 @@ class MediaFlowApi:
                     revision_id=revision_id,
                 )
                 return self._response(start_response, 200, package)
-            if len(parts) == 6 and parts[4:6] == ["export", "results"] and method == "GET":
+            if len(parts) == 5 and parts[3:5] == ["export", "results"] and method == "GET":
                 self._require(principal, ApiPermission.READ)
                 values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
                 if set(values).difference({"taskId", "limit"}) or any(
@@ -3080,9 +3088,9 @@ class MediaFlowApi:
                 return self._response(start_response, 200, package)
             return self._error(start_response, 404, "not_found", "package route was not found")
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
+            len(parts) == 4
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -3096,13 +3104,13 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._configuration_service.detail(parts[4]),
+                self._configuration_service.detail(parts[3]),
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "naming-preview"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "naming-preview"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3128,7 +3136,7 @@ class MediaFlowApi:
             if not isinstance(document["sample"], dict):
                 raise ValueError("naming preview sample must be an object")
             evidence = self._configuration_objects.naming_preview(
-                parts[4],
+                parts[3],
                 expected_version=expected,
                 expected_digest=document["expectedDigest"],
                 actor=principal.principal_id,
@@ -3137,10 +3145,10 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, evidence.document())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "destination-precheck"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "destination-precheck"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3181,7 +3189,7 @@ class MediaFlowApi:
                 if not isinstance(document["sample"], dict):
                     raise ValueError("destination precheck sample must be an object")
                 evidence = self._configuration_objects.destination_precheck(
-                    parts[4],
+                    parts[3],
                     expected_version=expected,
                     expected_digest=document["expectedDigest"],
                     actor=principal.principal_id,
@@ -3197,7 +3205,7 @@ class MediaFlowApi:
                 if any(not isinstance(value, dict) for value in raw_samples):
                     raise ValueError("destination precheck sample must be an object")
                 evidence = self._configuration_objects.destination_precheck(
-                    parts[4],
+                    parts[3],
                     expected_version=expected,
                     expected_digest=document["expectedDigest"],
                     actor=principal.principal_id,
@@ -3206,10 +3214,10 @@ class MediaFlowApi:
                 )
             return self._response(start_response, 200, evidence.document())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "classification-preview"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "classification-preview"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3236,7 +3244,7 @@ class MediaFlowApi:
             if not isinstance(document["sample"], dict):
                 raise ValueError("classification preview sample must be an object")
             evidence = self._configuration_objects.classification_preview(
-                parts[4],
+                parts[3],
                 expected_version=expected,
                 expected_digest=document["expectedDigest"],
                 actor=principal.principal_id,
@@ -3245,10 +3253,10 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, evidence.document())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "organize-authority"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "organize-authority"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3273,7 +3281,7 @@ class MediaFlowApi:
             if not isinstance(document["recognitionType"], str):
                 raise ValueError("organize authority RecognitionType is required")
             evidence = self._configuration_objects.organize_authority(
-                parts[4],
+                parts[3],
                 expected_version=expected,
                 expected_digest=document["expectedDigest"],
                 actor=principal.principal_id,
@@ -3281,10 +3289,10 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, evidence.document())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "destination-preview"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "destination-preview"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3316,7 +3324,7 @@ class MediaFlowApi:
             if not isinstance(document["sample"], dict):
                 raise ValueError("destination preview sample must be an object")
             evidence = self._configuration_objects.destination_preview(
-                parts[4],
+                parts[3],
                 expected_version=expected,
                 expected_digest=document["expectedDigest"],
                 actor=principal.principal_id,
@@ -3325,10 +3333,10 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, evidence.document())
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5:] == ["recognition-strategy-test", "metadata-correction"]
+            len(parts) == 6
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4:] == ["recognition-strategy-test", "metadata-correction"]
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3353,7 +3361,7 @@ class MediaFlowApi:
             if not isinstance(document["expectedDigest"], str):
                 raise ValueError("configuration expectedDigest is required")
             evidence = self._configuration_objects.recognition_strategy_correct_metadata(
-                parts[4],
+                parts[3],
                 expected_version=expected,
                 expected_digest=document["expectedDigest"],
                 expected_tested_at=document["expectedTestedAt"],
@@ -3365,10 +3373,10 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, evidence.document())
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5:] == ["recognition-strategy-test", "candidate-selection"]
+            len(parts) == 6
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4:] == ["recognition-strategy-test", "candidate-selection"]
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3397,7 +3405,7 @@ class MediaFlowApi:
             if not isinstance(document["expectedDigest"], str):
                 raise ValueError("configuration expectedDigest is required")
             evidence = self._configuration_objects.recognition_strategy_select_candidate(
-                parts[4],
+                parts[3],
                 expected_version=expected,
                 expected_digest=document["expectedDigest"],
                 expected_tested_at=document["expectedTestedAt"],
@@ -3406,10 +3414,10 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, evidence.document())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "objects"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "objects"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -3423,14 +3431,14 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._configuration_objects.revision_detail(parts[4]),
+                self._configuration_objects.revision_detail(parts[3]),
             )
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "objects"
-            and parts[6] == "storages"
+            len(parts) == 6
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "objects"
+            and parts[5] == "storages"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -3441,7 +3449,7 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration service is unavailable",
                 )
-            detail = self._configuration_objects.revision_detail(parts[4])
+            detail = self._configuration_objects.revision_detail(parts[3])
             items = detail["objects"]["storages"]
             return self._response(
                 start_response,
@@ -3453,11 +3461,11 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "objects"
-            and parts[6] == "storages"
+            len(parts) == 7
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "objects"
+            and parts[5] == "storages"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -3468,24 +3476,24 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration service is unavailable",
                 )
-            detail = self._configuration_objects.revision_detail(parts[4])
+            detail = self._configuration_objects.revision_detail(parts[3])
             storage = next(
-                (item for item in detail["objects"]["storages"] if item.get("id") == parts[7]),
+                (item for item in detail["objects"]["storages"] if item.get("id") == parts[6]),
                 None,
             )
             if storage is None:
-                raise LookupError(f"storages {parts[7]!r} was not found")
+                raise LookupError(f"storages {parts[6]!r} was not found")
             return self._response(
                 start_response,
                 200,
                 {**detail, "storage": storage},
             )
         if (
-            len(parts) == 9
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5:7] == ["objects", "storages"]
-            and parts[8] == "check"
+            len(parts) == 8
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4:6] == ["objects", "storages"]
+            and parts[7] == "check"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3505,19 +3513,19 @@ class MediaFlowApi:
             if not isinstance(document["expectedDigest"], str):
                 raise ValueError("configuration expectedDigest is required")
             evidence = self._configuration_objects.storage_check(
-                parts[4],
-                storage_id=parts[7],
+                parts[3],
+                storage_id=parts[6],
                 expected_version=expected,
                 expected_digest=document["expectedDigest"],
                 actor=principal.principal_id,
             )
-            response = self._configuration_objects.storage_check_evidence(parts[4], parts[7])
+            response = self._configuration_objects.storage_check_evidence(parts[3], parts[6])
             return self._response(start_response, 200, response or evidence.document())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "storage-check"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "storage-check"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3542,19 +3550,19 @@ class MediaFlowApi:
             if not isinstance(document["expectedDigest"], str):
                 raise ValueError("configuration expectedDigest is required")
             evidence = self._configuration_objects.storage_check(
-                parts[4],
+                parts[3],
                 storage_id=storage_id,
                 expected_version=expected,
                 expected_digest=document["expectedDigest"],
                 actor=principal.principal_id,
             )
-            response = self._configuration_objects.storage_check_evidence(parts[4], storage_id)
+            response = self._configuration_objects.storage_check_evidence(parts[3], storage_id)
             return self._response(start_response, 200, response or evidence.document())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "storage-checks"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "storage-checks"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -3565,7 +3573,7 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration service is unavailable",
                 )
-            detail = self._configuration_objects.revision_detail(parts[4])
+            detail = self._configuration_objects.revision_detail(parts[3])
             items = detail.get("storageChecks", [])
             return self._response(
                 start_response,
@@ -3573,10 +3581,10 @@ class MediaFlowApi:
                 {**detail, "items": items, "total": len(items)},
             )
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "storage-checks"
+            len(parts) == 6
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "storage-checks"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -3587,21 +3595,21 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration service is unavailable",
                 )
-            evidence = self._configuration_objects.storage_check_evidence(parts[4], parts[6])
+            evidence = self._configuration_objects.storage_check_evidence(parts[3], parts[5])
             if evidence is None:
-                raise LookupError(f"Storage check evidence for {parts[6]!r} was not found")
-            detail = self._configuration_objects.revision_detail(parts[4])
+                raise LookupError(f"Storage check evidence for {parts[5]!r} was not found")
+            detail = self._configuration_objects.revision_detail(parts[3])
             return self._response(
                 start_response,
                 200,
                 {**detail, "storageCheck": evidence},
             )
         if (
-            len(parts) == 9
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5:7] == ["objects", "storages"]
-            and parts[8] == "check"
+            len(parts) == 8
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4:6] == ["objects", "storages"]
+            and parts[7] == "check"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -3612,15 +3620,15 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration service is unavailable",
                 )
-            evidence = self._configuration_objects.storage_check_evidence(parts[4], parts[7])
+            evidence = self._configuration_objects.storage_check_evidence(parts[3], parts[6])
             if evidence is None:
-                raise LookupError(f"Storage check evidence for {parts[7]!r} was not found")
+                raise LookupError(f"Storage check evidence for {parts[6]!r} was not found")
             return self._response(start_response, 200, evidence)
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "storage-browser"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "storage-browser"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -3635,13 +3643,13 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._configuration_objects.browse_storage(parts[4], **query),
+                self._configuration_objects.browse_storage(parts[3], **query),
             )
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5:7] == ["storage-browser", "select"]
+            len(parts) == 6
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4:6] == ["storage-browser", "select"]
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3676,7 +3684,7 @@ class MediaFlowApi:
                 if not isinstance(document[field], str):
                     raise ValueError(f"Storage directory selection {field} must be text")
             result = self._configuration_objects.select_storage_directory(
-                parts[4],
+                parts[3],
                 storage_id=document["storageId"],
                 path=document["path"],
                 target=document["target"],
@@ -3688,10 +3696,10 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, result)
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "objects"
+            len(parts) == 6
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "objects"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3702,7 +3710,7 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration service is unavailable",
                 )
-            kind = self._configuration_object_kind(parts[6])
+            kind = self._configuration_object_kind(parts[5])
             document = self._document(environ)
             if set(document) != {"object", "expectedVersion"}:
                 raise ValueError(
@@ -3736,7 +3744,7 @@ class MediaFlowApi:
                     }
                 }
             revision = self._configuration_objects.mutate(
-                parts[4],
+                parts[3],
                 kind,
                 object_id=None,
                 value=value,
@@ -3762,11 +3770,11 @@ class MediaFlowApi:
                     response["webhook"] = values[-1]
             return self._response(start_response, 200, response)
         if (
-            len(parts) == 9
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "objects"
-            and parts[8] in {"copy", "enable", "disable"}
+            len(parts) == 8
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "objects"
+            and parts[7] in {"copy", "enable", "disable"}
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3777,13 +3785,13 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration service is unavailable",
                 )
-            kind = self._configuration_object_kind(parts[6])
+            kind = self._configuration_object_kind(parts[5])
             document = self._document(environ)
             expected = document.get("expectedVersion")
             if isinstance(expected, bool) or not isinstance(expected, int):
                 raise ValueError("configuration expectedVersion must be an integer")
-            action = parts[8]
-            label = parts[6][:-1] if parts[6].endswith("s") else parts[6]
+            action = parts[7]
+            label = parts[5][:-1] if parts[5].endswith("s") else parts[5]
             if action == "copy":
                 allowed = {"expectedVersion", "newId", "id", "newName", "name"}
                 if set(document).difference(allowed):
@@ -3795,9 +3803,9 @@ class MediaFlowApi:
                 if new_name is not None and not isinstance(new_name, str):
                     raise ValueError(f"{label} copied name must be a string")
                 revision = self._configuration_objects.copy_object(
-                    parts[4],
+                    parts[3],
                     kind,
-                    object_id=parts[7],
+                    object_id=parts[6],
                     new_object_id=new_id,
                     new_name=new_name,
                     expected_version=expected,
@@ -3807,22 +3815,22 @@ class MediaFlowApi:
                 if set(document) != {"expectedVersion"}:
                     raise ValueError(f"{label} enable/disable requires expectedVersion")
                 revision = self._configuration_objects.set_object_enabled(
-                    parts[4],
+                    parts[3],
                     kind,
-                    object_id=parts[7],
+                    object_id=parts[6],
                     enabled=action == "enable",
                     expected_version=expected,
                     actor=principal.principal_id,
                 )
             response = revision.summary()
-            section = ConfigurationObjectService._SECTIONS.get(kind, parts[6])
+            section = ConfigurationObjectService._SECTIONS.get(kind, parts[5])
             items = revision.document.get(section) if section in revision.document else None
             updated = None
             if items:
                 updated = (
                     items[-1]
                     if action == "copy"
-                    else next((item for item in items if item.get("id") == parts[7]), None)
+                    else next((item for item in items if item.get("id") == parts[6]), None)
                 )
             if kind is ConfigurationObjectKind.STORAGE:
                 response["storage"] = updated
@@ -3833,10 +3841,10 @@ class MediaFlowApi:
                 response["object"] = updated
             return self._response(start_response, 200, response)
         if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "objects"
+            len(parts) == 7
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "objects"
             and method == "PUT"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3847,7 +3855,7 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration service is unavailable",
                 )
-            kind = self._configuration_object_kind(parts[6])
+            kind = self._configuration_object_kind(parts[5])
             document = self._document(environ)
             if set(document) != {"object", "expectedVersion"}:
                 raise ValueError("configuration object update requires object and expectedVersion")
@@ -3875,9 +3883,9 @@ class MediaFlowApi:
                     }
                 }
             revision = self._configuration_objects.mutate(
-                parts[4],
+                parts[3],
                 kind,
-                object_id=parts[7],
+                object_id=parts[6],
                 value=value,
                 expected_version=expected,
                 actor=principal.principal_id,
@@ -3888,7 +3896,7 @@ class MediaFlowApi:
                     "objects"
                 ]["storages"]
                 response["storage"] = next(
-                    (item for item in storages if item.get("id") == parts[7]),
+                    (item for item in storages if item.get("id") == parts[6]),
                     None,
                 )
             elif kind is ConfigurationObjectKind.SCHEDULE:
@@ -3896,7 +3904,7 @@ class MediaFlowApi:
                     (
                         item
                         for item in revision.document.get("automationTaskDefinitions", [])
-                        if item.get("id") == parts[7]
+                        if item.get("id") == parts[6]
                     ),
                     None,
                 )
@@ -3905,16 +3913,16 @@ class MediaFlowApi:
                     (
                         item
                         for item in revision.document.get("webhooks", [])
-                        if item.get("id") == parts[7]
+                        if item.get("id") == parts[6]
                     ),
                     None,
                 )
             return self._response(start_response, 200, response)
         if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "objects"
+            len(parts) == 7
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "objects"
             and method == "DELETE"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -3925,7 +3933,7 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration service is unavailable",
                 )
-            kind = self._configuration_object_kind(parts[6])
+            kind = self._configuration_object_kind(parts[5])
             document = self._document(environ)
             if set(document) != {"expectedVersion"}:
                 raise ValueError("configuration object deletion requires expectedVersion")
@@ -3933,9 +3941,9 @@ class MediaFlowApi:
             if isinstance(expected, bool) or not isinstance(expected, int):
                 raise ValueError("configuration expectedVersion must be an integer")
             revision = self._configuration_objects.mutate(
-                parts[4],
+                parts[3],
                 kind,
-                object_id=parts[7],
+                object_id=parts[6],
                 value=None,
                 expected_version=expected,
                 actor=principal.principal_id,
@@ -3943,11 +3951,11 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, revision.summary())
         if (
-            len(parts) == 9
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5:7] == ["objects", "webhooks"]
-            and parts[8] == "test"
+            len(parts) == 8
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4:6] == ["objects", "webhooks"]
+            and parts[7] == "test"
             and method == "POST"
         ):
             # Explicit bounded Webhook test against the exact managed revision.
@@ -3970,18 +3978,18 @@ class MediaFlowApi:
             if not isinstance(document["expectedDigest"], str):
                 raise ValueError("Webhook test expectedDigest is required")
             result = self._webhook_tests.test(
-                parts[4],
-                parts[7],
+                parts[3],
+                parts[6],
                 expected_version=expected,
                 expected_digest=document["expectedDigest"],
                 actor=principal.principal_id,
             )
             return self._response(start_response, 200, result)
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "local-setup-check"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "local-setup-check"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -4003,7 +4011,7 @@ class MediaFlowApi:
             if not isinstance(digest, str):
                 raise ValueError("configuration expectedDigest is required")
             evidence = self._configuration_objects.local_check(
-                parts[4],
+                parts[3],
                 expected_version=expected,
                 expected_digest=digest,
                 actor=principal.principal_id,
@@ -4012,10 +4020,10 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, evidence.document())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "recognition-strategy-test"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "recognition-strategy-test"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -4048,7 +4056,7 @@ class MediaFlowApi:
             if not isinstance(live_metadata, bool):
                 raise ValueError("Recognition Strategy Test liveMetadata must be a boolean")
             evidence = self._configuration_objects.recognition_strategy_test(
-                parts[4],
+                parts[3],
                 expected_version=expected,
                 expected_digest=document["expectedDigest"],
                 actor=principal.principal_id,
@@ -4058,9 +4066,9 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, evidence.document())
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
+            len(parts) == 4
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
             and method == "PUT"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -4080,13 +4088,13 @@ class MediaFlowApi:
             if not isinstance(document["document"], dict):
                 raise ValueError("configuration Draft document must be an object")
             revision = self._configuration_service.edit_draft(
-                parts[4],
+                parts[3],
                 document["document"],
                 expected_version=expected,
                 actor=principal.principal_id,
             )
             return self._response(start_response, 200, revision.summary())
-        if parts == ["api", "v1", "configuration", "drafts"] and method == "POST":
+        if parts == ["api", "configuration", "drafts"] and method == "POST":
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             if self._configuration_service is None:
                 return self._error(
@@ -4113,10 +4121,10 @@ class MediaFlowApi:
             )
             return self._response(start_response, 201, revision.summary())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] in {"validate", "activate"}
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] in {"validate", "activate"}
             and method == "POST"
         ):
             if self._configuration_service is None:
@@ -4127,12 +4135,12 @@ class MediaFlowApi:
                     "managed configuration service is unavailable",
                 )
             document = self._document(environ)
-            if parts[5] == "validate":
+            if parts[4] == "validate":
                 self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
                 if document:
                     raise ValueError("configuration validation does not accept request fields")
                 revision = self._configuration_service.validate(
-                    parts[4], actor=principal.principal_id
+                    parts[3], actor=principal.principal_id
                 )
                 return self._response(start_response, 200, revision.summary())
             self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
@@ -4156,19 +4164,19 @@ class MediaFlowApi:
                         "managed configuration object service is unavailable",
                     )
                 revision = self._configuration_objects.activate_checked(
-                    parts[4], expected_version=expected, actor=principal.principal_id
+                    parts[3], expected_version=expected, actor=principal.principal_id
                 )
             else:
                 revision = self._configuration_service.activate(
-                    parts[4], expected_version=expected, actor=principal.principal_id
+                    parts[3], expected_version=expected, actor=principal.principal_id
                 )
             self._refresh_configuration_binding()
             return self._response(start_response, 200, revision.summary())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "successor"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "successor"
             and method == "POST"
         ):
             self._require_empty_query(environ, "successor Draft")
@@ -4189,7 +4197,7 @@ class MediaFlowApi:
                 )
             if (
                 "expectedActiveRevisionId" in document
-                and document["expectedActiveRevisionId"] != parts[4]
+                and document["expectedActiveRevisionId"] != parts[3]
             ):
                 raise ValueError(
                     "expectedActiveRevisionId in request body does not match revision ID in URL"
@@ -4204,7 +4212,7 @@ class MediaFlowApi:
                 raise ValueError("expectedActiveDigest must be a string")
             revision = self._configuration_service.create_successor_draft(
                 actor=principal.principal_id,
-                expected_active_revision_id=parts[4],
+                expected_active_revision_id=parts[3],
                 expected_active_version=expected_version,
                 expected_active_digest=expected_digest,
             )
@@ -4215,9 +4223,9 @@ class MediaFlowApi:
             )
             return self._response(start_response, 201, response)
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "edit"
+            len(parts) == 4
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "edit"
             and method == "GET"
         ):
             self._require_empty_query(environ, "ResourceLibrary edit projection")
@@ -4232,9 +4240,9 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._configuration_objects.resource_library_edit_projection(parts[3]),
+                self._configuration_objects.resource_library_edit_projection(parts[2]),
             )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "resource-libraries"] and method == "PUT":
+        if len(parts) == 3 and parts[:2] == ["api", "resource-libraries"] and method == "PUT":
             self._require_empty_query(environ, "ResourceLibrary edit")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
@@ -4261,13 +4269,13 @@ class MediaFlowApi:
             if (
                 not required.issubset(document)
                 or set(document).difference(allowed)
-                or document["resourceLibraryId"] != parts[3]
+                or document["resourceLibraryId"] != parts[2]
             ):
                 raise ValueError(
                     "ResourceLibrary edit requires immutable matching ID and Active identity"
                 )
             candidate = {
-                "id": parts[3],
+                "id": parts[2],
                 "name": document["name"],
                 "enabled": document["enabled"],
                 "storageId": document["storageId"],
@@ -4307,7 +4315,7 @@ class MediaFlowApi:
                 for item in self._configuration_objects._canonical_objects(
                     revision.document, "resourceLibraries"
                 )
-                if item.get("id") == parts[3]
+                if item.get("id") == parts[2]
             )
             return self._response(
                 start_response,
@@ -4332,7 +4340,7 @@ class MediaFlowApi:
                     "sideEffects": "configuration_only",
                 },
             )
-        if parts == ["api", "v1", "resource-libraries"] and method == "POST":
+        if parts == ["api", "resource-libraries"] and method == "POST":
             self._require_empty_query(environ, "Files ResourceLibrary Save")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
@@ -4445,9 +4453,9 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "removal-preview"
+            len(parts) == 4
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "removal-preview"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -4459,13 +4467,9 @@ class MediaFlowApi:
                     "managed configuration object service is unavailable",
                 )
             self._require_empty_query(environ, "ResourceLibrary removal preview")
-            document = self._configuration_objects.resource_library_removal_evidence(parts[3])
+            document = self._configuration_objects.resource_library_removal_evidence(parts[2])
             return self._response(start_response, 200, document)
-        if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and method == "DELETE"
-        ):
+        if len(parts) == 3 and parts[:2] == ["api", "resource-libraries"] and method == "DELETE":
             self._require_empty_query(environ, "ResourceLibrary removal")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
@@ -4504,7 +4508,7 @@ class MediaFlowApi:
 
                 try:
                     revision = self._configuration_objects.remove_resource_library(
-                        parts[3],
+                        parts[2],
                         actor=principal.principal_id,
                         expected_revision_id=confirmation["expectedRevisionId"],
                         expected_version=confirmation["expectedVersion"],
@@ -4530,7 +4534,7 @@ class MediaFlowApi:
                 start_response,
                 200,
                 {
-                    "removed": {"id": parts[3]},
+                    "removed": {"id": parts[2]},
                     "active": revision.summary(),
                     "configuration": {
                         "authority": "MANAGED",
@@ -4545,9 +4549,9 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "edit"
+            len(parts) == 4
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "edit"
             and method == "GET"
         ):
             self._require_empty_query(environ, "MediaLibrary edit projection")
@@ -4562,9 +4566,9 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._configuration_objects.media_library_edit_projection(parts[3]),
+                self._configuration_objects.media_library_edit_projection(parts[2]),
             )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "media-libraries"] and method == "PUT":
+        if len(parts) == 3 and parts[:2] == ["api", "media-libraries"] and method == "PUT":
             self._require_empty_query(environ, "MediaLibrary edit")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
@@ -4586,12 +4590,12 @@ class MediaFlowApi:
                 "expectedVersion",
                 "expectedDigest",
             }
-            if set(document) != allowed or document["mediaLibraryId"] != parts[3]:
+            if set(document) != allowed or document["mediaLibraryId"] != parts[2]:
                 raise ValueError(
                     "MediaLibrary edit requires immutable matching ID and Active identity"
                 )
             candidate = {
-                "id": parts[3],
+                "id": parts[2],
                 "name": document["name"],
                 "enabled": document["enabled"],
                 "storageId": document["storageId"],
@@ -4628,7 +4632,7 @@ class MediaFlowApi:
                 for item in self._configuration_objects._canonical_objects(
                     revision.document, "mediaLibraries"
                 )
-                if item.get("id") == parts[3]
+                if item.get("id") == parts[2]
             )
             return self._response(
                 start_response,
@@ -4648,7 +4652,7 @@ class MediaFlowApi:
                     "sideEffects": "configuration_only",
                 },
             )
-        if parts == ["api", "v1", "media-libraries"] and method == "POST":
+        if parts == ["api", "media-libraries"] and method == "POST":
             self._require_empty_query(environ, "MediaLibrary Save")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
@@ -4739,9 +4743,9 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "removal-preview"
+            len(parts) == 4
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "removal-preview"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -4753,9 +4757,9 @@ class MediaFlowApi:
                     "managed configuration object service is unavailable",
                 )
             self._require_empty_query(environ, "MediaLibrary removal preview")
-            document = self._configuration_objects.media_library_removal_evidence(parts[3])
+            document = self._configuration_objects.media_library_removal_evidence(parts[2])
             return self._response(start_response, 200, document)
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "media-libraries"] and method == "DELETE":
+        if len(parts) == 3 and parts[:2] == ["api", "media-libraries"] and method == "DELETE":
             self._require_empty_query(environ, "MediaLibrary removal")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
@@ -4794,7 +4798,7 @@ class MediaFlowApi:
 
                 try:
                     revision = self._configuration_objects.remove_media_library(
-                        parts[3],
+                        parts[2],
                         actor=principal.principal_id,
                         expected_revision_id=confirmation["expectedRevisionId"],
                         expected_version=confirmation["expectedVersion"],
@@ -4820,7 +4824,7 @@ class MediaFlowApi:
                 start_response,
                 200,
                 {
-                    "removed": {"id": parts[3]},
+                    "removed": {"id": parts[2]},
                     "active": revision.summary(),
                     "configuration": {
                         "authority": "MANAGED",
@@ -4835,9 +4839,9 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "storages"]
-            and parts[4] == "edit"
+            len(parts) == 4
+            and parts[:2] == ["api", "storages"]
+            and parts[3] == "edit"
             and method == "GET"
         ):
             self._require_empty_query(environ, "Storage edit projection")
@@ -4852,12 +4856,12 @@ class MediaFlowApi:
             return self._response(
                 start_response,
                 200,
-                self._configuration_objects.storage_edit_projection(parts[3]),
+                self._configuration_objects.storage_edit_projection(parts[2]),
             )
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "storages"]
-            and parts[4] in {"copy", "enable", "disable"}
+            len(parts) == 4
+            and parts[:2] == ["api", "storages"]
+            and parts[3] in {"copy", "enable", "disable"}
             and method == "POST"
         ):
             self._require_empty_query(environ, "Storage lifecycle command")
@@ -4872,7 +4876,7 @@ class MediaFlowApi:
                 )
             document = self._document(environ)
             required = {"expectedRevisionId", "expectedVersion", "expectedDigest"}
-            action = parts[4]
+            action = parts[3]
             if action == "copy":
                 if set(document) != required | {"newStorageId", "name"}:
                     raise ValueError(
@@ -4881,7 +4885,7 @@ class MediaFlowApi:
 
                 def command(callback):
                     return self._configuration_objects.copy_storage_checked(
-                        parts[3],
+                        parts[2],
                         new_storage_id=document["newStorageId"],
                         new_name=document["name"],
                         actor=principal.principal_id,
@@ -4900,7 +4904,7 @@ class MediaFlowApi:
 
                 def command(callback):
                     return self._configuration_objects.set_storage_enabled_checked(
-                        parts[3],
+                        parts[2],
                         enabled=document["enabled"],
                         actor=principal.principal_id,
                         before_publish=callback,
@@ -4909,7 +4913,7 @@ class MediaFlowApi:
                         expected_digest=document["expectedDigest"],
                     )
 
-                result_id = parts[3]
+                result_id = parts[2]
             prepared: list[_ApiRuntimeBinding] = []
             with self._runtime_binding_lock:
                 self._refresh_configuration_binding_locked()
@@ -4927,7 +4931,7 @@ class MediaFlowApi:
                     )
                 self._publish_runtime_binding(prepared[0])
             return self._storage_save_response(start_response, revision, result_id)
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "storages"] and method == "DELETE":
+        if len(parts) == 3 and parts[:2] == ["api", "storages"] and method == "DELETE":
             self._require_empty_query(environ, "Storage removal")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
@@ -4946,7 +4950,7 @@ class MediaFlowApi:
             with self._runtime_binding_lock:
                 self._refresh_configuration_binding_locked()
                 revision = self._configuration_objects.remove_storage_checked(
-                    parts[3],
+                    parts[2],
                     actor=principal.principal_id,
                     before_publish=lambda rev: prepared.append(
                         self._prepare_storage_binding_for_revision(rev)
@@ -4969,7 +4973,7 @@ class MediaFlowApi:
                 start_response,
                 200,
                 {
-                    "removed": {"id": parts[3]},
+                    "removed": {"id": parts[2]},
                     "active": revision.summary(),
                     "sideEffects": "configuration_only",
                     "nextAction": (
@@ -4977,7 +4981,7 @@ class MediaFlowApi:
                     ),
                 },
             )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "storages"] and method == "PUT":
+        if len(parts) == 3 and parts[:2] == ["api", "storages"] and method == "PUT":
             self._require_empty_query(environ, "Storage edit")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
@@ -5003,10 +5007,10 @@ class MediaFlowApi:
             }
             # The ID is immutable after creation: an Edit may only address the
             # Active Storage it opened, never publish a re-identified object.
-            if set(document) != allowed or document["storageId"] != parts[3]:
+            if set(document) != allowed or document["storageId"] != parts[2]:
                 raise ValueError("Storage edit requires immutable matching ID and Active identity")
             candidate = {
-                "id": parts[3],
+                "id": parts[2],
                 "name": document["name"],
                 "type": document["type"],
                 "rootPath": document["rootPath"],
@@ -5040,8 +5044,8 @@ class MediaFlowApi:
                         status=503,
                     )
                 self._publish_runtime_binding(prepared[0])
-            return self._storage_save_response(start_response, revision, parts[3])
-        if parts == ["api", "v1", "storages"] and method == "GET":
+            return self._storage_save_response(start_response, revision, parts[2])
+        if parts == ["api", "storages"] and method == "GET":
             self._require_empty_query(environ, "Storage form authority")
             self._require(principal, ApiPermission.READ)
             if self._configuration_objects is None:
@@ -5054,7 +5058,7 @@ class MediaFlowApi:
             return self._response(
                 start_response, 200, self._configuration_objects.storage_form_authority()
             )
-        if parts == ["api", "v1", "storages"] and method == "POST":
+        if parts == ["api", "storages"] and method == "POST":
             self._require_empty_query(environ, "Storage Save")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
@@ -5130,7 +5134,7 @@ class MediaFlowApi:
                     )
                 self._publish_runtime_binding(prepared[0])
             return self._storage_save_response(start_response, revision, candidate["id"])
-        if parts == ["api", "v1", "system", "status"]:
+        if parts == ["api", "system", "status"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
             self._require_empty_query(environ, "system status")
@@ -5152,11 +5156,11 @@ class MediaFlowApi:
                     start_response, 503, "service_unavailable", "system status is unavailable"
                 )
             return self._response(start_response, 200, binding.system_status.as_document())
-        # GET /api/v1/system/settings
+        # GET /api/system/settings
         if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "system"]
-            and parts[3] == "settings"
+            len(parts) == 3
+            and parts[:2] == ["api", "system"]
+            and parts[2] == "settings"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -5195,11 +5199,11 @@ class MediaFlowApi:
             projection["consumption"] = evidence
             return self._response(start_response, 200, projection)
 
-        # PUT /api/v1/system/settings
+        # PUT /api/system/settings
         if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "system"]
-            and parts[3] == "settings"
+            len(parts) == 3
+            and parts[:2] == ["api", "system"]
+            and parts[2] == "settings"
             and method == "PUT"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -5249,12 +5253,12 @@ class MediaFlowApi:
             response["consumption"] = self._system_settings.consumption_evidence()
             return self._response(start_response, status_code, response)
 
-        # GET /api/v1/configuration/revisions/<revision_id>/settings
+        # GET /api/configuration/revisions/<revision_id>/settings
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "settings"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "settings"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -5265,7 +5269,7 @@ class MediaFlowApi:
                     "service_unavailable",
                     "system settings service is unavailable",
                 )
-            revision_id = parts[4]
+            revision_id = parts[3]
             try:
                 settings = self._system_settings.read_draft_or_active(revision_id)
             except RuntimeSnapshotUnavailable as error:
@@ -5286,12 +5290,12 @@ class MediaFlowApi:
             projection["consumption"] = self._system_settings.consumption_evidence()
             return self._response(start_response, 200, projection)
 
-        # PUT /api/v1/configuration/revisions/<revision_id>/settings
+        # PUT /api/configuration/revisions/<revision_id>/settings
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "configuration"]
-            and parts[3] == "revisions"
-            and parts[5] == "settings"
+            len(parts) == 5
+            and parts[:2] == ["api", "configuration"]
+            and parts[2] == "revisions"
+            and parts[4] == "settings"
             and method == "PUT"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -5308,7 +5312,7 @@ class MediaFlowApi:
                 raise ValueError("expectedVersion must be an integer")
             edits = self._extract_system_settings_edits(document)
             updated = self._system_settings.edit_draft(
-                parts[4],
+                parts[3],
                 edits=edits,
                 expected_version=expected_version,
                 actor=principal.principal_id,
@@ -5319,21 +5323,21 @@ class MediaFlowApi:
             return self._response(start_response, 200, response)
 
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
+            len(parts) == 4
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
             if binding.files_browser is None:
                 return self._files_browser_unavailable(start_response)
-            query = self._resource_library_files_query(environ, parts[3])
+            query = self._resource_library_files_query(environ, parts[2])
             return self._response(
                 start_response,
                 200,
                 binding.files_browser.browse_resource_library(**query),
             )
-        if parts == ["api", "v1", "resource-libraries", "files"] and method == "GET":
+        if parts == ["api", "resource-libraries", "files"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if binding.files_browser is None:
                 return self._files_browser_unavailable(start_response)
@@ -5341,29 +5345,29 @@ class MediaFlowApi:
             return self._response(
                 start_response, 200, binding.files_browser.list_resource_libraries()
             )
-        if parts == ["api", "v1", "media-libraries"] and method == "GET":
+        if parts == ["api", "media-libraries"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if binding.files_browser is None:
                 return self._files_browser_unavailable(start_response)
             self._require_empty_query(environ, "MediaLibrary list")
             return self._response(start_response, 200, binding.files_browser.list_media_libraries())
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "files"
+            len(parts) == 4
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "files"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
             if binding.files_browser is None:
                 return self._files_browser_unavailable(start_response)
-            query = self._media_library_files_query(environ, parts[3])
+            query = self._media_library_files_query(environ, parts[2])
             return self._response(
                 start_response,
                 200,
                 binding.files_browser.browse_media_library(**query),
             )
         if (
-            parts == ["api", "v1", "storage", "files"] or parts == ["api", "v1", "files", "browse"]
+            parts == ["api", "storage", "files"] or parts == ["api", "files", "browse"]
         ) and method == "GET":
             self._require(principal, ApiPermission.READ)
             if binding.files_browser is None:
@@ -5375,90 +5379,90 @@ class MediaFlowApi:
                 binding.files_browser.browse(**query),
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "text"
+            len(parts) == 5
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "text"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
-            return self._files_direct_text_read(start_response, binding, parts[3], environ)
+            return self._files_direct_text_read(start_response, binding, parts[2], environ)
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "text"
+            len(parts) == 5
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "text"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
             return self._files_direct_text_read(
-                start_response, binding, parts[3], environ, media_library=True
+                start_response, binding, parts[2], environ, media_library=True
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "delete-impact"
+            len(parts) == 5
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "delete-impact"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
-            return self._files_direct_delete_impact(start_response, binding, parts[3], environ)
+            return self._files_direct_delete_impact(start_response, binding, parts[2], environ)
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "delete-impact"
+            len(parts) == 5
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "delete-impact"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
             return self._files_direct_delete_impact(
-                start_response, binding, parts[3], environ, media_library=True
+                start_response, binding, parts[2], environ, media_library=True
             )
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4:6] == ["files", "deletes"]
+            len(parts) == 6
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3:5] == ["files", "deletes"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "Files Delete status")
-            return self._files_direct_delete_status(start_response, binding, parts[3], parts[6])
+            return self._files_direct_delete_status(start_response, binding, parts[2], parts[5])
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4:6] == ["files", "deletes"]
+            len(parts) == 6
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3:5] == ["files", "deletes"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "MediaLibrary Delete status")
             return self._files_direct_delete_status(
-                start_response, binding, parts[3], parts[6], media_library=True
+                start_response, binding, parts[2], parts[5], media_library=True
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "rename-evidence"
+            len(parts) == 5
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "rename-evidence"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
-            return self._files_direct_rename_evidence(start_response, binding, parts[3], environ)
+            return self._files_direct_rename_evidence(start_response, binding, parts[2], environ)
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "rename-evidence"
+            len(parts) == 5
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "rename-evidence"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
             return self._files_direct_rename_evidence(
-                start_response, binding, parts[3], environ, media_library=True
+                start_response, binding, parts[2], environ, media_library=True
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "transfer-impact"
+            len(parts) == 5
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "transfer-impact"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -5466,7 +5470,7 @@ class MediaFlowApi:
                 return self._files_browser_unavailable(start_response)
             query = self._files_transfer_impact_query(environ)
             impact = binding.direct_transfers.transfer_impact(
-                resource_library_id=parts[3],
+                resource_library_id=parts[2],
                 paths=query["paths"],
                 destination_resource_library_id=query["destination"],
                 destination_directory=query["destination_path"],
@@ -5475,10 +5479,10 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, impact.document())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "transfers"
+            len(parts) == 5
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "transfers"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
@@ -5503,7 +5507,7 @@ class MediaFlowApi:
             if not isinstance(document["paths"], list):
                 raise ValueError("Files transfer paths must be an array")
             result = binding.direct_transfers.submit_transfer(
-                resource_library_id=parts[3],
+                resource_library_id=parts[2],
                 paths=document["paths"],
                 destination_resource_library_id=document["destinationResourceLibraryId"],
                 destination_directory=document["destinationDirectory"],
@@ -5516,10 +5520,10 @@ class MediaFlowApi:
             # no Storage mutation has happened on this request's stack.
             return self._response(start_response, 202, result)
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "transfers"
+            len(parts) == 6
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "transfers"
             and method == "GET"
         ):
             # The bounded durable projection of one admitted transfer.  The Web
@@ -5532,10 +5536,10 @@ class MediaFlowApi:
                 return self._files_browser_unavailable(start_response)
             self._require_empty_query(environ, "Files transfer status")
             try:
-                projection = transfers.transfer_projection(parts[6])
+                projection = transfers.transfer_projection(parts[5])
             except DirectFileTransferError as error:
                 if error.category == "not_found":
-                    raise LookupError(f"task {parts[6]!r} was not found") from None
+                    raise LookupError(f"task {parts[5]!r} was not found") from None
                 raise
             return self._response(
                 start_response,
@@ -5543,10 +5547,10 @@ class MediaFlowApi:
                 self._with_transfer_worker_readiness(projection, media_library=False),
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "organize"
+            len(parts) == 5
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "organize"
             and method == "POST"
         ):
             # Files submits only the enabled ResourceLibrary identity and
@@ -5582,7 +5586,7 @@ class MediaFlowApi:
                 raise ValueError("Files organize admission paths must be an array")
             try:
                 intent = self._manual_previews.admit_storage_paths(
-                    resource_library_id=parts[3],
+                    resource_library_id=parts[2],
                     relative_paths=document["paths"],
                     actor=principal.principal_id,
                 )
@@ -5594,10 +5598,10 @@ class MediaFlowApi:
                 start_response, 201, self._organize_intent_document(intent, principal)
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "organize-work"
+            len(parts) == 5
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "organize-work"
             and method == "GET"
         ):
             # Files' own durable readback of its organizing work for this library.
@@ -5634,7 +5638,7 @@ class MediaFlowApi:
             work = self._files_organize_work(
                 principal,
                 binding,
-                resource_library_id=parts[3],
+                resource_library_id=parts[2],
                 limit=limit,
                 before=boundary,
                 request_id=(request_ids[0] if len(request_ids) == 1 else None),
@@ -5644,7 +5648,7 @@ class MediaFlowApi:
                 200,
                 {
                     "journey": "files-organize-work",
-                    "resourceLibraryId": parts[3],
+                    "resourceLibraryId": parts[2],
                     "items": work["items"],
                     "total": len(work["items"]),
                     "nextBefore": work["nextBefore"],
@@ -5653,10 +5657,10 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "discoveries"
+            len(parts) == 5
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "discoveries"
             and method == "POST"
         ):
             # RO-6 folder/mixed-selection discovery admission.  The browser
@@ -5706,7 +5710,7 @@ class MediaFlowApi:
                 raise ValueError("Files discovery autoPrepare flag must be boolean")
             try:
                 discovery = discovery_service.admit(
-                    resource_library_id=parts[3],
+                    resource_library_id=parts[2],
                     relative_paths=document["paths"],
                     actor=principal.principal_id,
                     admission_request_id=document.get("requestId"),
@@ -5729,21 +5733,21 @@ class MediaFlowApi:
                 ),
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "commands"
+            len(parts) == 5
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "commands"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
             return self._files_direct_command(
-                start_response, binding, parts[3], environ, media_library=False
+                start_response, binding, parts[2], environ, media_library=False
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "commands"
+            len(parts) == 5
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "commands"
             and method == "POST"
         ):
             # The MediaLibrary page reaches the same application behavior through
@@ -5753,13 +5757,13 @@ class MediaFlowApi:
             # MediaLibrary, so it fails closed.
             self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
             return self._files_direct_command(
-                start_response, binding, parts[3], environ, media_library=True
+                start_response, binding, parts[2], environ, media_library=True
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "transfer-impact"
+            len(parts) == 5
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "transfer-impact"
             and method == "GET"
         ):
             # The MediaLibrary transfer impact: the same zero-mutation bounded
@@ -5772,7 +5776,7 @@ class MediaFlowApi:
                 return self._files_browser_unavailable(start_response)
             query = self._files_transfer_impact_query(environ)
             impact = binding.direct_media_transfers.transfer_impact(
-                resource_library_id=parts[3],
+                resource_library_id=parts[2],
                 paths=query["paths"],
                 destination_resource_library_id=query["destination"],
                 destination_directory=query["destination_path"],
@@ -5781,10 +5785,10 @@ class MediaFlowApi:
             )
             return self._response(start_response, 200, impact.document())
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "transfers"
+            len(parts) == 5
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "transfers"
             and method == "POST"
         ):
             # MediaLibrary transfer admission: identical permissions, request
@@ -5814,7 +5818,7 @@ class MediaFlowApi:
             if not isinstance(document["paths"], list):
                 raise ValueError("MediaLibrary transfer paths must be an array")
             result = binding.direct_media_transfers.submit_transfer(
-                resource_library_id=parts[3],
+                resource_library_id=parts[2],
                 paths=document["paths"],
                 destination_resource_library_id=document["destinationMediaLibraryId"],
                 destination_directory=document["destinationDirectory"],
@@ -5827,10 +5831,10 @@ class MediaFlowApi:
             # no Storage mutation has happened on this request's stack.
             return self._response(start_response, 202, result)
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "transfers"
+            len(parts) == 6
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "files"
+            and parts[4] == "transfers"
             and method == "GET"
         ):
             # The bounded durable projection of one admitted media transfer.
@@ -5843,10 +5847,10 @@ class MediaFlowApi:
                 return self._files_browser_unavailable(start_response)
             self._require_empty_query(environ, "MediaLibrary transfer status")
             try:
-                projection = transfers.transfer_projection(parts[6])
+                projection = transfers.transfer_projection(parts[5])
             except DirectFileTransferError as error:
                 if error.category == "not_found":
-                    raise LookupError(f"task {parts[6]!r} was not found") from None
+                    raise LookupError(f"task {parts[5]!r} was not found") from None
                 raise
             return self._response(
                 start_response,
@@ -5854,9 +5858,9 @@ class MediaFlowApi:
                 self._with_transfer_worker_readiness(projection, media_library=True),
             )
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "file-operations"
+            len(parts) == 4
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "file-operations"
             and method == "GET"
         ):
             # The originating library's own ordinary file-operation history.
@@ -5869,13 +5873,13 @@ class MediaFlowApi:
                 start_response,
                 environ,
                 principal,
-                parts[3],
+                parts[2],
                 media_library=False,
             )
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "file-operations"
+            len(parts) == 4
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "file-operations"
             and method == "GET"
         ):
             # The MediaLibrary twin of the library-owned history read: the same
@@ -5886,13 +5890,13 @@ class MediaFlowApi:
                 start_response,
                 environ,
                 principal,
-                parts[3],
+                parts[2],
                 media_library=True,
             )
         if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[3] == "operation-origins"
+            len(parts) == 3
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[2] == "operation-origins"
             and method == "GET"
         ):
             # The bounded set of origins this library kind still owns.  It keeps
@@ -5903,17 +5907,17 @@ class MediaFlowApi:
                 start_response, environ, media_library=False
             )
         if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[3] == "operation-origins"
+            len(parts) == 3
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[2] == "operation-origins"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
             return self._library_file_operation_origins(start_response, environ, media_library=True)
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4:6] == ["files", "operations"]
+            len(parts) == 6
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3:5] == ["files", "operations"]
             and method == "GET"
         ):
             # One ordinary operation of this exact library, rebuilt from its
@@ -5924,15 +5928,15 @@ class MediaFlowApi:
                 start_response,
                 environ,
                 principal,
-                parts[3],
-                parts[6],
+                parts[2],
+                parts[5],
                 media_library=False,
                 binding=binding,
             )
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4:6] == ["files", "operations"]
+            len(parts) == 6
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3:5] == ["files", "operations"]
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
@@ -5940,15 +5944,15 @@ class MediaFlowApi:
                 start_response,
                 environ,
                 principal,
-                parts[3],
-                parts[6],
+                parts[2],
+                parts[5],
                 media_library=True,
                 binding=binding,
             )
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "files"]
-            and parts[3] == "operation-origin"
+            len(parts) == 4
+            and parts[:2] == ["api", "files"]
+            and parts[2] == "operation-origin"
             and method == "GET"
         ):
             # Resolve one existing ordinary Task/run deep link to the exact
@@ -5958,16 +5962,16 @@ class MediaFlowApi:
             # both library kinds share this one route.
             self._require(principal, ApiPermission.READ)
             return self._library_file_operation_origin(
-                start_response, environ, parts[4], media_library=None
+                start_response, environ, parts[3], media_library=None
             )
-        if parts == ["api", "v1", "security-audit"] and method == "GET":
+        if parts == ["api", "security-audit"] and method == "GET":
             self._require(principal, ApiPermission.READ_SECURITY_AUDIT)
             return self._response(
                 start_response,
                 200,
                 {"items": [self._value(item) for item in self._repository.list_security_audit()]},
             )
-        if parts == ["api", "v1", "auth", "principal"] and method == "GET":
+        if parts == ["api", "auth", "principal"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "authenticated principal")
             return self._response(
@@ -5975,36 +5979,36 @@ class MediaFlowApi:
                 200,
                 {"principal_id": principal.principal_id},
             )
-        if parts[:3] == ["api", "v1", "explore"] and method == "GET":
+        if parts[:2] == ["api", "explore"] and method == "GET":
             # Slice 51 Task 51.1: one read-only Explore boundary. A legitimate
             # READ is proven before any query parsing, Provider resolution,
             # catalog read or cache access, so an unauthorized principal can
             # never trigger an upstream read. All errors normalize through the
             # dedicated ExploreError handler in ``__call__``.
             if tuple(parts) not in {
-                ("api", "v1", "explore", "browse"),
-                ("api", "v1", "explore", "search"),
-                ("api", "v1", "explore", "options"),
-            } and not (len(parts) == 5 and parts[3] in {"movie", "tv"}):
+                ("api", "explore", "browse"),
+                ("api", "explore", "search"),
+                ("api", "explore", "options"),
+            } and not (len(parts) == 4 and parts[2] in {"movie", "tv"}):
                 return self._error(start_response, 404, "not_found", "route was not found")
             self._require(principal, ApiPermission.READ)
-            if len(parts) == 5:
+            if len(parts) == 4:
                 # One exact provider+type+id detail; no name re-matching and no
                 # extra query fields.
                 self._require_empty_query(environ, "explore detail")
-                document = self._explore.detail(parts[3], parts[4])
+                document = self._explore.detail(parts[2], parts[3])
             else:
                 params = self._explore_query(environ)
-                if parts[3] == "browse":
+                if parts[2] == "browse":
                     document = self._explore.browse(params)
-                elif parts[3] == "search":
+                elif parts[2] == "search":
                     document = self._explore.search(params)
                 else:
                     document = self._explore.options(params)
             return self._response(start_response, 200, document)
         if method == "GET":
             self._require(principal, ApiPermission.READ)
-        if parts == ["api", "v1", "tasks"] and method == "GET":
+        if parts == ["api", "tasks"] and method == "GET":
             task_status, task_command, limit, cursor = self._task_collection_query(environ)
             scope = _collection_scope(task_status.value if task_status else None, task_command)
             values = self._list_page(
@@ -6041,29 +6045,29 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
+            len(parts) == 5
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "items"
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "task checkpoint")
-            checkpoint = self._checkpoint_service.get(parts[5], task_id=parts[3])
+            checkpoint = self._checkpoint_service.get(parts[4], task_id=parts[2])
             value = checkpoint.document()
             if self._manual_execution is not None:
                 value["manualExecutionDiscovery"] = self._manual_execution.discovery_for_task_item(
-                    parts[3], parts[5]
+                    parts[2], parts[4]
                 )
             if self._manual_recovery is not None:
                 value["manualRecoveryPreparation"] = (
-                    self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
+                    self._manual_recovery.discovery_for_preparation(parts[2], parts[4])
                 )
             return self._response(start_response, 200, value)
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6] == "recovery"
+            len(parts) == 6
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "items"
+            and parts[5] == "recovery"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
@@ -6089,8 +6093,8 @@ class MediaFlowApi:
             ):
                 raise ValueError("recovery note must be a string")
             request = self._recovery_admission.admit(
-                parts[3],
-                parts[5],
+                parts[2],
+                parts[4],
                 action_id=action_id,
                 expected_checkpoint_version=expected,
                 actor=principal.principal_id,
@@ -6113,10 +6117,10 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6:8] == ["recovery", "continue"]
+            len(parts) == 7
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "items"
+            and parts[5:7] == ["recovery", "continue"]
             and method == "POST"
         ):
             self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
@@ -6133,15 +6137,15 @@ class MediaFlowApi:
             if not isinstance(expected, str) or not expected.strip():
                 raise ValueError("expectedCheckpointVersion is required")
             native = getattr(self, "_manual_task_continuation", None)
-            if native is not None and native.applies(parts[3]):
+            if native is not None and native.applies(parts[2]):
                 # RO-1/RO-3: this Task is its own scheduling authority, so the
                 # operator's saved decision continues *this* Task's bounded
                 # analysis.  No Job, child Task or execution authority is
                 # created; the same Task keeps its identity, pin and evidence.
                 try:
                     continuation = native.continue_analysis(
-                        parts[3],
-                        parts[5],
+                        parts[2],
+                        parts[4],
                         expected_checkpoint_version=expected,
                         actor=principal.principal_id,
                     )
@@ -6180,10 +6184,10 @@ class MediaFlowApi:
                 },
             )
         if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6:8] == ["recovery", "prepare-summary"]
+            len(parts) == 7
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "items"
+            and parts[5:7] == ["recovery", "prepare-summary"]
             and method == "POST"
         ):
             self._require_manual_execution(principal)
@@ -6210,8 +6214,8 @@ class MediaFlowApi:
             # is made.
             try:
                 native = self._manual_recovery.prepare_native_summary(
-                    parts[3],
-                    parts[5],
+                    parts[2],
+                    parts[4],
                     expected_checkpoint_version=expected,
                     actor=principal.principal_id,
                 )
@@ -6242,22 +6246,22 @@ class MediaFlowApi:
                 ),
             )
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "cancel"
+            len(parts) == 4
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "cancel"
             and method == "POST"
         ):
             # Cooperative Task cancellation.  It keeps its safe boundary; a
             # four-type problem continues through its own decision journey.
             self._require(principal, ApiPermission.CANCEL_JOB)
-            self._require_empty_query(environ, f"Task {parts[4]}")
-            expected_version = self._control_version(environ, f"Task {parts[4]} control")
+            self._require_empty_query(environ, f"Task {parts[3]}")
+            expected_version = self._control_version(environ, f"Task {parts[3]} control")
             service = TaskLifecycleService(
                 self._repository,
                 snapshot_validator=self._runtime_snapshot_validator,
                 mutation_authority=None,
             )
-            task = self._cancel_task(service, parts[3], expected_version, binding)
+            task = self._cancel_task(service, parts[2], expected_version, binding)
             lifecycle = self._task_lifecycle(
                 service, task, principal, results=service.results(task.task_id)
             )
@@ -6282,11 +6286,11 @@ class MediaFlowApi:
                     "nextAction": lifecycle["nextAction"],
                 },
             )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"] and method == "GET":
+        if len(parts) == 3 and parts[:2] == ["api", "tasks"] and method == "GET":
             item_limit, result_limit, item_cursor, result_cursor = self._task_detail_page(environ)
-            task = self._repository.get_task(parts[3])
+            task = self._repository.get_task(parts[2])
             if task is None:
-                raise LookupError(f"task {parts[3]!r} was not found")
+                raise LookupError(f"task {parts[2]!r} was not found")
             items = self._list_page(
                 lambda **kwargs: self._repository.list_items(task.task_id, **kwargs),
                 item_limit,
@@ -6366,7 +6370,7 @@ class MediaFlowApi:
                     ),
                 },
             )
-        if parts == ["api", "v1", "notifications"] and method == "GET":
+        if parts == ["api", "notifications"] and method == "GET":
             limit, delivery_status, cursor = self._notification_query(environ)
             scope = delivery_status.value if delivery_status else "all"
             values = self._list_page(
@@ -6416,7 +6420,7 @@ class MediaFlowApi:
                     ],
                 },
             )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "notifications"] and method == "GET":
+        if len(parts) == 3 and parts[:2] == ["api", "notifications"] and method == "GET":
             # One bounded delivery detail projection.  The application service
             # derives lease/staleness, known effects, retry safety and the
             # explicitly available recovery actions; viewing never mutates.
@@ -6426,14 +6430,14 @@ class MediaFlowApi:
                 start_response,
                 200,
                 self._notification_deliveries.detail(
-                    parts[3],
+                    parts[2],
                     lease_seconds=self._notification_delivery_lease_seconds(),
                 ),
             )
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "notifications"]
-            and parts[4] in {"requeue", "resolve-stale"}
+            len(parts) == 4
+            and parts[:2] == ["api", "notifications"]
+            and parts[3] in {"requeue", "resolve-stale"}
             and method == "POST"
         ):
             # Explicit delivery recovery actions (dead-letter requeue and
@@ -6446,9 +6450,9 @@ class MediaFlowApi:
             document = self._document(environ)
             if set(document) != {"expectedStatus", "expectedUpdatedAt"}:
                 raise ValueError("delivery recovery requires expectedStatus and expectedUpdatedAt")
-            if parts[4] == "requeue":
+            if parts[3] == "requeue":
                 result = self._notification_deliveries.requeue_dead_letter(
-                    parts[3],
+                    parts[2],
                     expected_status=document["expectedStatus"],
                     expected_updated_at=document["expectedUpdatedAt"],
                     lease_seconds=self._notification_delivery_lease_seconds(),
@@ -6456,14 +6460,14 @@ class MediaFlowApi:
                 )
             else:
                 result = self._notification_deliveries.resolve_stale(
-                    parts[3],
+                    parts[2],
                     expected_status=document["expectedStatus"],
                     expected_updated_at=document["expectedUpdatedAt"],
                     lease_seconds=self._notification_delivery_lease_seconds(),
                     actor=principal.principal_id,
                 )
             return self._response(start_response, 200, result)
-        if parts == ["api", "v1", "logs"] and method == "GET":
+        if parts == ["api", "logs"] and method == "GET":
             limit, minimum_level, cursor = self._log_query(environ)
             scope = minimum_level.name if minimum_level else "all"
             values = self._list_page(
@@ -6793,7 +6797,7 @@ class MediaFlowApi:
             )
 
             return {
-                key: unavailable_for(key, "/ui-v2/configuration", reason, next_action)
+                key: unavailable_for(key, "/configuration", reason, next_action)
                 for key in (
                     "storageConfiguration",
                     "libraryConfiguration",
@@ -6815,7 +6819,7 @@ class MediaFlowApi:
             return {
                 key: unavailable_for(
                     key,
-                    "/ui-v2/configuration",
+                    "/configuration",
                     "active_unavailable",
                     "repair the Active configuration, then refresh",
                 )
@@ -6882,18 +6886,16 @@ class MediaFlowApi:
                 )
             return None
 
-        storage_permission = permission(
-            manage and activate, "/ui-v2/storage", "storage configuration"
-        )
+        storage_permission = permission(manage and activate, "/storage", "storage configuration")
         library_permission = permission(
-            manage and activate, "/ui-v2/resourcelib/files", "library configuration"
+            manage and activate, "/resourcelib/files", "library configuration"
         )
         storage_config = storage_permission or self._readiness_entry(
             ready=True,
             condition="ready",
             durable_state="storage configuration is available",
             next_action="add or edit a Storage",
-            recovery_destination="/ui-v2/storage",
+            recovery_destination="/storage",
         )
         library_config = library_permission or self._readiness_entry(
             ready=bool(enabled_storages),
@@ -6904,7 +6906,7 @@ class MediaFlowApi:
             if enabled_storages
             else "no enabled Storage",
             next_action="enable a Storage" if storage_present else "add a Storage",
-            recovery_destination="/ui-v2/storage",
+            recovery_destination="/storage",
         )
         storage_access = self._readiness_entry(
             ready=bool(enabled_storages) and authorized_for("storageAccess"),
@@ -6933,7 +6935,7 @@ class MediaFlowApi:
                 if storage_present
                 else "add a Storage"
             ),
-            recovery_destination="/ui-v2/storage",
+            recovery_destination="/storage",
             authorized=authorized_for("storageAccess"),
         )
         browse = self._readiness_entry(
@@ -6959,7 +6961,7 @@ class MediaFlowApi:
                 if not authorized_for("libraryBrowse")
                 else "add a ResourceLibrary or MediaLibrary"
             ),
-            recovery_destination="/ui-v2/resourcelib/files",
+            recovery_destination="/resourcelib/files",
             authorized=authorized_for("libraryBrowse"),
         )
         transfer = self._readiness_entry(
@@ -6985,12 +6987,10 @@ class MediaFlowApi:
                 if not authorized_for("directTransfer")
                 else "add an enabled library"
             ),
-            recovery_destination="/ui-v2/resourcelib/files",
+            recovery_destination="/resourcelib/files",
             authorized=authorized_for("directTransfer"),
         )
-        organize_permission = permission(
-            preview and execute, "/ui-v2/resourcelib/files", "Organize"
-        )
+        organize_permission = permission(preview and execute, "/resourcelib/files", "Organize")
         organize = organize_permission or self._readiness_entry(
             ready=bool(enabled_resources and enabled_media and processing),
             condition="ready" if enabled_resources and enabled_media and processing else "missing",
@@ -6998,7 +6998,7 @@ class MediaFlowApi:
             if enabled_resources and enabled_media and processing
             else "source, destination or processing chain is not configured",
             next_action="configure the missing source, destination and processing policies",
-            recovery_destination="/ui-v2/configuration",
+            recovery_destination="/configuration",
         )
         notifications = (
             document.get("notifications", {}).get("webhooks", [])
@@ -7045,7 +7045,7 @@ class MediaFlowApi:
                 if definitions_present
                 else "create an Automation Task Definition"
             ),
-            recovery_destination="/ui-v2/operations/automation",
+            recovery_destination="/operations/automation",
             authorized=authorized_for("scheduling"),
         )
         notification = self._readiness_entry(
@@ -7073,7 +7073,7 @@ class MediaFlowApi:
                 if notification_present
                 else "add an enabled Webhook target"
             ),
-            recovery_destination="/ui-v2/operations/notifications",
+            recovery_destination="/operations/notifications",
             authorized=authorized_for("notification"),
         )
         return {
@@ -7171,7 +7171,7 @@ class MediaFlowApi:
         *,
         bounded: bool = False,
     ) -> dict[str, object]:
-        """Worker readiness document (GET /api/v1/workers/readiness).
+        """Worker readiness document (GET /api/workers/readiness).
 
         The bounded Operations projection keeps the readiness identity and the
         Operator-facing next action but not the Active snapshot digest, which is
@@ -7345,7 +7345,7 @@ class MediaFlowApi:
         *,
         bounded: bool = False,
     ) -> dict[str, object]:
-        """Workers list document (GET /api/v1/workers)."""
+        """Workers list document (GET /api/workers)."""
         self._require(principal, ApiPermission.READ)
         if self._worker_service is None:
             return {
@@ -7497,35 +7497,35 @@ class MediaFlowApi:
         """
 
         if path in (
-            "/api/v1/resource-libraries",
-            "/api/v1/media-libraries",
-            "/api/v1/storages",
+            "/api/resource-libraries",
+            "/api/media-libraries",
+            "/api/storages",
         ):
             return method == "POST"
         if method in {"POST", "PUT", "DELETE"} and path.startswith(
-            "/api/v1/operations/rules/objects/"
+            "/api/operations/rules/objects/"
         ):
             return True
-        if path.startswith("/api/v1/operations/automation/definitions"):
+        if path.startswith("/api/operations/automation/definitions"):
             return method in {"POST", "PUT", "DELETE"} and not path.endswith("schedule-preview")
-        return method == "PUT" and path.startswith("/api/v1/storages/")
+        return method == "PUT" and path.startswith("/api/storages/")
 
     @staticmethod
     def _is_workflow_producing_route(method: str, parts: list[str]) -> bool:
         if method in {"GET", "HEAD", "OPTIONS"}:
             return False
-        if parts[:3] == ["api", "v1", "configuration"]:
+        if parts[:2] == ["api", "configuration"]:
             return False
-        if parts[:3] == ["api", "v1", "system"]:
+        if parts[:2] == ["api", "system"]:
             return False
-        if parts == ["api", "v1", "management", "readiness"]:
+        if parts == ["api", "management", "readiness"]:
             return False
-        if tuple(parts[:3]) in {
-            ("api", "v1", "tasks"),
-            ("api", "v1", "resource-libraries"),
-            ("api", "v1", "automation"),
-            ("api", "v1", "files"),
-            ("api", "v1", "recovery"),
+        if tuple(parts[:2]) in {
+            ("api", "tasks"),
+            ("api", "resource-libraries"),
+            ("api", "automation"),
+            ("api", "files"),
+            ("api", "recovery"),
         }:
             return True
         return False
@@ -7746,170 +7746,170 @@ class MediaFlowApi:
     def _audit_route(path: str) -> str:
         parts = [part for part in path.split("/") if part]
         if (
-            len(parts) >= 4
-            and parts[:3] == ["api", "v1", "operations"]
-            and parts[3] in {"tasks", "workers"}
+            len(parts) >= 3
+            and parts[:2] == ["api", "operations"]
+            and parts[2] in {"tasks", "workers"}
         ):
             # The V2 Operations read alias names its own bounded projection
             # without publishing an object identifier in audit evidence.
-            kind = parts[3]
+            kind = parts[2]
+            if len(parts) == 3:
+                return f"/api/operations/{kind}"
             if len(parts) == 4:
-                return f"/api/v1/operations/{kind}"
-            if len(parts) == 5:
-                if kind == "workers" and parts[4] == "readiness":
-                    return "/api/v1/operations/workers/readiness"
-                return f"/api/v1/operations/{kind}/{{id}}"
-            return "/api/v1/<unmatched>"
-        if len(parts) >= 4 and parts[:3] == ["api", "v1", "operations"] and parts[3] == "runs":
+                if kind == "workers" and parts[3] == "readiness":
+                    return "/api/operations/workers/readiness"
+                return f"/api/operations/{kind}/{{id}}"
+            return "/api/<unmatched>"
+        if len(parts) >= 3 and parts[:2] == ["api", "operations"] and parts[2] == "runs":
             # The unified run detail reads name their own bounded operator
             # surface without publishing run, Task, Job or item identifiers
             # in audit evidence.
+            if len(parts) == 3:
+                return "/api/operations/runs"
             if len(parts) == 4:
-                return "/api/v1/operations/runs"
-            if len(parts) == 5:
-                return "/api/v1/operations/runs/{id}"
-            if len(parts) == 6 and parts[5] in {"items", "records", "export", "problem-items"}:
-                return f"/api/v1/operations/runs/{{id}}/{parts[5]}"
-            if len(parts) == 7 and parts[5] == "items":
-                return "/api/v1/operations/runs/{id}/items/{itemId}"
-            return "/api/v1/<unmatched>"
+                return "/api/operations/runs/{id}"
+            if len(parts) == 5 and parts[4] in {"items", "records", "export", "problem-items"}:
+                return f"/api/operations/runs/{{id}}/{parts[4]}"
+            if len(parts) == 6 and parts[4] == "items":
+                return "/api/operations/runs/{id}/items/{itemId}"
+            return "/api/<unmatched>"
         exact = {
-            ("api", "v1", "tasks"),
-            ("api", "v1", "notifications"),
-            ("api", "v1", "logs"),
-            ("api", "v1", "resource-libraries"),
-            ("api", "v1", "storages"),
-            ("api", "v1", "security-audit"),
-            ("api", "v1", "system", "status"),
-            ("api", "v1", "configuration", "packages"),
-            ("api", "v1", "configuration", "packages", "export", "configuration"),
-            ("api", "v1", "configuration", "packages", "export", "results"),
-            ("api", "v1", "automation", "task-definitions"),
-            ("api", "v1", "files"),
-            ("api", "v1", "storage", "files"),
-            ("api", "v1", "media-libraries"),
+            ("api", "tasks"),
+            ("api", "notifications"),
+            ("api", "logs"),
+            ("api", "resource-libraries"),
+            ("api", "storages"),
+            ("api", "security-audit"),
+            ("api", "system", "status"),
+            ("api", "configuration", "packages"),
+            ("api", "configuration", "packages", "export", "configuration"),
+            ("api", "configuration", "packages", "export", "results"),
+            ("api", "automation", "task-definitions"),
+            ("api", "files"),
+            ("api", "storage", "files"),
+            ("api", "media-libraries"),
         }
         key = tuple(parts)
         if key in exact:
             return "/" + "/".join(parts)
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "tasks"]:
-            return f"/api/v1/{parts[2]}/{{id}}"
-        if len(parts) == 5 and parts[:4] == ["api", "v1", "automation", "task-definitions"]:
-            return "/api/v1/automation/task-definitions/{id}"
+        if len(parts) == 3 and parts[:2] == ["api", "tasks"]:
+            return f"/api/{parts[1]}/{{id}}"
+        if len(parts) == 4 and parts[:3] == ["api", "automation", "task-definitions"]:
+            return "/api/automation/task-definitions/{id}"
         if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "occurrences"
+            len(parts) == 5
+            and parts[:3] == ["api", "automation", "task-definitions"]
+            and parts[4] == "occurrences"
         ):
-            return "/api/v1/automation/task-definitions/{id}/occurrences"
+            return "/api/automation/task-definitions/{id}/occurrences"
         if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "preview"
+            len(parts) == 5
+            and parts[:3] == ["api", "automation", "task-definitions"]
+            and parts[4] == "preview"
         ):
-            return "/api/v1/automation/task-definitions/{id}/preview"
+            return "/api/automation/task-definitions/{id}/preview"
         if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "previews"
+            len(parts) == 5
+            and parts[:3] == ["api", "automation", "task-definitions"]
+            and parts[4] == "previews"
         ):
-            return "/api/v1/automation/task-definitions/{id}/previews"
+            return "/api/automation/task-definitions/{id}/previews"
         if (
-            len(parts) >= 7
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "previews"
+            len(parts) >= 6
+            and parts[:3] == ["api", "automation", "task-definitions"]
+            and parts[4] == "previews"
         ):
-            return "/api/v1/automation/task-definitions/{id}/previews/{previewId}"
+            return "/api/automation/task-definitions/{id}/previews/{previewId}"
         if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] in {"copy", "enable", "disable"}
+            len(parts) == 5
+            and parts[:3] == ["api", "automation", "task-definitions"]
+            and parts[4] in {"copy", "enable", "disable"}
         ):
-            return f"/api/v1/automation/task-definitions/{{id}}/{parts[5]}"
-        if len(parts) >= 5 and parts[:4] == ["api", "v1", "operations", "notifications"]:
+            return f"/api/automation/task-definitions/{{id}}/{parts[4]}"
+        if len(parts) >= 4 and parts[:3] == ["api", "operations", "notifications"]:
             # The V2 Notification projections name their own bounded operator
             # surface without publishing Webhook identifiers, delivery
             # identifiers, endpoints or secret references in audit evidence.
-            if len(parts) == 5 and parts[4] == "webhooks":
-                return "/api/v1/operations/notifications/webhooks"
-            if parts[4] == "webhooks" and len(parts) == 6:
-                return "/api/v1/operations/notifications/webhooks/{id}"
+            if len(parts) == 4 and parts[3] == "webhooks":
+                return "/api/operations/notifications/webhooks"
+            if parts[3] == "webhooks" and len(parts) == 5:
+                return "/api/operations/notifications/webhooks/{id}"
             if (
-                parts[4] == "webhooks"
-                and len(parts) == 7
-                and parts[6] in {"draft", "test", "activate-draft"}
+                parts[3] == "webhooks"
+                and len(parts) == 6
+                and parts[5] in {"draft", "test", "activate-draft"}
             ):
-                return f"/api/v1/operations/notifications/webhooks/{{id}}/{parts[6]}"
-            if parts[4] == "deliveries" and len(parts) == 6:
-                return "/api/v1/operations/notifications/deliveries/{id}"
-            return "/api/v1/<unmatched>"
-        if len(parts) >= 4 and parts[:4] == ["api", "v1", "operations", "storage-management"]:
+                return f"/api/operations/notifications/webhooks/{{id}}/{parts[5]}"
+            if parts[3] == "deliveries" and len(parts) == 5:
+                return "/api/operations/notifications/deliveries/{id}"
+            return "/api/<unmatched>"
+        if len(parts) >= 3 and parts[:3] == ["api", "operations", "storage-management"]:
             # The V2 Storage management projections name their own bounded
             # operator surface without publishing revision identities or
             # Storage IDs in audit evidence.
-            if len(parts) == 5 and parts[4] == "inventory":
-                return "/api/v1/operations/storage-management/inventory"
-            if len(parts) == 6 and parts[4] == "storage":
-                return "/api/v1/operations/storage-management/storage/{id}"
-            if len(parts) == 7 and parts[4] == "storage" and parts[6] == "check":
-                return "/api/v1/operations/storage-management/storage/{id}/check"
-            return "/api/v1/<unmatched>"
-        if len(parts) >= 4 and parts[:4] == ["api", "v1", "operations", "rules"]:
+            if len(parts) == 4 and parts[3] == "inventory":
+                return "/api/operations/storage-management/inventory"
+            if len(parts) == 5 and parts[3] == "storage":
+                return "/api/operations/storage-management/storage/{id}"
+            if len(parts) == 6 and parts[3] == "storage" and parts[5] == "check":
+                return "/api/operations/storage-management/storage/{id}/check"
+            return "/api/<unmatched>"
+        if len(parts) >= 3 and parts[:3] == ["api", "operations", "rules"]:
             # The rules-workspace surfaces name their own bounded operator route so
             # neither a family-specific object ID nor a revision identity appears in
             # security audit evidence.
-            if len(parts) == 5 and parts[4] == "inventory":
-                return "/api/v1/operations/rules/inventory"
-            if len(parts) == 5 and parts[4] == "form-authority":
-                return "/api/v1/operations/rules/form-authority"
-            if len(parts) == 6 and parts[4] == "previews":
-                return f"/api/v1/operations/rules/previews/{parts[5]}"
-            if parts[4] == "objects":
+            if len(parts) == 4 and parts[3] == "inventory":
+                return "/api/operations/rules/inventory"
+            if len(parts) == 4 and parts[3] == "form-authority":
+                return "/api/operations/rules/form-authority"
+            if len(parts) == 5 and parts[3] == "previews":
+                return f"/api/operations/rules/previews/{parts[4]}"
+            if parts[3] == "objects":
+                if len(parts) == 5:
+                    return "/api/operations/rules/objects/{family}"
                 if len(parts) == 6:
-                    return "/api/v1/operations/rules/objects/{family}"
-                if len(parts) == 7:
-                    return "/api/v1/operations/rules/objects/{family}/{id}"
-                if len(parts) == 8 and parts[7] in {"copy", "impact"}:
-                    return f"/api/v1/operations/rules/objects/{{family}}/{{id}}/{parts[7]}"
-                if len(parts) == 9 and parts[7] == "state" and parts[8] in {"enable", "disable"}:
-                    return f"/api/v1/operations/rules/objects/{{family}}/{{id}}/state/{parts[8]}"
-            return "/api/v1/<unmatched>"
-        if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6:8] in (["recovery", "decision"], ["recovery", "metadata-search"])
-        ):
-            return f"/api/v1/tasks/{{task_id}}/items/{{item_id}}/recovery/{parts[7]}"
-        if len(parts) == 6 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "items":
-            return "/api/v1/tasks/{task_id}/items/{item_id}"
+                    return "/api/operations/rules/objects/{family}/{id}"
+                if len(parts) == 7 and parts[6] in {"copy", "impact"}:
+                    return f"/api/operations/rules/objects/{{family}}/{{id}}/{parts[6]}"
+                if len(parts) == 8 and parts[6] == "state" and parts[7] in {"enable", "disable"}:
+                    return f"/api/operations/rules/objects/{{family}}/{{id}}/state/{parts[7]}"
+            return "/api/<unmatched>"
         if (
             len(parts) == 7
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6] == "recovery"
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "items"
+            and parts[5:7] in (["recovery", "decision"], ["recovery", "metadata-search"])
         ):
-            return "/api/v1/tasks/{task_id}/items/{item_id}/recovery"
+            return f"/api/tasks/{{task_id}}/items/{{item_id}}/recovery/{parts[6]}"
+        if len(parts) == 5 and parts[:2] == ["api", "tasks"] and parts[3] == "items":
+            return "/api/tasks/{task_id}/items/{item_id}"
         if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6:8] == ["recovery", "continue"]
+            len(parts) == 6
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "items"
+            and parts[5] == "recovery"
         ):
-            return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue"
+            return "/api/tasks/{task_id}/items/{item_id}/recovery"
         if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "tasks"]
-            and parts[4] == "items"
-            and parts[6:8] == ["recovery", "prepare-summary"]
+            len(parts) == 7
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "items"
+            and parts[5:7] == ["recovery", "continue"]
         ):
-            return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/prepare-summary"
-        if len(parts) == 5 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "cancel":
-            return f"/api/v1/tasks/{{id}}/{parts[4]}"
+            return "/api/tasks/{task_id}/items/{item_id}/recovery/continue"
         if (
-            len(parts) == 4
-            and parts[:3] == ["api", "v1", "explore"]
-            and parts[3]
+            len(parts) == 7
+            and parts[:2] == ["api", "tasks"]
+            and parts[3] == "items"
+            and parts[5:7] == ["recovery", "prepare-summary"]
+        ):
+            return "/api/tasks/{task_id}/items/{item_id}/recovery/prepare-summary"
+        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "cancel":
+            return f"/api/tasks/{{id}}/{parts[3]}"
+        if (
+            len(parts) == 3
+            and parts[:2] == ["api", "explore"]
+            and parts[2]
             in {
                 "browse",
                 "search",
@@ -7918,91 +7918,87 @@ class MediaFlowApi:
         ):
             # Explore reads are audited by operation: no keyword or filter
             # value enters security-audit route evidence.
-            return f"/api/v1/explore/{parts[3]}"
-        if len(parts) == 5 and parts[:3] == ["api", "v1", "explore"]:
+            return f"/api/explore/{parts[2]}"
+        if len(parts) == 4 and parts[:2] == ["api", "explore"]:
             # The work identity is logged through its immutable type+id shape,
             # never through a search keyword.
-            return "/api/v1/explore/{mediaType}/{id}"
+            return "/api/explore/{mediaType}/{id}"
         if (
-            len(parts) == 5
-            and parts[:3]
+            len(parts) == 4
+            and parts[:2]
             in (
-                ["api", "v1", "files"],
-                ["api", "v1", "resource-libraries"],
+                ["api", "files"],
+                ["api", "resource-libraries"],
             )
-            and parts[4] in {"preview", "previews"}
+            and parts[3] in {"preview", "previews"}
         ):
-            return f"/api/v1/{parts[2]}/{{id}}/{parts[4]}"
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "resource-libraries"]:
-            return "/api/v1/resource-libraries/{id}"
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "storages"]:
+            return f"/api/{parts[1]}/{{id}}/{parts[3]}"
+        if len(parts) == 3 and parts[:2] == ["api", "resource-libraries"]:
+            return "/api/resource-libraries/{id}"
+        if len(parts) == 3 and parts[:2] == ["api", "storages"]:
             # The Storage Add/Edit surface is audited by template so the exact
             # Storage ID never appears in security audit route evidence.
-            return "/api/v1/storages/{id}"
+            return "/api/storages/{id}"
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "storages"]
-            and parts[4] in {"copy", "enable", "disable"}
+            len(parts) == 4
+            and parts[:2] == ["api", "storages"]
+            and parts[3] in {"copy", "enable", "disable"}
         ):
-            return f"/api/v1/storages/{{id}}/{parts[4]}"
-        if len(parts) == 5 and parts[:3] == ["api", "v1", "storages"] and parts[4] == "edit":
-            return "/api/v1/storages/{id}/edit"
+            return f"/api/storages/{{id}}/{parts[3]}"
+        if len(parts) == 4 and parts[:2] == ["api", "storages"] and parts[3] == "edit":
+            return "/api/storages/{id}/edit"
         if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4:6] == ["files", "deletes"]
+            len(parts) == 6
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3:5] == ["files", "deletes"]
         ):
-            return "/api/v1/resource-libraries/{id}/files/deletes/{taskId}"
+            return "/api/resource-libraries/{id}/files/deletes/{taskId}"
         if (
-            len(parts) == 5
-            and tuple(parts[:3])
+            len(parts) == 4
+            and tuple(parts[:2])
             in {
-                ("api", "v1", "resource-libraries"),
-                ("api", "v1", "media-libraries"),
+                ("api", "resource-libraries"),
+                ("api", "media-libraries"),
             }
-            and parts[4] == "file-operations"
+            and parts[3] == "file-operations"
         ):
             # The library-owned ordinary file-operation history names no Task
             # identity in security audit route evidence.
-            return f"/api/v1/{parts[2]}/{{id}}/file-operations"
+            return f"/api/{parts[1]}/{{id}}/file-operations"
         if (
-            len(parts) == 4
-            and tuple(parts[:3])
+            len(parts) == 3
+            and tuple(parts[:2])
             in {
-                ("api", "v1", "resource-libraries"),
-                ("api", "v1", "media-libraries"),
+                ("api", "resource-libraries"),
+                ("api", "media-libraries"),
             }
-            and parts[3] == "operation-origins"
+            and parts[2] == "operation-origins"
         ):
             # The bounded origin index names no library or Task identity.
-            return f"/api/v1/{parts[2]}/operation-origins"
-        if (
-            len(parts) == 7
-            and tuple(parts[:3])
-            in {
-                ("api", "v1", "resource-libraries"),
-                ("api", "v1", "media-libraries"),
-            }
-            and parts[4:6] == ["files", "operations"]
-        ):
-            return f"/api/v1/{parts[2]}/{{id}}/files/operations/{{taskId}}"
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "files"]
-            and parts[3] == "operation-origin"
-        ):
-            return "/api/v1/files/operation-origin/{taskId}"
-        if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4:6] == ["files", "deletes"]
-        ):
-            return "/api/v1/media-libraries/{id}/files/deletes/{taskId}"
+            return f"/api/{parts[1]}/operation-origins"
         if (
             len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5]
+            and tuple(parts[:2])
+            in {
+                ("api", "resource-libraries"),
+                ("api", "media-libraries"),
+            }
+            and parts[3:5] == ["files", "operations"]
+        ):
+            return f"/api/{parts[1]}/{{id}}/files/operations/{{taskId}}"
+        if len(parts) == 4 and parts[:2] == ["api", "files"] and parts[2] == "operation-origin":
+            return "/api/files/operation-origin/{taskId}"
+        if (
+            len(parts) == 6
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3:5] == ["files", "deletes"]
+        ):
+            return "/api/media-libraries/{id}/files/deletes/{taskId}"
+        if (
+            len(parts) == 5
+            and parts[:2] == ["api", "resource-libraries"]
+            and parts[3] == "files"
+            and parts[4]
             in {
                 "text",
                 "delete-impact",
@@ -8013,18 +8009,14 @@ class MediaFlowApi:
                 "transfers",
             }
         ):
-            return f"/api/v1/resource-libraries/{{id}}/files/{parts[5]}"
+            return f"/api/resource-libraries/{{id}}/files/{parts[4]}"
+        if len(parts) == 4 and parts[:2] == ["api", "media-libraries"] and parts[3] == "files":
+            return "/api/media-libraries/{id}/files"
         if (
             len(parts) == 5
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "files"
-        ):
-            return "/api/v1/media-libraries/{id}/files"
-        if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "files"
-            and parts[5]
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "files"
+            and parts[4]
             in {
                 "text",
                 "delete-impact",
@@ -8036,16 +8028,16 @@ class MediaFlowApi:
         ):
             # The media command and transfer surfaces are audited under their
             # own path template, never folded into the resource-libraries one.
-            return f"/api/v1/media-libraries/{{id}}/files/{parts[5]}"
+            return f"/api/media-libraries/{{id}}/files/{parts[4]}"
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "media-libraries"]
-            and parts[4] == "removal-preview"
+            len(parts) == 4
+            and parts[:2] == ["api", "media-libraries"]
+            and parts[3] == "removal-preview"
         ):
-            return "/api/v1/media-libraries/{id}/removal-preview"
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "media-libraries"]:
-            return "/api/v1/media-libraries/{id}"
-        return "/api/v1/<unmatched>"
+            return "/api/media-libraries/{id}/removal-preview"
+        if len(parts) == 3 and parts[:2] == ["api", "media-libraries"]:
+            return "/api/media-libraries/{id}"
+        return "/api/<unmatched>"
 
     @staticmethod
     def _explore_query(environ: dict) -> dict[str, list[str]]:
@@ -9305,6 +9297,19 @@ class MediaFlowApi:
             pass
 
     @staticmethod
+    def _is_retired_api_path(path: str) -> bool:
+        """Whether the request targets a retired versioned API prefix.
+
+        The canonical namespace is flat, so a second segment that names a
+        retired version is never a resource family. Recognizing it here keeps
+        every old read and write an unknown route with no authentication,
+        Active resolution or business effect.
+        """
+
+        parts = [part for part in path.split("/") if part]
+        return len(parts) >= 2 and parts[1] in _RETIRED_API_NAMESPACES
+
+    @staticmethod
     def _suppress_file_detail_audit(path: str, method: str, principal) -> bool:
         """Read-only journey projections must not create durable audit mutations."""
 
@@ -9314,35 +9319,31 @@ class MediaFlowApi:
             return False
         parts = [part for part in str(path).split("/") if part]
         if parts in (
-            ["api", "v1", "management", "readiness"],
-            ["api", "v1", "workers", "readiness"],
-            ["api", "v1", "workers"],
+            ["api", "management", "readiness"],
+            ["api", "workers", "readiness"],
+            ["api", "workers"],
         ):
             return True
-        if parts[:3] == ["api", "v1", "tasks"]:
+        if parts[:2] == ["api", "tasks"]:
             return True
-        if parts[:4] == ["api", "v1", "automation", "task-definitions"] and (
-            len(parts) in {4, 5} or (len(parts) == 6 and parts[5] == "occurrences")
+        if parts[:3] == ["api", "automation", "task-definitions"] and (
+            len(parts) in {3, 4} or (len(parts) == 5 and parts[4] == "occurrences")
         ):
             return True
         return (
-            parts == ["api", "v1", "storage", "files"]
+            parts == ["api", "storage", "files"]
+            or (
+                len(parts) == 4
+                and parts[:2] == ["api", "resource-libraries"]
+                and parts[3] == "files"
+            )
+            or parts == ["api", "media-libraries"]
+            or (len(parts) == 4 and parts[:2] == ["api", "media-libraries"] and parts[3] == "files")
             or (
                 len(parts) == 5
-                and parts[:3] == ["api", "v1", "resource-libraries"]
-                and parts[4] == "files"
-            )
-            or parts == ["api", "v1", "media-libraries"]
-            or (
-                len(parts) == 5
-                and parts[:3] == ["api", "v1", "media-libraries"]
-                and parts[4] == "files"
-            )
-            or (
-                len(parts) == 6
-                and parts[:3] == ["api", "v1", "resource-libraries"]
-                and parts[4] == "files"
-                and parts[5] in {"text", "delete-impact"}
+                and parts[:2] == ["api", "resource-libraries"]
+                and parts[3] == "files"
+                and parts[4] in {"text", "delete-impact"}
             )
         )
 
@@ -9980,7 +9981,7 @@ class MediaFlowApi:
                     "available": can_manage and not terminal and not discovery.cancel_requested,
                     "method": "POST",
                     "path": (
-                        f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/cancel"
+                        f"/api/operations/organize/discoveries/{discovery.discovery_id}/cancel"
                     ),
                     "requiresVersion": True,
                     "sideEffects": "none",
@@ -10001,7 +10002,7 @@ class MediaFlowApi:
                     and material_refusal is None,
                     "method": "POST",
                     "path": (
-                        f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/finalize"
+                        f"/api/operations/organize/discoveries/{discovery.discovery_id}/finalize"
                     ),
                     "requiresVersion": True,
                     "sideEffects": "none",
@@ -10024,7 +10025,7 @@ class MediaFlowApi:
                     "available": can_manage and analysis_available,
                     "method": "POST",
                     "path": (
-                        f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze"
+                        f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze"
                     ),
                     "requiresVersion": True,
                     "sideEffects": "none",
@@ -10303,7 +10304,7 @@ class MediaFlowApi:
         progress = discovery.progress
         can_manage = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
         terminal = discovery.status in TERMINAL_DISCOVERY_STATUSES
-        base = f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}"
+        base = f"/api/operations/organize/discoveries/{discovery.discovery_id}"
         return manual_intent_analysis_document(
             {
                 "discoveryId": discovery.discovery_id,
@@ -10404,7 +10405,7 @@ class MediaFlowApi:
                 "reason": choice_reason,
                 "method": "POST",
                 "path": (
-                    f"/api/v1/operations/organize/intents/{intent_id}/items/{{itemId}}/choice"
+                    f"/api/operations/organize/intents/{intent_id}/items/{{itemId}}/choice"
                     if isinstance(intent_id, str) and intent_id
                     else None
                 ),
@@ -10494,7 +10495,7 @@ class MediaFlowApi:
                 "reason": reason,
                 "method": "POST",
                 "path": (
-                    f"/api/v1/operations/organize/previews/{preview_id}/execute"
+                    f"/api/operations/organize/previews/{preview_id}/execute"
                     if isinstance(preview_id, str) and preview_id
                     else None
                 ),
@@ -10519,7 +10520,7 @@ class MediaFlowApi:
                 "reason": None,
                 "method": "GET",
                 "path": (
-                    f"/api/v1/operations/organize/intents/{document.get('intentId')}"
+                    f"/api/operations/organize/intents/{document.get('intentId')}"
                     if isinstance(document.get("intentId"), str)
                     else None
                 ),
@@ -10584,7 +10585,7 @@ class MediaFlowApi:
                 "reason": None,
                 "method": "GET",
                 "path": (
-                    f"/api/v1/operations/organize/executions/{execution_id}"
+                    f"/api/operations/organize/executions/{execution_id}"
                     if isinstance(execution_id, str) and execution_id
                     else None
                 ),
@@ -10597,7 +10598,7 @@ class MediaFlowApi:
                 "reason": None,
                 "method": "GET",
                 "path": (
-                    f"/api/v1/operations/tasks/{document.get('taskId')}"
+                    f"/api/operations/tasks/{document.get('taskId')}"
                     if isinstance(document.get("taskId"), str)
                     else None
                 ),
@@ -10807,7 +10808,7 @@ class MediaFlowApi:
                 "available": True,
                 "reason": None,
                 "method": "GET",
-                "path": (f"/api/v1/operations/automation/task-definitions/{definition_id}"),
+                "path": (f"/api/operations/automation/task-definitions/{definition_id}"),
                 "sideEffects": "none",
                 "durableOutcome": None,
                 "nextAction": ("inspect the durable definition, schedule and occurrence state"),
@@ -10817,7 +10818,7 @@ class MediaFlowApi:
                 "reason": None,
                 "method": "GET",
                 "path": (
-                    f"/api/v1/operations/automation/task-definitions/{definition_id}/occurrences"
+                    f"/api/operations/automation/task-definitions/{definition_id}/occurrences"
                 ),
                 "sideEffects": "none",
                 "durableOutcome": None,
@@ -10839,7 +10840,7 @@ class MediaFlowApi:
                     )
                 ),
                 "method": "POST",
-                "path": f"/api/v1/operations/automation/task-definitions/{definition_id}/run-once",
+                "path": f"/api/operations/automation/task-definitions/{definition_id}/run-once",
                 "sideEffects": "none",
                 "durableOutcome": (
                     "a durable organizing task for the saved scope is admitted and executed "
@@ -10866,7 +10867,7 @@ class MediaFlowApi:
                     )
                 ),
                 "method": "POST",
-                "path": f"/api/v1/automation/task-definitions/{definition_id}/copy",
+                "path": f"/api/automation/task-definitions/{definition_id}/copy",
                 "sideEffects": "none",
                 "durableOutcome": ("a copied definition is stored inside the open successor Draft"),
                 "nextAction": (
@@ -10891,7 +10892,7 @@ class MediaFlowApi:
                 ),
                 "method": "POST",
                 "path": (
-                    f"/api/v1/configuration/revisions/{active_revision_id}/successor"
+                    f"/api/configuration/revisions/{active_revision_id}/successor"
                     if active_revision_id is not None
                     else None
                 ),
@@ -11001,7 +11002,7 @@ class MediaFlowApi:
                 "available": True,
                 "reason": None,
                 "method": "GET",
-                "path": f"/api/v1/operations/tasks/{task_id}",
+                "path": f"/api/operations/tasks/{task_id}",
                 "sideEffects": "none",
                 "durableOutcome": None,
                 "nextAction": None,
@@ -11037,22 +11038,22 @@ class MediaFlowApi:
         if method != "GET":
             return self._error(start_response, 405, "method_not_allowed", "GET required")
         self._require(principal, ApiPermission.READ)
-        if len(parts) == 4:
+        if len(parts) == 3:
             return self._operations_runs_page(environ, start_response, principal)
-        if len(parts) == 5:
-            return self._operations_run_overview(parts[4], start_response, principal)
-        if len(parts) == 6 and parts[5] == "items":
-            return self._operations_run_items(parts[4], environ, start_response, principal)
-        if len(parts) == 6 and parts[5] == "records":
-            return self._operations_run_records(parts[4], environ, start_response, principal)
-        if len(parts) == 6 and parts[5] == "export":
-            return self._operations_run_export(parts[4], environ, start_response, principal)
-        if len(parts) == 7 and parts[5] == "items":
+        if len(parts) == 4:
+            return self._operations_run_overview(parts[3], start_response, principal)
+        if len(parts) == 5 and parts[4] == "items":
+            return self._operations_run_items(parts[3], environ, start_response, principal)
+        if len(parts) == 5 and parts[4] == "records":
+            return self._operations_run_records(parts[3], environ, start_response, principal)
+        if len(parts) == 5 and parts[4] == "export":
+            return self._operations_run_export(parts[3], environ, start_response, principal)
+        if len(parts) == 6 and parts[4] == "items":
             return self._operations_run_item_evidence(
-                parts[4], parts[6], environ, start_response, principal
+                parts[3], parts[5], environ, start_response, principal
             )
-        if len(parts) == 6 and parts[5] == "problem-items":
-            return self._operations_run_problem_items(parts[4], environ, start_response, principal)
+        if len(parts) == 5 and parts[4] == "problem-items":
+            return self._operations_run_problem_items(parts[3], environ, start_response, principal)
         return self._error(start_response, 404, "not_found", "route was not found")
 
     @classmethod
@@ -12267,7 +12268,7 @@ class MediaFlowApi:
         This is a distinct contract from the generic managed Settings editor:
         ``GET`` states the published target plus each live consumer's own
         adoption, and ``PUT`` publishes exactly these four fields from the
-        checked Active.  The generic ``/api/v1/system/settings`` Draft semantics
+        checked Active.  The generic ``/api/system/settings`` Draft semantics
         stay unchanged and keep their own validation/activation journey.
         """
 
@@ -12343,7 +12344,7 @@ class MediaFlowApi:
                     None,
                     principal,
                     method,
-                    "/api/v1/operations/automation/settings",
+                    "/api/operations/automation/settings",
                     "automation-engine-settings",
                     "conflict" if error.status < 500 else "error",
                     error.status,
@@ -12401,23 +12402,23 @@ class MediaFlowApi:
 
         The read documents are the exact, digest-free evidence the Web journey
         consumes. The raw managed-configuration and automation documents stay
-        on the existing /api/v1/automation and /api/v1/configuration surfaces.
+        on the existing /api/automation and /api/configuration surfaces.
         The one mutation here is the automation-scoped checked activation: it
         composes the existing read-only Storage/strategy/destination checks
         server-side so the browser never handles a revision digest.
         """
 
-        if len(parts) == 7 and parts[6] == "activate-draft" and method == "POST":
+        if len(parts) == 6 and parts[5] == "activate-draft" and method == "POST":
             return self._automation_definition_activate_checked_draft(
-                parts[5], environ, start_response, principal
+                parts[4], environ, start_response, principal
             )
         if method != "GET":
             return self._error(start_response, 405, "method_not_allowed", "GET required")
         if (
             parts
             in (
-                ["api", "v1", "operations", "automation", "metrics"],
-                ["api", "v1", "operations", "automation", "records"],
+                ["api", "operations", "automation", "metrics"],
+                ["api", "operations", "automation", "records"],
             )
             and method == "GET"
         ):
@@ -12427,7 +12428,7 @@ class MediaFlowApi:
             # definitions are exactly the states the operator must still be
             # able to read truthfully.
             self._require(principal, ApiPermission.READ)
-            if parts[4] == "metrics":
+            if parts[3] == "metrics":
                 self._require_empty_query(environ, "automation metrics")
                 return self._response(start_response, 200, self._automation_metrics_document())
             return self._automation_records_page(environ, start_response, principal)
@@ -12439,17 +12440,17 @@ class MediaFlowApi:
                 "service_unavailable",
                 "managed configuration service is unavailable",
             )
-        if len(parts) == 5:
+        if len(parts) == 4:
             return self._automation_definitions_operator_page(environ, start_response, principal)
-        if len(parts) == 6:
+        if len(parts) == 5:
             self._require_empty_query(environ, "operations automation definition")
-            return self._automation_definition_operator_detail(parts[5], start_response, principal)
-        if len(parts) == 7 and parts[6] == "draft":
+            return self._automation_definition_operator_detail(parts[4], start_response, principal)
+        if len(parts) == 6 and parts[5] == "draft":
             self._require_empty_query(environ, "operations automation definition draft")
-            return self._automation_definition_operator_draft(parts[5], start_response, principal)
-        if len(parts) == 7 and parts[6] == "occurrences":
+            return self._automation_definition_operator_draft(parts[4], start_response, principal)
+        if len(parts) == 6 and parts[5] == "occurrences":
             return self._automation_definition_operator_occurrences(
-                parts[5], environ, start_response, principal
+                parts[4], environ, start_response, principal
             )
         return self._error(start_response, 404, "not_found", "route was not found")
 
@@ -12991,7 +12992,7 @@ class MediaFlowApi:
 
         document = self._operations_run_document(overview)
         task_center = (
-            {"runId": overview.task_id, "path": f"/api/v1/operations/runs/{overview.task_id}"}
+            {"runId": overview.task_id, "path": f"/api/operations/runs/{overview.task_id}"}
             if overview.task_id
             else None
         )
@@ -13080,7 +13081,7 @@ class MediaFlowApi:
             "explanation": route["explanation"],
             "taskCenter": task_center,
             "definitionSettings": (
-                f"/ui-v2/operations/automation/lifecycle/"
+                f"/operations/automation/lifecycle/"
                 f"{overview.definition_id or overview.origin_definition_id}"
                 if (overview.definition_id or overview.origin_definition_id)
                 else None
@@ -13363,9 +13364,7 @@ class MediaFlowApi:
                 ),
                 "supported_command": command,
                 "supported_command_path": (
-                    f"/ui-v2/operations/automation/lifecycle/{definition_id}"
-                    if definition_id
-                    else None
+                    f"/operations/automation/lifecycle/{definition_id}" if definition_id else None
                 ),
                 "definition_settings": definition_id,
                 "next_action": {
@@ -13924,7 +13923,7 @@ class MediaFlowApi:
     ):
         """The native V2 Automation definition lifecycle surface.
 
-        Routes (all under ``/api/v1/operations/automation/definitions``):
+        Routes (all under ``/api/operations/automation/definitions``):
 
         * ``GET  /``                     — form authority (fields/references/bounds)
         * ``POST /``                     — one checked create Save
@@ -13951,8 +13950,8 @@ class MediaFlowApi:
                 "service_unavailable",
                 "managed configuration service is unavailable",
             )
-        base = ["api", "v1", "operations", "automation", "definitions"]
-        if parts[:5] != base:
+        base = ["api", "operations", "automation", "definitions"]
+        if parts[:4] != base:
             return self._error(start_response, 404, "not_found", "route was not found")
 
         # -- collection ---------------------------------------------------
@@ -13990,7 +13989,7 @@ class MediaFlowApi:
                     enabled=enabled if isinstance(enabled, bool) else None,
                 )
             return self._error(start_response, 405, "method_not_allowed", "GET or POST required")
-        if len(parts) == 6 and parts[5] == "schedule-preview":
+        if len(parts) == 5 and parts[4] == "schedule-preview":
             if method != "POST":
                 return self._error(
                     start_response, 405, "method_not_allowed", "POST required for schedule preview"
@@ -14011,11 +14010,11 @@ class MediaFlowApi:
                 lambda: self._automation_workspace.schedule_preview(candidate, object_id=object_id),
             )
 
-        if len(parts) < 6:
+        if len(parts) < 5:
             return self._error(start_response, 404, "not_found", "route was not found")
-        definition_id = parts[5]
+        definition_id = parts[4]
 
-        if len(parts) == 6:
+        if len(parts) == 5:
             if method == "GET":
                 self._require_empty_query(environ, "automation definition edit projection")
                 self._require(principal, ApiPermission.READ)
@@ -14067,7 +14066,7 @@ class MediaFlowApi:
                 start_response, 405, "method_not_allowed", "GET, PUT or DELETE required"
             )
 
-        if len(parts) == 7 and parts[6] == "publication-intent":
+        if len(parts) == 6 and parts[5] == "publication-intent":
             self._require(principal, ApiPermission.READ)
             if method != "POST":
                 return self._error(
@@ -14100,7 +14099,7 @@ class MediaFlowApi:
                     expected_digest=document["expectedDigest"],
                 ),
             )
-        if len(parts) == 7 and parts[6] == "copy-candidate":
+        if len(parts) == 6 and parts[5] == "copy-candidate":
             if method != "GET":
                 return self._error(
                     start_response, 405, "method_not_allowed", "GET required for a candidate read"
@@ -14111,7 +14110,7 @@ class MediaFlowApi:
                 start_response,
                 lambda: self._automation_workspace.copy_projection(definition_id),
             )
-        if len(parts) == 7 and parts[6] == "copy-intent":
+        if len(parts) == 6 and parts[5] == "copy-intent":
             if method != "GET":
                 return self._error(
                     start_response,
@@ -14151,7 +14150,7 @@ class MediaFlowApi:
                     expected_digest=expected_digest,
                 ),
             )
-        if len(parts) == 7 and parts[6] == "run-once":
+        if len(parts) == 6 and parts[5] == "run-once":
             # Definition-bound Run once on the focused lifecycle base.  The
             # published definition itself supplies the ResourceLibrary, source
             # sub-scope and effective bound, so no file selection is sent.  One
@@ -14165,9 +14164,9 @@ class MediaFlowApi:
                 definition_id, method, environ, start_response, principal
             )
         if (
-            len(parts) == 8
-            and parts[6] == "run-once"
-            and parts[7]
+            len(parts) == 7
+            and parts[5] == "run-once"
+            and parts[6]
             in {
                 "cancel",
                 "finalize",
@@ -14176,9 +14175,9 @@ class MediaFlowApi:
             if method != "POST":
                 return self._error(start_response, 405, "method_not_allowed", "POST required")
             return self._automation_run_once_detail_projection(
-                parts[5], parts[7], method, environ, start_response, principal
+                parts[4], parts[6], method, environ, start_response, principal
             )
-        if len(parts) == 7 and parts[6] == "removal-impact":
+        if len(parts) == 6 and parts[5] == "removal-impact":
             if method != "GET":
                 return self._error(
                     start_response, 405, "method_not_allowed", "GET required for removal evidence"
@@ -14189,7 +14188,7 @@ class MediaFlowApi:
                 start_response,
                 lambda: self._automation_workspace.removal_impact(definition_id),
             )
-        if len(parts) == 7 and parts[6] in {"copy", "enable", "disable"}:
+        if len(parts) == 6 and parts[5] in {"copy", "enable", "disable"}:
             if method != "POST":
                 return self._error(
                     start_response,
@@ -14208,7 +14207,7 @@ class MediaFlowApi:
                 object_id=definition_id,
                 value=None,
                 authority=authority,
-                action=parts[6],
+                action=parts[5],
             )
         return self._error(start_response, 404, "not_found", "route was not found")
 
@@ -14702,7 +14701,7 @@ class MediaFlowApi:
                                 "configuration setup owns the first Draft"
                             ),
                             "method": "POST",
-                            "path": "/api/v1/automation/task-definitions",
+                            "path": "/api/automation/task-definitions",
                             "sideEffects": "none",
                             "durableOutcome": (
                                 "the bounded definition is stored inside the open successor Draft"
@@ -14879,7 +14878,7 @@ class MediaFlowApi:
                             "the connected API principal cannot create Automation Task Definitions",
                         ),
                         "method": "POST",
-                        "path": "/api/v1/automation/task-definitions",
+                        "path": "/api/automation/task-definitions",
                         "sideEffects": "none",
                         "durableOutcome": (
                             "the bounded definition is stored inside the open successor Draft"
@@ -14896,7 +14895,7 @@ class MediaFlowApi:
                             "the connected API principal cannot create a successor Draft",
                         ),
                         "method": "POST",
-                        "path": (f"/api/v1/configuration/revisions/{active.revision_id}/successor"),
+                        "path": (f"/api/configuration/revisions/{active.revision_id}/successor"),
                         "sideEffects": "none",
                         "durableOutcome": (
                             "a successor Draft seeded from the immutable Active "
@@ -15191,7 +15190,7 @@ class MediaFlowApi:
                             "the connected API principal cannot create a successor Draft",
                         ),
                         "method": "POST",
-                        "path": (f"/api/v1/configuration/revisions/{active.revision_id}/successor"),
+                        "path": (f"/api/configuration/revisions/{active.revision_id}/successor"),
                         "sideEffects": "none",
                         "durableOutcome": (
                             "a successor Draft seeded from the immutable Active "
@@ -15219,7 +15218,7 @@ class MediaFlowApi:
                         ),
                         "method": "PUT",
                         "path": (
-                            f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                            f"/api/configuration/revisions/{draft_revision_id}/objects/"
                             f"automationTaskDefinitions/{definition_id}"
                             if draft_revision_id is not None
                             else None
@@ -15250,7 +15249,7 @@ class MediaFlowApi:
                         ),
                         "method": "POST",
                         "path": (
-                            f"/api/v1/configuration/revisions/{draft_revision_id}/validate"
+                            f"/api/configuration/revisions/{draft_revision_id}/validate"
                             if draft_revision_id is not None
                             else None
                         ),
@@ -15277,7 +15276,7 @@ class MediaFlowApi:
                         ),
                         "method": "POST",
                         "path": (
-                            f"/api/v1/operations/automation/task-definitions/{definition_id}"
+                            f"/api/operations/automation/task-definitions/{definition_id}"
                             "/activate-draft"
                             if draft_revision_id is not None
                             else None
@@ -15414,13 +15413,13 @@ class MediaFlowApi:
 
         The inventory read keeps its existing GET-only contract; the typed object
         commands reuse the same application service, permissions, validation, audit
-        and concurrency boundaries as `/api/v1/configuration/*`, V1, the CLI and the
+        and concurrency boundaries as `/api/configuration/*`, V1, the CLI and the
         runtime.  Nothing here creates a scan, Task, Job, schedule occurrence,
         notification, Provider call or Storage mutation.
         """
 
-        if parts[:5] == ["api", "v1", "operations", "rules", "inventory"]:
-            if parts != ["api", "v1", "operations", "rules", "inventory"]:
+        if parts[:4] == ["api", "operations", "rules", "inventory"]:
+            if parts != ["api", "operations", "rules", "inventory"]:
                 return self._error(start_response, 404, "not_found", "route was not found")
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -15433,7 +15432,7 @@ class MediaFlowApi:
                 "service_unavailable",
                 "managed configuration service is unavailable",
             )
-        if parts == ["api", "v1", "operations", "rules", "form-authority"]:
+        if parts == ["api", "operations", "rules", "form-authority"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
             self._require_empty_query(environ, "rules form authority")
@@ -15441,15 +15440,15 @@ class MediaFlowApi:
             return self._rules_document(
                 start_response, lambda: self._rules_workspace.form_authority()
             )
-        if len(parts) == 6 and parts[4] == "previews" and method == "POST":
+        if len(parts) == 5 and parts[3] == "previews" and method == "POST":
             return self._rules_preview_command(parts, environ, start_response, principal)
-        if len(parts) == 6 and parts[4] == "analysis" and method == "POST":
+        if len(parts) == 5 and parts[3] == "analysis" and method == "POST":
             return self._rules_analysis_command(parts, environ, start_response, principal)
-        if parts == ["api", "v1", "operations", "rules", "complete-flow"] and method == "POST":
+        if parts == ["api", "operations", "rules", "complete-flow"] and method == "POST":
             return self._rules_complete_flow_command(environ, start_response, principal)
-        if len(parts) >= 6 and parts[4] == "objects" and parts[5] in RULE_WORKSPACE_FAMILIES:
+        if len(parts) >= 5 and parts[3] == "objects" and parts[4] in RULE_WORKSPACE_FAMILIES:
             return self._rules_object_command(parts, method, environ, start_response, principal)
-        if len(parts) >= 5 and parts[4] == "objects":
+        if len(parts) >= 4 and parts[3] == "objects":
             # A typed family the workspace does not author (recognition rules and
             # type bindings stay a later in-Slice unit, and any other configuration
             # kind keeps its existing managed surface).
@@ -15459,7 +15458,7 @@ class MediaFlowApi:
                 "not_found",
                 "route was not found",
                 details={
-                    "objectKind": parts[5] if len(parts) > 5 else None,
+                    "objectKind": parts[4] if len(parts) > 4 else None,
                     "durableState": "active_unchanged",
                     "sideEffects": "none",
                     "retrySafe": True,
@@ -15487,7 +15486,7 @@ class MediaFlowApi:
         """
         self._require_empty_query(environ, "rules preview")
         self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
-        kind = parts[5]
+        kind = parts[4]
         allowed = {
             "strategy": {
                 "expectedRevisionId",
@@ -15715,7 +15714,7 @@ class MediaFlowApi:
                 "service_unavailable",
                 "managed configuration service is unavailable",
             )
-        family = parts[5]
+        family = parts[4]
         if family not in RULE_WORKSPACE_FAMILIES:
             return self._error(start_response, 404, "not_found", "preview route was not found")
         allowed = {
@@ -15913,8 +15912,8 @@ class MediaFlowApi:
     ):
         """Typed object reads and the one explicit Save-and-activate command."""
 
-        family = parts[5]
-        if len(parts) == 6:
+        family = parts[4]
+        if len(parts) == 5:
             if method != "POST":
                 return self._error(
                     start_response, 405, "method_not_allowed", "POST required for a new object"
@@ -15932,8 +15931,8 @@ class MediaFlowApi:
                 value=value,
                 authority=authority,
             )
-        if len(parts) == 7:
-            object_id = parts[6]
+        if len(parts) == 6:
+            object_id = parts[5]
             if method == "GET":
                 self._require_empty_query(environ, "rules object projection")
                 self._require(principal, ApiPermission.READ)
@@ -15975,23 +15974,23 @@ class MediaFlowApi:
                 "method_not_allowed",
                 "GET, PUT or DELETE required for one rules object",
             )
-        if len(parts) == 8 and parts[7] in {"copy", "impact"}:
+        if len(parts) == 7 and parts[6] in {"copy", "impact"}:
             if method != "GET":
                 return self._error(
                     start_response, 405, "method_not_allowed", "GET required for a candidate read"
                 )
             self._require_empty_query(
                 environ,
-                "rules object copy candidate" if parts[7] == "copy" else "rules object impact",
+                "rules object copy candidate" if parts[6] == "copy" else "rules object impact",
             )
             self._require(principal, ApiPermission.READ)
             produce = (
                 self._rules_workspace.copy_projection
-                if parts[7] == "copy"
+                if parts[6] == "copy"
                 else self._rules_workspace.removal_impact
             )
-            return self._rules_document(start_response, lambda: produce(family, parts[6]))
-        if len(parts) == 9 and parts[7] == "state" and parts[8] in {"enable", "disable"}:
+            return self._rules_document(start_response, lambda: produce(family, parts[5]))
+        if len(parts) == 8 and parts[6] == "state" and parts[7] in {"enable", "disable"}:
             if method != "POST":
                 return self._error(
                     start_response, 405, "method_not_allowed", "POST required for a state change"
@@ -16000,15 +15999,15 @@ class MediaFlowApi:
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
             document = self._document(environ)
-            enabled = parts[8] == "enable"
+            enabled = parts[7] == "enable"
             authority = self._rules_command_envelope(
-                document, parts[6], object=False, enabled=enabled
+                document, parts[5], object=False, enabled=enabled
             )[1]
             return self._rules_publish(
                 start_response,
                 principal,
                 family=family,
-                object_id=parts[6],
+                object_id=parts[5],
                 value=None,
                 authority=authority,
                 state=enabled,
@@ -16379,25 +16378,25 @@ class MediaFlowApi:
         start_response: Callable,
         principal: ResolvedApiPrincipal,
     ):
-        if len(parts) == 3:
+        if len(parts) == 2:
             return self._error(start_response, 404, "not_found", "route was not found")
-        if parts[3] == "storage-management" and len(parts) == 5 and parts[4] == "inventory":
+        if parts[2] == "storage-management" and len(parts) == 4 and parts[3] == "inventory":
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
             self._require(principal, ApiPermission.READ)
             bounds = self._storage_inventory_query(environ)
             return self._storage_inventory_operator_page(start_response, principal, bounds)
-        if parts[3] == "storage-management" and len(parts) == 6 and parts[4] == "storage":
+        if parts[2] == "storage-management" and len(parts) == 5 and parts[3] == "storage":
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
             self._require_empty_query(environ, "storage management detail")
             self._require(principal, ApiPermission.READ)
-            return self._storage_detail_operator_document(parts[5], start_response, principal)
+            return self._storage_detail_operator_document(parts[4], start_response, principal)
         if (
-            parts[3] == "storage-management"
-            and len(parts) == 7
-            and parts[4] == "storage"
-            and parts[6] == "check"
+            parts[2] == "storage-management"
+            and len(parts) == 6
+            and parts[3] == "storage"
+            and parts[5] == "check"
         ):
             if method != "POST":
                 return self._error(start_response, 405, "method_not_allowed", "POST required")
@@ -16422,7 +16421,7 @@ class MediaFlowApi:
             if isinstance(expected_version, bool) or not isinstance(expected_version, int):
                 raise ValueError("expectedVersion must be an integer")
             return self._storage_check_operator_document(
-                parts[5],
+                parts[4],
                 expected_revision_id,
                 expected_version,
                 start_response,
@@ -16691,7 +16690,7 @@ class MediaFlowApi:
                     "reason": check_reason,
                     "method": "POST",
                     "path": (
-                        f"/api/v1/operations/storage-management/storage/{storage_id}/check"
+                        f"/api/operations/storage-management/storage/{storage_id}/check"
                         if manage and available
                         else None
                     ),
@@ -16818,7 +16817,7 @@ class MediaFlowApi:
 
         The read documents are the exact, digest-free Webhook evidence the Web
         journey consumes; the raw managed-configuration documents stay on the
-        existing /api/v1/configuration surfaces. The two mutations here are
+        existing /api/configuration surfaces. The two mutations here are
         the digest-free exact-revision Webhook test and the Webhook-object-
         scoped checked activation: the browser submits only the advertised
         revision identity and optimistic version, while the configuration
@@ -16827,24 +16826,24 @@ class MediaFlowApi:
         only permission-aware recovery action metadata.
         """
 
-        if parts[4] == "deliveries":
+        if parts[3] == "deliveries":
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
-            if len(parts) != 6:
+            if len(parts) != 5:
                 return self._error(start_response, 404, "not_found", "route was not found")
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "operations notification delivery detail")
-            return self._notification_delivery_operator_detail(parts[5], start_response, principal)
-        if parts[4] != "webhooks" or len(parts) > 7:
+            return self._notification_delivery_operator_detail(parts[4], start_response, principal)
+        if parts[3] != "webhooks" or len(parts) > 6:
             return self._error(start_response, 404, "not_found", "route was not found")
-        if len(parts) == 7 and method == "POST" and parts[6] == "test":
+        if len(parts) == 6 and method == "POST" and parts[5] == "test":
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
             return self._notification_webhook_operator_test(
-                parts[5], environ, start_response, principal
+                parts[4], environ, start_response, principal
             )
-        if len(parts) == 7 and method == "POST" and parts[6] == "activate-draft":
+        if len(parts) == 6 and method == "POST" and parts[5] == "activate-draft":
             return self._notification_webhook_activate_checked_draft(
-                parts[5], environ, start_response, principal
+                parts[4], environ, start_response, principal
             )
         if method != "GET":
             return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -16856,15 +16855,15 @@ class MediaFlowApi:
                 "service_unavailable",
                 "managed configuration service is unavailable",
             )
-        if len(parts) == 5:
+        if len(parts) == 4:
             self._require_empty_query(environ, "operations notification definitions")
             return self._notification_webhooks_operator_page(environ, start_response, principal)
-        if len(parts) == 6:
+        if len(parts) == 5:
             self._require_empty_query(environ, "operations notification definition")
-            return self._notification_webhook_operator_detail(parts[5], start_response, principal)
-        if len(parts) == 7 and parts[6] == "draft":
+            return self._notification_webhook_operator_detail(parts[4], start_response, principal)
+        if len(parts) == 6 and parts[5] == "draft":
             self._require_empty_query(environ, "operations notification definition draft")
-            return self._notification_webhook_operator_draft(parts[5], start_response, principal)
+            return self._notification_webhook_operator_draft(parts[4], start_response, principal)
         return self._error(start_response, 404, "not_found", "route was not found")
 
     def _notification_webhook_resolution(self, webhook_id: str, start_response: Callable):
@@ -16958,7 +16957,7 @@ class MediaFlowApi:
                 "available": True,
                 "reason": None,
                 "method": "GET",
-                "path": f"/api/v1/operations/notifications/webhooks/{webhook_id}",
+                "path": f"/api/operations/notifications/webhooks/{webhook_id}",
                 "sideEffects": "none",
                 "durableOutcome": None,
                 "nextAction": "inspect the exact bounded Webhook definition state",
@@ -16971,7 +16970,7 @@ class MediaFlowApi:
                     manage_reason,
                 ),
                 "method": "POST",
-                "path": f"/api/v1/operations/notifications/webhooks/{webhook_id}/test",
+                "path": f"/api/operations/notifications/webhooks/{webhook_id}/test",
                 "sideEffects": "one_signed_test_request",
                 "durableOutcome": (
                     "no durable change; only the bounded test outcome category is returned"
@@ -16994,7 +16993,7 @@ class MediaFlowApi:
                 ),
                 "method": "PUT",
                 "path": (
-                    f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                    f"/api/configuration/revisions/{draft_revision_id}/objects/"
                     f"webhooks/{webhook_id}"
                     if draft_revision_id is not None
                     else None
@@ -17019,7 +17018,7 @@ class MediaFlowApi:
                 ),
                 "method": "POST",
                 "path": (
-                    f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                    f"/api/configuration/revisions/{draft_revision_id}/objects/"
                     f"webhooks/{webhook_id}/copy"
                     if draft_revision_id is not None
                     else None
@@ -17044,7 +17043,7 @@ class MediaFlowApi:
                 ),
                 "method": "POST",
                 "path": (
-                    f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                    f"/api/configuration/revisions/{draft_revision_id}/objects/"
                     f"webhooks/{webhook_id}/enable"
                     if draft_revision_id is not None
                     else None
@@ -17068,7 +17067,7 @@ class MediaFlowApi:
                 ),
                 "method": "POST",
                 "path": (
-                    f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                    f"/api/configuration/revisions/{draft_revision_id}/objects/"
                     f"webhooks/{webhook_id}/disable"
                     if draft_revision_id is not None
                     else None
@@ -17097,7 +17096,7 @@ class MediaFlowApi:
                 ),
                 "method": "POST",
                 "path": (
-                    f"/api/v1/configuration/revisions/{active_revision_id}/successor"
+                    f"/api/configuration/revisions/{active_revision_id}/successor"
                     if active_revision_id is not None
                     else None
                 ),
@@ -17123,7 +17122,7 @@ class MediaFlowApi:
                 ),
                 "method": "POST",
                 "path": (
-                    f"/api/v1/operations/notifications/webhooks/{webhook_id}/activate-draft"
+                    f"/api/operations/notifications/webhooks/{webhook_id}/activate-draft"
                     if draft_revision_id is not None
                     else None
                 ),
@@ -17343,7 +17342,7 @@ class MediaFlowApi:
                         ),
                         "method": "POST",
                         "path": (
-                            f"/api/v1/configuration/revisions/{draft_revision_id}/objects/webhooks"
+                            f"/api/configuration/revisions/{draft_revision_id}/objects/webhooks"
                             if draft_revision_id is not None
                             else None
                         ),
@@ -17364,7 +17363,7 @@ class MediaFlowApi:
                             "the connected API principal cannot create a successor Draft",
                         ),
                         "method": "POST",
-                        "path": f"/api/v1/configuration/revisions/{active.revision_id}/successor",
+                        "path": f"/api/configuration/revisions/{active.revision_id}/successor",
                         "sideEffects": "none",
                         "durableOutcome": (
                             "a successor Draft seeded from the immutable Active "
@@ -17469,7 +17468,7 @@ class MediaFlowApi:
                         ),
                         "method": "POST",
                         "path": (
-                            f"/api/v1/configuration/revisions/{active_revision_id}/successor"
+                            f"/api/configuration/revisions/{active_revision_id}/successor"
                             if active_revision_id is not None
                             else None
                         ),
@@ -17496,7 +17495,7 @@ class MediaFlowApi:
                         ),
                         "method": "PUT",
                         "path": (
-                            f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                            f"/api/configuration/revisions/{draft_revision_id}/objects/"
                             f"webhooks/{webhook_id}"
                             if draft_revision_id is not None
                             else None
@@ -17523,7 +17522,7 @@ class MediaFlowApi:
                         ),
                         "method": "POST",
                         "path": (
-                            f"/api/v1/configuration/revisions/{draft_revision_id}/validate"
+                            f"/api/configuration/revisions/{draft_revision_id}/validate"
                             if draft_revision_id is not None
                             else None
                         ),
@@ -17546,7 +17545,7 @@ class MediaFlowApi:
                         ),
                         "method": "POST",
                         "path": (
-                            f"/api/v1/operations/notifications/webhooks/{webhook_id}/activate-draft"
+                            f"/api/operations/notifications/webhooks/{webhook_id}/activate-draft"
                             if draft_revision_id is not None
                             else None
                         ),
@@ -17571,7 +17570,7 @@ class MediaFlowApi:
                             )
                         ),
                         "method": "POST",
-                        "path": f"/api/v1/operations/notifications/webhooks/{webhook_id}/test",
+                        "path": f"/api/operations/notifications/webhooks/{webhook_id}/test",
                         "sideEffects": "one_signed_test_request",
                         "durableOutcome": (
                             "no durable change; only the bounded test outcome category is returned"
@@ -17715,7 +17714,7 @@ class MediaFlowApi:
                     )
                 ),
                 "method": "POST",
-                "path": f"/api/v1/notifications/{delivery_id}/requeue",
+                "path": f"/api/notifications/{delivery_id}/requeue",
                 "requiresConfirmation": True,
                 "sideEffects": "delivery_queue_state_only",
                 "durableOutcome": (
@@ -17739,7 +17738,7 @@ class MediaFlowApi:
                     )
                 ),
                 "method": "POST",
-                "path": f"/api/v1/notifications/{delivery_id}/resolve-stale",
+                "path": f"/api/notifications/{delivery_id}/resolve-stale",
                 "requiresConfirmation": True,
                 "sideEffects": "delivery_queue_state_only",
                 "durableOutcome": (

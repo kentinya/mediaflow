@@ -333,7 +333,7 @@ describe("AddResourceLibraryDrawer", () => {
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        if (url === "/api/v1/system/status") {
+        if (url === "/api/system/status") {
           statusReads += 1;
           return statusReads === 1
             ? jsonResponse(activeStatus)
@@ -347,10 +347,10 @@ describe("AddResourceLibraryDrawer", () => {
                 503,
               );
         }
-        if (url.startsWith("/api/v1/resource-libraries/source/files")) {
+        if (url.startsWith("/api/resource-libraries/source/files")) {
           return jsonResponse(files);
         }
-        if (url === "/api/v1/resource-libraries") {
+        if (url === "/api/resource-libraries") {
           expect(init?.method).toBe("POST");
           return jsonResponse(
             {
@@ -793,7 +793,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     let dropDeleteResponse = options.dropDeleteResponse === true;
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/v1/system/status") return jsonResponse(options.status);
+      if (url === "/api/system/status") return jsonResponse(options.status);
       if (
         /\/resource-libraries\/[^/]+\/edit$/.test(url) &&
         init?.method === undefined
@@ -803,7 +803,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
         throw new Error(`unexpected edit read: ${url}`);
       }
       if (
-        (url === "/api/v1/resource-libraries" && init?.method === "POST") ||
+        (url === "/api/resource-libraries" && init?.method === "POST") ||
         (/\/resource-libraries\/[^/]+$/.test(url) && init?.method === "PUT")
       ) {
         const body = JSON.parse(String(init?.body ?? "{}")) as Record<
@@ -836,7 +836,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
           ),
         });
       }
-      if (url === "/api/v1/operations/organize/discoveries") {
+      if (url === "/api/operations/organize/discoveries") {
         // The removed center list: a bounded empty answer keeps an accidental
         // consumer from failing while proving nothing depends on it.
         return jsonResponse({
@@ -1657,7 +1657,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/v1/system/status") {
+      if (url === "/api/system/status") {
         return jsonResponse(activeStatus([]));
       }
       throw new Error(`unexpected test request: ${url}`);
@@ -1822,7 +1822,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     );
     expect(
       fetchMock.mock.calls.some(([url]) =>
-        String(url).endsWith("/api/v1/resource-libraries/lib-a"),
+        String(url).endsWith("/api/resource-libraries/lib-a"),
       ),
     ).toBe(true);
   });
@@ -4382,7 +4382,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
       }),
     );
     authStore.setToken("test-token");
-    const { router } = renderApp("/ui-v2/resourcelib/files");
+    const { router } = renderApp("/resourcelib/files");
 
     await screen.findAllByText("Recover");
     await user.click(
@@ -4581,7 +4581,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        if (String(input) === "/api/v1/system/status") return statusResponse;
+        if (String(input) === "/api/system/status") return statusResponse;
         throw new Error(`unexpected test request: ${String(input)}`);
       }),
     );
@@ -4626,7 +4626,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        if (String(input) === "/api/v1/resource-libraries/lib-a/edit") {
+        if (String(input) === "/api/resource-libraries/lib-a/edit") {
           return editResponse;
         }
         return baseImplementation(input, init);

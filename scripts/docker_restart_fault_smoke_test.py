@@ -202,7 +202,7 @@ def exec_python(
 
 
 def active_identity(base: str, token: str) -> dict[str, object]:
-    status, management = json_request(base, "/api/v1/management/readiness", token)
+    status, management = json_request(base, "/api/management/readiness", token)
     if status != 200:
         raise RuntimeError(f"management readiness returned HTTP {status}")
     active = management.get("active") or {}
@@ -215,7 +215,7 @@ def active_identity(base: str, token: str) -> dict[str, object]:
 
 
 def definition_projection(base: str, token: str) -> dict:
-    status, document = json_request(base, "/api/v1/automation/task-definitions", token)
+    status, document = json_request(base, "/api/automation/task-definitions", token)
     if status != 200:
         raise RuntimeError(f"Automation Task Definition list returned HTTP {status}: {document}")
     definition = next(
@@ -231,7 +231,7 @@ def prepare_definition_intent(base: str, token: str, identity: dict[str, object]
     """Checked Enabled publication supplies the scheduled execution intent."""
     status, published = json_request(
         base,
-        f"/api/v1/operations/automation/definitions/{urllib.parse.quote(DEFINITION_ID)}/enable",
+        f"/api/operations/automation/definitions/{urllib.parse.quote(DEFINITION_ID)}/enable",
         token,
         method="POST",
         body={
@@ -255,7 +255,7 @@ def scheduled_tasks(base: str, token: str) -> list[dict]:
     task_id = occurrence.get("taskId")
     if not task_id:
         return []
-    status, task = json_request(base, f"/api/v1/tasks/{urllib.parse.quote(str(task_id))}", token)
+    status, task = json_request(base, f"/api/tasks/{urllib.parse.quote(str(task_id))}", token)
     if status != 200:
         raise RuntimeError(f"definition-bound Task read returned HTTP {status}: {task}")
     return [task]
@@ -286,7 +286,7 @@ def wait_task_terminal(base: str, token: str, task_id: str) -> dict:
     def reached() -> bool:
         _, document = json_request(
             base,
-            f"/api/v1/tasks/{urllib.parse.quote(task_id)}",
+            f"/api/tasks/{urllib.parse.quote(task_id)}",
             token,
         )
         return document.get("status") in {
@@ -297,17 +297,17 @@ def wait_task_terminal(base: str, token: str, task_id: str) -> dict:
         }
 
     wait_until(reached, timeout=180.0, description=f"Task {task_id} terminal evidence")
-    _, document = json_request(base, f"/api/v1/tasks/{urllib.parse.quote(task_id)}", token)
+    _, document = json_request(base, f"/api/tasks/{urllib.parse.quote(task_id)}", token)
     return document
 
 
 def wait_worker_ready(base: str, token: str) -> dict:
     def reached() -> bool:
-        _, readiness = json_request(base, "/api/v1/workers/readiness", token)
+        _, readiness = json_request(base, "/api/workers/readiness", token)
         return readiness.get("ready") is True
 
     wait_until(reached, timeout=120.0, description="processing Worker ready")
-    _, readiness = json_request(base, "/api/v1/workers/readiness", token)
+    _, readiness = json_request(base, "/api/workers/readiness", token)
     return readiness
 
 
@@ -555,7 +555,7 @@ with (
                 NOW,
                 "deployment-admin",
                 "GET",
-                "/api/v1/tasks",
+                "/api/tasks",
                 "read",
                 "success",
                 200,
@@ -872,14 +872,14 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
 
             baseline = {
                 "active": identity,
-                "tasks": collection_ids(base, token, "/api/v1/tasks?limit=100"),
+                "tasks": collection_ids(base, token, "/api/tasks?limit=100"),
                 "scheduledTasks": second_occurrence,
                 "scheduledTaskId": scheduled_task_id,
                 "occurrence": occurrence,
                 "intentEvidence": intent_evidence,
-                "notifications": collection_ids(base, token, "/api/v1/notifications?limit=100"),
-                "logs": collection_ids(base, token, "/api/v1/logs?limit=100"),
-                "audits": collection_ids(base, token, "/api/v1/security-audit?limit=100"),
+                "notifications": collection_ids(base, token, "/api/notifications?limit=100"),
+                "logs": collection_ids(base, token, "/api/logs?limit=100"),
+                "audits": collection_ids(base, token, "/api/security-audit?limit=100"),
             }
             baseline_task_ids = {item.get("task_id") for item in baseline["tasks"]}
             if UNCERTAIN_TASK_ID not in baseline_task_ids:
@@ -893,7 +893,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             print("Restarting the API service...")
             run([*command, "restart", "api"], environment=environment)
             wait_for_api(base, token)
-            after_api = collection_ids(base, token, "/api/v1/tasks?limit=100")
+            after_api = collection_ids(base, token, "/api/tasks?limit=100")
             if [item["task_id"] for item in after_api] != [
                 item["task_id"] for item in baseline["tasks"]
             ]:
@@ -905,7 +905,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             wait_worker_ready(base, token)
             _, fence_task = json_request(
                 base,
-                f"/api/v1/tasks/{urllib.parse.quote(fence_task_id)}",
+                f"/api/tasks/{urllib.parse.quote(fence_task_id)}",
                 token,
             )
             if fence_task.get("status") != "completed":
@@ -923,8 +923,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             ]:
                 raise RuntimeError("Scheduler restart changed the scheduled Task identity")
             final_task_ids = {
-                item.get("task_id")
-                for item in collection_ids(base, token, "/api/v1/tasks?limit=100")
+                item.get("task_id") for item in collection_ids(base, token, "/api/tasks?limit=100")
             }
             if scheduled_task_id not in final_task_ids:
                 raise RuntimeError("definition-bound Task disappeared after service restarts")
@@ -947,7 +946,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             def notification_evidence_settled() -> bool:
                 _, notifications = json_request(
                     base,
-                    "/api/v1/notifications?limit=100",
+                    "/api/notifications?limit=100",
                     token,
                 )
                 values = {item["deliveryId"]: item for item in notifications.get("items", [])}
@@ -983,7 +982,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             except RuntimeError as error:
                 _, notification_state = json_request(
                     base,
-                    "/api/v1/notifications?limit=100",
+                    "/api/notifications?limit=100",
                     token,
                 )
                 notification_logs = run(
@@ -997,7 +996,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
 
             _, notifications = json_request(
                 base,
-                "/api/v1/notifications?limit=100",
+                "/api/notifications?limit=100",
                 token,
             )
             final_delivery_ids = {item["deliveryId"] for item in notifications.get("items", [])}
@@ -1009,7 +1008,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             print("Verifying API/Web per-item recovery evidence and zero-mutation reads...")
             _, uncertain = json_request(
                 base,
-                f"/api/v1/tasks/{UNCERTAIN_TASK_ID}/items/{UNCERTAIN_ITEM_ID}",
+                f"/api/tasks/{UNCERTAIN_TASK_ID}/items/{UNCERTAIN_ITEM_ID}",
                 token,
             )
             if "investigate" not in uncertain.get("permitted_action_ids", []):
@@ -1019,7 +1018,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             if "automatic_replay_refused" not in uncertain.get("refusal_reason", ""):
                 raise RuntimeError("uncertain item lost its automatic replay refusal")
 
-            status, ui = http_request(f"{base}/ui-v2/")
+            status, ui = http_request(f"{base}/")
             if status != 200 or b'<div id="root">' not in ui:
                 raise RuntimeError("current V2 Web shell is not reachable")
             for retired_path in ("/ui", "/ui/", "/ui/app.js", "/ui/style.css"):
@@ -1030,20 +1029,16 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                     )
 
             before_reads = {
-                "tasks": len(collection_ids(base, token, "/api/v1/tasks?limit=100")),
-                "notifications": len(
-                    collection_ids(base, token, "/api/v1/notifications?limit=100")
-                ),
+                "tasks": len(collection_ids(base, token, "/api/tasks?limit=100")),
+                "notifications": len(collection_ids(base, token, "/api/notifications?limit=100")),
             }
             for _ in range(2):
-                collection_ids(base, token, "/api/v1/tasks?limit=100")
-                collection_ids(base, token, "/api/v1/notifications?limit=100")
-                collection_ids(base, token, "/api/v1/logs?limit=100")
+                collection_ids(base, token, "/api/tasks?limit=100")
+                collection_ids(base, token, "/api/notifications?limit=100")
+                collection_ids(base, token, "/api/logs?limit=100")
             after_reads = {
-                "tasks": len(collection_ids(base, token, "/api/v1/tasks?limit=100")),
-                "notifications": len(
-                    collection_ids(base, token, "/api/v1/notifications?limit=100")
-                ),
+                "tasks": len(collection_ids(base, token, "/api/tasks?limit=100")),
+                "notifications": len(collection_ids(base, token, "/api/notifications?limit=100")),
             }
             if before_reads != after_reads:
                 raise RuntimeError(f"read projections mutated durable state: {after_reads}")

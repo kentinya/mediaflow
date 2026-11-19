@@ -181,7 +181,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration?returnTo=storage");
+    renderApp("/configuration?returnTo=storage");
     await userEvent.click(
       await screen.findByRole("button", { name: /恢复草稿/ }),
     );
@@ -209,7 +209,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     expect(
       await screen.findByRole("heading", { name: "系统设置" }),
     ).toBeVisible();
@@ -224,7 +224,7 @@ describe("V2 configuration route", () => {
     await userEvent.click(screen.getByRole("button", { name: "创建首个草稿" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/v1/configuration/drafts/first",
+        "/api/configuration/drafts/first",
         expect.objectContaining({ method: "POST" }),
       ),
     );
@@ -253,7 +253,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     expect(
       await screen.findByRole("heading", { name: "系统设置" }),
     ).toBeVisible();
@@ -322,7 +322,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     const activeJson = await screen.findByLabelText("配置 JSON");
     expect((activeJson as HTMLTextAreaElement).value).toContain("zh-CN");
     expect(screen.getByText(/来源：生效配置/)).toBeVisible();
@@ -353,7 +353,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("viewer-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     expect(await screen.findByText("已有草稿待恢复")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "创建首个草稿" }),
@@ -380,7 +380,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await userEvent.click(
       await screen.findByRole("button", { name: /恢复草稿/ }),
     );
@@ -433,7 +433,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await userEvent.click(
       await screen.findByRole("button", { name: /恢复草稿/ }),
     );
@@ -477,7 +477,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await userEvent.click(
       await screen.findByRole("button", { name: /恢复草稿/ }),
     );
@@ -546,7 +546,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     const locale = await screen.findByLabelText("系统语言");
     await userEvent.clear(locale);
     await userEvent.type(locale, "en-US");
@@ -601,7 +601,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     // Change the Localization group but save the Logging group.
     const locale = await screen.findByLabelText("系统语言");
     await userEvent.clear(locale);
@@ -662,7 +662,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     const timezone = await screen.findByLabelText("系统时区");
     await userEvent.clear(timezone);
     await userEvent.type(timezone, "Europe/Berlin");
@@ -741,7 +741,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await userEvent.click(
       await screen.findByRole("button", { name: /恢复草稿/ }),
     );
@@ -797,7 +797,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await screen.findByLabelText("系统语言");
     await userEvent.click(screen.getByRole("button", { name: "日志" }));
     const retention = screen.getByLabelText("日志保留天数");
@@ -846,7 +846,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     const locale = await screen.findByLabelText("系统语言");
     await userEvent.clear(locale);
     await userEvent.type(locale, "en-US");
@@ -856,7 +856,7 @@ describe("V2 configuration route", () => {
     cleanup();
     // A real remount with the same authenticated principal (reload or a
     // successful reauthentication) restores the input and the exact edit base.
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     expect(await screen.findByLabelText("系统语言")).toHaveValue("en-US");
     expect(screen.getByText("已恢复未保存输入")).toBeVisible();
     expect(screen.getByText(/本组有未保存修改/)).toBeVisible();
@@ -886,7 +886,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await screen.findByLabelText("系统语言");
     await userEvent.click(screen.getByRole("button", { name: "日志" }));
     const loggingEnabled = screen.getByLabelText("启用操作日志");
@@ -939,7 +939,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await userEvent.click(
       await screen.findByRole("button", { name: "创建首个草稿" }),
     );
@@ -994,7 +994,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await userEvent.click(
       await screen.findByRole("button", { name: /恢复草稿/ }),
     );
@@ -1070,7 +1070,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     const locale = await screen.findByLabelText("系统语言");
     await userEvent.clear(locale);
     await userEvent.type(locale, "en-US");
@@ -1125,7 +1125,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await userEvent.click(
       await screen.findByRole("button", { name: /恢复草稿/ }),
     );
@@ -1194,7 +1194,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     expect((await screen.findAllByText("需重启后生效")).length).toBeGreaterThan(
       0,
     );
@@ -1222,7 +1222,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    const { router } = renderApp("/ui-v2/configuration");
+    const { router } = renderApp("/configuration");
     const locale = await screen.findByLabelText("系统语言");
     await userEvent.clear(locale);
     await userEvent.type(locale, "en-US");
@@ -1273,7 +1273,7 @@ describe("V2 configuration route", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     expect(await screen.findByText("生效配置不可用，需要恢复")).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "生效配置需要恢复" }),
@@ -1348,7 +1348,7 @@ describe("V2 configuration rule readiness", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await screen.findByRole("heading", { name: "系统设置" });
     await clickDiagnostics();
     expect(
@@ -1358,15 +1358,12 @@ describe("V2 configuration rule readiness", () => {
     expect(screen.getByText("部分规则族尚未就绪")).toBeVisible();
     expect(screen.getByRole("link", { name: "查看识别类型" })).toHaveAttribute(
       "href",
-      "/ui-v2/rules?section=recognitionTypes",
+      "/rules?section=recognitionTypes",
     );
     const gapLink = screen.getAllByRole("link", {
       name: "查看识别规则",
     })[0]!;
-    expect(gapLink).toHaveAttribute(
-      "href",
-      "/ui-v2/rules?section=recognitionRules",
-    );
+    expect(gapLink).toHaveAttribute("href", "/rules?section=recognitionRules");
     expect(screen.getByText("2 项 · 2 已启用")).toBeVisible();
     expect(
       fetchMock.mock.calls.filter(([input]) =>
@@ -1402,7 +1399,7 @@ describe("V2 configuration rule readiness", () => {
         }),
       );
       authStore.setToken("admin-token");
-      renderApp("/ui-v2/configuration");
+      renderApp("/configuration");
       await screen.findByRole("heading", { name: "系统设置" });
       await clickDiagnostics();
       await screen.findByRole("heading", { name: "整理规则就绪状态" });
@@ -1439,7 +1436,7 @@ describe("V2 configuration rule readiness", () => {
       }),
     );
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await screen.findByRole("heading", { name: "系统设置" });
     await clickDiagnostics();
     await screen.findByRole("heading", { name: "整理规则就绪状态" });
@@ -1479,7 +1476,7 @@ describe("V2 configuration rule readiness", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await screen.findByRole("heading", { name: "系统设置" });
     await clickDiagnostics();
     await screen.findByRole("heading", { name: "整理规则就绪状态" });
@@ -1491,7 +1488,7 @@ describe("V2 configuration rule readiness", () => {
   it("maps a malformed rule-readiness document to an explicit unavailable state", async () => {
     vi.stubGlobal("fetch", statusWith({ state: "PROBABLY_FINE" }));
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await screen.findByRole("heading", { name: "系统设置" });
     await clickDiagnostics();
     await screen.findByRole("heading", { name: "整理规则就绪状态" });
@@ -1521,12 +1518,12 @@ describe("V2 configuration rule readiness", () => {
     );
     authStore.setToken("admin-token");
     const { router } = renderApp(
-      "/ui-v2/configuration?returnTo=rules&returnSection=classificationPolicies",
+      "/configuration?returnTo=rules&returnSection=classificationPolicies",
     );
     expect(await screen.findByText("来自其他页面")).toBeVisible();
     expect(
       screen.getByRole("link", { name: "返回整理规则 · 分类规则" }),
-    ).toHaveAttribute("href", "/ui-v2/rules?section=classificationPolicies");
+    ).toHaveAttribute("href", "/rules?section=classificationPolicies");
     expect(screen.getByRole("heading", { name: "系统设置" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/configuration");
   });
@@ -1557,7 +1554,7 @@ describe("V2 configuration rule readiness", () => {
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
     const { router } = renderApp(
-      "/ui-v2/configuration?returnTo=rules&returnSection=metadataPolicies",
+      "/configuration?returnTo=rules&returnSection=metadataPolicies",
     );
     await userEvent.click(
       await screen.findByRole("button", { name: /恢复草稿/ }),
@@ -1656,8 +1653,8 @@ describe("V2 configuration rule readiness", () => {
         return response({ revisionId: "draft-1", version: 2, activated: true });
       }
       if (
-        path === "/api/v1/configuration/revisions/draft-1" ||
-        path === "/api/v1/configuration/revisions/draft-1/objects"
+        path === "/api/configuration/revisions/draft-1" ||
+        path === "/api/configuration/revisions/draft-1/objects"
       ) {
         return response({
           revisionId: "draft-1",
@@ -1728,7 +1725,7 @@ describe("V2 configuration rule readiness", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await userEvent.click(
       await screen.findByRole("button", { name: /恢复草稿/ }),
     );
@@ -1777,7 +1774,7 @@ describe("V2 configuration rule readiness", () => {
 
     expect(requests.map((entry) => [entry.path, entry.body])).toEqual([
       [
-        "/api/v1/configuration/revisions/draft-1/storage-check",
+        "/api/configuration/revisions/draft-1/storage-check",
         {
           storageId: "source-storage",
           expectedVersion: 2,
@@ -1785,7 +1782,7 @@ describe("V2 configuration rule readiness", () => {
         },
       ],
       [
-        "/api/v1/configuration/revisions/draft-1/recognition-strategy-test",
+        "/api/configuration/revisions/draft-1/recognition-strategy-test",
         {
           expectedVersion: 2,
           expectedDigest: "digest-2",
@@ -1794,7 +1791,7 @@ describe("V2 configuration rule readiness", () => {
         },
       ],
       [
-        "/api/v1/configuration/revisions/draft-1/destination-precheck",
+        "/api/configuration/revisions/draft-1/destination-precheck",
         {
           expectedVersion: 2,
           expectedDigest: "digest-2",
@@ -1813,7 +1810,7 @@ describe("V2 configuration rule readiness", () => {
     await userEvent.click(screen.getByRole("button", { name: "激活配置" }));
     await expect(screen.findByText("配置已激活")).resolves.toBeVisible();
     expect(requests.at(-1)).toEqual({
-      path: "/api/v1/configuration/revisions/draft-1/activate",
+      path: "/api/configuration/revisions/draft-1/activate",
       body: { expectedVersion: 2, checked: true },
     });
   });
@@ -1869,8 +1866,8 @@ describe("V2 configuration rule readiness", () => {
         return response(evidence);
       }
       if (
-        path === "/api/v1/configuration/revisions/draft-1" ||
-        path === "/api/v1/configuration/revisions/draft-1/objects"
+        path === "/api/configuration/revisions/draft-1" ||
+        path === "/api/configuration/revisions/draft-1/objects"
       ) {
         return response({
           revisionId: "draft-1",
@@ -1943,7 +1940,7 @@ describe("V2 configuration rule readiness", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await userEvent.click(
       await screen.findByRole("button", { name: /恢复草稿/ }),
     );
@@ -2005,8 +2002,8 @@ describe("V2 configuration rule readiness", () => {
         return response({ revisionId: "draft-1", version: 2 });
       }
       if (
-        path === "/api/v1/configuration/revisions/draft-1" ||
-        path === "/api/v1/configuration/revisions/draft-1/objects"
+        path === "/api/configuration/revisions/draft-1" ||
+        path === "/api/configuration/revisions/draft-1/objects"
       ) {
         return response({
           revisionId: "draft-1",
@@ -2034,7 +2031,7 @@ describe("V2 configuration rule readiness", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     await userEvent.click(
       await screen.findByRole("button", { name: /恢复草稿/ }),
     );
@@ -2069,7 +2066,7 @@ describe("V2 configuration rule readiness", () => {
       }),
     );
     authStore.setToken("admin-token");
-    renderApp("/ui-v2/configuration?returnTo=https%3A%2F%2Fevil.example");
+    renderApp("/configuration?returnTo=https%3A%2F%2Fevil.example");
     await screen.findByRole("heading", { name: "系统设置" });
     expect(screen.queryByText("来自其他页面")).toBeNull();
     expect(document.body.textContent).not.toContain("evil.example");

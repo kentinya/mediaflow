@@ -931,12 +931,12 @@ class TransferApiTests(TransferTestCase):
             (root / "source" / "Movies").mkdir()
             _status, impact = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "/api/resource-libraries/source/files/transfer-impact"
                 "?path=a.mkv&to=source&toPath=Movies&operation=copy&conflict=fail",
             )
             status, admitted = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfers",
+                "/api/resource-libraries/source/files/transfers",
                 method="POST",
                 body={
                     "operation": "copy",
@@ -964,14 +964,14 @@ class TransferApiTests(TransferTestCase):
                 runtime_schema_version=SCHEMA_VERSION,
                 now=datetime.now(UTC),
             )
-            status, readiness = request(api, "/api/v1/workers/readiness")
+            status, readiness = request(api, "/api/workers/readiness")
             self.assertEqual(status, 200, readiness)
             self.assertFalse(readiness["currentActiveAvailable"])
             self.assertTrue(readiness["workReadiness"]["resourceFilesTransfer"]["ready"])
             self.assertTrue(readiness["workReadiness"]["mediaFilesTransfer"]["ready"])
             status, progress = request(
                 api,
-                f"/api/v1/resource-libraries/source/files/transfers/{admitted['taskId']}",
+                f"/api/resource-libraries/source/files/transfers/{admitted['taskId']}",
             )
             self.assertEqual(status, 200, progress)
             self.assertEqual(progress["taskId"], admitted["taskId"])
@@ -1018,12 +1018,12 @@ class TransferApiTests(TransferTestCase):
         (root / "source" / "Movies").mkdir(exist_ok=True)
         _status, impact = request(
             api,
-            "/api/v1/resource-libraries/source/files/transfer-impact"
+            "/api/resource-libraries/source/files/transfer-impact"
             "?path=a.mkv&to=source&toPath=Movies&operation=copy&conflict=fail",
         )
         status, admitted = request(
             api,
-            "/api/v1/resource-libraries/source/files/transfers",
+            "/api/resource-libraries/source/files/transfers",
             method="POST",
             body={
                 "operation": "copy",
@@ -1067,7 +1067,7 @@ class TransferApiTests(TransferTestCase):
 
             restarted = self._restart_api(root, runtime, storage_adapters=providers)
             status, progress = request(
-                restarted, f"/api/v1/resource-libraries/source/files/transfers/{task_id}"
+                restarted, f"/api/resource-libraries/source/files/transfers/{task_id}"
             )
             self.assertEqual(status, 200, progress)
             self.assertEqual(progress["taskId"], task_id)
@@ -1088,20 +1088,20 @@ class TransferApiTests(TransferTestCase):
             # A media Task is never readable through the ResourceLibrary route,
             # and an unknown Task keeps its durable 404.
             missing, _body = request(
-                restarted, "/api/v1/resource-libraries/source/files/transfers/no-such-task"
+                restarted, "/api/resource-libraries/source/files/transfers/no-such-task"
             )
             self.assertEqual(missing, 404)
             # RBAC stays authoritative on the durable read.
             denied, _body = request(
                 restarted,
-                f"/api/v1/resource-libraries/source/files/transfers/{task_id}",
+                f"/api/resource-libraries/source/files/transfers/{task_id}",
                 token="nope-token",
             )
             self.assertEqual(denied, 401)
             # Refresh never resubmits: still exactly one admitted Task and the
             # media scope is untouched.
             status, again = request(
-                restarted, f"/api/v1/resource-libraries/source/files/transfers/{task_id}"
+                restarted, f"/api/resource-libraries/source/files/transfers/{task_id}"
             )
             self.assertEqual(status, 200, again)
             self.assertEqual(again["version"], progress["version"])
@@ -1117,7 +1117,7 @@ class TransferApiTests(TransferTestCase):
             # New admission during the outage still fails closed with zero effect.
             refused, _body = request(
                 restarted,
-                "/api/v1/resource-libraries/source/files/transfers",
+                "/api/resource-libraries/source/files/transfers",
                 method="POST",
                 body={
                     "operation": "copy",
@@ -1141,7 +1141,7 @@ class TransferApiTests(TransferTestCase):
             # resubmission and no second Task.
             self._set_active_status(restarted, active.revision_id, "active")
             status, repaired = request(
-                restarted, f"/api/v1/resource-libraries/source/files/transfers/{task_id}"
+                restarted, f"/api/resource-libraries/source/files/transfers/{task_id}"
             )
             self.assertEqual(status, 200, repaired)
             self.assertEqual(repaired["status"], "QUEUED")
@@ -1157,7 +1157,7 @@ class TransferApiTests(TransferTestCase):
             finished = worker.run_next()
             self.assertIsNotNone(finished)
             status, done = request(
-                restarted, f"/api/v1/resource-libraries/source/files/transfers/{task_id}"
+                restarted, f"/api/resource-libraries/source/files/transfers/{task_id}"
             )
             self.assertEqual(status, 200, done)
             self.assertTrue(done["terminal"], done)
@@ -1200,12 +1200,12 @@ class TransferApiTests(TransferTestCase):
             (root / "source" / "Movies").mkdir()
             _status, impact = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "/api/resource-libraries/source/files/transfer-impact"
                 "?path=a.mkv&to=source&toPath=Movies&operation=copy&conflict=fail",
             )
             created, result = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfers",
+                "/api/resource-libraries/source/files/transfers",
                 method="POST",
                 body={
                     "operation": "copy",
@@ -1258,13 +1258,13 @@ class TransferApiTests(TransferTestCase):
             (root / "source" / "Movies").mkdir()
             status, impact = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "/api/resource-libraries/source/files/transfer-impact"
                 "?path=a.mkv&to=source&toPath=Movies&operation=copy&conflict=fail",
             )
             self.assertEqual(status, 200)
             created, result = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfers",
+                "/api/resource-libraries/source/files/transfers",
                 method="POST",
                 body={
                     "operation": "copy",
@@ -1305,21 +1305,21 @@ class TransferApiTests(TransferTestCase):
             # originating library page.  The same durable display identity is
             # published there, and the organizing Task Center never lists it.
             code, page = request(
-                api, "/api/v1/resource-libraries/source/file-operations", token="viewer-token"
+                api, "/api/resource-libraries/source/file-operations", token="viewer-token"
             )
             self.assertEqual(200, code, page)
             self.assertEqual(1, page["total"], page)
             self.assertEqual(task_id, page["items"][0]["taskId"])
             code, overview = request(
                 api,
-                f"/api/v1/resource-libraries/source/files/operations/{task_id}",
+                f"/api/resource-libraries/source/files/operations/{task_id}",
                 token="viewer-token",
             )
             self.assertEqual(200, code)
             self.assertEqual("复制/移动", overview["commandLabel"])
             self.assertEqual("Unified media source/a.mkv", overview["sourceScope"])
             self.assertEqual("Unified media source/Movies", overview["targetScope"])
-            code, inventory = request(api, "/api/v1/operations/runs", token="viewer-token")
+            code, inventory = request(api, "/api/operations/runs", token="viewer-token")
             self.assertEqual(0, inventory["total"], inventory)
             # Bounded and secret-free: no host root or adapter evidence in the
             # public library documents.
@@ -1339,7 +1339,7 @@ class TransferApiTests(TransferTestCase):
             )
             code, page = request(
                 restarted_api,
-                "/api/v1/resource-libraries/source/file-operations",
+                "/api/resource-libraries/source/file-operations",
                 token="viewer-token",
             )
             self.assertEqual(200, code)
@@ -1356,7 +1356,7 @@ class TransferApiTests(TransferTestCase):
 
             status, impact = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "/api/resource-libraries/source/files/transfer-impact"
                 "?path=a.mkv&to=source&toPath=Movies&operation=copy&conflict=fail",
             )
             self.assertEqual(status, 200)
@@ -1367,7 +1367,7 @@ class TransferApiTests(TransferTestCase):
 
             viewer_status, _ = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "/api/resource-libraries/source/files/transfer-impact"
                 "?path=a.mkv&to=source&toPath=Movies&operation=copy",
                 token="viewer-token",
             )
@@ -1375,7 +1375,7 @@ class TransferApiTests(TransferTestCase):
 
             forbidden, _ = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfers",
+                "/api/resource-libraries/source/files/transfers",
                 method="POST",
                 token="viewer-token",
                 body={
@@ -1391,7 +1391,7 @@ class TransferApiTests(TransferTestCase):
 
             created, result = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfers",
+                "/api/resource-libraries/source/files/transfers",
                 method="POST",
                 body={
                     "operation": "copy",
@@ -1413,7 +1413,7 @@ class TransferApiTests(TransferTestCase):
             # separately invoked Worker claim advances it.
             status_code, queued_projection = request(
                 api,
-                f"/api/v1/resource-libraries/source/files/transfers/{result['taskId']}",
+                f"/api/resource-libraries/source/files/transfers/{result['taskId']}",
             )
             self.assertEqual(status_code, 200)
             self.assertEqual(queued_projection["status"], "QUEUED")
@@ -1434,7 +1434,7 @@ class TransferApiTests(TransferTestCase):
             self._run_worker(transfers_service, api._repository)
             final_code, projection = request(
                 api,
-                f"/api/v1/resource-libraries/source/files/transfers/{result['taskId']}",
+                f"/api/resource-libraries/source/files/transfers/{result['taskId']}",
             )
             self.assertEqual(final_code, 200)
             self.assertEqual(projection["status"], "SUCCESS")
@@ -1450,20 +1450,20 @@ class TransferApiTests(TransferTestCase):
 
             unknown, _ = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "/api/resource-libraries/source/files/transfer-impact"
                 "?path=a.mkv&to=source&operation=copy&bogus=1",
             )
             self.assertEqual(unknown, 400)
 
             status, _impact = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "/api/resource-libraries/source/files/transfer-impact"
                 "?path=a.mkv&to=source&toPath=Movies&operation=copy",
             )
             self.assertEqual(status, 200)
             stale, document = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfers",
+                "/api/resource-libraries/source/files/transfers",
                 method="POST",
                 body={
                     "operation": "copy",
@@ -2340,7 +2340,7 @@ class RepeatedPathDeleteImpactTests(TransferTestCase):
                 (root / "source" / f"f{index:02d}.txt").write_text("x", encoding="utf-8")
             two, first = request(
                 api,
-                "/api/v1/resource-libraries/source/files/delete-impact?path=f00.txt&path=f01.txt",
+                "/api/resource-libraries/source/files/delete-impact?path=f00.txt&path=f01.txt",
             )
             self.assertEqual(two, 200)
             self.assertEqual(sorted(first["topLevelPaths"]), ["f00.txt", "f01.txt"])
@@ -2349,7 +2349,7 @@ class RepeatedPathDeleteImpactTests(TransferTestCase):
 
             fifty, many = request(
                 api,
-                "/api/v1/resource-libraries/source/files/delete-impact?"
+                "/api/resource-libraries/source/files/delete-impact?"
                 + "&".join(f"path=f{index:02d}.txt" for index in range(50)),
             )
             self.assertEqual(fifty, 200)
@@ -2362,17 +2362,17 @@ class RepeatedPathDeleteImpactTests(TransferTestCase):
             for index in range(51):
                 (root / "source" / f"f{index:02d}.txt").write_text("x", encoding="utf-8")
             unknown, unknown_document = request(
-                api, "/api/v1/resource-libraries/source/files/delete-impact?path=f00.txt&other=1"
+                api, "/api/resource-libraries/source/files/delete-impact?path=f00.txt&other=1"
             )
             self.assertEqual(unknown, 400)
             self.assertEqual(unknown_document["error"]["code"], "files_direct_invalid_request")
             blank, _ = request(
-                api, "/api/v1/resource-libraries/source/files/delete-impact?path=f00.txt&path="
+                api, "/api/resource-libraries/source/files/delete-impact?path=f00.txt&path="
             )
             self.assertEqual(blank, 400)
             limit, _ = request(
                 api,
-                "/api/v1/resource-libraries/source/files/delete-impact?"
+                "/api/resource-libraries/source/files/delete-impact?"
                 + "&".join(f"path=f{index:02d}.txt" for index in range(51)),
             )
             self.assertEqual(limit, 400)
@@ -3696,7 +3696,7 @@ class InFlightResolutionTests(TransferTestCase):
         uncertain investigation truth — never a raw error, host path or digest.
         """
 
-        status, document = request(api, f"/api/v1/operations/tasks/{task_id}")
+        status, document = request(api, f"/api/operations/tasks/{task_id}")
         self.assertEqual(status, 200)
         # Slice 48 RO-2: the resolution of an entered mutation is a file-level
         # technical end with unknown effect — the flow completed while the
@@ -4409,7 +4409,7 @@ class SourceLockGenerationTests(TransferTestCase):
             self.assertEqual(record.effect_certainty, "verified_complete")
             self.assertEqual(record.uncertain_effects, ())
 
-        status, document = request(api, f"/api/v1/operations/tasks/{task_id}")
+        status, document = request(api, f"/api/operations/tasks/{task_id}")
         self.assertEqual(status, 200)
         self.assertEqual(document["status"], "completed")
         self.assertEqual([item["status"] for item in document["items"]], ["success"])
@@ -5002,7 +5002,7 @@ class SourceLockGenerationTests(TransferTestCase):
             )
             self._run_worker(transfers, runtime)
             task_id = queued["taskId"]
-            status, document = request(api, f"/api/v1/operations/tasks/{task_id}")
+            status, document = request(api, f"/api/operations/tasks/{task_id}")
             self.assertEqual(status, 200)
             serialized = json.dumps(document)
             self.assertNotIn("lock_owner_token", serialized)
@@ -6409,7 +6409,7 @@ class LargeFolderTransferTests(TransferTestCase):
 
             status, document = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "/api/resource-libraries/source/files/transfer-impact"
                 "?path=bulk&to=source&toPath=Movies&operation=copy&conflict=fail",
                 token="admin-token",
             )
@@ -6439,7 +6439,7 @@ class LargeFolderTransferTests(TransferTestCase):
 
             status, document = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "/api/resource-libraries/source/files/transfer-impact"
                 "?path=deep&to=source&toPath=Movies&operation=copy&conflict=fail",
                 token="admin-token",
             )
@@ -6524,7 +6524,7 @@ class LargeFolderTransferTests(TransferTestCase):
 
             status, document = request(
                 api,
-                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "/api/resource-libraries/source/files/transfer-impact"
                 "?path=bulk&to=source&toPath=Movies&operation=copy&conflict=fail",
                 token="admin-token",
             )

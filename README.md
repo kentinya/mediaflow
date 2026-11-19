@@ -36,7 +36,7 @@ Name the bootstrap with `--config` (or export the `MEDIAFLOW_CONFIG` above) so t
 written to the deployment's database; without either, the command refuses to run.
 
 Import never publishes. Publication is the checked journey in `系统设置`
-(`/ui-v2/configuration`): under `高级配置 → 查看配置` select the imported Draft, run
+(`/configuration`): under `高级配置 → 查看配置` select the imported Draft, run
 `验证草稿`, complete the `发布前检查` listed for that exact version (read-only checks for every
 referenced enabled Storage, the offline recognition strategy test and the destination precheck),
 then click `激活配置`. Before the applicable checks pass there is no Active configuration; a
@@ -73,9 +73,10 @@ AWS/R2, other OpenList drivers, remote atomic publication, power loss or multi-h
 
 ## V2 development status
 
-`main` is the unreleased `2.0.0.dev0` Operator Web development trunk. Python `/api/v1/*` remains the
-business authority. Slice55 accepts `/ui-v2/` as the only current Web root and retires V1 and obsolete
-migration entrances on main. Valid V2 data and work at the Slice55 Base retain their original identities.
+`main` is the unreleased `2.0.0.dev0` Operator Web development trunk. Python `/api/*` remains the
+business authority. Slice56 activates the current Web root `/` and the unversioned API namespace;
+Slice55 remains the accepted retirement of V1 and obsolete migration entrances on main. Valid V2
+data and work at the base of either Slice retain their original identities.
 Historical V1 is retained on `release/v1`.
 [Documentation](docs/README.md) maps document
 responsibilities. [Roadmap](docs/roadmap.md) records priority/status,
@@ -102,7 +103,7 @@ existing detail in Task Center. A lost response offers original-request reconcil
 its original identity even after an unselected file is corrected/reanalyzed. After leaving,
 `继续整理` on the original Task opens the same still-continuable review above the preserved
 Task Center list/detail, including after reload/re-authentication. Its canonical address is
-`/ui-v2/operations?run=<Task>&dialog=organize`. Ended Task details show results and inline file
+`/operations?run=<Task>&dialog=organize`. Ended Task details show results and inline file
 evidence, without a preparation section or summary/restart buttons; the canonical address keeps
 their saved plan readable in the same shared dialog. The former `/operations/organize/new`
 page is removed and its addresses return ordinary not-found. The shared organizer keeps space
@@ -198,7 +199,7 @@ Definition management and organizing recovery use their own workspace entries.
 
 ## V2 frontend (web/)
 
-React/TypeScript/Vite, TanStack Router/Query and a central typed API boundary render `/ui-v2/`.
+React/TypeScript/Vite, TanStack Router/Query and a central typed API boundary render `/`.
 Tokens stay in browser memory. Python serves built static assets; Node is build/development tooling.
 
 ```bash
@@ -207,7 +208,7 @@ npm --prefix web run build
 mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
-Open `/ui-v2/` and connect a configured API-principal token. Reload requires reconnecting.
+Open `/` and connect a configured API-principal token. Reload requires reconnecting.
 Retired V1 `/ui` assets, `/review`, the old Library addresses and the former Task/Job/automation
 create and edit addresses are ordinary unknown routes; none redirects into the current product.
 The development listener is trusted-loopback only; production exposure/TLS/proxy rules belong to
@@ -302,7 +303,7 @@ mutation authority. Keep local API tokens, Webhook secrets and Storage credentia
 New organizing work is admitted through the current Task kernel only: the Files Web journey,
 the direct CLI `organize` command, an Automation due occurrence, or a definition Run once. The
 former remote execution ticket (`execution-authorizations`, `X-MediaFlow-Execution-Token` and
-`POST /api/v1/tasks`) is retired; `api.remoteExecution` in an immutable historical document stays
+`POST /api/tasks`) is retired; `api.remoteExecution` in an immutable historical document stays
 readable but grants no authority and cannot be published again. Ordinary users never issue or
 transfer execution tokens. Every entrance retains RBAC, pins, effect scope, audit, fencing and
 OrganizerExecutor-only mutation. See [Architecture](docs/architecture.md#interactive-execution-authorization).

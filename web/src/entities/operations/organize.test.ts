@@ -50,7 +50,7 @@ function previewDocument(): Json {
   const action = (value["actions"] as Json)["execute"] as Json;
   action["available"] = true;
   action["reason"] = null;
-  action["path"] = "/api/v1/operations/organize/previews/preview-1/execute";
+  action["path"] = "/api/operations/organize/previews/preview-1/execute";
   return value;
 }
 
@@ -105,7 +105,7 @@ describe("normalizeOrganizeAction route binding", () => {
     expect(() =>
       normalizeOrganizeAction(
         offeredExecuteAction(
-          "/api/v1/operations/organize/previews/<preview>/execute",
+          "/api/operations/organize/previews/<preview>/execute",
         ),
         "actions.execute",
         "preview-execute",
@@ -118,7 +118,7 @@ describe("normalizeOrganizeAction route binding", () => {
     expect(() =>
       normalizeOrganizeAction(
         offeredExecuteAction(
-          "/api/v1/operations/organize/previews/<preview>/execute",
+          "/api/operations/organize/previews/<preview>/execute",
         ),
         "actions.execute",
         "preview-execute",
@@ -131,7 +131,7 @@ describe("normalizeOrganizeAction route binding", () => {
     expect(() =>
       normalizeOrganizeAction(
         offeredExecuteAction(
-          "/api/v1/operations/organize/previews/preview-1/execute",
+          "/api/operations/organize/previews/preview-1/execute",
         ),
         "actions.execute",
         "preview-execute",
@@ -142,9 +142,9 @@ describe("normalizeOrganizeAction route binding", () => {
 
   it("rejects braces and angle brackets outside the one template segment", () => {
     for (const path of [
-      "/api/v1/operations/organize/previews/preview-1/{execute}",
-      "/api/v1/operations/organize/previews/pre{view}/execute",
-      "/api/v1/operations/organize/previews/preview-1/execu>te",
+      "/api/operations/organize/previews/preview-1/{execute}",
+      "/api/operations/organize/previews/pre{view}/execute",
+      "/api/operations/organize/previews/preview-1/execu>te",
     ]) {
       expect(() =>
         normalizeOrganizeAction(
@@ -163,7 +163,7 @@ describe("normalizeOrganizeAction route binding", () => {
     expect(() =>
       normalizeOrganizeAction(
         offeredExecuteAction(
-          "/api/v1/operations/organize/previews/{itemId}/execute",
+          "/api/operations/organize/previews/{itemId}/execute",
         ),
         "actions.execute",
         "preview-execute",
@@ -181,7 +181,7 @@ describe("normalizeOrganizeAction route binding", () => {
         method: "POST",
         nextAction:
           "edit one item choice with its current intent and item versions",
-        path: "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice",
+        path: "/api/operations/organize/intents/intent-1/items/{itemId}/choice",
         reason: null,
         sideEffects: "none",
       },
@@ -192,7 +192,7 @@ describe("normalizeOrganizeAction route binding", () => {
     expect(model.available).toBe(true);
     expect(model.method).toBe("POST");
     expect(model.path).toBe(
-      "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice",
+      "/api/operations/organize/intents/intent-1/items/{itemId}/choice",
     );
   });
 
@@ -202,7 +202,7 @@ describe("normalizeOrganizeAction route binding", () => {
         available: true,
         reason: null,
         method: "POST",
-        path: "/api/v1/operations/organize/intents/intent-1/items/item-1/choice",
+        path: "/api/operations/organize/intents/intent-1/items/item-1/choice",
         sideEffects: "none",
       },
       "actions.choice",
@@ -211,22 +211,22 @@ describe("normalizeOrganizeAction route binding", () => {
     );
     expect(model.available).toBe(true);
     expect(model.path).toBe(
-      "/api/v1/operations/organize/intents/intent-1/items/item-1/choice",
+      "/api/operations/organize/intents/intent-1/items/item-1/choice",
     );
   });
 
   it("still rejects a wrong suffix, method or another object's route", () => {
     for (const path of [
       // The Preview's own read route without the /execute suffix.
-      "/api/v1/operations/organize/previews/preview-1",
+      "/api/operations/organize/previews/preview-1",
       // An arbitrary descendant of the owned route.
-      "/api/v1/operations/organize/previews/preview-1/execute/extra",
+      "/api/operations/organize/previews/preview-1/execute/extra",
       // A wrong fixed suffix.
-      "/api/v1/operations/organize/previews/preview-1/executes",
+      "/api/operations/organize/previews/preview-1/executes",
       // Another object's route.
-      "/api/v1/operations/organize/previews/other-preview/execute",
+      "/api/operations/organize/previews/other-preview/execute",
       // Another collection's route.
-      "/api/v1/operations/tasks/task-1",
+      "/api/operations/tasks/task-1",
     ]) {
       expect(() =>
         normalizeOrganizeAction(
@@ -241,7 +241,7 @@ describe("normalizeOrganizeAction route binding", () => {
       normalizeOrganizeAction(
         {
           ...offeredExecuteAction(
-            "/api/v1/operations/organize/previews/preview-1/execute",
+            "/api/operations/organize/previews/preview-1/execute",
           ),
           method: "GET",
         },
@@ -375,8 +375,8 @@ function executionDocument(): Json {
   value["taskId"] = "task-1";
   const actions = value["actions"] as Json;
   (actions["detail"] as Json)["path"] =
-    "/api/v1/operations/organize/executions/execution-1";
-  (actions["task"] as Json)["path"] = "/api/v1/operations/tasks/task-1";
+    "/api/operations/organize/executions/execution-1";
+  (actions["task"] as Json)["path"] = "/api/operations/tasks/task-1";
   return value;
 }
 

@@ -307,10 +307,10 @@ class FileIndexRetirementTests(unittest.TestCase):
                     ),
                 )
                 for path in (
-                    "/api/v1/files",
-                    "/api/v1/file-index",
-                    "/api/v1/files/stats",
-                    "/api/v1/files/by-source",
+                    "/api/files",
+                    "/api/file-index",
+                    "/api/files/stats",
+                    "/api/files/by-source",
                 ):
                     with self.subTest(path=path):
                         status, _ = _request(api, path)

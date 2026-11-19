@@ -92,7 +92,7 @@ async function openPlan(
     );
     expect(selected.status()).toBe(200);
   }
-  await page.goto(`/ui-v2/operations/organize/intent/${INTENT_ID}`);
+  await page.goto(`/operations/organize/intent/${INTENT_ID}`);
   await connect(page, token);
   await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
   await page.getByRole("button", { name: "生成分析摘要" }).click();
@@ -105,7 +105,7 @@ test.describe("manual organize journey", () => {
   test("creates a durable intent, saves one choice and creates the exact Preview", async ({
     page,
   }) => {
-    await page.goto(`/ui-v2/operations/organize/intent/${INTENT_ID}`);
+    await page.goto(`/operations/organize/intent/${INTENT_ID}`);
     await connect(page, VIEWER_TOKEN);
 
     await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
@@ -154,7 +154,7 @@ test.describe("manual organize journey", () => {
     // The intent action runs the shared Organize analysis inline, so the
     // operator stays on this same page with the complete fixed plan summary.
     await expect(page).toHaveURL(
-      new RegExp(`/ui-v2/operations/organize/intent/${INTENT_ID}$`),
+      new RegExp(`/operations/organize/intent/${INTENT_ID}$`),
     );
     await expect(
       page.getByRole("heading", { name: "当前整理计划（零变更摘要）" }),
@@ -220,7 +220,7 @@ test.describe("manual organize journey", () => {
   }) => {
     const returnOps = encodeURIComponent("command=manual_organize&status=all");
     await page.goto(
-      `/ui-v2/operations/organize/intent/${INTENT_ID}?returnOps=${returnOps}`,
+      `/operations/organize/intent/${INTENT_ID}?returnOps=${returnOps}`,
     );
     await connect(page, VIEWER_TOKEN);
     const selected = await page.request.post(
@@ -420,7 +420,7 @@ test.describe("manual organize journey", () => {
     // after a token-clearing reload — reaches the ordinary not-found component
     // with the shell's shared reconnection affordance, never the execution
     // page and never a special continuation to the deleted destination.
-    await page.goto(`/ui-v2/operations/organize/execution/${EXECUTION_ID}`);
+    await page.goto(`/operations/organize/execution/${EXECUTION_ID}`);
     await expect(
       page.getByRole("heading", { name: "Route not found" }),
     ).toBeVisible();
@@ -439,7 +439,7 @@ test.describe("manual organize journey", () => {
       page.getByRole("heading", { name: "整理执行情况" }),
     ).toHaveCount(0);
 
-    await page.goto(`/ui-v2/operations/organize/execution/${EXECUTION_ID}`);
+    await page.goto(`/operations/organize/execution/${EXECUTION_ID}`);
     await expect(
       page.getByRole("heading", { name: "Route not found" }),
     ).toBeVisible();
@@ -466,7 +466,7 @@ test.describe("manual organize journey", () => {
   test("offers no manual organize control to a read-only principal", async ({
     page,
   }) => {
-    await page.goto("/ui-v2/operations");
+    await page.goto("/operations");
     await connect(page, READ_ONLY_TOKEN);
     // The unified inventory landing renders with its Chinese business heading.
     await expect(
@@ -488,7 +488,7 @@ test.describe("manual organize journey", () => {
   test("unauthenticated deep entry returns to the connection boundary", async ({
     page,
   }) => {
-    await page.goto(`/ui-v2/operations/organize/intent/${INTENT_ID}`);
+    await page.goto(`/operations/organize/intent/${INTENT_ID}`);
     await expect(page.getByRole("button", { name: "Connect" })).toBeVisible();
   });
 
@@ -569,7 +569,7 @@ test.describe("manual organize journey", () => {
     // read: the same run detail that owns the task presents the failed file's
     // bounded finding and the explicit next step, and the read never replays
     // or submits the uncertain work.
-    await page.goto("/ui-v2/operations?run=task-001");
+    await page.goto("/operations?run=task-001");
     await connect(page, VIEWER_TOKEN);
 
     const detail = page.getByRole("dialog", { name: "运行详情" });

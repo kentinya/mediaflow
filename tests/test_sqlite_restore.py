@@ -65,7 +65,7 @@ class SQLiteRestoreTests(unittest.TestCase):
                     NOW,
                     "operator",
                     "GET",
-                    "/api/v1/jobs",
+                    "/api/jobs",
                     "list",
                     "allowed",
                     200,

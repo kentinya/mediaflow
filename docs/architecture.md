@@ -15,10 +15,17 @@ Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e62
 
 The Python WSGI service owns the distinct `/health`, `/api/*` and root Web/static boundaries.
 API dispatch, permission checks, error handling and audit classification interpret the same
-canonical route. Vite and the client router use the same root as Python static serving, with SPA
-fallback reserved for Web navigation. Action and recovery projections use the current paths.
-Historical audit keeps its recorded route, and existing Tasks, requests and snapshots keep their
-identities. Acceptance and retirement rules are defined in [Slice56](../SLICE.md).
+canonical route: the segments after `/api` name the resource family directly, and new audit
+records carry the canonical template. `/api/v1` and `/api/v2` are ordinary unknown JSON routes
+that never authenticate, resolve Active configuration or reach a business service. Vite and the
+client router use the same `/` root as Python static serving, with SPA fallback reserved for Web
+navigation: built asset addresses stay artifact files, and only a dotted path outside the
+allowlisted rules-edit route fails closed as an unknown asset. Retired Web prefixes render the
+ordinary client not-found view at the same address. Action and recovery projections use the
+current paths, while the checkpoint version keeps its historical hash input so a summary or
+request pinned at Base stays confirmable; historical audit keeps its recorded route, and existing
+Tasks, requests and snapshots keep their identities. Acceptance and retirement rules are defined
+in [Slice56](../SLICE.md).
 
 ## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 
@@ -28,15 +35,16 @@ identities. Acceptance and retirement rules are defined in [Slice56](../SLICE.md
 ```text
 minimal deployment bootstrap + api.principals
   -> current complete configuration/runtime schema + managed Active
-  -> native V2 + one current /api/v1 and CLI contract
+  -> native V2 + one current /api and CLI contract
   -> Task admission / claim / discovery-analysis / exact authority / execution
   -> same-Task decisions, attempts, independent Results/effects and audit
 ```
 
 - **Web/transport：** 删除 V1静态模块／分派与旧 V2 migration／resolver／redirect，旧输入
   使用通用未知路由／参数错误；不保留专用退休409/410。当前 SPA／安全头及正式深链保持，
-  根仍 /ui-v2。逐端点删除 V1-only／alias／旧投影，当前消费者接唯一当前契约；不建设
-  API v2、新服务器或兼容后端。仅旧传输退出，共享审核／规划／执行／配置服务继续使用。
+  根为 `/`，API 为 `/api/*`（Slice56 TARGET 已把当时的 `/ui-v2` 与 `/api/v1` 拼写
+  切到正式命名空间）。逐端点删除 V1-only／alias／旧投影，当前消费者接唯一当前契约；
+  不建设 API v2、新服务器或兼容后端。仅旧传输退出，共享审核／规划／执行／配置服务继续使用。
 - **Authority/engine：** 删除 legacy schedules、远程执行票据与独立 grant 的表面、模型、
   专用持久化和注入；Enabled 发布者权限／审计证据与 Run once 意图仍是当前权威。
   整理及合法续作只在同一 Task 内核调度，不装配 non-kernel discovery/execution 领取／
@@ -153,7 +161,7 @@ provider ID. TMDB rating/vote count is independent of matching confidence; no pa
 local-ownership assertion is involved.
 
 **Deployment/API:** reuse deployment-owned TMDB credentials and the lazy provider bootstrap. Only
-an explicit Explore read resolves the provider. API surfaces are `GET /api/v1/explore/browse`,
+an explicit Explore read resolves the provider. API surfaces are `GET /api/explore/browse`,
 `/search`, `/options` and `/{movie|tv}/{id}`; every read authenticates and requires READ before
 provider/cache access. Missing deployment configuration identifies environment injection/restart/reload
 recovery without exposing values. No dedicated no-Active/no-library startup mode was added.
@@ -204,7 +212,7 @@ focus/scroll/exit behavior. About owns the approved same-origin logo reference, 
 TMDB home link; Shell does not depend on Explore. Opening/closing About adds no route, API request
 or Provider read, and preserves the page position and focus.
 
-**Routes/presentation:** `/ui-v2/explore` is the default connected homepage and sidebar identity;
+**Routes/presentation:** `/explore` is the default connected homepage and sidebar identity;
 other supported intended routes keep their authentication continuation. A Chinese filter/search
 page renders a 2:3 grid (two columns at 390px), bounded manual paging and an exact-work centered
 `ModalCard`. Close/Escape/browser Back preserve list conditions/current page/scroll/invoker focus and do
@@ -782,12 +790,12 @@ independent competing API/database/frontend products.
 
 `web/` is a feature-first React/TypeScript/Vite SPA with TanStack Router/Query, strict frontend-owned
 models and a central authenticated API/query boundary. Python domain/application services and
-`/api/v1/*` remain authoritative; presentation/cache never owns business decisions, pins or mutation.
+`/api/*` remain authoritative; presentation/cache never owns business decisions, pins or mutation.
 
 A Node build stage runs `npm ci` from `web/package-lock.json` and `npm run build`. Only static
 output enters the Python runtime at `/opt/mediaflow/web/dist`, selected by deployment-owned
 `MEDIAFLOW_UI_V2_ASSET_ROOT`. No Node/npm/source/dev server/SSR/CDN or second production HTTP service.
-Python serves the V2 static assets at `/ui-v2/` and the API. Asset failure uses ordinary not-found behavior.
+Python serves the V2 static assets at `/` and the API. Asset failure uses ordinary not-found behavior.
 See [Deployment](deployment.md#v2-frontend-artifact-and-serving) for serving/security details.
 
 The shared responsive AppShell owns route/auth continuation, bounded return context and permission/
@@ -957,7 +965,7 @@ prechecks for applicable configured targets/chains, and existing Automation/Webh
 relevant. Missing capability is distinct from a broken declared dependency. Inapplicable checks
 cannot be fabricated as passed; applicable stale/failed evidence still blocks atomic publication.
 
-Native `/ui-v2/configuration` owns explicit first-Draft create/resume/activate, labelled Active/Draft
+Native `/configuration` owns explicit first-Draft create/resume/activate, labelled Active/Draft
 JSON, portable secret-free export and schema/field-allowlisted editing for supported fields absent
 elsewhere. Read/navigation creates no Draft or work. JSON defaults to runtime-consumed Active, never
 cache or a replacement Draft. Database locator and principal/role/token authority stay deployment
@@ -991,7 +999,7 @@ every policy/Review/Recovery workspace.
 ## CURRENT — V2 organizing rules workspace (Slice 41)
 
 ```text
-/ui-v2/rules focused Save
+/rules focused Save
   → exact Active + object candidate
   → shared object/reference/audit/concurrency services
   → whole-document validation + applicable evidence
@@ -1030,7 +1038,7 @@ unrelated empty families. Detailed operator inputs/results are in
 ## CURRENT — Object-scoped Rules analysis and complete-flow separation
 
 Family-local Web tests use `RulesObjectAnalysisService` and the authenticated
-`/api/v1/operations/rules/analysis/{family}` routes. `stage_analysis_candidate` captures the submitted
+`/api/operations/rules/analysis/{family}` routes. `stage_analysis_candidate` captures the submitted
 object in a non-Active revision from the exact observed Active identity; object field/identity and
 necessary-reference validation precedes analysis. It does not require a whole-runtime load merely
 to test one object. Results bind family, candidate/revision/digest, purpose, sample and context;
@@ -1504,7 +1512,7 @@ Source ownership is independent of short-lived execution leases:
   free siblings. Control/reconcile settlement repeats that same reservation/prune decision so
   cancellation or lease loss cannot restore the rejected source through a fallback publication.
 
-`GET /api/v1/resource-libraries/{id}/files/organize-work` provides principal/library-scoped paged
+`GET /api/resource-libraries/{id}/files/organize-work` provides principal/library-scoped paged
 history and exact `requestId` reconciliation. Files uses the exact-request read for unknown admission;
 ordinary directory browsing has no organizing-history panel or history polling. The selected Task
 Center run read exposes optional `filesPreparation {discoveryId, resourceLibraryId, continuable}`
@@ -1738,12 +1746,12 @@ resident adoption below are accepted parts of the same Slice.
 #### Focused engine-settings publication and resident adoption
 
 ```text
-GET /api/v1/operations/automation/settings   READ
+GET /api/operations/automation/settings   READ
   → published target (Active revision id/version/digest + the three values)
   → per-consumer adoption (each *current* resident instance's own report)
   → bounded retained stopped/stale history as diagnostics only
 
-PUT /api/v1/operations/automation/settings   MANAGE_CONFIGURATION
+PUT /api/operations/automation/settings   MANAGE_CONFIGURATION
   → strict three-field normalization (no other key, no bool/fractional/non-finite)
   → observed Active captured, no-op detected (publishes nothing)
   → successor Draft from that exact Active
@@ -1818,7 +1826,7 @@ against the candidate would treat another writer's preserved field as a fresh
 keystroke and restore its old value after a successful Save.
 
 `SystemSettingsService` retains the generic Draft editor and its
-`/api/v1/system/settings` semantics unchanged; the focused command is a distinct
+`/api/system/settings` semantics unchanged; the focused command is a distinct
 contract, not a replacement. Shared validation stays in
 `mediaflow.domain.system_settings` (now including finite-number rejection) and the
 three-field subset/bounds/meanings live in `mediaflow.domain.automation_settings`.
@@ -1863,14 +1871,14 @@ authenticated configuration, files, tasks, reviews, manual organize, recovery, a
 notifications, logs, Explore, security audit and system status routes. RBAC is applied
 at the shared service boundary; 401/403 behavior and Web/API projections are tested together.
 
-The React/TypeScript SPA at `/ui-v2/` is the only Web interface served by Python. The
+The React/TypeScript SPA at `/` is the only Web interface served by Python. The
 [accepted Explore contract](#current--v2-explore-homepage-slice51-pass--closed) defines the homepage
 and Dashboard retirement. V2 exposes Explore, ResourceLibrary Files, MediaLibrary, Storage,
 Settings, Rules and the Operations route family for Tasks and Organize,
 Automation and Notifications. The unified Operations task center provides native task-linked
 decision/recovery, cross-Task problem-type lists and same-Task four-type analysis/summary/confirmation. Cross-Task
 bulk mutation and arbitrary historical Reprocess remain deferred. Advanced JSON and managed lifecycle
-operations remain available in Settings. The SPA uses the shared `/api/v1/*` application authority.
+operations remain available in Settings. The SPA uses the shared `/api/*` application authority.
 The browser holds the API token in memory. A read-only API response confirms the current principal before
 the browser uses recovery hints that survive a page reload. The hints carry context only.
 
@@ -1955,8 +1963,8 @@ this document's historical checkpoint; they are not independent architecture sta
 
 ### MediaLibrary file management and route separation
 
-The delivered Slice 38 baseline exposes ResourceLibrary Files at `/ui-v2/resourcelib/files` and
-MediaLibrary at `/ui-v2/medialib/files`; the old `/ui-v2/library/files` and `/ui-v2/library`
+The delivered Slice 38 baseline exposes ResourceLibrary Files at `/resourcelib/files` and
+MediaLibrary at `/medialib/files`; the old `/library/files` and `/library`
 registrations use bounded route recovery. Media-scoped browse, direct commands and transfers resolve
 MediaLibrary authority independently of ResourceLibrary authority. The delivered page-local edit
 journey covers both library kinds.
@@ -1972,7 +1980,7 @@ MediaLibrary ID + relative path
   -> durable per-item Task/result/recovery and refreshed live listing
 ```
 
-Media-scoped `/api/v1/media-libraries/...` endpoints share application behavior with Web. Existing
+Media-scoped `/api/media-libraries/...` endpoints share application behavior with Web. Existing
 resource-scoped APIs and Files Organize retain their semantics. Library kind must be unambiguous in
 lookup, cursor/evidence binding, cache keys, transfer manifests, persisted execution and recovery;
 equal IDs do not grant cross-kind authority. Historical ResourceLibrary work stays readable and

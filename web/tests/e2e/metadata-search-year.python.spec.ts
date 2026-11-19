@@ -33,7 +33,7 @@ interface RecordedCommand {
 }
 
 async function connect(page: Page): Promise<void> {
-  await page.goto(`${BASE}/ui-v2/`);
+  await page.goto(`${BASE}/`);
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -43,7 +43,7 @@ function recordCommands(page: Page): RecordedCommand[] {
   const commands: RecordedCommand[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (!url.pathname.startsWith("/api/v1/")) return;
+    if (!url.pathname.startsWith("/api/")) return;
     let body: Record<string, unknown> | null;
     try {
       body = request.postDataJSON() as Record<string, unknown>;
@@ -115,7 +115,7 @@ async function driveDiscoveryFor(
 
 async function openProbeDirectory(page: Page): Promise<void> {
   await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await page
     .getByRole("button", { name: /source/ })
     .first()
@@ -162,7 +162,7 @@ test("the Task Center recovery search submits the current year to the Provider",
   await connect(page);
   const commands = recordCommands(page);
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
   await page.getByRole("button", { name: "元数据恢复", exact: true }).click();
   const sourceRun = page
     .getByRole("row")
@@ -194,7 +194,7 @@ test("the Task Center recovery search submits the current year to the Provider",
     (response) =>
       response.request().method() === "POST" &&
       new URL(response.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
+        `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
   );
   await recovery
     .getByRole("button", { name: "显式搜索 Metadata Provider" })
@@ -220,7 +220,7 @@ test("the Task Center recovery search submits the current year to the Provider",
     (response) =>
       response.request().method() === "POST" &&
       new URL(response.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
+        `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
   );
   await recovery
     .getByRole("button", { name: "显式搜索 Metadata Provider" })
@@ -254,13 +254,13 @@ test("the Task Center recovery search submits the current year to the Provider",
     (response) =>
       response.request().method() === "POST" &&
       new URL(response.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/decision`,
+        `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/decision`,
   );
   const continuation = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
       new URL(response.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
+        `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
   );
   await recovery.getByRole("button", { name: "保存并重新分析" }).click();
   expect((await decision).status()).toBe(200);

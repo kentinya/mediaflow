@@ -10,7 +10,7 @@ import { expect, test, type Page } from "@playwright/test";
  * Covered journeys:
  * - Direct unauthenticated deep entry redirects to the in-shell connection
  *   boundary without any API request.
- * - The retired `/ui-v2/dashboard` address is an ordinary React not-found
+ * - The retired `/dashboard` address is an ordinary React not-found
  *   (the Python SPA HTML fallback layer) and starts no API request.
  * - Root entry connects deterministically to the Explore homepage.
  * - A real deep link connects back to that exact allowlisted route.
@@ -41,7 +41,7 @@ function apiRequestsOf(page: Page): string[] {
 function exploreReadsOf(page: Page): string[] {
   const seen: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/explore/")) {
+    if (request.url().includes("/api/explore/")) {
       seen.push(request.url());
     }
   });
@@ -51,7 +51,7 @@ function exploreReadsOf(page: Page): string[] {
 function exploreAuthorizationOf(page: Page): string[] {
   const seen: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/explore/")) {
+    if (request.url().includes("/api/explore/")) {
       seen.push(request.headers()["authorization"] ?? "");
     }
   });
@@ -62,13 +62,13 @@ test("direct deep entry redirects to the in-shell connection boundary without an
   page,
 }) => {
   const apiRequests = apiRequestsOf(page);
-  await page.goto("/ui-v2/explore");
+  await page.goto("/explore");
   // Shell context is present on the connection boundary.
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
   await expect(page.getByText("MediaFlow", { exact: true })).toBeVisible();
   // The allowlisted destination was recorded and the operator redirected to
   // the existing memory-only connection interaction.
-  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await expect(page.getByLabel("API token")).toBeVisible();
   await expect(page).toHaveTitle("Connect | MediaFlow");
@@ -84,15 +84,15 @@ test("the retired Dashboard address is an ordinary not-found layer, not a page",
   // deep link (compatibility of the asset serve, not of the removed page);
   // the React not-found layer owns the address with no redirect, no alias and
   // no retirement copy, and starts no read at all.
-  const fallback = await page.request.get("/ui-v2/dashboard");
+  const fallback = await page.request.get("/dashboard");
   expect(fallback.status()).toBe(200);
   expect(fallback.headers()["content-type"]).toContain("text/html");
 
-  await page.goto("/ui-v2/dashboard");
+  await page.goto("/dashboard");
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
+  await expect(page).toHaveURL(/\/dashboard$/);
   await expect(
     page.getByRole("link", { name: "Return to Explore" }),
   ).toBeVisible();
@@ -102,10 +102,10 @@ test("the retired Dashboard address is an ordinary not-found layer, not a page",
 test("connect from root opens the Explore homepage and stays oriented", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/explore$/);
+  await expect(page).toHaveURL(/\/explore$/);
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
   // The default browse context is visible: its applied conditions echo and
   // at least one honest poster card.
@@ -128,16 +128,14 @@ test("connect from a real deep link continues to that exact allowlisted route", 
   page,
 }) => {
   // Opening the deep route unauthenticated redirects to the entry boundary.
-  await page.goto("/ui-v2/medialib/files");
-  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await page.goto("/medialib/files");
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   // Connecting continues to the exact route that was opened, not a default.
   // The browsed library is recorded, so the live read is recoverable.
-  await expect(page).toHaveURL(
-    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
-  );
+  await expect(page).toHaveURL(/\/medialib\/files\?mediaLibraryId=movies$/);
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();
@@ -150,10 +148,10 @@ test("connect from a real deep link continues to that exact allowlisted route", 
   // A deep link naming a library-relative directory continues to that exact
   // directory, and a reload plus reconnect restores the same location.
   await page.goto(
-    "/ui-v2/medialib/files?mediaLibraryId=movies&path=" +
+    "/medialib/files?mediaLibraryId=movies&path=" +
       encodeURIComponent("Breaking Bad/Season 1"),
   );
-  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await expect(page).toHaveURL(/\/$/);
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page).toHaveURL(/path=Breaking\+Bad%2FSeason\+1$/);
@@ -176,10 +174,10 @@ test("retired Library addresses are ordinary not-found routes with no work", asy
 }) => {
   const apiRequests = apiRequestsOf(page);
   for (const path of [
-    "/ui-v2/library",
-    "/ui-v2/library?resourceLibraryId=movies",
-    "/ui-v2/library/files",
-    "/ui-v2/library/files?path=Movies",
+    "/library",
+    "/library?resourceLibraryId=movies",
+    "/library/files",
+    "/library/files?path=Movies",
   ]) {
     await page.goto(path);
     await expect(
@@ -197,7 +195,7 @@ test("retired Library addresses are ordinary not-found routes with no work", asy
 });
 
 test("no supported page emits a retired route address", async ({ page }) => {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -209,12 +207,12 @@ test("no supported page emits a retired route address", async ({ page }) => {
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
   for (const prefix of [
-    "/ui-v2/review",
-    "/ui-v2/library",
-    "/ui-v2/operations/tasks",
-    "/ui-v2/operations/jobs",
-    "/ui-v2/operations/automation/new",
-    "/ui-v2/operations/organize/new",
+    "/review",
+    "/library",
+    "/operations/tasks",
+    "/operations/jobs",
+    "/operations/automation/new",
+    "/operations/organize/new",
   ]) {
     expect(await page.locator(`a[href^="${prefix}"]`).count()).toBe(0);
   }
@@ -229,8 +227,8 @@ test("the retired preparation receiving address is an ordinary not-found", async
   // and the former discovery-shaped address keep no page, guidance shell,
   // redirect or preparation request.
   for (const path of [
-    "/ui-v2/operations/organize/new",
-    "/ui-v2/operations/organize/new?discoveryId=prep-1&resourceLibraryId=source",
+    "/operations/organize/new",
+    "/operations/organize/new?discoveryId=prep-1&resourceLibraryId=source",
   ]) {
     await page.goto(path);
     await expect(
@@ -251,7 +249,7 @@ test("an explicit route choice at the boundary replaces an earlier intention", a
 }) => {
   // Deep entry to the MediaLibrary Files page records that route as the
   // initial intention.
-  await page.goto("/ui-v2/medialib/files");
+  await page.goto("/medialib/files");
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
 
   // Before connecting, the operator explicitly chooses the currently supported
@@ -262,7 +260,7 @@ test("an explicit route choice at the boundary replaces an earlier intention", a
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
 
-  await expect(page).toHaveURL(/\/ui-v2\/rules$/);
+  await expect(page).toHaveURL(/\/rules$/);
   await expect(
     page.getByRole("heading", { name: "整理规则", exact: true }),
   ).toBeVisible();
@@ -274,7 +272,7 @@ test("an explicit route choice at the boundary replaces an earlier intention", a
 test("refresh keeps memory-only semantics and reconnects to the same supported path", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -282,7 +280,7 @@ test("refresh keeps memory-only semantics and reconnects to the same supported p
   // A full reload clears the memory-only store; the current supported path
   // becomes the safe intended destination shown at the connection boundary.
   await page.reload();
-  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
   const storage = await page.evaluate(() => ({
@@ -303,7 +301,7 @@ test("disconnect clears token, intent and cache with no hidden retry or redirect
   page,
 }) => {
   const exploreReads = exploreReadsOf(page);
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -313,7 +311,7 @@ test("disconnect clears token, intent and cache with no hidden retry or redirect
 
   // Disconnect from the shell returns to the entry boundary.
   await page.getByRole("button", { name: "Disconnect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await expect(page.getByText("API token active in memory")).toHaveCount(0);
   // No request is replayed after disconnect.
@@ -332,7 +330,7 @@ test("401 clears rejected authority and an explicit new credential continues to 
   const exploreAuthorization = exploreAuthorizationOf(page);
 
   // Deep entry to Explore so the intended route is the exact destination.
-  await page.goto("/ui-v2/explore");
+  await page.goto("/explore");
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(EXPIRED_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
@@ -340,7 +338,7 @@ test("401 clears rejected authority and an explicit new credential continues to 
   // The 401 clears the rejected authority and query cache in place; the
   // operator stays on the intended route behind a bounded unauthorized state.
   await expect(page.getByRole("heading", { name: "身份被拒绝" })).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/explore$/);
+  await expect(page).toHaveURL(/\/explore$/);
   await expect(page.getByText("API token active in memory")).toHaveCount(0);
   await expect(page.getByText(EXPIRED_TOKEN)).toHaveCount(0);
   // The rejected reads were not automatically replayed: browse + options.
@@ -371,7 +369,7 @@ test("401 clears rejected authority and an explicit new credential continues to 
 test("403 is visibly distinct from 401 and retains the authenticated principal", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(LIMITED_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
 
@@ -399,7 +397,7 @@ test("403 is visibly distinct from 401 and retains the authenticated principal",
   await forbiddenBanner
     .getByRole("link", { name: "Connect a principal with read permission" })
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await expect(page).toHaveURL(/\/$/);
   await expect(
     page.getByRole("button", { name: "Disconnect" }).first(),
   ).toBeVisible();
@@ -415,12 +413,12 @@ test("an unavailable read shows a bounded state and explicit retry recovers", as
 }) => {
   const browseAuthorization: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/explore/browse")) {
+    if (request.url().includes("/api/explore/browse")) {
       browseAuthorization.push(request.headers()["authorization"] ?? "");
     }
   });
   let attempts = 0;
-  await page.route("**/api/v1/explore/browse*", async (route) => {
+  await page.route("**/api/explore/browse*", async (route) => {
     attempts += 1;
     if (attempts === 1) {
       await route.fulfill({
@@ -433,7 +431,7 @@ test("an unavailable read shows a bounded state and explicit retry recovers", as
     await route.fallback();
   });
 
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -461,7 +459,7 @@ test("a malformed read stays bounded and retry recovers without exposing payload
   page,
 }) => {
   let attempts = 0;
-  await page.route("**/api/v1/explore/browse*", async (route) => {
+  await page.route("**/api/explore/browse*", async (route) => {
     attempts += 1;
     if (attempts === 1) {
       await route.fulfill({
@@ -474,7 +472,7 @@ test("a malformed read stays bounded and retry recovers without exposing payload
     await route.fallback();
   });
 
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -494,7 +492,7 @@ test("a malformed read stays bounded and retry recovers without exposing payload
 test("unknown route preserves shell context and a meaningful title", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/nonexistent-route");
+  await page.goto("/nonexistent-route");
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
   await expect(page).toHaveTitle(/MediaFlow/);
   await expect(
@@ -510,11 +508,11 @@ test("the retired Review address is an ordinary not-found route", async ({
   page,
 }) => {
   const apiRequests = apiRequestsOf(page);
-  await page.goto("/ui-v2/review");
+  await page.goto("/review");
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/review$/);
+  await expect(page).toHaveURL(/\/review$/);
   await expect(page.getByLabel("API token")).toHaveCount(0);
   await expect(
     page.getByText("Review & Recovery is not available"),
@@ -523,4 +521,26 @@ test("the retired Review address is an ordinary not-found route", async ({
     page.getByRole("link", { name: "Open current Web UI" }),
   ).toHaveCount(0);
   expect(apiRequests).toHaveLength(0);
+});
+
+test("the retired Web prefix is an ordinary not-found route", async ({
+  page,
+}) => {
+  // The old /ui-v2 prefix keeps no redirect, notice page or second product:
+  // the same entry document renders the ordinary not-found view at the same
+  // address, and its old asset addresses are plain 404s.
+  const apiRequests = apiRequestsOf(page);
+  await page.goto(
+    "/ui-v2/resourcelib/files?resourceLibraryId=source&path=Movies",
+  );
+  await expect(
+    page.getByRole("heading", { name: "Route not found" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files\?/);
+  await expect(
+    page.getByRole("link", { name: "Open current Web UI" }),
+  ).toHaveCount(0);
+  expect(apiRequests).toHaveLength(0);
+  const asset = await page.request.get("/ui-v2/assets/index-abc123.js");
+  expect(asset.status()).toBe(404);
 });

@@ -1,10 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The Python application serves the built artifact under the documented
-// /ui-v2/ migration prefix, so every asset URL must be emitted relative to it.
+// The Python application serves the built artifact from the Web root, so Vite
+// emits every asset URL relative to "/" and the same bytes work in the
+// container, the wheel and the development proxy.
 export default defineConfig({
-  base: "/ui-v2/",
+  base: "/",
   plugins: [react()],
   server: {
     proxy: {

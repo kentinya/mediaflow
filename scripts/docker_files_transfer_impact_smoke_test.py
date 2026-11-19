@@ -198,7 +198,7 @@ def impact_request(
         query += f"&conflict={conflict}"
     status, body = json_request(
         base,
-        f"/api/v1/resource-libraries/source/files/transfer-impact?{query}",
+        f"/api/resource-libraries/source/files/transfer-impact?{query}",
         token,
     )
     if isinstance(body, bytes):
@@ -398,7 +398,7 @@ def transfer_impact_smoke(project: str, image: str, keep: bool, admin_token: str
             activate_runtime(base, admin_token, config_file)
 
             def management_ready() -> bool:
-                status, management = json_request(base, "/api/v1/management/readiness", admin_token)
+                status, management = json_request(base, "/api/management/readiness", admin_token)
                 return (
                     status == 200
                     and management.get("managementReady") is True

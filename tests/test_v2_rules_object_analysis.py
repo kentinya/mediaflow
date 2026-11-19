@@ -30,7 +30,7 @@ from mediaflow.domain.metadata import (
 )
 from tests.test_v2_rules_workspace_commands import RulesWorkspaceCommandTests
 
-BASE = "/api/v1/operations/rules"
+BASE = "/api/operations/rules"
 ANALYSIS = f"{BASE}/analysis"
 COMPLETE_FLOW = f"{BASE}/complete-flow"
 

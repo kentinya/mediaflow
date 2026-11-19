@@ -32,7 +32,7 @@ def _example_document() -> dict:
 def _request(
     api,
     method: str = "GET",
-    path: str = "/api/v1/workers",
+    path: str = "/api/workers",
     query: str = "",
     token: str = "viewer-token",
 ):
@@ -158,7 +158,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
             runtime_schema_version=SCHEMA_VERSION,
             now=datetime.now(UTC),
         )
-        status, document = _request(self.api, "GET", "/api/v1/workers", token="api-secret")
+        status, document = _request(self.api, "GET", "/api/workers", token="api-secret")
         self.assertEqual(status, 200)
         worker = document["workers"][0]
         self.assertEqual(worker["worker_id"], "projection-worker")
@@ -220,7 +220,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                 status, management = _request(
                     api,
                     "GET",
-                    "/api/v1/management/readiness",
+                    "/api/management/readiness",
                     token="admin-token",
                 )
                 self.assertEqual(status, 200, management)
@@ -231,7 +231,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                 status, readiness = _request(
                     api,
                     "GET",
-                    "/api/v1/workers/readiness",
+                    "/api/workers/readiness",
                     token="admin-token",
                 )
                 self.assertEqual(status, 200, readiness)
@@ -400,9 +400,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         self.assertTrue(ready["ready"])
         self.assertEqual(ready["condition"], "ready")
 
-        status, document = _request(
-            self.api, "GET", "/api/v1/workers/readiness", token="api-secret"
-        )
+        status, document = _request(self.api, "GET", "/api/workers/readiness", token="api-secret")
         self.assertEqual(status, 200)
         self.assertTrue(document["processAlive"])
         self.assertTrue(document["baseReadiness"]["registered"])
@@ -434,9 +432,9 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         self.assertTrue(document.get("processAlive"))
 
     def test_management_readiness_payload_unchanged_when_no_live_worker(self) -> None:
-        # No live worker; /api/v1/management/readiness must still report ready
+        # No live worker; /api/management/readiness must still report ready
         status, document = _request(
-            self.api, "GET", "/api/v1/management/readiness", token="api-secret"
+            self.api, "GET", "/api/management/readiness", token="api-secret"
         )
         self.assertEqual(status, 200)
         # Management readiness is configuration-readiness, not worker-readiness.
@@ -444,7 +442,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         # a worker-readiness field.
         self.assertNotIn("workerReadiness", document)
         self.assertNotIn("workers", document)
-        status, worker = _request(self.api, "GET", "/api/v1/workers/readiness", token="api-secret")
+        status, worker = _request(self.api, "GET", "/api/workers/readiness", token="api-secret")
         self.assertEqual(status, 200, worker)
         self.assertFalse(worker["ready"])
         self.assertEqual(
@@ -490,17 +488,17 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
             patch.object(subprocess, "Popen", tracking_popen),
             patch.object(threading.Thread, "__init__", tracking_thread_init),
         ):
-            status, _ = _request(self.api, "GET", "/api/v1/workers", token="api-secret")
+            status, _ = _request(self.api, "GET", "/api/workers", token="api-secret")
 
         self.assertEqual(status, 200)
         self.assertEqual(popen_calls, [], "API request must not spawn subprocesses")
         self.assertEqual(thread_calls, [], "API request must not spawn threads")
 
     def test_api_request_for_workers_is_read_only(self) -> None:
-        # POST/PUT/DELETE on /api/v1/workers must be rejected with 405
+        # POST/PUT/DELETE on /api/workers must be rejected with 405
         for method in ("POST", "PUT", "DELETE", "PATCH"):
             with self.subTest(method=method):
-                status, _ = _request(self.api, method, "/api/v1/workers", token="api-secret")
+                status, _ = _request(self.api, method, "/api/workers", token="api-secret")
                 self.assertEqual(status, 405)
 
 

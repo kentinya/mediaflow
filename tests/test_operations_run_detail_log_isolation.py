@@ -14,7 +14,7 @@ file pins down has three cooperating parts, each proven here:
    through its own ``SQLiteOperationalLogger``.  Both passes share one plan ID,
    yet ``list_operational_logs_for_plan(plan_id, task_id=...)`` attributes each
    log row to exactly its own run, refuses attribution with no run linkage, and
-   the real ``GET /api/v1/operations/runs/{run}/items/{item}`` read publishes
+   the real ``GET /api/operations/runs/{run}/items/{item}`` read publishes
    exactly the repository's per-run rows — never the other run's.  Each run's
    durable Result survives regardless of log attribution, and both Preview
    passes mutate zero files.  Logs emitted without a run linkage (for example
@@ -358,7 +358,7 @@ class RealPipelineSharedPlanIsolationTests(unittest.TestCase):
             code, evidence, _ = request(
                 api,
                 "GET",
-                f"/api/v1/operations/runs/{pass_['task'].task_id}/items/{pass_['item'].item_id}",
+                f"/api/operations/runs/{pass_['task'].task_id}/items/{pass_['item'].item_id}",
                 token="operator-token",
             )
             self.assertEqual(code, 200, evidence)
@@ -430,7 +430,7 @@ class RealPipelineSharedPlanIsolationTests(unittest.TestCase):
             code, evidence, _ = request(
                 api,
                 "GET",
-                f"/api/v1/operations/runs/{pass_['task'].task_id}/items/{pass_['item'].item_id}",
+                f"/api/operations/runs/{pass_['task'].task_id}/items/{pass_['item'].item_id}",
                 token="operator-token",
             )
             self.assertEqual(code, 200, evidence)
@@ -450,7 +450,7 @@ class RealPipelineSharedPlanIsolationTests(unittest.TestCase):
 
         # The unlinked history is still globally observable — excluded, not
         # silently destroyed.
-        _, page, _ = request(api, "GET", "/api/v1/logs", query="limit=100", token="operator-token")
+        _, page, _ = request(api, "GET", "/api/logs", query="limit=100", token="operator-token")
         global_ids = {item["log_id"] for item in page["items"]}
         self.assertTrue(unlinked_ids <= global_ids)
 
@@ -592,7 +592,7 @@ class SeededSharedPlanAttributionTests(unittest.TestCase):
         code, body, _ = request(
             self.api,
             "GET",
-            f"/api/v1/operations/runs/{run_id}/items/{item_id}",
+            f"/api/operations/runs/{run_id}/items/{item_id}",
         )
         self.assertEqual(code, 200, body)
         return body

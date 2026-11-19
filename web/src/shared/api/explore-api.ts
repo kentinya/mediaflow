@@ -230,7 +230,7 @@ export async function fetchExploreBrowse(
   fetchImpl: FetchLike = fetch,
 ): Promise<ExplorePageModel> {
   const payload = await exploreRead(
-    `/api/v1/explore/browse?${exploreBrowseQuery(request)}`,
+    `/api/explore/browse?${exploreBrowseQuery(request)}`,
     token,
     fetchImpl,
   );
@@ -260,7 +260,7 @@ export async function fetchExploreSearch(
   params.set("query", request.query);
   if (request.page !== undefined) params.set("page", String(request.page));
   const payload = await exploreRead(
-    `/api/v1/explore/search?${params.toString()}`,
+    `/api/explore/search?${params.toString()}`,
     token,
     fetchImpl,
   );
@@ -277,7 +277,7 @@ export async function fetchExploreOptions(
   fetchImpl: FetchLike = fetch,
 ): Promise<ExploreOptionsModel> {
   const payload = await exploreRead(
-    `/api/v1/explore/options?mediaType=${mediaType}`,
+    `/api/explore/options?mediaType=${mediaType}`,
     token,
     fetchImpl,
   );
@@ -298,7 +298,7 @@ export async function fetchExploreDetail(
     throw new ExploreApiError("invalid");
   }
   const payload = await exploreRead(
-    `/api/v1/explore/${mediaType}/${providerId}`,
+    `/api/explore/${mediaType}/${providerId}`,
     token,
     fetchImpl,
   );

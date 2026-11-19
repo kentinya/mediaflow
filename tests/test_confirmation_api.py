@@ -170,7 +170,7 @@ class ConfirmationApiTests(unittest.TestCase):
                     status, detail = request(
                         api,
                         "GET",
-                        f"/api/v1/tasks/{second.task_id}/items/{second_item.item_id}/recovery",
+                        f"/api/tasks/{second.task_id}/items/{second_item.item_id}/recovery",
                         token="operator-token",
                     )
                     self.assertEqual(status, 200, detail)
@@ -182,7 +182,7 @@ class ConfirmationApiTests(unittest.TestCase):
                             status, denied = request(
                                 api,
                                 "POST",
-                                f"/api/v1/tasks/{second.task_id}/items/"
+                                f"/api/tasks/{second.task_id}/items/"
                                 f"{second_item.item_id}/recovery/decision",
                                 token=f"{role}-token",
                                 document={
@@ -196,7 +196,7 @@ class ConfirmationApiTests(unittest.TestCase):
                     status, resolved = request(
                         api,
                         "POST",
-                        f"/api/v1/tasks/{second.task_id}/items/"
+                        f"/api/tasks/{second.task_id}/items/"
                         f"{second_item.item_id}/recovery/decision",
                         token="operator-token",
                         document={
@@ -222,7 +222,7 @@ class ConfirmationApiTests(unittest.TestCase):
                     status, reopened = request(
                         api,
                         "GET",
-                        f"/api/v1/tasks/{first.task_id}/items/{first_item.item_id}/recovery",
+                        f"/api/tasks/{first.task_id}/items/{first_item.item_id}/recovery",
                         token="operator-token",
                     )
                     self.assertEqual(200, status, reopened)
@@ -230,7 +230,7 @@ class ConfirmationApiTests(unittest.TestCase):
                     status, first_resolved = request(
                         api,
                         "POST",
-                        f"/api/v1/tasks/{first.task_id}/items/{first_item.item_id}/recovery/decision",
+                        f"/api/tasks/{first.task_id}/items/{first_item.item_id}/recovery/decision",
                         token="operator-token",
                         document={
                             "kind": "conflict",
@@ -260,48 +260,48 @@ class ConfirmationApiTests(unittest.TestCase):
                         configuration_service=managed,
                     )
                     routes = (
-                        ("GET", "/api/v1/confirmations", None, ""),
+                        ("GET", "/api/confirmations", None, ""),
                         (
                             "GET",
-                            f"/api/v1/confirmations/{confirmation.confirmation_id}",
+                            f"/api/confirmations/{confirmation.confirmation_id}",
                             None,
                             "",
                         ),
                         (
                             "POST",
-                            f"/api/v1/confirmations/{confirmation.confirmation_id}/resolve",
+                            f"/api/confirmations/{confirmation.confirmation_id}/resolve",
                             {"strategy": "skip"},
                             "",
                         ),
                         (
                             "GET",
-                            f"/api/v1/confirmations/{confirmation.confirmation_id}/audit",
+                            f"/api/confirmations/{confirmation.confirmation_id}/audit",
                             None,
                             "",
                         ),
-                        ("GET", "/api/v1/recognition-reviews", None, ""),
-                        ("GET", "/api/v1/metadata-reviews", None, ""),
-                        ("GET", "/api/v1/metadata-corrections", None, ""),
-                        ("GET", "/api/v1/classification-reviews", None, ""),
-                        ("GET", "/api/v1/manual-intents", None, ""),
-                        ("GET", "/api/v1/manual-previews", None, ""),
-                        ("GET", "/api/v1/manual-executions", None, ""),
+                        ("GET", "/api/recognition-reviews", None, ""),
+                        ("GET", "/api/metadata-reviews", None, ""),
+                        ("GET", "/api/metadata-corrections", None, ""),
+                        ("GET", "/api/classification-reviews", None, ""),
+                        ("GET", "/api/manual-intents", None, ""),
+                        ("GET", "/api/manual-previews", None, ""),
+                        ("GET", "/api/manual-executions", None, ""),
                         (
                             "POST",
-                            "/api/v1/manual-recovery-preparations/preparation/confirm",
+                            "/api/manual-recovery-preparations/preparation/confirm",
                             {"itemIds": ["x"], "confirmation": True},
                             "",
                         ),
-                        ("GET", "/api/v1/files/file-1/previews", None, "resourceLibrary=library"),
+                        ("GET", "/api/files/file-1/previews", None, "resourceLibrary=library"),
                         (
                             "POST",
-                            "/api/v1/files/file-1/manual-intent",
+                            "/api/files/file-1/manual-intent",
                             {},
                             "",
                         ),
                         (
                             "GET",
-                            "/api/v1/resource-libraries/library/previews",
+                            "/api/resource-libraries/library/previews",
                             None,
                             "",
                         ),
@@ -352,7 +352,7 @@ class ConfirmationApiTests(unittest.TestCase):
                         status, detail = request(
                             api,
                             "GET",
-                            f"/api/v1/tasks/{confirmation.task_id}/items/{item.item_id}/recovery",
+                            f"/api/tasks/{confirmation.task_id}/items/{item.item_id}/recovery",
                             token="operator-token",
                         )
                         self.assertEqual(200, status, detail)
@@ -363,7 +363,7 @@ class ConfirmationApiTests(unittest.TestCase):
                         status, refused = request(
                             api,
                             "POST",
-                            f"/api/v1/tasks/{confirmation.task_id}/items/"
+                            f"/api/tasks/{confirmation.task_id}/items/"
                             f"{item.item_id}/recovery/decision",
                             token="operator-token",
                             document=payload,
@@ -471,7 +471,7 @@ class ConfirmationApiTests(unittest.TestCase):
                     status, detail = request(
                         api,
                         "GET",
-                        f"/api/v1/tasks/{confirmation.task_id}/items/{item.item_id}/recovery",
+                        f"/api/tasks/{confirmation.task_id}/items/{item.item_id}/recovery",
                         token="operator-token",
                     )
                     self.assertEqual(200, status, detail)
@@ -482,7 +482,7 @@ class ConfirmationApiTests(unittest.TestCase):
                         status, resolved = request(
                             api,
                             "POST",
-                            f"/api/v1/tasks/{confirmation.task_id}/items/"
+                            f"/api/tasks/{confirmation.task_id}/items/"
                             f"{item.item_id}/recovery/decision",
                             token="operator-token",
                             document={

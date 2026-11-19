@@ -79,7 +79,7 @@ async function connect(page: Page, token: string): Promise<void> {
 test("Operations directs new manual work to Files without a scope picker or action-matrix read", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/operations");
+  await page.goto("/operations");
   await connect(page, VIEWER_TOKEN);
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
@@ -95,7 +95,7 @@ test("Operations directs new manual work to Files without a scope picker or acti
     page.getByRole("link", { name: "Files", exact: true }),
   ).toBeVisible();
   expect(
-    requestsTo(await manualEvidence(page), "GET", "/api/v1/manual-actions"),
+    requestsTo(await manualEvidence(page), "GET", "/api/manual-actions"),
   ).toHaveLength(0);
 });
 
@@ -108,13 +108,13 @@ test("the retired standalone Preview entry is an ordinary not-found route", asyn
   // journey, covered by manual-organize.spec.ts.
   const apiRequests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/")) {
+    if (request.url().includes("/api/")) {
       apiRequests.push(request.url());
     }
   });
 
   await page.goto(
-    "/ui-v2/operations/preview/new?scopeKind=resourceLibrary&resourceLibraryId=resources",
+    "/operations/preview/new?scopeKind=resourceLibrary&resourceLibraryId=resources",
   );
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
@@ -127,10 +127,10 @@ test("the retired standalone Preview entry is an ordinary not-found route", asyn
   ).toBeVisible();
   await expect(page.getByLabel("API token")).toHaveCount(0);
   expect(
-    apiRequests.filter((url) => url.includes("/api/v1/previews")),
+    apiRequests.filter((url) => url.includes("/api/previews")),
   ).toHaveLength(0);
   expect(
-    apiRequests.filter((url) => url.includes("/api/v1/manual-actions")),
+    apiRequests.filter((url) => url.includes("/api/manual-actions")),
   ).toHaveLength(0);
   expect(apiRequests).toHaveLength(0);
 });
@@ -140,12 +140,12 @@ test("removed Scan deep links render the ordinary not-found route", async ({
 }) => {
   const apiRequests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/")) {
+    if (request.url().includes("/api/")) {
       apiRequests.push(request.url());
     }
   });
 
-  await page.goto("/ui-v2/operations/scan/new");
+  await page.goto("/operations/scan/new");
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
@@ -153,25 +153,25 @@ test("removed Scan deep links render the ordinary not-found route", async ({
     page.getByRole("link", { name: "Connect API token" }),
   ).toBeVisible();
   expect(
-    apiRequests.filter((url) => url.includes("/api/v1/manual-actions")),
+    apiRequests.filter((url) => url.includes("/api/manual-actions")),
   ).toHaveLength(0);
-  expect(
-    apiRequests.filter((url) => url.includes("/api/v1/scans")),
-  ).toHaveLength(0);
+  expect(apiRequests.filter((url) => url.includes("/api/scans"))).toHaveLength(
+    0,
+  );
 
   await page.getByRole("link", { name: "Connect API token" }).click();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/explore$/);
+  await expect(page).toHaveURL(/\/explore$/);
   expect(
-    apiRequests.filter((url) => url.includes("/api/v1/manual-actions")).length,
+    apiRequests.filter((url) => url.includes("/api/manual-actions")).length,
   ).toBe(0);
 });
 
 test("Read-only principal sees the inventory without a center manual-creation entry", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/operations");
+  await page.goto("/operations");
   await connect(page, READ_ONLY_TOKEN);
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
@@ -193,7 +193,7 @@ test("a retired action-matrix scope query never reaches the Files-based DOM", as
   // carrying credential-shaped evidence must issue no matrix read and must
   // never render any of it; no retired Scan/Preview submit control appears.
   await page.goto(
-    "/ui-v2/operations?scopeKind=resourceLibrary&resourceLibraryId=hostile-source",
+    "/operations?scopeKind=resourceLibrary&resourceLibraryId=hostile-source",
   );
   await connect(page, VIEWER_TOKEN);
 
@@ -205,7 +205,7 @@ test("a retired action-matrix scope query never reaches the Files-based DOM", as
   expect(rendered ?? "").not.toContain("/private/");
   expect(rendered ?? "").not.toContain("a".repeat(64));
   expect(
-    requestsTo(await manualEvidence(page), "GET", "/api/v1/manual-actions"),
+    requestsTo(await manualEvidence(page), "GET", "/api/manual-actions"),
   ).toHaveLength(0);
   await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
@@ -233,7 +233,7 @@ test("Files row admits one eligible file into the durable Organize journey", asy
   const reset = await page.request.post(`${BASE_URL}/__test__/reset-organize`);
   expect(reset.status()).toBe(200);
 
-  await page.goto("/ui-v2/resourcelib/files");
+  await page.goto("/resourcelib/files");
   await connect(page, VIEWER_TOKEN);
   await expect(page.getByRole("table")).toBeVisible();
 
@@ -246,7 +246,7 @@ test("Files row admits one eligible file into the durable Organize journey", asy
   const card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
+    /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
   await expect(
     card.getByRole("heading", { name: /第 1 \/ 1 个/ }),

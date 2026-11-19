@@ -535,7 +535,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 evidence_before = repository.get_storage_setup_check(
                     second.revision_id, "media-target"
                 )
-                endpoint = f"/api/v1/configuration/revisions/{second.revision_id}/activate"
+                endpoint = f"/api/configuration/revisions/{second.revision_id}/activate"
                 with patch.dict(
                     os.environ,
                     {"MEDIAFLOW_TEST_OPENLIST_TOKEN": ""},
@@ -1001,7 +1001,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 )
                 revision = self._validated(managed, document)
                 self._save_existing_gates(repository, revision)
-                endpoint = f"/api/v1/configuration/revisions/{revision.revision_id}/activate"
+                endpoint = f"/api/configuration/revisions/{revision.revision_id}/activate"
                 for checked in (False, True):
                     denied_status, denied = request(
                         api,

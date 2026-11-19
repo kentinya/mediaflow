@@ -35,7 +35,7 @@ async function openMediaLibrary(
   search = "",
   token = VIEWER_TOKEN,
 ): Promise<void> {
-  await page.goto("/ui-v2/medialib/files" + search);
+  await page.goto("/medialib/files" + search);
   await connectAs(page, token);
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
@@ -46,15 +46,13 @@ test("both new routes are distinct, sidebar-owned and reach live files", async (
   page,
 }) => {
   const requests = apiRequestsOf(page);
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await connectAs(page);
   await page.getByRole("link", { name: "Library" }).click();
 
   // The address records the library actually being browsed, at its root, so
   // the live read is recoverable rather than an anonymous page.
-  await expect(page).toHaveURL(
-    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
-  );
+  await expect(page).toHaveURL(/\/medialib\/files\?mediaLibraryId=movies$/);
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();
@@ -80,12 +78,12 @@ test("both new routes are distinct, sidebar-owned and reach live files", async (
     ),
   ).toBe(true);
   expect(
-    requests.some((request) => request.url.includes("/api/v1/media-libraries")),
+    requests.some((request) => request.url.includes("/api/media-libraries")),
   ).toBe(true);
 
   // 文件 is the separate ResourceLibrary Files page.
   await page.getByRole("link", { name: "Files" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files$/);
+  await expect(page).toHaveURL(/\/resourcelib\/files$/);
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
   ).toBeVisible();
@@ -148,7 +146,7 @@ test("directory navigation, return to root and library switching keep the route 
     .click();
   await expect(page.getByRole("row", { name: /Season 1/ })).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies&path=Breaking\+Bad$/,
+    /\/medialib\/files\?mediaLibraryId=movies&path=Breaking\+Bad$/,
   );
 
   // A reload followed by authentication reconnect restores that same
@@ -157,7 +155,7 @@ test("directory navigation, return to root and library switching keep the route 
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await connectAs(page);
   await expect(page).toHaveURL(
-    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies&path=Breaking\+Bad$/,
+    /\/medialib\/files\?mediaLibraryId=movies&path=Breaking\+Bad$/,
   );
   await expect(page.getByRole("row", { name: /Season 1/ })).toBeVisible();
   await expect(page.getByRole("row", { name: /^Dune \(2021\)/ })).toHaveCount(
@@ -177,27 +175,23 @@ test("directory navigation, return to root and library switching keep the route 
   // Returning to the library root clears the directory but keeps the library.
   await page.getByRole("button", { name: "返回媒体库根目录" }).click();
   await expect(page.getByRole("row", { name: /Dune \(2021\)/ })).toBeVisible();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
-  );
+  await expect(page).toHaveURL(/\/medialib\/files\?mediaLibraryId=movies$/);
 
   // Switching library from a path-bearing address selects the new library at
   // its own root: the previous library's directory never remains.
-  await page.goto(
-    "/ui-v2/medialib/files?mediaLibraryId=movies&path=Breaking%20Bad",
-  );
+  await page.goto("/medialib/files?mediaLibraryId=movies&path=Breaking%20Bad");
   await connectAs(page);
   await expect(page.getByRole("row", { name: /Season 1/ })).toBeVisible();
   await page.getByRole("button", { name: "夸克网盘" }).click();
   await expect(page.getByRole("row", { name: /电影/ })).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/medialib\/files\?mediaLibraryId=tv$/);
+  await expect(page).toHaveURL(/\/medialib\/files\?mediaLibraryId=tv$/);
   await expect(page).not.toHaveURL(/path=/);
 
   // The new location survives a reload and reconnect on its own terms.
   await page.reload();
   await connectAs(page);
   await expect(page.getByRole("row", { name: /电影/ })).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/medialib\/files\?mediaLibraryId=tv$/);
+  await expect(page).toHaveURL(/\/medialib\/files\?mediaLibraryId=tv$/);
 });
 
 test("focused MediaLibrary folder activation enters the folder instead of opening its row menu", async ({
@@ -221,7 +215,7 @@ test("an unavailable requested library is replaced by the browsed one in the rou
   page,
 }) => {
   await page.goto(
-    "/ui-v2/medialib/files?mediaLibraryId=disabled-lib&path=Breaking%20Bad",
+    "/medialib/files?mediaLibraryId=disabled-lib&path=Breaking%20Bad",
   );
   await connectAs(page);
 
@@ -230,15 +224,11 @@ test("an unavailable requested library is replaced by the browsed one in the rou
   ).toBeVisible();
   // The address records the library actually browsed, at its root, so a
   // reload cannot replay the unavailable request with a foreign directory.
-  await expect(page).toHaveURL(
-    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
-  );
+  await expect(page).toHaveURL(/\/medialib\/files\?mediaLibraryId=movies$/);
 
   await page.reload();
   await connectAs(page);
-  await expect(page).toHaveURL(
-    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
-  );
+  await expect(page).toHaveURL(/\/medialib\/files\?mediaLibraryId=movies$/);
   await expect(page.getByRole("row", { name: /Breaking Bad/ })).toBeVisible();
   await expect(page.getByText(/不可用或已停用/)).toHaveCount(0);
 });
@@ -254,7 +244,7 @@ test("library selection, lazy navigation, breadcrumbs, search and refresh", asyn
   await expect(page.getByRole("row", { name: /电影/ })).toBeVisible();
   expect(
     requests.some((request) =>
-      request.url.includes("/api/v1/media-libraries/tv/files"),
+      request.url.includes("/api/media-libraries/tv/files"),
     ),
   ).toBe(true);
 
@@ -274,14 +264,14 @@ test("library selection, lazy navigation, breadcrumbs, search and refresh", asyn
 
   // Refresh repeats the live read for the same still-valid location.
   const before = requests.filter((request) =>
-    request.url.includes("/api/v1/media-libraries/tv/files"),
+    request.url.includes("/api/media-libraries/tv/files"),
   ).length;
   await page.getByRole("button", { name: /刷新/ }).click();
   await expect
     .poll(
       () =>
         requests.filter((request) =>
-          request.url.includes("/api/v1/media-libraries/tv/files"),
+          request.url.includes("/api/media-libraries/tv/files"),
         ).length,
     )
     .toBeGreaterThan(before);
@@ -347,7 +337,7 @@ test("missing directory, stale cursor and unavailable Storage offer scoped recov
   // page's own Next action submits a cursor that belongs to the other kind and
   // the bounded invalid-continuation state must appear.
   await page.goto(
-    "/ui-v2/medialib/files?mediaLibraryId=movies&path=cross-kind-cursor",
+    "/medialib/files?mediaLibraryId=movies&path=cross-kind-cursor",
   );
   await connectAs(page);
   await page.getByRole("button", { name: "下一页" }).click();
@@ -357,9 +347,7 @@ test("missing directory, stale cursor and unavailable Storage offer scoped recov
   await expect(page.getByRole("button", { name: "重试" })).toBeVisible();
 
   // An unavailable provider read keeps the bounded retry inside the shell.
-  await page.goto(
-    "/ui-v2/medialib/files?mediaLibraryId=movies&path=unavailable",
-  );
+  await page.goto("/medialib/files?mediaLibraryId=movies&path=unavailable");
   await connectAs(page);
   await expect(
     page.getByRole("heading", { name: "Storage read failed" }),
@@ -381,7 +369,7 @@ test("a disabled or unknown MediaLibrary is explained instead of browsed", async
   // never produced a browse request of its own.
   expect(
     requests.some((request) =>
-      request.url.includes("/api/v1/media-libraries/disabled-lib/files"),
+      request.url.includes("/api/media-libraries/disabled-lib/files"),
     ),
   ).toBe(false);
   await expect(page.getByRole("table")).toBeVisible();
@@ -391,7 +379,7 @@ test("a limited principal is denied without leaking the token", async ({
   page,
 }) => {
   const requests = apiRequestsOf(page);
-  await page.goto("/ui-v2/medialib/files");
+  await page.goto("/medialib/files");
   await connectAs(page, LIMITED_TOKEN);
 
   await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
@@ -425,17 +413,17 @@ test("MediaLibrary and ResourceLibrary reads never share request authority", asy
   const requests = apiRequestsOf(page);
   await openMediaLibrary(page);
   await page.getByRole("link", { name: "Files" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files$/);
+  await expect(page).toHaveURL(/\/resourcelib\/files$/);
   // The previous MediaLibrary page must not append its selected library to the
   // ResourceLibrary address during the shared main-page handoff.
   expect(page.url()).not.toContain("mediaLibraryId");
   await expect(page.getByRole("table")).toBeVisible();
 
   const mediaRequests = requests.filter((request) =>
-    request.url.includes("/api/v1/media-libraries"),
+    request.url.includes("/api/media-libraries"),
   );
   const resourceRequests = requests.filter((request) =>
-    request.url.includes("/api/v1/resource-libraries"),
+    request.url.includes("/api/resource-libraries"),
   );
   expect(mediaRequests.length).toBeGreaterThan(0);
   expect(resourceRequests.length).toBeGreaterThan(0);
@@ -465,9 +453,8 @@ test("Task52.2 MediaLibrary refresh keeps one reserved busy state without pushin
   const slotBefore = await slot.boundingBox();
   expect(rowsBefore).not.toBeNull();
   const filesReads = () =>
-    requests.filter((request) =>
-      request.url.includes("/api/v1/media-libraries/"),
-    ).length;
+    requests.filter((request) => request.url.includes("/api/media-libraries/"))
+      .length;
 
   // A fast real re-read never flashes the transient busy line and never
   // moves the list.
@@ -480,7 +467,7 @@ test("Task52.2 MediaLibrary refresh keeps one reserved busy state without pushin
   // A slow real re-read: the reserved row carries one stable busy line while
   // the current directory stays readable and stationary.
   await page.route(
-    /\/api\/v1\/media-libraries\/[^/]+\/files(?:\?|$)/,
+    /\/api\/media-libraries\/[^/]+\/files(?:\?|$)/,
     async (route) => {
       const response = await route.fetch();
       await new Promise((resolve) => setTimeout(resolve, 1_300));

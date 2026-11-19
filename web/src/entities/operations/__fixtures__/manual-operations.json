@@ -6,7 +6,7 @@
         "durableOutcome": null,
         "method": "GET",
         "nextAction": "the reviewed work is durably admitted and waits for the resident Processing Worker to claim it",
-        "path": "/api/v1/operations/organize/executions/<uuid>",
+        "path": "/api/operations/organize/executions/<uuid>",
         "reason": null,
         "sideEffects": "none"
       },
@@ -24,7 +24,7 @@
         "durableOutcome": null,
         "method": "GET",
         "nextAction": "inspect the durable Task and its per-item Results",
-        "path": "/api/v1/operations/tasks/<uuid>",
+        "path": "/api/operations/tasks/<uuid>",
         "reason": null,
         "sideEffects": "none"
       }
@@ -85,7 +85,7 @@
         "durableOutcome": null,
         "method": "GET",
         "nextAction": "inspect the verified per-item Results; no replay is required",
-        "path": "/api/v1/operations/organize/executions/<uuid>",
+        "path": "/api/operations/organize/executions/<uuid>",
         "reason": null,
         "sideEffects": "none"
       },
@@ -103,7 +103,7 @@
         "durableOutcome": null,
         "method": "GET",
         "nextAction": "inspect the durable Task and its per-item Results",
-        "path": "/api/v1/operations/tasks/<uuid>",
+        "path": "/api/operations/tasks/<uuid>",
         "reason": null,
         "sideEffects": "none"
       }
@@ -183,7 +183,7 @@
             "durableOutcome": null,
             "method": "GET",
             "nextAction": "inspect the verified per-item Results; no replay is required",
-            "path": "/api/v1/operations/organize/executions/<uuid>",
+            "path": "/api/operations/organize/executions/<uuid>",
             "reason": null,
             "sideEffects": "none"
           },
@@ -201,7 +201,7 @@
             "durableOutcome": null,
             "method": "GET",
             "nextAction": "inspect the durable Task and its per-item Results",
-            "path": "/api/v1/operations/tasks/<uuid>",
+            "path": "/api/operations/tasks/<uuid>",
             "reason": null,
             "sideEffects": "none"
           }
@@ -285,7 +285,7 @@
         "durableOutcome": "a durable optimistic choice revision is stored and every earlier Preview of this intent becomes historical evidence",
         "method": "POST",
         "nextAction": "edit one item choice with its current intent and item versions",
-        "path": "/api/v1/operations/organize/intents/<uuid>/items/{itemId}/choice",
+        "path": "/api/operations/organize/intents/<uuid>/items/{itemId}/choice",
         "reason": null,
         "sideEffects": "none"
       },
@@ -484,7 +484,7 @@
         "durableOutcome": "a durable optimistic choice revision is stored and every earlier Preview of this intent becomes historical evidence",
         "method": "POST",
         "nextAction": "edit one item choice with its current intent and item versions",
-        "path": "/api/v1/operations/organize/intents/<uuid>/items/{itemId}/choice",
+        "path": "/api/operations/organize/intents/<uuid>/items/{itemId}/choice",
         "reason": null,
         "sideEffects": "none"
       },
@@ -684,7 +684,7 @@
         "durableOutcome": "a durable optimistic choice revision is stored and every earlier Preview of this intent becomes historical evidence",
         "method": "POST",
         "nextAction": "edit one item choice with its current intent and item versions",
-        "path": "/api/v1/operations/organize/intents/<uuid>/items/{itemId}/choice",
+        "path": "/api/operations/organize/intents/<uuid>/items/{itemId}/choice",
         "reason": null,
         "sideEffects": "none"
       },
@@ -704,7 +704,7 @@
         "cancel": {
           "available": false,
           "method": "POST",
-          "path": "/api/v1/operations/organize/discoveries/<uuid>/cancel",
+          "path": "/api/operations/organize/discoveries/<uuid>/cancel",
           "requiresVersion": true,
           "sideEffects": "none"
         }
@@ -918,7 +918,7 @@
         "durableOutcome": "one durable admitted execution and its Processing Worker outcome are stored; only OrganizerExecutor may then mutate Storage",
         "method": "POST",
         "nextAction": "confirm one Execute action for the selected exact items",
-        "path": "/api/v1/operations/organize/previews/<uuid>/execute",
+        "path": "/api/operations/organize/previews/<uuid>/execute",
         "reason": null,
         "requiresConfirmation": true,
         "sideEffects": "reported_per_item"
@@ -928,7 +928,7 @@
         "durableOutcome": null,
         "method": "GET",
         "nextAction": "reopen the durable intent to change a choice",
-        "path": "/api/v1/operations/organize/intents/<uuid>",
+        "path": "/api/operations/organize/intents/<uuid>",
         "reason": null,
         "sideEffects": "none"
       }
@@ -1177,7 +1177,7 @@
         "durableOutcome": "one durable admitted execution and its Processing Worker outcome are stored; only OrganizerExecutor may then mutate Storage",
         "method": "POST",
         "nextAction": "confirm one Execute action for the selected exact items",
-        "path": "/api/v1/operations/organize/previews/<uuid>/execute",
+        "path": "/api/operations/organize/previews/<uuid>/execute",
         "reason": null,
         "requiresConfirmation": true,
         "sideEffects": "reported_per_item"
@@ -1187,7 +1187,7 @@
         "durableOutcome": null,
         "method": "GET",
         "nextAction": "reopen the durable intent to change a choice",
-        "path": "/api/v1/operations/organize/intents/<uuid>",
+        "path": "/api/operations/organize/intents/<uuid>",
         "reason": null,
         "sideEffects": "none"
       }

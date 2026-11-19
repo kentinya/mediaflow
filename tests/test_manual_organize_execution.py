@@ -942,7 +942,7 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                     manual_preview_service=previews,
                     manual_execution_service=service,
                 )
-                status, task_document = request(api, f"/api/v1/tasks/{run.task_id}")
+                status, task_document = request(api, f"/api/tasks/{run.task_id}")
                 self.assertEqual(200, status)
                 discovered = task_document["manualExecutionDiscovery"]
                 self.assertEqual(
@@ -956,7 +956,7 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
 
                 status, item_document = request(
                     api,
-                    f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}",
+                    f"/api/tasks/{run.task_id}/items/{run.items[0].task_item_id}",
                 )
                 self.assertEqual(200, status)
                 self.assertEqual(
@@ -997,15 +997,13 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                     manual_execution_service=service,
                 )
                 audit_count = len(repository.list_security_audit())
-                status, task_document = request(api, f"/api/v1/tasks/{task_id}")
+                status, task_document = request(api, f"/api/tasks/{task_id}")
                 self.assertEqual(200, status)
                 self.assertEqual(
                     task_id,
                     task_document["manualExecutionDiscovery"]["executions"][0]["taskId"],
                 )
-                status, item_document = request(
-                    api, f"/api/v1/tasks/{task_id}/items/{task_item_id}"
-                )
+                status, item_document = request(api, f"/api/tasks/{task_id}/items/{task_item_id}")
                 self.assertEqual(200, status)
                 self.assertEqual(
                     "completed",
@@ -1056,7 +1054,7 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                     manual_execution_service=service,
                 )
                 raw_execution = repository.list_manual_executions_for_intent(intent_id)[0]
-                status, task_document = request(api, f"/api/v1/tasks/{raw_execution.task_id}")
+                status, task_document = request(api, f"/api/tasks/{raw_execution.task_id}")
                 self.assertEqual(200, status)
                 self.assertEqual(
                     "admitted", task_document["manualExecutionDiscovery"]["executions"][0]["status"]
@@ -1439,7 +1437,7 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                     manual_preview_service=previews,
                     manual_execution_service=service,
                 )
-                status, task_document = request(api, f"/api/v1/tasks/{run.task_id}")
+                status, task_document = request(api, f"/api/tasks/{run.task_id}")
                 self.assertEqual(200, status, task_document)
                 self.assertEqual("completed", task_document["status"])
                 self.assertEqual(

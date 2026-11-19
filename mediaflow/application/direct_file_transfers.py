@@ -4824,7 +4824,7 @@ def _transfer_actions(task: PersistentTask, claim_live: bool) -> list[dict[str, 
             {
                 "action": "cancel",
                 "available": True,
-                "path": f"/api/v1/tasks/{task.task_id}/cancel",
+                "path": f"/api/tasks/{task.task_id}/cancel",
             }
         )
     else:

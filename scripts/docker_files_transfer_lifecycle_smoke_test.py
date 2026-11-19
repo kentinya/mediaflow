@@ -239,13 +239,13 @@ def prepare(root: Path, api_token: str, openlist_token: str, port: int) -> tuple
 def checked_activate(base: str, token: str, config: Path) -> dict:
     document = json.loads(config.read_text(encoding="utf-8"))
     status, draft = json_request(
-        base, "/api/v1/configuration/drafts", token, method="POST", body={"document": document}
+        base, "/api/configuration/drafts", token, method="POST", body={"document": document}
     )
     if status != 201:
         raise RuntimeError(f"Draft import failed: HTTP {status}: {draft}")
     revision = urllib.parse.quote(draft["revisionId"])
     status, validated = json_request(
-        base, f"/api/v1/configuration/revisions/{revision}/validate", token, method="POST", body={}
+        base, f"/api/configuration/revisions/{revision}/validate", token, method="POST", body={}
     )
     if status != 200:
         raise RuntimeError(f"validation failed: HTTP {status}: {validated}")
@@ -256,7 +256,7 @@ def checked_activate(base: str, token: str, config: Path) -> dict:
     for storage_id in ("openlist",):
         status, result = json_request(
             base,
-            f"/api/v1/configuration/revisions/{revision}/storage-check",
+            f"/api/configuration/revisions/{revision}/storage-check",
             token,
             method="POST",
             body={**evidence, "storageId": storage_id},
@@ -265,7 +265,7 @@ def checked_activate(base: str, token: str, config: Path) -> dict:
             raise RuntimeError(f"Storage check failed: HTTP {status}: {result}")
     status, result = json_request(
         base,
-        f"/api/v1/configuration/revisions/{revision}/recognition-strategy-test",
+        f"/api/configuration/revisions/{revision}/recognition-strategy-test",
         token,
         method="POST",
         body={**evidence, "resourceLibraryId": "source", "syntheticPath": "resident.mkv"},
@@ -274,7 +274,7 @@ def checked_activate(base: str, token: str, config: Path) -> dict:
         raise RuntimeError(f"strategy test failed: HTTP {status}: {result}")
     status, result = json_request(
         base,
-        f"/api/v1/configuration/revisions/{revision}/destination-precheck",
+        f"/api/configuration/revisions/{revision}/destination-precheck",
         token,
         method="POST",
         body={
@@ -293,7 +293,7 @@ def checked_activate(base: str, token: str, config: Path) -> dict:
         raise RuntimeError(f"destination precheck failed: HTTP {status}: {result}")
     status, active = json_request(
         base,
-        f"/api/v1/configuration/revisions/{revision}/activate",
+        f"/api/configuration/revisions/{revision}/activate",
         token,
         method="POST",
         body={"expectedVersion": validated["version"], "checked": True},
@@ -344,7 +344,7 @@ def lifecycle(project: str, image: str, keep: bool) -> None:
             base = f"http://127.0.0.1:{api_port}"
             wait_for_api(base, api_token)
             worker_id = service_records(command, environment)["worker"].get("ID")
-            status, readiness = json_request(base, "/api/v1/workers/readiness", api_token)
+            status, readiness = json_request(base, "/api/workers/readiness", api_token)
             work = readiness.get("workReadiness") or {}
             if status != 200 or readiness.get("currentActiveAvailable") is not False:
                 raise RuntimeError(f"pre-activation readiness is untruthful: {readiness}")
@@ -354,13 +354,13 @@ def lifecycle(project: str, image: str, keep: bool) -> None:
             checked_activate(base, api_token, config)
             query = "path=resident.mkv&to=destination&toPath=&operation=move&conflict=fail"
             status, impact = json_request(
-                base, f"/api/v1/resource-libraries/source/files/transfer-impact?{query}", api_token
+                base, f"/api/resource-libraries/source/files/transfer-impact?{query}", api_token
             )
             if status != 200:
                 raise RuntimeError(f"transfer impact failed: HTTP {status}: {impact}")
             status, admitted = json_request(
                 base,
-                "/api/v1/resource-libraries/source/files/transfers",
+                "/api/resource-libraries/source/files/transfers",
                 api_token,
                 method="POST",
                 body={
@@ -378,7 +378,7 @@ def lifecycle(project: str, image: str, keep: bool) -> None:
             if not state.move_entered.wait(30):
                 raise RuntimeError("the real OpenList Move request was not observed")
             time.sleep(10.5)
-            status, during = json_request(base, "/api/v1/workers/readiness", api_token)
+            status, during = json_request(base, "/api/workers/readiness", api_token)
             if status != 200 or not (during.get("baseReadiness") or {}).get("ready"):
                 raise RuntimeError(f"Worker registration became stale during slow Move: {during}")
 
@@ -388,7 +388,7 @@ def lifecycle(project: str, image: str, keep: bool) -> None:
                 nonlocal terminal
                 status_code, terminal = json_request(
                     base,
-                    f"/api/v1/resource-libraries/source/files/transfers/{task_id}",
+                    f"/api/resource-libraries/source/files/transfers/{task_id}",
                     api_token,
                 )
                 return status_code == 200 and terminal.get("terminal") is True

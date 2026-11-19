@@ -2,7 +2,7 @@
  * Frontend-owned bounded manual Automation models.
  *
  * The Python contract exposes the V2 Automation journey as digest-free
- * operator documents under ``/api/v1/operations/automation/``: a definitions
+ * operator documents under ``/api/operations/automation/``: a definitions
  * page with the exact immutable Active identity and open-Draft state, the
  * focused definition form projections, an exact zero-mutation Preview and its
  * paged items, and a bounded occurrence history with linked-work transports.
@@ -118,11 +118,11 @@ export type AutomationActionKind =
   | "preview-definition"
   | "occurrence-task";
 
-const AUTOMATION_DEFINITIONS_ROUTE = "/api/v1/automation/task-definitions/";
+const AUTOMATION_DEFINITIONS_ROUTE = "/api/automation/task-definitions/";
 const OPERATIONS_DEFINITIONS_ROUTE =
-  "/api/v1/operations/automation/task-definitions/";
-const CONFIGURATION_REVISIONS_ROUTE = "/api/v1/configuration/revisions/";
-const OPERATIONS_TASKS_ROUTE = "/api/v1/operations/tasks/";
+  "/api/operations/automation/task-definitions/";
+const CONFIGURATION_REVISIONS_ROUTE = "/api/configuration/revisions/";
+const OPERATIONS_TASKS_ROUTE = "/api/operations/tasks/";
 
 type AutomationActionContract = ActionTransportContract;
 
@@ -174,7 +174,7 @@ export const AUTOMATION_ACTION_CONTRACTS: Readonly<
   },
   "list-create": {
     method: "POST",
-    routePrefix: "/api/v1/automation/task-definitions",
+    routePrefix: "/api/automation/task-definitions",
     suffix: "",
     requiresConfirmation: false,
     offeredWithoutTransport: false,

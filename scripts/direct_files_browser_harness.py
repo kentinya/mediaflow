@@ -756,7 +756,7 @@ def main(argv: list[str] | None = None) -> int:
         server_class=ThreadingWSGIServer,
         handler_class=QuietHandler,
     ) as server:
-        print(f"direct Files browser harness: http://{args.host}:{args.port}/ui-v2/", flush=True)
+        print(f"direct Files browser harness: http://{args.host}:{args.port}/", flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

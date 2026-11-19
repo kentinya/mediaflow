@@ -39,7 +39,7 @@ WRITER = ("writer", "writer-token")
 VIEWER = ("viewer", "viewer-token")
 UNICODE_WRITER = ("运营-甲", "unicode-token")
 
-SETTINGS = "/api/v1/operations/automation/settings"
+SETTINGS = "/api/operations/automation/settings"
 
 
 def example_document() -> dict:

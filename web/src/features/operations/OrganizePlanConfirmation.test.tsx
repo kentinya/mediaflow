@@ -33,7 +33,7 @@ const TOKEN = "history-token";
 const DISCOVERY_ID = "discovery-history";
 const INTENT_ID = "intent-history";
 const PREVIEW_ID = "preview-history";
-const API_PATH = `/api/v1/operations/automation/run-once/${DISCOVERY_ID}`;
+const API_PATH = `/api/operations/automation/run-once/${DISCOVERY_ID}`;
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -173,7 +173,7 @@ function frozenRunOnceDocument(previewId: string | null): Json {
         path:
           previewId === null
             ? null
-            : `/api/v1/operations/organize/previews/${previewId}`,
+            : `/api/operations/organize/previews/${previewId}`,
         nextAction:
           "review the frozen manifest's exact plan summary in this Run once",
       }),
@@ -203,7 +203,7 @@ function previewDocument(options: { readonly history?: Json }): Json {
   (actions["execute"] as Json)["available"] = true;
   (actions["execute"] as Json)["reason"] = null;
   (actions["execute"] as Json)["path"] =
-    `/api/v1/operations/organize/previews/${PREVIEW_ID}/execute`;
+    `/api/operations/organize/previews/${PREVIEW_ID}/execute`;
   if (options.history !== undefined) {
     (first["plan"] as Json)["history"] = options.history;
   }
@@ -233,18 +233,16 @@ describe("organize plan confirmation history warning", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        if (url === "/api/v1/auth/principal") {
+        if (url === "/api/auth/principal") {
           return jsonResponse({ principal_id: "operator" });
         }
         if (url === API_PATH) {
           return jsonResponse(frozenRunOnceDocument(PREVIEW_ID));
         }
-        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+        if (url === `/api/operations/organize/previews/${PREVIEW_ID}`) {
           return jsonResponse(previewDocument({ history: failedHistory() }));
         }
-        if (
-          url === `/api/v1/operations/organize/previews/${PREVIEW_ID}/execute`
-        ) {
+        if (url === `/api/operations/organize/previews/${PREVIEW_ID}/execute`) {
           executeBody = JSON.parse(String(init?.body ?? "{}")) as Json;
           return jsonResponse(
             {
@@ -256,9 +254,7 @@ describe("organize plan confirmation history warning", () => {
             202,
           );
         }
-        if (
-          url.startsWith("/api/v1/operations/organize/executions?previewId=")
-        ) {
+        if (url.startsWith("/api/operations/organize/executions?previewId=")) {
           return jsonResponse({
             journey: "organize",
             items: [],
@@ -271,7 +267,7 @@ describe("organize plan confirmation history warning", () => {
       }),
     );
     authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`);
+    renderApp(`/operations/automation/run-once/${DISCOVERY_ID}`);
 
     await screen.findByRole("heading", { name: "本次运行计划的零变更摘要" });
     // The conspicuous aggregate banner names the affected file and the check
@@ -317,13 +313,13 @@ describe("organize plan confirmation history warning", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
-        if (url === "/api/v1/auth/principal") {
+        if (url === "/api/auth/principal") {
           return jsonResponse({ principal_id: "operator" });
         }
         if (url === API_PATH) {
           return jsonResponse(frozenRunOnceDocument(PREVIEW_ID));
         }
-        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+        if (url === `/api/operations/organize/previews/${PREVIEW_ID}`) {
           return jsonResponse(
             previewDocument({
               history: {
@@ -341,9 +337,7 @@ describe("organize plan confirmation history warning", () => {
             }),
           );
         }
-        if (
-          url.startsWith("/api/v1/operations/organize/executions?previewId=")
-        ) {
+        if (url.startsWith("/api/operations/organize/executions?previewId=")) {
           return jsonResponse({
             journey: "organize",
             items: [],
@@ -356,7 +350,7 @@ describe("organize plan confirmation history warning", () => {
       }),
     );
     authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`);
+    renderApp(`/operations/automation/run-once/${DISCOVERY_ID}`);
 
     await screen.findByRole("heading", { name: "本次运行计划的零变更摘要" });
     const partialBanner = (
@@ -375,18 +369,16 @@ describe("organize plan confirmation history warning", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
-        if (url === "/api/v1/auth/principal") {
+        if (url === "/api/auth/principal") {
           return jsonResponse({ principal_id: "operator" });
         }
         if (url === API_PATH) {
           return jsonResponse(frozenRunOnceDocument(PREVIEW_ID));
         }
-        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+        if (url === `/api/operations/organize/previews/${PREVIEW_ID}`) {
           return jsonResponse(previewDocument({ history: undefined }));
         }
-        if (
-          url.startsWith("/api/v1/operations/organize/executions?previewId=")
-        ) {
+        if (url.startsWith("/api/operations/organize/executions?previewId=")) {
           return jsonResponse({
             journey: "organize",
             items: [],
@@ -399,7 +391,7 @@ describe("organize plan confirmation history warning", () => {
       }),
     );
     authStore.setToken(TOKEN);
-    renderApp(`/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`);
+    renderApp(`/operations/automation/run-once/${DISCOVERY_ID}`);
 
     await screen.findByRole("heading", { name: "本次运行计划的零变更摘要" });
     await screen.findByText("One.2001.mkv");

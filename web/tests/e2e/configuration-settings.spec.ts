@@ -36,7 +36,7 @@ async function openSettings(
   } = {},
 ): Promise<void> {
   await resetSettings(page, options.mode ?? "active", options.extra ?? "");
-  await page.goto(`/ui-v2/configuration${options.search ?? ""}`);
+  await page.goto(`/configuration${options.search ?? ""}`);
   await connect(page);
   await expect(
     page.getByRole("heading", { name: "系统设置", exact: true }),
@@ -48,7 +48,7 @@ function recordSaves(page: Page): Array<Record<string, unknown>> {
   page.on("request", (request) => {
     if (
       request.method() === "PUT" &&
-      request.url().endsWith("/api/v1/system/settings")
+      request.url().endsWith("/api/system/settings")
     ) {
       saves.push(request.postDataJSON() as Record<string, unknown>);
     }
@@ -156,7 +156,7 @@ test.describe("Settings hierarchy and typed settings", () => {
       .poll(() => page.getByRole("button", { name: "激活配置" }).isEnabled())
       .toBe(true);
     expect(validateRequests).toEqual([
-      "/api/v1/configuration/revisions/settings-draft-from-active-1/validate",
+      "/api/configuration/revisions/settings-draft-from-active-1/validate",
     ]);
 
     await page.getByRole("button", { name: "激活配置" }).click();

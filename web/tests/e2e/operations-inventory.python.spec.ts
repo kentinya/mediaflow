@@ -47,7 +47,7 @@ const TASK45_RECOVERY_EVIDENCE = "test-results/task45.3-recovery-evidence";
 let seededRunTotal = 4;
 
 test.beforeAll(async ({ request }) => {
-  const response = await request.get(`${BASE}/api/v1/operations/runs`, {
+  const response = await request.get(`${BASE}/api/operations/runs`, {
     headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
   });
   expect(response.ok()).toBe(true);
@@ -59,7 +59,7 @@ test.beforeAll(async ({ request }) => {
 const RICH_RUN_SCOPE = "Movies/Harness/Failed";
 
 async function connect(page: Page, token = TOKEN): Promise<void> {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -81,7 +81,7 @@ function recordApiCalls(
   const api: { method: string; path: string; search: string }[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname.startsWith("/api/v1/")) {
+    if (url.pathname.startsWith("/api/")) {
       api.push({
         method: request.method(),
         path: url.pathname,
@@ -99,7 +99,7 @@ async function openInventory(page: Page): Promise<void> {
     await expect(selectedDetail).toHaveCount(0);
   }
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
@@ -177,7 +177,7 @@ async function chooseNativeRecoveryDecision(
       (response) =>
         response.request().method() === "POST" &&
         new URL(response.url()).pathname ===
-          `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
+          `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
     );
     await recovery
       .getByRole("button", { name: "显式搜索 Metadata Provider" })
@@ -213,7 +213,7 @@ async function chooseNativeRecoveryDecision(
     (response) =>
       response.request().method() === "POST" &&
       new URL(response.url()).pathname ===
-        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/decision`,
+        `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/decision`,
   );
   const continuationResponse =
     outcome === "lost_response"
@@ -222,7 +222,7 @@ async function chooseNativeRecoveryDecision(
           (response) =>
             response.request().method() === "POST" &&
             new URL(response.url()).pathname ===
-              `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
+              `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
         );
   await recovery.getByRole("button", { name: "保存并重新分析" }).click();
   expect((await decisionResponse).status()).toBe(200);
@@ -318,7 +318,7 @@ async function finishNativeRecovery(
   const confirmResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/.test(
+      /\/api\/operations\/organize\/previews\/[^/]+\/execute$/.test(
         new URL(response.url()).pathname,
       ),
   );
@@ -386,7 +386,7 @@ async function runNativeRecoveryJourney(
       : kind === "metadata_correction"
         ? "lost_response"
         : null;
-  const continuationPath = `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`;
+  const continuationPath = `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`;
   if (outcome !== null) {
     await page.route(
       `**${continuationPath}`,
@@ -470,7 +470,7 @@ async function openOrganizingSource(
   // the authenticated shell, and the exact library is then chosen on the page's
   // own library strip (never a second independent picker entry point).
   await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   if (resourceLibraryId !== "") {
     await page
       .getByRole("button", { name: new RegExp(resourceLibraryId) })
@@ -682,7 +682,7 @@ test("the selected run follows polling, header refresh and history navigation", 
     api.filter(
       (entry) =>
         entry.method === "GET" &&
-        entry.path.startsWith("/api/v1/operations/runs/"),
+        entry.path.startsWith("/api/operations/runs/"),
     ).length;
 
   // Select a real non-terminal run: the seeded pending admission stays
@@ -735,7 +735,7 @@ test("the selected run follows polling, header refresh and history navigation", 
     desktopDetail.getByRole("button", { name: "关闭详情" }),
   ).toBeVisible();
   const cancelled = await page.request.post(
-    `${BASE}/api/v1/tasks/${queued.taskId}/cancel`,
+    `${BASE}/api/tasks/${queued.taskId}/cancel`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(cancelled.ok()).toBeTruthy();
@@ -879,7 +879,7 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   // Every read of this journey — overview, items, records and item evidence —
   // is a side-effect-free GET; no verb can admit, continue or retry work.
   const detailReads = api.filter((entry) =>
-    entry.path.startsWith("/api/v1/operations/runs/"),
+    entry.path.startsWith("/api/operations/runs/"),
   );
   expect(detailReads.length).toBeGreaterThan(0);
   expect(detailReads.filter((entry) => entry.method !== "GET")).toEqual([]);
@@ -893,7 +893,7 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   // The ended population is read from the same server the page reads, so an
   // earlier real-Python spec's terminal runs are part of the truth.
   const endedPopulation = (await (
-    await request.get(`${BASE}/api/v1/operations/runs?view=ended`, {
+    await request.get(`${BASE}/api/operations/runs?view=ended`, {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
     })
   ).json()) as { readonly total: number };
@@ -1031,7 +1031,7 @@ test("the detail tab and filter context survives a reload through auth continuat
   await page.getByLabel("API token").fill(TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
 
-  await expect(page).toHaveURL(/\/ui-v2\/operations/);
+  await expect(page).toHaveURL(/\/operations/);
   await expect(page).toHaveURL(/view=ended/);
   await expect(page).not.toHaveURL(/command=/);
   await expect(page).toHaveURL(/run=/);
@@ -1396,7 +1396,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   // durable admission, then aborts the client response.
   let droppedExecuteResponse = false;
   await page.route(
-    /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/,
+    /\/api\/operations\/organize\/previews\/[^/]+\/execute$/,
     async (route) => {
       if (droppedExecuteResponse) {
         await route.continue();
@@ -1429,7 +1429,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   ).toEqual({ sourceExists: true, destinationTargets: [] });
 
   await page.getByRole("button", { name: "核对提交结果" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
@@ -1575,7 +1575,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   // exact identity from the product discovery record instead of guessing a
   // newest row.
   const discoveryResponse = await request.get(
-    `${BASE}/api/v1/operations/organize/discoveries/${discoveryId}`,
+    `${BASE}/api/operations/organize/discoveries/${discoveryId}`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(discoveryResponse.ok()).toBeTruthy();
@@ -1584,7 +1584,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   };
   const taskId = discovery.organizeTaskId;
   expect(taskId).toBeTruthy();
-  await page.goto(`${BASE}/ui-v2/operations?run=${taskId}`);
+  await page.goto(`${BASE}/operations?run=${taskId}`);
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
@@ -1646,7 +1646,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
     readonly selectedItemIds: readonly string[];
   } | null = null;
   await page.route(
-    /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/,
+    /\/api\/operations\/organize\/previews\/[^/]+\/execute$/,
     async (route) => {
       if (droppedExecuteResponse) {
         await route.continue();
@@ -1766,7 +1766,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
     allowSourceCleanup: "false",
   });
   const admissionResponse = await request.get(
-    `${BASE}/api/v1/operations/organize/previews/${committed!.previewId}/admission?${admissionParams.toString()}`,
+    `${BASE}/api/operations/organize/previews/${committed!.previewId}/admission?${admissionParams.toString()}`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(admissionResponse.ok()).toBeTruthy();
@@ -1781,7 +1781,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   // card.  The newer summary never replaces or replays the original admitted
   // sibling execution.
   await page.goto(
-    `${BASE}/ui-v2/resourcelib/files?resourceLibraryId=source&organizeDiscovery=${discoveryId}`,
+    `${BASE}/resourcelib/files?resourceLibraryId=source&organizeDiscovery=${discoveryId}`,
   );
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   const reopenedCard = page.getByRole("dialog", { name: "整理所选文件" });
@@ -1821,7 +1821,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   });
   expect(exactExecutePosts()).toHaveLength(1);
   const admissionAfterRework = await request.get(
-    `${BASE}/api/v1/operations/organize/previews/${committed!.previewId}/admission?${admissionParams.toString()}`,
+    `${BASE}/api/operations/organize/previews/${committed!.previewId}/admission?${admissionParams.toString()}`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(admissionAfterRework.ok()).toBeTruthy();
@@ -1877,7 +1877,7 @@ test("a selected execution never blocks the unselected sibling's correction and 
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByText(/将整理 1 项/)).toBeVisible();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect(worker.ok()).toBeTruthy();
@@ -1900,7 +1900,7 @@ test("a selected execution never blocks the unselected sibling's correction and 
   // Re-open the same preparation: the admitted sibling is shown as already
   // accepted, and the unselected sibling stays correctable.
   await page.goto(
-    `${BASE}/ui-v2/resourcelib/files?resourceLibraryId=source&organizeDiscovery=${discoveryId}`,
+    `${BASE}/resourcelib/files?resourceLibraryId=source&organizeDiscovery=${discoveryId}`,
   );
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(card).toBeVisible({ timeout: 30_000 });
@@ -2046,7 +2046,7 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
 
   await card.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect(worker.ok()).toBeTruthy();
@@ -2280,13 +2280,13 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
   // The rendered total is the server's own authorized population.  Read the
   // same durable population through the product API instead of assuming a
   // sequence-dependent offset: the assertion is then that the page states the
   // real total, which is what AC-T3 is actually about.
   const population = (await (
-    await request.get(`${BASE}/api/v1/operations/runs`, {
+    await request.get(`${BASE}/api/operations/runs`, {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
     })
   ).json()) as { readonly total: number };
@@ -2352,7 +2352,7 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   // The card hands the proved admission to the existing exact run selection.
   await card.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
@@ -2367,7 +2367,7 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   // The retired receiving address is an ordinary not-found address: there is
   // no guidance shell, library picker, redirect or preparation request, and
   // visiting it creates no work.
-  await page.goto(`${BASE}/ui-v2/operations/organize/new`);
+  await page.goto(`${BASE}/operations/organize/new`);
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
@@ -2378,14 +2378,14 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   expect(
     (
       await (
-        await request.get(`${BASE}/api/v1/operations/runs`, {
+        await request.get(`${BASE}/api/operations/runs`, {
           headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
         })
       ).json()
     ).total,
   ).toBe(population.total + 1);
   // Return to the exact admitted run before proving the continuation.
-  await page.goto(`${BASE}/ui-v2/operations?run=${runId}`);
+  await page.goto(`${BASE}/operations?run=${runId}`);
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
 
   // Reconnect preserves the explicitly selected run without replay.
@@ -2525,7 +2525,7 @@ test("the retired remaining-scope entry rejects without inspecting a historical 
   // it creates no Preview, authorization or continuation under any historical
   // pin and leaves the recorded Task authority exactly as it was.
   const refusedPreview = await request.post(
-    `${BASE}/api/v1/tasks/${taskId}/remaining-scope-previews`,
+    `${BASE}/api/tasks/${taskId}/remaining-scope-previews`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(refusedPreview.status()).toBe(404);
@@ -2640,7 +2640,7 @@ test("a mixed run never offers its technical or unknown-era siblings for batch r
   ).toHaveCount(0);
   // The same mixed run is still a real Recognition/Conflict center entry.
   const run = await (
-    await request.get(`${BASE}/api/v1/operations/runs/${seeded.mixedTaskId}`, {
+    await request.get(`${BASE}/api/operations/runs/${seeded.mixedTaskId}`, {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
     })
   ).json();
@@ -2687,7 +2687,7 @@ test("the retired batch continuation is a bounded refusal while the center offer
     await request.get(`${BASE}/__harness__/task-item-recovery-batch-state`)
   ).json();
   const batch = await request.post(
-    `${BASE}/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
+    `${BASE}/api/tasks/${seeded.taskId}/recovery/continue-batch`,
     {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
       data: {
@@ -3086,7 +3086,7 @@ test("a visible terminal inventory discovers new work and shows live progress", 
     .getByRole("button", { name: "已结束", exact: true })
     .click();
   const beforeResponse = await request.get(
-    `${BASE}/api/v1/operations/runs?view=ended`,
+    `${BASE}/api/operations/runs?view=ended`,
     { headers: { Authorization: `Bearer ${TOKEN}` } },
   );
   const beforeTotal = (await beforeResponse.json()).total as number;
@@ -3096,7 +3096,7 @@ test("a visible terminal inventory discovers new work and shows live progress", 
     api.filter(
       (entry) =>
         entry.method === "GET" &&
-        entry.path === "/api/v1/operations/runs" &&
+        entry.path === "/api/operations/runs" &&
         new URLSearchParams(entry.search).get("view") === "ended",
     ).length;
   const readsBeforeAppend = inventoryReads();
@@ -3133,7 +3133,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
   for (const width of [1536, 380]) {
     await page.setViewportSize({ width, height: width === 380 ? 720 : 1024 });
     for (const old of ["new?scopeKind=bucket&fileId=old", "old-task"]) {
-      await page.goto("/ui-v2/operations/scan/" + old);
+      await page.goto("/operations/scan/" + old);
       await expect(
         page.getByRole("heading", { name: "Route not found" }),
       ).toBeVisible();
@@ -3163,7 +3163,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
       await expect(page.getByLabel("API token")).toBeVisible();
       await page.getByLabel("API token").fill(ADMIN_TOKEN);
       await page.getByRole("button", { name: "Connect" }).click();
-      await expect(page).toHaveURL(/\/ui-v2\/explore$/);
+      await expect(page).toHaveURL(/\/explore$/);
     }
   }
   expect(
@@ -3175,9 +3175,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
     await request.get(BASE + "/__harness__/retirement-state")
   ).json();
   await request.post(BASE + "/__harness__/register-manual-worker");
-  await page.goto(
-    "/ui-v2/resourcelib/files?resourceLibraryId=retirement&path=",
-  );
+  await page.goto("/resourcelib/files?resourceLibraryId=retirement&path=");
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await page
     .getByRole("checkbox", { name: "选择 Thirteenth.2013.mkv" })
@@ -3270,7 +3268,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
       .counts,
   ).toEqual(unchanged.counts);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   const executed = await (
     await request.post(BASE + "/__harness__/run-manual-worker")
   ).json();
@@ -3300,7 +3298,7 @@ test("Task55.1 retired Web addresses are ordinary not-found while current entrie
   request,
 }) => {
   const command = await request.post(
-    BASE + "/api/v1/resource-libraries/source/files/commands",
+    BASE + "/api/resource-libraries/source/files/commands",
     {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
       data: {
@@ -3316,8 +3314,7 @@ test("Task55.1 retired Web addresses are ordinary not-found while current entrie
   const ordinaryTaskId = admitted.taskId as string;
 
   const origin = await request.get(
-    BASE +
-      `/api/v1/files/operation-origin/${encodeURIComponent(ordinaryTaskId)}`,
+    BASE + `/api/files/operation-origin/${encodeURIComponent(ordinaryTaskId)}`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(origin.status()).toBe(200);
@@ -3343,18 +3340,18 @@ test("Task55.1 retired Web addresses are ordinary not-found while current entrie
 
   const api = recordApiCalls(page);
   for (const path of [
-    "/ui-v2/review",
-    "/ui-v2/review?returnTab=definitions",
-    "/ui-v2/library",
-    "/ui-v2/library/files",
-    `/ui-v2/operations/tasks/${ordinaryTaskId}`,
-    "/ui-v2/operations/tasks",
-    "/ui-v2/operations/jobs",
-    "/ui-v2/operations/jobs/job-005",
-    "/ui-v2/operations/automation/new",
-    "/ui-v2/operations/automation/definition/proof-definition",
-    "/ui-v2/operations/automation/editor/proof-definition",
-    "/ui-v2/operations/organize/new",
+    "/review",
+    "/review?returnTab=definitions",
+    "/library",
+    "/library/files",
+    `/operations/tasks/${ordinaryTaskId}`,
+    "/operations/tasks",
+    "/operations/jobs",
+    "/operations/jobs/job-005",
+    "/operations/automation/new",
+    "/operations/automation/definition/proof-definition",
+    "/operations/automation/editor/proof-definition",
+    "/operations/organize/new",
   ]) {
     await page.goto(path);
     await expect(
@@ -3370,12 +3367,12 @@ test("Task55.1 retired Web addresses are ordinary not-found while current entrie
 
   // Browser refresh/back on a retired address keeps the same ordinary
   // not-found/auth behavior and never reopens the removed page.
-  await page.goto("/ui-v2/operations");
+  await page.goto("/operations");
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
-  await page.goto("/ui-v2/review?returnTab=definitions");
+  await page.goto("/review?returnTab=definitions");
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
@@ -3387,7 +3384,7 @@ test("Task55.1 retired Web addresses are ordinary not-found while current entrie
   if (await page.getByLabel("API token").isVisible()) {
     await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   }
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
@@ -3395,7 +3392,7 @@ test("Task55.1 retired Web addresses are ordinary not-found while current entrie
   // The real ordinary Task remains inspectable through its current owning
   // library page, carrying only its exact selected operation identity.
   await page.goto(
-    `/ui-v2/resourcelib/files?resourceLibraryId=source&operationTaskId=${ordinaryTaskId}`,
+    `/resourcelib/files?resourceLibraryId=source&operationTaskId=${ordinaryTaskId}`,
   );
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(
@@ -3408,7 +3405,7 @@ test("Task55.1 retired Web addresses are ordinary not-found while current entrie
   ).toBeVisible();
 
   // System Settings is the formal current configuration entry.
-  await page.goto("/ui-v2/configuration");
+  await page.goto("/configuration");
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(
     page.getByRole("heading", { name: "系统设置", exact: true }),
@@ -3419,7 +3416,7 @@ test("Task55.1 tab=settings is an ordinary unknown Automation tab", async ({
   page,
 }) => {
   const api = recordApiCalls(page);
-  await page.goto("/ui-v2/operations/automation?tab=settings");
+  await page.goto("/operations/automation?tab=settings");
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(
     page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
@@ -3428,9 +3425,9 @@ test("Task55.1 tab=settings is an ordinary unknown Automation tab", async ({
   // ordinary Automation list fallback stays on its own route, the unknown tab
   // is dropped by the same bounded continuation as any unknown tab, and no
   // settings form is read or written.
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
   expect(
-    api.filter((call) => call.path.includes("/api/v1/system/settings")),
+    api.filter((call) => call.path.includes("/api/system/settings")),
   ).toEqual([]);
   expect(api.filter((call) => call.method !== "GET")).toEqual([]);
 });
@@ -3448,12 +3445,12 @@ test("Task55.1 mixed ResourceLibrary references open their current management en
 }) => {
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/") && request.method() !== "GET") {
+    if (request.url().includes("/api/") && request.method() !== "GET") {
       writes.push(`${request.method()} ${request.url()}`);
     }
   });
 
-  await page.goto("/ui-v2/resourcelib/files?resourceLibraryId=source");
+  await page.goto("/resourcelib/files?resourceLibraryId=source");
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
@@ -3480,14 +3477,14 @@ test("Task55.1 mixed ResourceLibrary references open their current management en
   await dialog
     .getByRole("button", { name: "前往整理规则处理识别规则引用" })
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/rules\?section=recognitionRules$/);
+  await expect(page).toHaveURL(/\/rules\?section=recognitionRules$/);
   await expect(
     page.getByRole("heading", { name: "整理规则", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("row", { name: /movie-library/ })).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=source$/,
+    /\/resourcelib\/files\?resourceLibraryId=source$/,
   );
   await expect(page.getByText("路径: /", { exact: true })).toBeVisible();
   await expect(
@@ -3504,7 +3501,7 @@ test("Task55.1 mixed ResourceLibrary references open their current management en
       name: "前往自动化管理处理自动化定义引用",
     })
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
   await expect(
     page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
   ).toBeVisible();
@@ -3519,7 +3516,7 @@ test("Task55.1 mixed ResourceLibrary references open their current management en
 
   await page.goBack();
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=source$/,
+    /\/resourcelib\/files\?resourceLibraryId=source$/,
   );
   await expect(page.getByText("路径: /", { exact: true })).toBeVisible();
   await expect(
@@ -3555,7 +3552,7 @@ async function seedTimeFilterPopulation(
 async function allViewPopulationTotal(
   request: APIRequestContext,
 ): Promise<number> {
-  const response = await request.get(`${BASE}/api/v1/operations/runs`, {
+  const response = await request.get(`${BASE}/api/operations/runs`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
   });
   expect(response.ok()).toBeTruthy();
@@ -3693,7 +3690,7 @@ test("time filter: an old All link never keeps its removed hidden filters", asyn
   // attention conditions and one exact run identity. Reconnecting preserves
   // the run but reads the complete time-only population.
   await page.goto(
-    "/ui-v2/operations?q=NoSuchRun&status=failed" +
+    "/operations?q=NoSuchRun&status=failed" +
       "&source=TaskCenter%2FTimeFilter&command=manual_organize" +
       `&attention=true&run=${seeded.taskIds[0]}`,
   );
@@ -3759,7 +3756,7 @@ test("time filter: running, ended and business views preserve their own dated po
   ]) {
     await views.getByRole("button", { name: label, exact: true }).click();
     const baseline = await request.get(
-      `${BASE}/api/v1/operations/runs?view=${view}`,
+      `${BASE}/api/operations/runs?view=${view}`,
       { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
     );
     const total = (await baseline.json()).total as number;
@@ -3777,7 +3774,7 @@ test("time filter: running, ended and business views preserve their own dated po
       return { start, end };
     });
     const actual = await request.get(
-      `${BASE}/api/v1/operations/runs?${new URLSearchParams({ view: view!, from: params.start, to: params.end })}`,
+      `${BASE}/api/operations/runs?${new URLSearchParams({ view: view!, from: params.start, to: params.end })}`,
       { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
     );
     await expectRunTotal(page, (await actual.json()).total);
@@ -3791,7 +3788,7 @@ test("time filter: running, ended and business views preserve their own dated po
   // A bookmark produced by the former metadata view keeps its exact problem
   // context while removed list limits disappear before the first list read.
   await page.goto(
-    `/ui-v2/operations?${new URLSearchParams({ view: "metadata", source, q: source, status: "failed", problemRun: business.taskId, problemType: "metadata" })}`,
+    `/operations?${new URLSearchParams({ view: "metadata", source, q: source, status: "failed", problemRun: business.taskId, problemType: "metadata" })}`,
   );
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(page).not.toHaveURL(/source=|q=|status=/);
@@ -3837,7 +3834,7 @@ test("refresh feedback: quiet polling joins manual refresh without clearing the 
     started = resolve;
   });
   let reads = 0;
-  await page.route(/\/api\/v1\/operations\/runs\?/, async (route) => {
+  await page.route(/\/api\/operations\/runs\?/, async (route) => {
     reads += 1;
     started();
     await gate;
@@ -3872,7 +3869,7 @@ for (const status of [503, 403, 401]) {
     await connect(page);
     await openInventory(page);
     await expect(page.getByRole("table")).toBeVisible();
-    await page.route(/\/api\/v1\/operations\/runs\?/, (route) =>
+    await page.route(/\/api\/operations\/runs\?/, (route) =>
       route.fulfill({
         status,
         contentType: "application/json",
@@ -3947,7 +3944,7 @@ test("a real Worker claim advances a queued Task without changing the total", as
   );
 
   // The exact durable Task read agrees with the center's processing state.
-  const durable = await request.get(`${BASE}/api/v1/tasks/${linked.taskId}`, {
+  const durable = await request.get(`${BASE}/api/tasks/${linked.taskId}`, {
     headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
   });
   expect(durable.ok()).toBeTruthy();
@@ -4045,10 +4042,10 @@ test("the Notifications page reads the real Task event contract end to end", asy
     (response) =>
       response.request().method() === "GET" &&
       new URL(response.url()).pathname ===
-        "/api/v1/operations/notifications/webhooks",
+        "/api/operations/notifications/webhooks",
   );
   await page.getByRole("link", { name: "Notifications", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/notifications$/);
+  await expect(page).toHaveURL(/\/operations\/notifications$/);
   const response = await definitionsRead;
   expect(response.status()).toBe(200);
   const document = (await response.json()) as {
@@ -4106,7 +4103,7 @@ test("the Notifications page reads the real Task event contract end to end", asy
     (response) =>
       response.request().method() === "GET" &&
       new URL(response.url()).pathname ===
-        "/api/v1/operations/notifications/webhooks/operations-webhook/draft",
+        "/api/operations/notifications/webhooks/operations-webhook/draft",
   );
   await editDraft.click();
   expect((await draftDocumentRead).status()).toBe(200);
@@ -4116,9 +4113,7 @@ test("the Notifications page reads the real Task event contract end to end", asy
   await expect(
     page.getByRole("checkbox", { name: /job\.completed/ }),
   ).toHaveCount(0);
-  expect(api.filter((entry) => entry.path.startsWith("/api/v1/jobs"))).toEqual(
-    [],
-  );
+  expect(api.filter((entry) => entry.path.startsWith("/api/jobs"))).toEqual([]);
 });
 
 test("a settled Task publishes one outbox delivery the delivery pages read", async ({
@@ -4146,10 +4141,9 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
   const eventId = `task:${settled.taskId}:completed`;
 
   const readDeliveries = async () => {
-    const response = await request.get(
-      `${BASE}/api/v1/notifications?limit=100`,
-      { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-    );
+    const response = await request.get(`${BASE}/api/notifications?limit=100`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    });
     expect(response.ok()).toBeTruthy();
     return (await response.json()) as {
       readonly items: readonly {
@@ -4172,7 +4166,7 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
     status: "pending",
   });
   const taskBefore = (await (
-    await request.get(`${BASE}/api/v1/tasks/${settled.taskId}`, {
+    await request.get(`${BASE}/api/tasks/${settled.taskId}`, {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
     })
   ).json()) as {
@@ -4187,13 +4181,11 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
   const listRead = page.waitForResponse(
     (response) =>
       response.request().method() === "GET" &&
-      new URL(response.url()).pathname === "/api/v1/notifications",
+      new URL(response.url()).pathname === "/api/notifications",
   );
   await page.getByRole("link", { name: "查看投递记录", exact: true }).click();
   expect((await listRead).status()).toBe(200);
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/notifications\/deliveries$/,
-  );
+  await expect(page).toHaveURL(/\/operations\/notifications\/deliveries$/);
   await expect(
     page.getByRole("heading", { name: "通知投递记录", exact: true }),
   ).toBeVisible();
@@ -4205,9 +4197,7 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
     .first()
     .click();
   await expect(page).toHaveURL(
-    new RegExp(
-      `/ui-v2/operations/notifications/deliveries/${delivery.deliveryId}$`,
-    ),
+    new RegExp(`/operations/notifications/deliveries/${delivery.deliveryId}$`),
   );
   const deliveryDialog = page.getByRole("dialog", {
     name: `投递 ${delivery.deliveryId}`,
@@ -4232,7 +4222,7 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
     (response) =>
       response.request().method() === "GET" &&
       new URL(response.url()).pathname ===
-        `/api/v1/operations/notifications/deliveries/${delivery.deliveryId}`,
+        `/api/operations/notifications/deliveries/${delivery.deliveryId}`,
   );
   await page.getByRole("button", { name: "读取最新投递", exact: true }).click();
   expect((await detailRead).status()).toBe(200);
@@ -4240,7 +4230,7 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
     (await readDeliveries()).items.filter((item) => item.eventId === eventId),
   ).toHaveLength(1);
   const taskAfter = (await (
-    await request.get(`${BASE}/api/v1/tasks/${settled.taskId}`, {
+    await request.get(`${BASE}/api/tasks/${settled.taskId}`, {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
     })
   ).json()) as {
@@ -4251,9 +4241,7 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
   expect(taskAfter.status).toBe("completed");
   expect(taskAfter.completed_at).toBe(taskBefore.completed_at);
   expect(taskAfter.items).toEqual(taskBefore.items);
-  expect(api.filter((entry) => entry.path.startsWith("/api/v1/jobs"))).toEqual(
-    [],
-  );
+  expect(api.filter((entry) => entry.path.startsWith("/api/jobs"))).toEqual([]);
 });
 
 test("Task52.2 the task center handoff waits on the real inventory read without blocking the shell", async ({
@@ -4268,7 +4256,7 @@ test("Task52.2 the task center handoff waits on the real inventory read without 
   // handler is kept registered until the delayed response lands, so the page
   // really waits through its own read instead of being released early.
   let intercepted = 0;
-  await page.route(/\/api\/v1\/operations\/runs\?/, async (route) => {
+  await page.route(/\/api\/operations\/runs\?/, async (route) => {
     intercepted += 1;
     const response = await route.fetch();
     await new Promise((resolve) => setTimeout(resolve, 2_400));
@@ -4276,7 +4264,7 @@ test("Task52.2 the task center handoff waits on the real inventory read without 
   });
 
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
@@ -4287,7 +4275,7 @@ test("Task52.2 the task center handoff waits on the real inventory read without 
   await expect(page.getByText("正在加载运行清单")).toBeVisible();
 
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
-  await page.unroute(/\/api\/v1\/operations\/runs\?/);
+  await page.unroute(/\/api\/operations\/runs\?/);
   await expect(page.getByText("正在加载运行清单")).toHaveCount(0);
   await expect(page.locator("[data-main-page='operations']")).toHaveCount(1);
   expect(
@@ -4347,7 +4335,7 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   // the browser journey below then finds that same Task through its normal
   // Task Center detail rather than through a guessed record.
   const discoveryResponse = await request.get(
-    `${BASE}/api/v1/operations/organize/discoveries/${discoveryId}`,
+    `${BASE}/api/operations/organize/discoveries/${discoveryId}`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(discoveryResponse.ok()).toBeTruthy();
@@ -4363,7 +4351,7 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
   // The just-admitted Task is the newest run in the real inventory.
   await page
     .getByRole("table")
@@ -4390,7 +4378,7 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   // The continue link is the task center's own bounded address: exact Task +
   // closed marker, with no discovery/library identity in the browser URL.
   const continueUrl = new URL(continueHref as string, BASE);
-  expect(continueUrl.pathname).toBe("/ui-v2/operations");
+  expect(continueUrl.pathname).toBe("/operations");
   expect(continueUrl.searchParams.get("run")).toBe(taskId);
   expect(continueUrl.searchParams.get("dialog")).toBe("organize");
   expect(continueUrl.searchParams.get("discoveryId")).toBeNull();
@@ -4414,7 +4402,7 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
 
   // The main path never leaves the task center: same route, exact Task and
   // no independent receiving-page content or intermediate frame.
-  expect(new URL(page.url()).pathname).toBe("/ui-v2/operations");
+  expect(new URL(page.url()).pathname).toBe("/operations");
   const opened = new URL(page.url());
   expect(opened.searchParams.get("run")).toBe(taskId);
   expect(opened.searchParams.get("dialog")).toBe("organize");
@@ -4450,7 +4438,7 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   await recognition.selectOption("B");
   await expect(recognition).toHaveValue("B");
 
-  const overviewRoute = new RegExp(`/api/v1/operations/runs/${taskId}$`);
+  const overviewRoute = new RegExp(`/api/operations/runs/${taskId}$`);
   let failNextOverviewRead = false;
   let failedOverviewReads = 0;
   await page.route(overviewRoute, async (route) => {
@@ -4619,7 +4607,7 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   const executeResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/.test(
+      /\/api\/operations\/organize\/previews\/[^/]+\/execute$/.test(
         new URL(response.url()).pathname,
       ),
   );
@@ -4704,7 +4692,7 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   // Re-authentication restored the same task center, exact Task and hosted
   // marker instead of leaving for the retired receiving page.
-  expect(new URL(page.url()).pathname).toBe("/ui-v2/operations");
+  expect(new URL(page.url()).pathname).toBe("/operations");
   expect(new URL(page.url()).searchParams.get("run")).toBe(taskId);
   expect(new URL(page.url()).searchParams.get("dialog")).toBe("organize");
   const historyDialog = page.getByRole("dialog", { name: "整理所选文件" });

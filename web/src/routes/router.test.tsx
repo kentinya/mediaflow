@@ -19,25 +19,25 @@ afterEach(() => {
 });
 
 const RETIRED_ROUTES = [
-  "/ui-v2/review",
-  "/ui-v2/review?returnTab=definitions",
-  "/ui-v2/library",
-  "/ui-v2/library?resourceLibraryId=movies",
-  "/ui-v2/library/files",
-  "/ui-v2/library/files?path=Movies",
-  "/ui-v2/operations/tasks",
-  "/ui-v2/operations/tasks?status=failed",
-  "/ui-v2/operations/tasks/task-1",
-  "/ui-v2/operations/jobs",
-  "/ui-v2/operations/jobs/job-1",
-  "/ui-v2/operations/automation/new",
-  "/ui-v2/operations/automation/new?returnTab=definitions",
-  "/ui-v2/operations/automation/definition/def-1",
-  "/ui-v2/operations/automation/editor/def-1",
-  "/ui-v2/operations/organize/new",
-  "/ui-v2/operations/organize/new?discoveryId=prep-1&resourceLibraryId=library",
-  "/ui-v2/operations/organize/execution/execution-1",
-  "/ui-v2/operations/organize/preview/preview-1",
+  "/review",
+  "/review?returnTab=definitions",
+  "/library",
+  "/library?resourceLibraryId=movies",
+  "/library/files",
+  "/library/files?path=Movies",
+  "/operations/tasks",
+  "/operations/tasks?status=failed",
+  "/operations/tasks/task-1",
+  "/operations/jobs",
+  "/operations/jobs/job-1",
+  "/operations/automation/new",
+  "/operations/automation/new?returnTab=definitions",
+  "/operations/automation/definition/def-1",
+  "/operations/automation/editor/def-1",
+  "/operations/organize/new",
+  "/operations/organize/new?discoveryId=prep-1&resourceLibraryId=library",
+  "/operations/organize/execution/execution-1",
+  "/operations/organize/preview/preview-1",
 ] as const;
 
 function stubJson(payload: unknown, status = 200): void {
@@ -66,23 +66,23 @@ describe("Task55.1 retired Web routes", () => {
       ).toBeVisible();
       expect(
         screen.getByRole("link", { name: "Return to Explore" }),
-      ).toHaveAttribute("href", "/ui-v2/explore");
+      ).toHaveAttribute("href", "/explore");
       // No relocation, compatibility shell, former page copy or internal
       // retired address is produced by the unknown route.
       expect(vi.mocked(fetch)).not.toHaveBeenCalled();
       expect(
         document.querySelector(
-          'a[href*="/review"], a[href^="/ui-v2/library"], a[href^="/ui-v2/operations/tasks"], a[href^="/ui-v2/operations/jobs"], a[href^="/ui-v2/operations/automation/new"]',
+          'a[href*="/review"], a[href^="/library"], a[href^="/operations/tasks"], a[href^="/operations/jobs"], a[href^="/operations/automation/new"]',
         ),
       ).toBeNull();
     },
   );
 
   it.each([
-    "/ui-v2/review",
-    "/ui-v2/library",
-    "/ui-v2/operations/tasks",
-    "/ui-v2/operations/automation/new",
+    "/review",
+    "/library",
+    "/operations/tasks",
+    "/operations/automation/new",
   ])(
     "does not treat unauthenticated %s as a continuation target",
     async (path) => {
@@ -102,8 +102,8 @@ describe("Task55.1 retired Web routes", () => {
     stubJson({ error: { code: "not_found" } }, 404);
     authStore.setToken("route-retirement-token");
     for (const path of [
-      "/ui-v2/dashboard",
-      "/ui-v2/operations/organize/preview/preview-1",
+      "/dashboard",
+      "/operations/organize/preview/preview-1",
     ]) {
       cleanup();
       authStore.setToken("route-retirement-token");

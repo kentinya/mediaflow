@@ -206,7 +206,7 @@ class ExploreApiTests(unittest.TestCase):
     # -- success documents ---------------------------------------------------
 
     def test_browse_search_options_and_detail_documents(self) -> None:
-        status, _, body = request(self.api, "/api/v1/explore/browse?mediaType=movie&sort=rating")
+        status, _, body = request(self.api, "/api/explore/browse?mediaType=movie&sort=rating")
         self.assertEqual(status, 200)
         self.assertEqual(body["provider"], "tmdb")
         self.assertEqual(body["mediaType"], "movie")
@@ -222,27 +222,27 @@ class ExploreApiTests(unittest.TestCase):
         )
         self.assertEqual(body["items"][0]["providerId"], "601")
 
-        status, _, options = request(self.api, "/api/v1/explore/options?mediaType=tv")
+        status, _, options = request(self.api, "/api/explore/options?mediaType=tv")
         self.assertEqual(status, 200)
         self.assertEqual(options["mediaType"], "tv")
         self.assertEqual([genre["name"] for genre in options["genres"]], ["动作", "科幻"])
         self.assertEqual([language["code"] for language in options["languages"]], ["zh", "en"])
 
         status, _, search = request(
-            self.api, "/api/v1/explore/search?mediaType=movie&query=matrix&page=2"
+            self.api, "/api/explore/search?mediaType=movie&query=matrix&page=2"
         )
         self.assertEqual(status, 200)
         self.assertEqual(search["applied"], {"mediaType": "movie", "page": 2, "query": "matrix"})
         self.assertEqual(search["totalResults"], 0)
         self.assertEqual(self.requested, ("tmdb",))
 
-        status, _, detail = request(self.api, "/api/v1/explore/movie/603")
+        status, _, detail = request(self.api, "/api/explore/movie/603")
         self.assertEqual(status, 200)
         self.assertEqual(detail["title"], "Alpha Movie")
         self.assertEqual(detail["externalUrl"], "https://www.themoviedb.org/movie/603")
         # The nullable episode count runs through the wire contract as-is.
         self.assertIsNone(detail["numberOfEpisodes"])
-        status, _, show = request(self.api, "/api/v1/explore/tv/603")
+        status, _, show = request(self.api, "/api/explore/tv/603")
         self.assertEqual(status, 200)
         self.assertEqual(show["numberOfEpisodes"], 24)
         self.assertEqual(show["numberOfSeasons"], 2)
@@ -251,9 +251,9 @@ class ExploreApiTests(unittest.TestCase):
         self.assertEqual(browse_calls[0][1].sort, ExploreSort.RATING)
 
     def test_detail_identity_is_media_type_plus_exact_id(self) -> None:
-        status, _, movie = request(self.api, "/api/v1/explore/movie/603")
+        status, _, movie = request(self.api, "/api/explore/movie/603")
         self.assertEqual(status, 200)
-        status, _, show = request(self.api, "/api/v1/explore/tv/603")
+        status, _, show = request(self.api, "/api/explore/tv/603")
         self.assertEqual(status, 200)
         self.assertEqual(movie["title"], "Alpha Movie")
         self.assertEqual(show["title"], "Alpha Show")
@@ -262,13 +262,13 @@ class ExploreApiTests(unittest.TestCase):
 
     def test_unknown_and_invalid_detail_routes(self) -> None:
         for path, expected in (
-            ("/api/v1/explore/anime/1", 404),
-            ("/api/v1/explore/movie/0", 400),
-            ("/api/v1/explore/movie/-5", 400),
-            ("/api/v1/explore/movie/99999999999", 400),
-            ("/api/v1/explore/movie/abc", 400),
-            ("/api/v1/explore/movie/603?extra=1", 400),
-            ("/api/v1/explore/unknown-op", 404),
+            ("/api/explore/anime/1", 404),
+            ("/api/explore/movie/0", 400),
+            ("/api/explore/movie/-5", 400),
+            ("/api/explore/movie/99999999999", 400),
+            ("/api/explore/movie/abc", 400),
+            ("/api/explore/movie/603?extra=1", 400),
+            ("/api/explore/unknown-op", 404),
         ):
             with self.subTest(path=path):
                 status, _, body = request(self.api, path)
@@ -281,15 +281,15 @@ class ExploreApiTests(unittest.TestCase):
     # -- permissions before any provider access -----------------------------
 
     def test_authentication_and_read_permission_precede_provider_access(self) -> None:
-        status, headers, body = request(self.api, "/api/v1/explore/browse", token=None)
+        status, headers, body = request(self.api, "/api/explore/browse", token=None)
         self.assertEqual(status, 401)
         self.assertEqual(body["error"]["code"], "unauthorized")
         self.assertIn("WWW-Authenticate", headers)
-        status, _, body = request(self.api, "/api/v1/explore/browse", token="wrong")
+        status, _, body = request(self.api, "/api/explore/browse", token="wrong")
         self.assertEqual(status, 401)
         self.assertEqual(body["error"]["code"], "unauthorized")
 
-        status, headers, body = request(self.api, "/api/v1/explore/browse", token="audit-token")
+        status, headers, body = request(self.api, "/api/explore/browse", token="audit-token")
         self.assertEqual(status, 403)
         self.assertEqual(body["error"]["code"], "forbidden")
         # No legitimate READ: no provider resolution, no cache, no upstream read.
@@ -297,12 +297,12 @@ class ExploreApiTests(unittest.TestCase):
         self.assertEqual(self.provider.calls, [])
 
         # A valid READ then really reaches the port.
-        status, _, _ = request(self.api, "/api/v1/explore/browse")
+        status, _, _ = request(self.api, "/api/explore/browse")
         self.assertEqual(status, 200)
         self.assertEqual(self.factory_calls, 1)
 
     def test_non_get_explore_requests_follow_the_unknown_route_rule(self) -> None:
-        status, _, body = request(self.api, "/api/v1/explore/browse", method="POST")
+        status, _, body = request(self.api, "/api/explore/browse", method="POST")
         self.assertEqual(status, 404)
         self.assertEqual(body["error"]["code"], "not_found")
         self.assertEqual(self.provider.calls, [])
@@ -311,21 +311,21 @@ class ExploreApiTests(unittest.TestCase):
 
     def test_invalid_queries_are_bounded_400_before_provider(self) -> None:
         cases = (
-            "/api/v1/explore/browse?unknown=1",
-            "/api/v1/explore/browse?page=1&page=2",
-            "/api/v1/explore/browse?page=501",
-            "/api/v1/explore/browse?sort=random",
-            "/api/v1/explore/browse?mediaType=anime",
-            "/api/v1/explore/browse?year=10000",
-            "/api/v1/explore/browse?minRating=nan",
-            "/api/v1/explore/browse?minRating=11",
-            "/api/v1/explore/browse?minVotes=-1",
-            "/api/v1/explore/search?query=matrix",
-            "/api/v1/explore/search?mediaType=movie&query=",
-            "/api/v1/explore/search?mediaType=movie&query=bad%0Aword",
-            "/api/v1/explore/search?mediaType=movie&query=matrix&year=2020",
-            "/api/v1/explore/options",
-            "/api/v1/explore/options?mediaType=anime",
+            "/api/explore/browse?unknown=1",
+            "/api/explore/browse?page=1&page=2",
+            "/api/explore/browse?page=501",
+            "/api/explore/browse?sort=random",
+            "/api/explore/browse?mediaType=anime",
+            "/api/explore/browse?year=10000",
+            "/api/explore/browse?minRating=nan",
+            "/api/explore/browse?minRating=11",
+            "/api/explore/browse?minVotes=-1",
+            "/api/explore/search?query=matrix",
+            "/api/explore/search?mediaType=movie&query=",
+            "/api/explore/search?mediaType=movie&query=bad%0Aword",
+            "/api/explore/search?mediaType=movie&query=matrix&year=2020",
+            "/api/explore/options",
+            "/api/explore/options?mediaType=anime",
         )
         for path in cases:
             with self.subTest(path=path):
@@ -384,7 +384,7 @@ class ExploreApiTests(unittest.TestCase):
         for failure, expected_status, expected_code, headers, retryable in mapping:
             with self.subTest(code=expected_code):
                 self.provider.browse_error = failure
-                status, headers_map, body = request(self.api, "/api/v1/explore/browse")
+                status, headers_map, body = request(self.api, "/api/explore/browse")
                 self.assertEqual(status, expected_status, body)
                 self.assertEqual(body["error"]["code"], expected_code)
                 for header in headers:
@@ -402,23 +402,23 @@ class ExploreApiTests(unittest.TestCase):
         self.provider.browse_error = MetadataError(
             MetadataErrorCode.AUTHENTICATION_FAILED, "upstream rejected credential"
         )
-        status, headers, body = request(self.api, "/api/v1/explore/browse")
+        status, headers, body = request(self.api, "/api/explore/browse")
         self.assertEqual(status, 401)
         self.assertNotIn("WWW-Authenticate", headers)
         self.assertEqual(body["error"]["code"], "provider_authentication_failed")
-        status, headers, body = request(self.api, "/api/v1/explore/browse", token=None)
+        status, headers, body = request(self.api, "/api/explore/browse", token=None)
         self.assertEqual(status, 401)
         self.assertIn("WWW-Authenticate", headers)
         self.assertEqual(body["error"]["code"], "unauthorized")
 
     def test_missing_title_and_missing_configuration_are_distinct(self) -> None:
         self.provider.detail_error = MetadataError(MetadataErrorCode.NOT_FOUND, "gone")
-        status, _, body = request(self.api, "/api/v1/explore/movie/404")
+        status, _, body = request(self.api, "/api/explore/movie/404")
         self.assertEqual(status, 404)
         self.assertEqual(body["error"]["code"], "not_found")
 
         api = self._build_api(None)
-        status, _, body = request(api, "/api/v1/explore/browse")
+        status, _, body = request(api, "/api/explore/browse")
         self.assertEqual(status, 503)
         self.assertEqual(body["error"]["code"], "provider_not_configured")
         self.assertIn("nextAction", body["error"]["details"])
@@ -428,14 +428,14 @@ class ExploreApiTests(unittest.TestCase):
 
     def test_audit_routes_exclude_keywords_and_ids(self) -> None:
         status, _, _ = request(
-            self.api, "/api/v1/explore/search?mediaType=movie&query=top-secret-word"
+            self.api, "/api/explore/search?mediaType=movie&query=top-secret-word"
         )
         self.assertEqual(status, 200)
-        status, _, _ = request(self.api, "/api/v1/explore/movie/603")
+        status, _, _ = request(self.api, "/api/explore/movie/603")
         self.assertEqual(status, 200)
         records = list(self.repository.list_security_audit())
-        routes = {record.route for record in records if record.route.startswith("/api/v1/explore")}
-        self.assertEqual(routes, {"/api/v1/explore/search", "/api/v1/explore/{mediaType}/{id}"})
+        routes = {record.route for record in records if record.route.startswith("/api/explore")}
+        self.assertEqual(routes, {"/api/explore/search", "/api/explore/{mediaType}/{id}"})
         self.assertNotIn(
             "top-secret-word", json.dumps([record.route for record in records], ensure_ascii=False)
         )
@@ -447,11 +447,11 @@ class ExploreApiTests(unittest.TestCase):
         api = self._build_api(self._factory, repository=spy_repository)
         spy_repository.recording = True
         for path in (
-            "/api/v1/explore/browse",
-            "/api/v1/explore/search?mediaType=movie&query=matrix",
-            "/api/v1/explore/options?mediaType=movie",
-            "/api/v1/explore/movie/603",
-            "/api/v1/explore/browse?page=1&page=2",
+            "/api/explore/browse",
+            "/api/explore/search?mediaType=movie&query=matrix",
+            "/api/explore/options?mediaType=movie",
+            "/api/explore/movie/603",
+            "/api/explore/browse?page=1&page=2",
         ):
             request(api, path)
         self.assertEqual(spy_repository.violations, [])
@@ -524,7 +524,7 @@ class ProductionAdapterExploreApiTests(unittest.TestCase):
         api = self._api()
         cases = (
             (
-                "/api/v1/explore/browse?mediaType=movie&sort=rating&minVotes=250"
+                "/api/explore/browse?mediaType=movie&sort=rating&minVotes=250"
                 "&genreId=28&originalLanguage=ko&year=2024&minRating=7.5&page=1",
                 "discover/movie",
                 {
@@ -548,7 +548,7 @@ class ProductionAdapterExploreApiTests(unittest.TestCase):
                 },
             ),
             (
-                "/api/v1/explore/browse?mediaType=tv&sort=date&genreId=18"
+                "/api/explore/browse?mediaType=tv&sort=date&genreId=18"
                 "&originalLanguage=ko&year=2024&page=1",
                 "discover/tv",
                 {
@@ -568,13 +568,13 @@ class ProductionAdapterExploreApiTests(unittest.TestCase):
                 },
             ),
             (
-                "/api/v1/explore/search?mediaType=movie&query=no%20such%20work&page=1",
+                "/api/explore/search?mediaType=movie&query=no%20such%20work&page=1",
                 "search/movie",
                 {"mediaType": "movie", "page": 1, "query": "no such work"},
                 {"page": "1", "query": "no such work"},
             ),
             (
-                "/api/v1/explore/search?mediaType=tv&query=no%20such%20work&page=1",
+                "/api/explore/search?mediaType=tv&query=no%20such%20work&page=1",
                 "search/tv",
                 {"mediaType": "tv", "page": 1, "query": "no such work"},
                 {"page": "1", "query": "no such work"},
@@ -629,7 +629,7 @@ class ProductionAdapterExploreApiTests(unittest.TestCase):
                 self.page_payload = payload
                 self.calls.clear()
                 api = self._api()
-                status, _, body = request(api, "/api/v1/explore/browse?mediaType=movie")
+                status, _, body = request(api, "/api/explore/browse?mediaType=movie")
                 self.assertEqual(status, 502, body)
                 self.assertEqual(body["error"]["code"], "provider_malformed")
                 self.assertEqual(
@@ -648,9 +648,7 @@ class ProductionAdapterExploreApiTests(unittest.TestCase):
         api = self._api()
         for page in ("0", "501"):
             with self.subTest(page=page):
-                status, _, body = request(
-                    api, f"/api/v1/explore/browse?mediaType=movie&page={page}"
-                )
+                status, _, body = request(api, f"/api/explore/browse?mediaType=movie&page={page}")
                 self.assertEqual(status, 400, body)
                 self.assertEqual(body["error"]["code"], "invalid_request")
         self.assertEqual(self.calls, [])

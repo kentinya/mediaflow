@@ -421,7 +421,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, document = self.request(
                 value,
                 "GET",
-                "/api/v1/operations/automation/metrics",
+                "/api/operations/automation/metrics",
                 token=token,
             )
         self.assertEqual(200, status, document)
@@ -457,7 +457,7 @@ class RunOnceApiTests(unittest.TestCase):
             **overrides,
         }
         return self.request(
-            value, "POST", "/api/v1/operations/automation/task-definitions/nightly/run-once", body
+            value, "POST", "/api/operations/automation/task-definitions/nightly/run-once", body
         )
 
     @staticmethod
@@ -719,9 +719,7 @@ class RunOnceApiTests(unittest.TestCase):
                 )
 
             before_refresh = counts()
-            status, page = self.request(
-                value, "GET", "/api/v1/operations/automation/records?limit=20"
-            )
+            status, page = self.request(value, "GET", "/api/operations/automation/records?limit=20")
             self.assertEqual(200, status, page)
             self.assertEqual(2, page["total"])
             records = {record["historyContext"]["definitionId"]: record for record in page["items"]}
@@ -748,7 +746,7 @@ class RunOnceApiTests(unittest.TestCase):
             # A refresh is the same bounded read: it creates no Task/Job/grant/
             # discovery and never re-executes the settled failure.
             status, refreshed = self.request(
-                value, "GET", "/api/v1/operations/automation/records?limit=20"
+                value, "GET", "/api/operations/automation/records?limit=20"
             )
             self.assertEqual(200, status, refreshed)
             self.assertEqual(page["total"], refreshed["total"])
@@ -808,7 +806,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertIsNotNone(evidence["record_started_at"], evidence)
             self.assertIsNotNone(evidence["record_finished_at"], evidence)
             status, runs = self.request(
-                value, "GET", "/api/v1/operations/runs?view=all&trigger=manual"
+                value, "GET", "/api/operations/runs?view=all&trigger=manual"
             )
             self.assertEqual(200, status, runs)
             linked = [v for v in runs["items"] if v["task_id"] == task.task_id]
@@ -892,7 +890,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, admitted = self.request(
                 value,
                 "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                "/api/operations/automation/task-definitions/nightly/run-once",
                 body,
             )
             self.assertEqual(202, status, admitted)
@@ -904,7 +902,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, refused = self.request(
                 value,
                 "POST",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                "/api/operations/automation/task-definitions/nightly/run-once",
                 stale,
             )
             self.assertEqual(409, status, refused)
@@ -923,7 +921,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, read = self.request(
                 value,
                 "GET",
-                "/api/v1/operations/automation/task-definitions/nightly/run-once?admissionRequestId=request-1",
+                "/api/operations/automation/task-definitions/nightly/run-once?admissionRequestId=request-1",
             )
             self.assertEqual(200, status, read)
             self.assertEqual(first["taskId"], read["taskId"])
@@ -993,7 +991,7 @@ class RunOnceApiTests(unittest.TestCase):
                 status, _ = self.request(
                     value,
                     "POST",
-                    "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                    "/api/operations/automation/task-definitions/nightly/run-once",
                     body,
                     token=token,
                 )
@@ -1003,7 +1001,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, _ = self.request(
                 value,
                 "POST",
-                "/api/v1/operations/automation/task-definitions/missing/run-once",
+                "/api/operations/automation/task-definitions/missing/run-once",
                 {"admissionRequestId": "missing"},
             )
             self.assertEqual(404, status)
@@ -1044,7 +1042,7 @@ class RunOnceApiTests(unittest.TestCase):
                 admission_request_id="00000000-0000-4000-8000-000000000001",
             )
             status, read = self.request(
-                value, "GET", f"/api/v1/operations/automation/run-once/{legacy.discovery_id}"
+                value, "GET", f"/api/operations/automation/run-once/{legacy.discovery_id}"
             )
             self.assertEqual(200, status)
             self.assertTrue(read["zeroMutation"])
@@ -1091,7 +1089,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("completed", task.status.value)
             self.assertEqual((2, 1), (task.completed_items, task.failed_items))
             self.assertTrue(fresh.exists())
-            status, page = self.request(value, "GET", "/api/v1/operations/runs?view=attention")
+            status, page = self.request(value, "GET", "/api/operations/runs?view=attention")
             self.assertEqual(200, status, page)
             self.assertEqual(0, page["total"])
 
@@ -1160,7 +1158,7 @@ class RunOnceApiTests(unittest.TestCase):
             # The Task Center row publishes the durable per-file facts: no
             # successful file, one partial, and the compatibility failure count
             # that still contains both partial and failed.
-            status, run = self.request(value, "GET", f"/api/v1/operations/runs/{task.task_id}")
+            status, run = self.request(value, "GET", f"/api/operations/runs/{task.task_id}")
             self.assertEqual(200, status, run)
             self.assertEqual("completed", run["status"])
             self.assertEqual(2, run["total_items"])
@@ -1173,7 +1171,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, run["failed_items"] - run["partial_items"])
             self.assertEqual(1, run["uncertain_effect_items"])
 
-            status, page = self.request(value, "GET", "/api/v1/operations/runs?view=ended&limit=20")
+            status, page = self.request(value, "GET", "/api/operations/runs?view=ended&limit=20")
             self.assertEqual(200, status, page)
             rows = [item for item in page["items"] if item["task_id"] == task.task_id]
             self.assertEqual(1, len(rows), page)
@@ -1189,7 +1187,7 @@ class RunOnceApiTests(unittest.TestCase):
             # The Automation record uses the same Task flow outcome but its own
             # independent file counts, so it names one partial and one failed.
             status, records = self.request(
-                value, "GET", "/api/v1/operations/automation/records?limit=20"
+                value, "GET", "/api/operations/automation/records?limit=20"
             )
             self.assertEqual(200, status, records)
             record = next(item for item in records["items"] if item.get("task_id") == task.task_id)
@@ -1278,7 +1276,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual(0, len(()))
             status, listing = self.request(
-                value, "GET", "/api/v1/operations/automation/run-once", token=VIEWER_TOKEN
+                value, "GET", "/api/operations/automation/run-once", token=VIEWER_TOKEN
             )
             self.assertEqual(200, status, listing)
             self.assertEqual([], listing["items"])
@@ -1313,7 +1311,7 @@ class RunOnceApiTests(unittest.TestCase):
             result = self.execute(value)
             (item,) = value.repository.list_items(result.task_id)
             self.assertEqual("waiting_recognition", item.status.value)
-            status, page = self.request(value, "GET", "/api/v1/operations/runs?view=recognition")
+            status, page = self.request(value, "GET", "/api/operations/runs?view=recognition")
             self.assertEqual(200, status, page)
             self.assertEqual(1, page["total"])
             self.assertEqual([], value.source.mutations)
@@ -1337,7 +1335,7 @@ class RunOnceApiTests(unittest.TestCase):
             result = self.execute(value)
             (item,) = value.repository.list_items(result.task_id)
             self.assertEqual("waiting_classification", item.status.value)
-            status, page = self.request(value, "GET", "/api/v1/operations/runs?view=classification")
+            status, page = self.request(value, "GET", "/api/operations/runs?view=classification")
             self.assertEqual(200, status, page)
             self.assertEqual(1, page["total"])
             self.assertEqual([], value.source.mutations)
@@ -1369,7 +1367,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, len(value.repository.list_tasks()))
 
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             self.assertEqual("business_problem", detail["recoveryKind"])
@@ -1390,7 +1388,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, decided = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 {
                     "kind": "recognition",
                     "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
@@ -1404,7 +1402,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, continued = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/continue",
                 {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
             )
             self.assertEqual(202, status, continued)
@@ -1418,7 +1416,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.target.mutations)
 
             status, queued_detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, queued_detail)
             self.assertEqual("queued", queued_detail["native_analysis"]["queue_state"])
@@ -1429,7 +1427,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, repeat = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/continue",
                 {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
             )
             self.assertEqual(409, status, repeat)
@@ -1447,7 +1445,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.target.mutations)
 
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             self.assertEqual("waiting_human", detail["native_analysis"]["queue_state"])
@@ -1463,7 +1461,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertTrue(detail["manualRecoveryAnalysisReady"])
 
             status, preview = self.request(
-                value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+                value, "GET", f"/api/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -1474,7 +1472,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, refused = self.request(
                 value,
                 "POST",
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
                 {
                     "preparationId": preparation["preparation_id"],
                     "itemIds": ready,
@@ -1493,7 +1491,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, confirmed = self.request(
                 value,
                 "POST",
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
                 {
                     "preparationId": preparation["preparation_id"],
                     "itemIds": ready,
@@ -1587,7 +1585,7 @@ class RunOnceApiTests(unittest.TestCase):
             # The original execution facts survive a reload; the confirmed
             # summary reads back as confirmed with its linked execution.
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             confirmed_summary = detail["manualRecoveryPreparation"]
@@ -1602,7 +1600,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, repeat = self.request(
                 value,
                 "POST",
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
                 {
                     "preparationId": preparation["preparation_id"],
                     "itemIds": ready,
@@ -1675,14 +1673,14 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(1, value.repository.count_scheduled_capacity_use())
 
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             version = detail["checkpoint"]["checkpoint_version"]
             status, decided = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 {
                     "kind": "recognition",
                     "expectedCheckpointVersion": version,
@@ -1697,7 +1695,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, refused = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/continue",
                 {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
             )
             self.assertEqual(409, status, refused)
@@ -1712,7 +1710,7 @@ class RunOnceApiTests(unittest.TestCase):
             # The real durable projection proves non-admission: the overall
             # Task flow still reads running, but no analysis owns the queue.
             status, after_refusal = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, after_refusal)
             self.assertEqual("waiting_human", after_refusal["native_analysis"]["queue_state"])
@@ -1735,7 +1733,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, continued = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/continue",
                 {"expectedCheckpointVersion": after_refusal["checkpoint"]["checkpoint_version"]},
             )
             self.assertEqual(202, status, continued)
@@ -1743,7 +1741,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("queued", state.queue_state.value)
             self.assertEqual("analysis", state.machine_stage.value)
             status, admitted_detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, admitted_detail)
             self.assertEqual("queued", admitted_detail["native_analysis"]["queue_state"])
@@ -1781,13 +1779,13 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("waiting_recognition", item.status.value)
 
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             status, decided = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 {
                     "kind": "recognition",
                     "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
@@ -1798,7 +1796,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, continued = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/continue",
                 {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
             )
             self.assertEqual(202, status, continued)
@@ -1808,13 +1806,13 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("waiting_confirm", item.status.value, item)
 
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             preparation = detail["manualRecoveryPreparation"]
             self.assertIsNotNone(preparation, detail)
             status, preview = self.request(
-                value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+                value, "GET", f"/api/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -1824,7 +1822,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, confirmed = self.request(
                 value,
                 "POST",
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
                 {
                     "preparationId": preparation["preparation_id"],
                     "itemIds": ready,
@@ -1875,38 +1873,36 @@ class RunOnceApiTests(unittest.TestCase):
 
             # The Task Center run detail keeps the failed flow authoritative
             # with the independent file success beside it; no recovered claim.
-            status, run = self.request(value, "GET", f"/api/v1/operations/runs/{task_id}")
+            status, run = self.request(value, "GET", f"/api/operations/runs/{task_id}")
             self.assertEqual(200, status, run)
             self.assertEqual("failed", run["status"], run)
             self.assertFalse(run["recovered_completion"], run)
             self.assertEqual(1, run["success_items"], run)
 
             # Status partitions and filters follow the same durable flow.
-            status, all_page = self.request(
-                value, "GET", "/api/v1/operations/runs?view=all&limit=50"
-            )
+            status, all_page = self.request(value, "GET", "/api/operations/runs?view=all&limit=50")
             self.assertEqual(200, status, all_page)
             (row,) = [entry for entry in all_page["items"] if entry["task_id"] == task_id]
             self.assertEqual("failed", row["status"], row)
             self.assertEqual({"failed": 1}, all_page["status_counts"], all_page["status_counts"])
             self.assertEqual(0, row["attention"], row)
             status, failed_page = self.request(
-                value, "GET", "/api/v1/operations/runs?status=failed&limit=50"
+                value, "GET", "/api/operations/runs?status=failed&limit=50"
             )
             self.assertEqual(200, status, failed_page)
             self.assertEqual(1, failed_page["total"], failed_page["items"])
             status, completed_page = self.request(
-                value, "GET", "/api/v1/operations/runs?status=completed&limit=50"
+                value, "GET", "/api/operations/runs?status=completed&limit=50"
             )
             self.assertEqual(200, status, completed_page)
             self.assertEqual(0, completed_page["total"], completed_page["items"])
             status, ended_page = self.request(
-                value, "GET", "/api/v1/operations/runs?view=ended&limit=50"
+                value, "GET", "/api/operations/runs?view=ended&limit=50"
             )
             self.assertEqual(200, status, ended_page)
             self.assertEqual(1, ended_page["total"], ended_page["items"])
             status, running_page = self.request(
-                value, "GET", "/api/v1/operations/runs?view=running&limit=50"
+                value, "GET", "/api/operations/runs?view=running&limit=50"
             )
             self.assertEqual(200, status, running_page)
             self.assertEqual(0, running_page["total"], running_page["items"])
@@ -1914,7 +1910,7 @@ class RunOnceApiTests(unittest.TestCase):
             # The Automation record reads the same failed flow with the
             # current file success and the current explanation: no recovered
             # completion, no obsolete waiting reason, no fabricated failure.
-            records_route = "/api/v1/operations/automation/records?limit=20"
+            records_route = "/api/operations/automation/records?limit=20"
             status, records = self.request(value, "GET", records_route)
             self.assertEqual(200, status, records)
             self.assertEqual(1, records["total"], records["items"])
@@ -2028,7 +2024,7 @@ class RunOnceApiTests(unittest.TestCase):
         )
         conflict_target.parent.mkdir(parents=True, exist_ok=True)
         conflict_target.write_bytes(b"old-target")
-        records_route = "/api/v1/operations/automation/records?limit=20"
+        records_route = "/api/operations/automation/records?limit=20"
 
         with self.journey() as value:
             status, admitted = self.admit(value)
@@ -2091,7 +2087,7 @@ class RunOnceApiTests(unittest.TestCase):
             # exactly as captured above across the whole recovery.
             self.clock.advance(3600)
 
-            route = f"/api/v1/tasks/{task_id}/items/{items['One.2001.mkv'].item_id}/recovery"
+            route = f"/api/tasks/{task_id}/items/{items['One.2001.mkv'].item_id}/recovery"
             status, detail = self.request(value, "GET", route)
             self.assertEqual(200, status, detail)
             status, decided = self.request(
@@ -2123,7 +2119,7 @@ class RunOnceApiTests(unittest.TestCase):
             preparation = detail["manualRecoveryPreparation"]
             self.assertIsNotNone(preparation, detail)
             status, preview = self.request(
-                value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+                value, "GET", f"/api/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -2133,7 +2129,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, confirmed = self.request(
                 value,
                 "POST",
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
                 {
                     "preparationId": preparation["preparation_id"],
                     "itemIds": ready,
@@ -2417,7 +2413,7 @@ class RunOnceApiTests(unittest.TestCase):
             # facts, then advance the clock so every later recovery write uses
             # a later time the frozen record must never adopt.
             status, first_record = self.request(
-                value, "GET", "/api/v1/operations/automation/records?limit=20"
+                value, "GET", "/api/operations/automation/records?limit=20"
             )
             self.assertEqual(200, status, first_record)
             self.assertEqual(1, first_record["total"], first_record["items"])
@@ -2435,13 +2431,13 @@ class RunOnceApiTests(unittest.TestCase):
             self.clock.advance(3600)
 
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             status, decided = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 {
                     "kind": "recognition",
                     "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
@@ -2452,7 +2448,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, continued = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/continue",
                 {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
             )
             self.assertEqual(202, status, continued)
@@ -2470,7 +2466,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.target.mutations)
 
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             preparation = detail["manualRecoveryPreparation"]
@@ -2479,7 +2475,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("admin", preparation["actor"])
             # A refresh/reopen reads the same durable summary and actor.
             status, refreshed = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, refreshed)
             self.assertEqual(
@@ -2488,7 +2484,7 @@ class RunOnceApiTests(unittest.TestCase):
             )
 
             status, preview = self.request(
-                value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+                value, "GET", f"/api/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -2498,7 +2494,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, refused = self.request(
                 value,
                 "POST",
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
                 {
                     "preparationId": preparation["preparation_id"],
                     "itemIds": ready,
@@ -2517,7 +2513,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, confirmed = self.request(
                 value,
                 "POST",
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
                 {
                     "preparationId": preparation["preparation_id"],
                     "itemIds": ready,
@@ -2548,9 +2544,7 @@ class RunOnceApiTests(unittest.TestCase):
             # The due run stays the one original Automation record after its
             # same-Task recovery completed it: same identity, scheduled
             # trigger, real outcome, and the recovery reported separately.
-            status, page = self.request(
-                value, "GET", "/api/v1/operations/automation/records?limit=20"
-            )
+            status, page = self.request(value, "GET", "/api/operations/automation/records?limit=20")
             self.assertEqual(200, status, page)
             self.assertEqual(1, page["total"], page["items"])
             (record,) = page["items"]
@@ -2571,7 +2565,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, failed_only = self.request(
                 value,
                 "GET",
-                "/api/v1/operations/automation/records?limit=20&outcome=failed",
+                "/api/operations/automation/records?limit=20&outcome=failed",
             )
             self.assertEqual(200, status, failed_only)
             # Slice 48 RO-4: the recovered flow outcome is completed, so the
@@ -2580,21 +2574,21 @@ class RunOnceApiTests(unittest.TestCase):
             status, completed_only = self.request(
                 value,
                 "GET",
-                "/api/v1/operations/automation/records?limit=20&outcome=completed",
+                "/api/operations/automation/records?limit=20&outcome=completed",
             )
             self.assertEqual(200, status, completed_only)
             self.assertEqual(1, completed_only["total"], completed_only["items"])
             status, filtered = self.request(
                 value,
                 "GET",
-                "/api/v1/operations/automation/records?limit=20&trigger=scheduled",
+                "/api/operations/automation/records?limit=20&trigger=scheduled",
             )
             self.assertEqual(200, status, filtered)
             self.assertEqual(1, filtered["total"], filtered["items"])
             status, manual_only = self.request(
                 value,
                 "GET",
-                "/api/v1/operations/automation/records?limit=20&trigger=manual",
+                "/api/operations/automation/records?limit=20&trigger=manual",
             )
             self.assertEqual(200, status, manual_only)
             self.assertEqual(0, manual_only["total"], manual_only["items"])
@@ -2633,13 +2627,13 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("waiting_recognition", item.status.value)
 
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             status, decided = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 {
                     "kind": "recognition",
                     "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
@@ -2650,7 +2644,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, continued = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/continue",
                 {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
             )
             self.assertEqual(202, status, continued)
@@ -2664,9 +2658,7 @@ class RunOnceApiTests(unittest.TestCase):
             state = value.repository.get_task_scheduling(task_id)
             self.assertEqual("waiting_human", state.queue_state.value)
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            status, listing = self.request(
-                value, "GET", "/api/v1/operations/runs?view=classification"
-            )
+            status, listing = self.request(value, "GET", "/api/operations/runs?view=classification")
             self.assertEqual(200, status, listing)
             self.assertEqual(1, listing["total"], listing)
             self.assertEqual([], value.source.mutations)
@@ -2674,7 +2666,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertFalse(hasattr(value.repository, "list_jobs"))
 
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             self.assertEqual("business_problem", detail["recoveryKind"])
@@ -2683,7 +2675,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, decided = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 {
                     "kind": "classification",
                     "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
@@ -2694,7 +2686,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, continued = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/continue",
                 {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
             )
             self.assertEqual(202, status, continued)
@@ -2705,13 +2697,13 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.target.mutations)
 
             status, detail = self.request(
-                value, "GET", f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             preparation = detail["manualRecoveryPreparation"]
             self.assertEqual("admin", preparation["actor"])
             status, preview = self.request(
-                value, "GET", f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+                value, "GET", f"/api/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -2721,7 +2713,7 @@ class RunOnceApiTests(unittest.TestCase):
             status, confirmed = self.request(
                 value,
                 "POST",
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
                 {
                     "preparationId": preparation["preparation_id"],
                     "itemIds": ready,
@@ -2750,7 +2742,7 @@ class RunOnceApiTests(unittest.TestCase):
             task_id = body["taskId"]
             self.assertIsNotNone(value.repository.get_task(task_id))
             status, response = self.request(
-                value, "POST", f"/api/v1/tasks/{task_id}/cancel", token=ADMIN_TOKEN
+                value, "POST", f"/api/tasks/{task_id}/cancel", token=ADMIN_TOKEN
             )
             self.assertEqual(200, status, response)
             task = value.repository.get_task(task_id)
@@ -2829,7 +2821,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(202, status, body)
             cancelled_task_id = body["taskId"]
             status, cancelled = self.request(
-                value, "POST", f"/api/v1/tasks/{cancelled_task_id}/cancel"
+                value, "POST", f"/api/tasks/{cancelled_task_id}/cancel"
             )
             self.assertEqual(200, status, cancelled)
             self.assertEqual("cancelled", cancelled["task"]["status"])
@@ -2852,7 +2844,7 @@ class RunOnceApiTests(unittest.TestCase):
             # not the completed/(completed+failed) ratio.
             status, body = self.admit(value, request_id="cancelled-second")
             self.assertEqual(202, status, body)
-            status, _second = self.request(value, "POST", f"/api/v1/tasks/{body['taskId']}/cancel")
+            status, _second = self.request(value, "POST", f"/api/tasks/{body['taskId']}/cancel")
             self.assertEqual(200, status, _second)
             after_cancel = self.metric_document(value)
             self.assertEqual(11, after_cancel["monthToDateAdmitted"], after_cancel)
@@ -3424,7 +3416,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual(202, status, body)
             task_id = body["taskId"]
             status, response = self.request(
-                value, "POST", f"/api/v1/tasks/{task_id}/cancel", token=ADMIN_TOKEN
+                value, "POST", f"/api/tasks/{task_id}/cancel", token=ADMIN_TOKEN
             )
             self.assertEqual(200, status, response)
             self.assertIsNone(self.execute(value))

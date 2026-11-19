@@ -155,7 +155,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                     "edits": [{"fieldPath": "automation.staleJobAgeSeconds", "value": 7200}],
                 }
             ).encode("utf-8")
-            status, data = request(api, "/api/v1/system/settings", method="PUT", body=body)
+            status, data = request(api, "/api/system/settings", method="PUT", body=body)
             self.assertEqual(status, 422, data)
             self.assertEqual(data["error"]["code"], "system_settings_invalid")
             errors = data["error"]["details"]["errors"]
@@ -212,7 +212,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
     def test_api_read_active_system_settings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api, service, active, repo = setup_test_api(directory)
-            status, data = request(api, "/api/v1/system/settings")
+            status, data = request(api, "/api/system/settings")
             self.assertEqual(status, 200)
             self.assertEqual(data["authority"], "MANAGED")
             self.assertEqual(data["revisionId"], active.revision_id)
@@ -231,14 +231,14 @@ class SystemSettingsManagementTests(unittest.TestCase):
             draft = service.create_successor_draft(actor="tester")
 
             # Via query param
-            status, data1 = request(api, f"/api/v1/system/settings?revisionId={draft.revision_id}")
+            status, data1 = request(api, f"/api/system/settings?revisionId={draft.revision_id}")
             self.assertEqual(status, 200)
             self.assertEqual(data1["revisionId"], draft.revision_id)
             self.assertFalse(data1["isActive"])
 
             # Via revision route
             status, data2 = request(
-                api, f"/api/v1/configuration/revisions/{draft.revision_id}/settings"
+                api, f"/api/configuration/revisions/{draft.revision_id}/settings"
             )
             self.assertEqual(status, 200)
             self.assertEqual(data2["revisionId"], draft.revision_id)
@@ -256,7 +256,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                     }
                 }
             ).encode("utf-8")
-            status, data = request(api, "/api/v1/system/settings", method="PUT", body=body)
+            status, data = request(api, "/api/system/settings", method="PUT", body=body)
             self.assertEqual(status, 201)
             self.assertTrue(data["created"])
             self.assertNotEqual(data["revisionId"], active.revision_id)
@@ -285,7 +285,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             ).encode("utf-8")
             status, data = request(
                 api,
-                f"/api/v1/configuration/revisions/{draft.revision_id}/settings",
+                f"/api/configuration/revisions/{draft.revision_id}/settings",
                 method="PUT",
                 body=body,
             )
@@ -304,12 +304,10 @@ class SystemSettingsManagementTests(unittest.TestCase):
             create_body = json.dumps(
                 {"edits": [{"fieldPath": "automation.maximumActiveJobs", "value": 75}]}
             ).encode("utf-8")
-            status, created = request(
-                api, "/api/v1/system/settings", method="PUT", body=create_body
-            )
+            status, created = request(api, "/api/system/settings", method="PUT", body=create_body)
             self.assertEqual(status, 201)
             draft_id = created["revisionId"]
-            status, draft_view = request(api, f"/api/v1/system/settings?revisionId={draft_id}")
+            status, draft_view = request(api, f"/api/system/settings?revisionId={draft_id}")
             self.assertEqual(status, 200)
             self.assertEqual(draft_view["revisionId"], draft_id)
             self.assertFalse(draft_view["isActive"])
@@ -327,7 +325,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                     }
                 ).encode("utf-8")
                 status, updated = request(
-                    api, "/api/v1/system/settings", method="PUT", body=update_body
+                    api, "/api/system/settings", method="PUT", body=update_body
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(updated["revisionId"], draft_id)
@@ -354,7 +352,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                 patch.object(api, "_refresh_configuration_binding", return_value=stale_binding),
                 patch.object(api, "_runtime_binding", stale_binding),
             ):
-                status, data = request(api, "/api/v1/system/settings")
+                status, data = request(api, "/api/system/settings")
             self.assertEqual(status, 200)
             self.assertFalse(data["consumption"]["consumed"])
             self.assertEqual(data["consumption"]["reason"], "runtime_snapshot_mismatch")
@@ -374,7 +372,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             ).encode("utf-8")
             status, data = request(
                 api,
-                f"/api/v1/configuration/revisions/{draft.revision_id}/settings",
+                f"/api/configuration/revisions/{draft.revision_id}/settings",
                 method="PUT",
                 body=body,
             )
@@ -387,16 +385,16 @@ class SystemSettingsManagementTests(unittest.TestCase):
             api, service, active, repo = setup_test_api(directory)
 
             # Unauthenticated -> 401
-            status, _ = request(api, "/api/v1/system/settings", token=None)
+            status, _ = request(api, "/api/system/settings", token=None)
             self.assertEqual(status, 401)
 
             # Viewer (read-only) -> GET 200, PUT 403
-            status, _ = request(api, "/api/v1/system/settings", token="viewer-token")
+            status, _ = request(api, "/api/system/settings", token="viewer-token")
             self.assertEqual(status, 200)
 
             body = json.dumps({"settings": {"automation.maximumActiveJobs": 50}}).encode("utf-8")
             status, data = request(
-                api, "/api/v1/system/settings", method="PUT", body=body, token="viewer-token"
+                api, "/api/system/settings", method="PUT", body=body, token="viewer-token"
             )
             self.assertEqual(status, 403)
             self.assertEqual(data["error"]["code"], "forbidden")
@@ -407,7 +405,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             body = json.dumps(
                 {"settings": {"persistence.databasePath": "tampered.sqlite3"}}
             ).encode("utf-8")
-            status, data = request(api, "/api/v1/system/settings", method="PUT", body=body)
+            status, data = request(api, "/api/system/settings", method="PUT", body=body)
             self.assertEqual(status, 422)
             self.assertEqual(data["error"]["code"], "system_settings_invalid")
             errors = data["error"]["details"]["errors"]
@@ -423,7 +421,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                     }
                 }
             ).encode("utf-8")
-            status, data = request(api, "/api/v1/system/settings", method="PUT", body=body)
+            status, data = request(api, "/api/system/settings", method="PUT", body=body)
             self.assertEqual(status, 201)
 
             audits = repo.list_revision_audits(data["revisionId"])
@@ -448,7 +446,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             rows_after_delete = len(repo.list_revisions(limit=100))
 
             # Read fails closed and names the durable last-known Active identity.
-            status, body = request(api, "/api/v1/system/settings")
+            status, body = request(api, "/api/system/settings")
             self.assertEqual(status, 503)
             self.assertEqual(body["error"]["code"], "configuration_unavailable")
             details = body["error"]["details"]
@@ -464,7 +462,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             body = json.dumps({"edits": [{"fieldPath": "locale", "value": "en-US"}]}).encode(
                 "utf-8"
             )
-            status, _ = request(api, "/api/v1/system/settings", method="PUT", body=body)
+            status, _ = request(api, "/api/system/settings", method="PUT", body=body)
             self.assertEqual(status, 503)
             self.assertEqual(len(repo.list_revisions(limit=100)), rows_after_delete)
 
@@ -479,7 +477,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             )
             repo._connection.commit()
 
-            status, body = request(api, "/api/v1/system/settings")
+            status, body = request(api, "/api/system/settings")
             self.assertEqual(status, 503)
             self.assertEqual(body["error"]["code"], "configuration_unavailable")
             details = body["error"]["details"]
@@ -493,7 +491,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
 
             status, _ = request(
                 api,
-                "/api/v1/system/settings",
+                "/api/system/settings",
                 method="PUT",
                 body=json.dumps({"edits": [{"fieldPath": "locale", "value": "en-US"}]}).encode(
                     "utf-8"
@@ -525,7 +523,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             )
             repo._connection.commit()
 
-            status, body = request(api, "/api/v1/system/settings")
+            status, body = request(api, "/api/system/settings")
             self.assertEqual(status, 503)
             self.assertEqual(body["error"]["code"], "configuration_unavailable")
             details = body["error"]["details"]
@@ -537,7 +535,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
 
             status, _ = request(
                 api,
-                "/api/v1/system/settings",
+                "/api/system/settings",
                 method="PUT",
                 body=json.dumps({"edits": [{"fieldPath": "locale", "value": "en-US"}]}).encode(
                     "utf-8"
@@ -562,7 +560,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                     ]
                 }
             ).encode("utf-8")
-            status, created = request(api, "/api/v1/system/settings", method="PUT", body=body)
+            status, created = request(api, "/api/system/settings", method="PUT", body=body)
             self.assertEqual(status, 201)
             draft_id = created["revisionId"]
 
@@ -570,20 +568,20 @@ class SystemSettingsManagementTests(unittest.TestCase):
             # validate/checked-activate path.
             status, _ = request(
                 api,
-                f"/api/v1/configuration/revisions/{draft_id}/validate",
+                f"/api/configuration/revisions/{draft_id}/validate",
                 method="POST",
                 body=b"{}",
             )
             self.assertEqual(status, 200)
             status, activated = request(
                 api,
-                f"/api/v1/configuration/revisions/{draft_id}/activate",
+                f"/api/configuration/revisions/{draft_id}/activate",
                 method="POST",
                 body=json.dumps({"expectedVersion": created["draftVersion"]}).encode("utf-8"),
             )
             self.assertEqual(status, 200)
 
-            status, view = request(api, "/api/v1/system/settings")
+            status, view = request(api, "/api/system/settings")
             self.assertEqual(status, 200)
             self.assertEqual(view["revisionId"], draft_id)
             self.assertTrue(view["isActive"])
@@ -619,7 +617,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             revisions_before = len(repo.list_revisions(limit=100))
 
             # 1. Web enters Settings and reads the Active view.
-            status, active_view = request(api, "/api/v1/system/settings")
+            status, active_view = request(api, "/api/system/settings")
             self.assertEqual(status, 200)
             self.assertTrue(active_view["isActive"])
 
@@ -632,7 +630,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                 "expectedActiveDigest": active_view["revisionDigest"],
             }
             status, created = request(
-                api, "/api/v1/system/settings", method="PUT", body=json.dumps(web_body).encode()
+                api, "/api/system/settings", method="PUT", body=json.dumps(web_body).encode()
             )
             self.assertEqual(status, 201)
             self.assertTrue(created["created"])
@@ -640,7 +638,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
 
             # 3. Web reopens the returned Draft; consumption stays bound to the
             #    Active, never to the Draft being edited.
-            status, draft_view = request(api, f"/api/v1/system/settings?revisionId={draft_id}")
+            status, draft_view = request(api, f"/api/system/settings?revisionId={draft_id}")
             self.assertEqual(status, 200)
             self.assertFalse(draft_view["isActive"])
             self.assertEqual(draft_view["consumption"]["revisionId"], active.revision_id)
@@ -657,7 +655,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
 
             # 4. First Draft edit with the mutable Draft version succeeds.
             status, updated = request(
-                api, "/api/v1/system/settings", method="PUT", body=draft_edit(85, first_token)
+                api, "/api/system/settings", method="PUT", body=draft_edit(85, first_token)
             )
             self.assertEqual(status, 200)
             self.assertEqual(updated["settings"]["automation.maximumActiveJobs"], 85)
@@ -668,7 +666,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             #    zero side effects.
             status, _ = request(
                 api,
-                "/api/v1/system/settings",
+                "/api/system/settings",
                 method="PUT",
                 body=json.dumps(
                     {
@@ -680,7 +678,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             )
             self.assertEqual(status, 200)
             status, conflict = request(
-                api, "/api/v1/system/settings", method="PUT", body=draft_edit(90, first_token)
+                api, "/api/system/settings", method="PUT", body=draft_edit(90, first_token)
             )
             self.assertEqual(status, 409)
             self.assertEqual(conflict["error"]["code"], "configuration_version_conflict")
@@ -692,12 +690,12 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertIn("refresh", details["nextAction"])
 
             # 6. Recovery: refresh the Draft and retry with the current token.
-            status, refreshed = request(api, f"/api/v1/system/settings?revisionId={draft_id}")
+            status, refreshed = request(api, f"/api/system/settings?revisionId={draft_id}")
             self.assertEqual(status, 200)
             self.assertNotEqual(refreshed["draftVersion"], first_token)
             status, recovered = request(
                 api,
-                "/api/v1/system/settings",
+                "/api/system/settings",
                 method="PUT",
                 body=draft_edit(90, refreshed["draftVersion"]),
             )

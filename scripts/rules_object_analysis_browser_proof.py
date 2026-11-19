@@ -79,7 +79,7 @@ async function api(path, method = 'GET', body = undefined) {
 }
 
 const authority = async () =>
-  (await api('/api/v1/operations/rules/form-authority')).document.active;
+  (await api('/api/operations/rules/form-authority')).document.active;
 
 function identity(active) {
   return {
@@ -95,7 +95,7 @@ try {
   const evidence = {};
 
   // -- RecognitionType: definition valid, no association is inapplicable -----
-  await open(page, '/ui-v2/rules?section=recognitionTypes');
+  await open(page, '/rules?section=recognitionTypes');
   await page.getByRole('button', { name: '添加识别类型' }).click();
   const typeDrawer = page.getByRole('dialog', { name: '添加识别类型' });
   await typeDrawer.locator('#mf-rules-form-recognitionTypes-id').fill('proof-type');
@@ -108,17 +108,17 @@ try {
   evidence.recognitionTypeDefinition = true;
 
   // Editing after a result invalidates currency and submits nothing by itself.
-  const beforeEdit = (await api('/api/v1/operations/rules/form-authority')).document.active;
+  const beforeEdit = (await api('/api/operations/rules/form-authority')).document.active;
   await typeDrawer.locator('#mf-rules-form-recognitionTypes-name').fill('证明类型改名');
   await expect(typeDrawer.getByText(/该结果已过期/).first()).toBeVisible();
-  const afterEdit = (await api('/api/v1/operations/rules/form-authority')).document.active;
+  const afterEdit = (await api('/api/operations/rules/form-authority')).document.active;
   if (beforeEdit.revisionId !== afterEdit.revisionId) {
     throw new Error('editing the form published an Active revision');
   }
   evidence.noSubmitOnEdit = true;
 
   // -- RecognitionRule: a genuine match and non-match on the same candidate --
-  await open(page, '/ui-v2/rules?section=recognitionRules');
+  await open(page, '/rules?section=recognitionRules');
   await page.getByRole('button', { name: '添加识别规则' }).click();
   const ruleDrawer = page.getByRole('dialog', { name: '添加识别规则' });
   await ruleDrawer.locator('#mf-rules-form-recognitionRules-id').fill('proof-rule');
@@ -148,7 +148,7 @@ try {
       stopOnMatch: false,
     },
   };
-  const created = await api('/api/v1/operations/rules/analysis/recognitionRules', 'POST', {
+  const created = await api('/api/operations/rules/analysis/recognitionRules', 'POST', {
     ...identity(active),
     candidate,
     sample: { path: '电影/Example.Movie.2024.mkv' },
@@ -183,7 +183,7 @@ try {
   evidence.ruleMatch = match.result.testedPath;
 
   const nonMatchResponse = await api(
-    '/api/v1/operations/rules/analysis/recognitionRules',
+    '/api/operations/rules/analysis/recognitionRules',
     'POST',
     {
       ...identity(active),
@@ -209,7 +209,7 @@ try {
   evidence.ruleNonMatch = nonMatch.result.testedPath;
 
   // The same journey is reachable from the native Edit page.
-  await open(page, '/ui-v2/rules/edit/recognitionRules/movie-library');
+  await open(page, '/rules/edit/recognitionRules/movie-library');
   await expect(page.getByRole('heading', { name: '测试与预览' })).toBeVisible();
   await expect(page.getByRole('button', { name: '测试该识别规则' })).toBeVisible();
   await page.getByRole('button', { name: '测试该识别规则' }).click();
@@ -217,7 +217,7 @@ try {
 
   // -- Type binding: only type/uniqueness/four references -------------------
   const bindingResponse = await api(
-    '/api/v1/operations/rules/analysis/typeBindings',
+    '/api/operations/rules/analysis/typeBindings',
     'POST',
     {
       ...identity(active),
@@ -257,7 +257,7 @@ try {
 
   // -- Metadata: offline needs no credential and no Provider ----------------
   const metadataResponse = await api(
-    '/api/v1/operations/rules/analysis/metadataPolicies',
+    '/api/operations/rules/analysis/metadataPolicies',
     'POST',
     {
       ...identity(active),
@@ -293,7 +293,7 @@ try {
 
   // -- Naming and Classification: typed samples, own rules only -------------
   const namingResponse = await api(
-    '/api/v1/operations/rules/analysis/namingPolicies',
+    '/api/operations/rules/analysis/namingPolicies',
     'POST',
     {
       ...identity(active),
@@ -322,7 +322,7 @@ try {
   evidence.namingDirectory = naming.result.directory;
 
   const classificationResponse = await api(
-    '/api/v1/operations/rules/analysis/classificationPolicies',
+    '/api/operations/rules/analysis/classificationPolicies',
     'POST',
     {
       ...identity(active),
@@ -356,7 +356,7 @@ try {
 
   // -- Organize: own effects, physical readiness explicitly unchecked -------
   const organizeResponse = await api(
-    '/api/v1/operations/rules/analysis/organizePolicies',
+    '/api/operations/rules/analysis/organizePolicies',
     'POST',
     {
       ...identity(active),
@@ -382,7 +382,7 @@ try {
   evidence.organizePhysicalReadiness = organize.result.physicalReadiness;
 
   // -- the native Edit page shows the same family-specific panel ------------
-  await open(page, '/ui-v2/rules/edit/recognitionTypes/A');
+  await open(page, '/rules/edit/recognitionTypes/A');
   await expect(page.getByRole('heading', { name: '测试与预览' })).toBeVisible();
   await expect(page.getByRole('button', { name: '测试该识别类型' })).toBeVisible();
   await expect(page.getByLabel('测试合成路径')).toHaveCount(0);
@@ -390,7 +390,7 @@ try {
   await expect(page.getByLabel('测试合成路径')).toBeVisible();
 
   // -- Overview: the separately labelled complete-flow check ----------------
-  await open(page, '/ui-v2/rules');
+  await open(page, '/rules');
   await expect(
     page.getByRole('heading', { name: '完整流程检查' }),
   ).toBeVisible();
@@ -404,7 +404,7 @@ try {
   evidence.completeFlowVisible = true;
 
   const completeFlowResponse = await api(
-    '/api/v1/operations/rules/complete-flow',
+    '/api/operations/rules/complete-flow',
     'POST',
     {
       ...identity(await authority()),
@@ -611,7 +611,7 @@ def main() -> int:
         print("== real Python-served object-scoped rules analysis proof ==")
 
         database_path = root / "runtime.sqlite3"
-        active_before = api("GET", "/api/v1/operations/rules/form-authority")["active"]
+        active_before = api("GET", "/api/operations/rules/form-authority")["active"]
         activations_before = _activation_count(database_path)
         work_before = _executable_work(database_path)
 
@@ -731,7 +731,7 @@ def main() -> int:
         for family, body in families.items():
             outcome = api(
                 "POST",
-                f"/api/v1/operations/rules/analysis/{family}",
+                f"/api/operations/rules/analysis/{family}",
                 {**_authority_identity(active_before), **body},
             )
             if outcome["outcome"] not in {
@@ -759,7 +759,7 @@ def main() -> int:
         # -- a definition check needs no sample, binding or downstream ---------
         orphan = api(
             "POST",
-            "/api/v1/operations/rules/analysis/recognitionTypes",
+            "/api/operations/rules/analysis/recognitionTypes",
             {
                 **_authority_identity(active_before),
                 "candidate": {
@@ -778,7 +778,7 @@ def main() -> int:
         # -- C remains C while reusing A policies -----------------------------
         binding = api(
             "POST",
-            "/api/v1/operations/rules/analysis/typeBindings",
+            "/api/operations/rules/analysis/typeBindings",
             {
                 **_authority_identity(active_before),
                 "candidate": {
@@ -805,7 +805,7 @@ def main() -> int:
         # -- the separately labelled complete-flow entry -----------------------
         complete = api(
             "POST",
-            "/api/v1/operations/rules/complete-flow",
+            "/api/operations/rules/complete-flow",
             {
                 **_authority_identity(active_before),
                 "resourceLibraryId": "source",
@@ -834,7 +834,7 @@ def main() -> int:
         )
 
         # -- a local pass never activates or creates executable work ----------
-        active_after = api("GET", "/api/v1/operations/rules/form-authority")["active"]
+        active_after = api("GET", "/api/operations/rules/form-authority")["active"]
         if (
             active_after["revisionId"] != active_before["revisionId"]
             or active_after["digest"] != active_before["digest"]
@@ -865,7 +865,7 @@ def main() -> int:
         print(f"   browser journey: {result.stdout.strip().splitlines()[-1]}")
 
         # -- the browser journey also mutated nothing -------------------------
-        final_active = api("GET", "/api/v1/operations/rules/form-authority")["active"]
+        final_active = api("GET", "/api/operations/rules/form-authority")["active"]
         if final_active["revisionId"] != active_before["revisionId"]:
             raise RuntimeError("the browser journey published an Active revision")
         if _activation_count(database_path) != activations_before:

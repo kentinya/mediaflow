@@ -198,7 +198,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                     environment.pop("MF_GUIDED_SMB_PASSWORD", None)
                     status, draft = request(
                         api,
-                        "/api/v1/configuration/drafts/first",
+                        "/api/configuration/drafts/first",
                         method="POST",
                         body={},
                     )
@@ -208,7 +208,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                     for value in self._storage_values(root):
                         status, result = request(
                             api,
-                            f"/api/v1/configuration/revisions/{revision_id}/objects/storages",
+                            f"/api/configuration/revisions/{revision_id}/objects/storages",
                             method="POST",
                             body={"expectedVersion": version, "object": value},
                         )
@@ -220,7 +220,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
 
                     status, detail = request(
                         api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects",
+                        f"/api/configuration/revisions/{revision_id}/objects",
                     )
                     self.assertEqual(status, 200)
                     items = detail["objects"]["storages"]
@@ -241,20 +241,20 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
 
                     status, inspected = request(
                         api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/storages/s3-guided",
+                        f"/api/configuration/revisions/{revision_id}/objects/storages/s3-guided",
                     )
                     self.assertEqual(status, 200)
                     self.assertEqual(inspected["storage"], by_id["s3-guided"])
                     status, collection = request(
                         api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/storages",
+                        f"/api/configuration/revisions/{revision_id}/objects/storages",
                         token="viewer-token",
                     )
                     self.assertEqual(status, 200)
                     self.assertEqual(collection["total"], 6)
                     status, denied = request(
                         api,
-                        f"/api/v1/configuration/revisions/{revision_id}/objects/storages",
+                        f"/api/configuration/revisions/{revision_id}/objects/storages",
                         method="POST",
                         body={
                             "expectedVersion": version,
@@ -290,14 +290,14 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 api = self._api(repository, runtime_repository, service, bootstrap)
                 _, draft = request(
                     api,
-                    "/api/v1/configuration/drafts/first",
+                    "/api/configuration/drafts/first",
                     method="POST",
                     body={},
                 )
                 value = self._storage_values(root)[-1]
                 status, created = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}/objects/storages",
+                    f"/api/configuration/revisions/{draft['revisionId']}/objects/storages",
                     method="POST",
                     body={"expectedVersion": draft["version"], "object": value},
                 )
@@ -305,7 +305,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 revision_id = draft["revisionId"]
                 status, copied = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages/{value['id']}/copy",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages/{value['id']}/copy",
                     method="POST",
                     body={"expectedVersion": created["version"]},
                 )
@@ -315,7 +315,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 self.assertEqual(copied["storage"]["type"], value["type"])
                 status, copied_again = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages/{value['id']}/copy",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages/{value['id']}/copy",
                     method="POST",
                     body={"expectedVersion": copied["version"]},
                 )
@@ -326,7 +326,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 edited["name"] = "Edited compatible"
                 status, changed = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages/{edited['id']}",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages/{edited['id']}",
                     method="PUT",
                     body={"expectedVersion": copied_again["version"], "object": edited},
                 )
@@ -334,7 +334,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 self.assertEqual(changed["storage"]["name"], "Edited compatible")
                 status, enabled = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages/{edited['id']}/enable",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages/{edited['id']}/enable",
                     method="POST",
                     body={"expectedVersion": changed["version"]},
                 )
@@ -342,7 +342,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 self.assertTrue(enabled["storage"]["enabled"])
                 status, disabled = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages/{edited['id']}/disable",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages/{edited['id']}/disable",
                     method="POST",
                     body={"expectedVersion": enabled["version"]},
                 )
@@ -350,7 +350,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 self.assertFalse(disabled["storage"]["enabled"])
                 status, stale = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages/{edited['id']}/enable",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages/{edited['id']}/enable",
                     method="POST",
                     body={"expectedVersion": enabled["version"]},
                 )
@@ -374,7 +374,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 api = self._api(repository, runtime_repository, service, bootstrap)
                 _, draft = request(
                     api,
-                    "/api/v1/configuration/drafts/first",
+                    "/api/configuration/drafts/first",
                     method="POST",
                     body={},
                 )
@@ -382,7 +382,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 bad["options"] = dict(bad["options"], unknownField="rejected")
                 status, response = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}/objects/storages",
+                    f"/api/configuration/revisions/{draft['revisionId']}/objects/storages",
                     method="POST",
                     body={"expectedVersion": draft["version"], "object": bad},
                 )
@@ -394,7 +394,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 literal["options"] = dict(literal["options"], token="literal-value")
                 status, response = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft['revisionId']}/objects/storages",
+                    f"/api/configuration/revisions/{draft['revisionId']}/objects/storages",
                     method="POST",
                     body={"expectedVersion": draft["version"], "object": literal},
                 )
@@ -443,7 +443,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 api = self._api(repository, runtime_repository, service, bootstrap)
                 _, draft = request(
                     api,
-                    "/api/v1/configuration/drafts/first",
+                    "/api/configuration/drafts/first",
                     method="POST",
                     body={},
                 )
@@ -452,7 +452,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 referenced["id"] = "referenced"
                 status, created = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages",
                     method="POST",
                     body={"expectedVersion": draft["version"], "object": referenced},
                 )
@@ -465,7 +465,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 }
                 status, resource_result = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/resourceLibraries",
+                    f"/api/configuration/revisions/{revision_id}/objects/resourceLibraries",
                     method="POST",
                     body={"expectedVersion": created["version"], "object": resource},
                 )
@@ -478,14 +478,14 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 }
                 status, media_result = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/mediaLibraries",
+                    f"/api/configuration/revisions/{revision_id}/objects/mediaLibraries",
                     method="POST",
                     body={"expectedVersion": resource_result["version"], "object": media},
                 )
                 self.assertEqual(status, 200)
                 status, blocked = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages/referenced",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages/referenced",
                     method="DELETE",
                     body={"expectedVersion": media_result["version"]},
                 )
@@ -505,14 +505,14 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 unreferenced["id"] = "unreferenced"
                 status, extra = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages",
                     method="POST",
                     body={"expectedVersion": unchanged.version, "object": unreferenced},
                 )
                 self.assertEqual(status, 200)
                 status, deleted = request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/storages/unreferenced",
+                    f"/api/configuration/revisions/{revision_id}/objects/storages/unreferenced",
                     method="DELETE",
                     body={"expectedVersion": extra["version"]},
                 )

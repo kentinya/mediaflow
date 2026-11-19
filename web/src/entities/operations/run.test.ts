@@ -101,7 +101,7 @@ function lifecycleAction(
     action: name,
     label: `${name} label`,
     method: "POST",
-    path: `/api/v1/tasks/{id}/${name}`,
+    path: `/api/tasks/{id}/${name}`,
     available,
     unavailableReason,
     confirmationRequired: false,

@@ -14,7 +14,7 @@ function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
 }
 
 async function connectAs(page: Page, token: string): Promise<void> {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
 }
@@ -25,7 +25,7 @@ async function openFiles(
   search = "",
   expectTable = true,
 ): Promise<void> {
-  await page.goto("/ui-v2/resourcelib/files" + search);
+  await page.goto("/resourcelib/files" + search);
   await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -44,7 +44,7 @@ test("the shell 文件 entry opens ResourceLibrary Files at its new address", as
 }) => {
   await connectAs(page, VIEWER_TOKEN);
   await page.getByRole("link", { name: "Files" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files$/);
+  await expect(page).toHaveURL(/\/resourcelib\/files$/);
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
   ).toBeVisible();
@@ -85,7 +85,7 @@ test("ResourceLibrary edit is prefilled, immutable-ID, recoverable and atomicall
   page.on("request", async (request) => {
     if (
       request.method() === "PUT" &&
-      request.url().includes("/api/v1/resource-libraries/resources")
+      request.url().includes("/api/resource-libraries/resources")
     ) {
       puts.push(request.postDataJSON() as Record<string, unknown>);
     }
@@ -240,7 +240,7 @@ test("Files route rejects limited principals without leaking the token", async (
   page,
 }) => {
   const apiRequests = apiRequestsOf(page);
-  await page.goto("/ui-v2/resourcelib/files");
+  await page.goto("/resourcelib/files");
   await page.getByLabel("API token").fill(LIMITED_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
@@ -426,7 +426,7 @@ test("general selection excludes ineligible rows from the durable Organize admis
     if (request.url().includes("/files/discoveries")) {
       admissionBodies.push(request.postData() ?? "");
     }
-    if (request.url().includes("/api/v1/operations/previews")) {
+    if (request.url().includes("/api/operations/previews")) {
       previewBodies.push(request.postData() ?? "");
     }
   });
@@ -453,7 +453,7 @@ test("general selection excludes ineligible rows from the durable Organize admis
   const card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
+    /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
   await expect(
     card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
@@ -470,7 +470,7 @@ test("general selection excludes ineligible rows from the durable Organize admis
   await expect(page.getByRole("dialog", { name: "整理所选文件" })).toHaveCount(
     0,
   );
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await expect(page.getByRole("table")).toBeVisible();
   await expect(page.getByText(/已选择 2 个文件/)).toBeVisible();
 });
@@ -505,7 +505,7 @@ test("a folder selection starts the bounded discovery journey instead of a direc
   const card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
+    /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
   expect(discoveryBodies).toHaveLength(1);
   expect(discoveryBodies[0]).toContain('"paths":["Movies"]');
@@ -545,7 +545,7 @@ test("a mixed folder and file selection enters one bounded discovery", async ({
     page.getByRole("dialog", { name: "整理所选文件" }),
   ).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
+    /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
   expect(discoveryBodies).toHaveLength(1);
   expect(discoveryBodies[0]).toContain("Movies");
@@ -575,7 +575,7 @@ test("a folder row Organize action admits exactly that discovery scope", async (
     page.getByRole("dialog", { name: "整理所选文件" }),
   ).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
+    /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
   expect(discoveryBodies).toHaveLength(1);
   expect(discoveryBodies[0]).toContain('"paths":["Movies"]');
@@ -609,9 +609,7 @@ test("the same-page preparation links the summary and confirms one exact subset"
   // Slice53 RO-3: the proved admission closes the preparation card and hands
   // the exact durable task to the existing task-center selection, whose
   // existing detail opens — never a second execution-results surface.
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\?.*run=organize-task-e2e-001/,
-  );
+  await expect(page).toHaveURL(/\/operations\?.*run=organize-task-e2e-001/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 });
 
@@ -634,7 +632,7 @@ test("the Files URL preparation identity reconnects the same card with no duplic
   const card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
+    /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
 
   // A full browser reload clears memory-only auth and lands on the V2
@@ -647,7 +645,7 @@ test("the Files URL preparation identity reconnects the same card with no duplic
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
+    /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
   await expect(
     card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
@@ -681,7 +679,7 @@ test("a matching open preparation reuses one durable record instead of a duplica
   // identity, never a second, different one.
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
+    /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
 });
 
@@ -730,7 +728,7 @@ test("the row Organize action admits the existing durable intent for one eligibl
   const card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(
-    /\/ui-v2\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
+    /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
   expect(admissionBodies).toHaveLength(1);
   expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');
@@ -739,7 +737,7 @@ test("the row Organize action admits the existing durable intent for one eligibl
   // directory listing intact behind it.
   await card.getByRole("button", { name: "关闭整理弹窗" }).click();
   await expect(card).toHaveCount(0);
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await expect(page.getByRole("table")).toBeVisible();
 });
 
@@ -802,7 +800,7 @@ test("a rejected Organize admission keeps Files context, selection and a safe re
   // The failure is explained on the Files item, the ResourceLibrary and
   // directory context survive and the selection is not silently replaced.
   await expect(page.getByText(/所选文件夹或文件已不存在/)).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await expect(sampleRow.getByRole("checkbox")).toBeChecked();
   await expect(page.getByText(/已选择 1 个文件/)).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
@@ -868,7 +866,7 @@ test("unavailable and malformed reads keep page context and safe retry", async (
     page.getByRole("heading", { name: "Storage read failed" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "重试" })).toBeVisible();
-  await page.goto("/ui-v2/resourcelib/files?path=malformed");
+  await page.goto("/resourcelib/files?path=malformed");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -892,7 +890,7 @@ test("invalid URL path is rejected locally without a Storage browse request", as
   ).toBeVisible();
   expect(
     apiRequests.some((request) =>
-      request.url.includes("/api/v1/resource-libraries/"),
+      request.url.includes("/api/resource-libraries/"),
     ),
   ).toBe(false);
 });
@@ -900,7 +898,7 @@ test("invalid URL path is rejected locally without a Storage browse request", as
 test("ResourceLibrary Save keeps the old Active on failure and retries once safely", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.evaluate(async () => {
     const response = await fetch(
       "/__test__/reset-resource-library?failOnce=1",
@@ -947,14 +945,14 @@ test("ResourceLibrary Save keeps the old Active on failure and retries once safe
   const savePosts = apiRequests.filter(
     (request) =>
       request.method === "POST" &&
-      request.url.includes("/api/v1/resource-libraries"),
+      request.url.includes("/api/resource-libraries"),
   );
   expect(savePosts).toHaveLength(2);
   expect(
     apiRequests.every(
       (request) =>
         request.method === "GET" ||
-        request.url.includes("/api/v1/resource-libraries"),
+        request.url.includes("/api/resource-libraries"),
     ),
   ).toBe(true);
 });
@@ -1137,7 +1135,7 @@ test("the trimmed sibling path is genuinely absent, keeping the real not-found s
  * other (possibly parallel) worker.
  */
 async function resetFakeOrganize(page: Page): Promise<void> {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.evaluate(async (target) => {
     const reset = await fetch(target, { method: "POST" });
     if (!reset.ok) throw new Error("organize fake reset failed");
@@ -1148,7 +1146,7 @@ async function resetFakeResourceLibraries(
   page: Page,
   query = "",
 ): Promise<void> {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   // The fake server binds its fixture state to a session cookie; the Set-Cookie
   // on this bootstrap request pins the session for the whole test.
   await page.evaluate(async (target) => {
@@ -1168,7 +1166,7 @@ test("normal entry keeps the Add ResourceLibrary drawer closed", async ({
   page,
 }) => {
   const apiRequests = apiRequestsOf(page);
-  await page.goto("/ui-v2/resourcelib/files");
+  await page.goto("/resourcelib/files");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -1215,7 +1213,7 @@ test("zero-library Active configuration renders the full-width empty state", asy
   // No ResourceLibrary-scoped request without an exact enabled library.
   expect(
     apiRequests.some((request) =>
-      /\/api\/v1\/resource-libraries\/[^/]+\/files/.test(request.url),
+      /\/api\/resource-libraries\/[^/]+\/files/.test(request.url),
     ),
   ).toBe(false);
 });
@@ -1386,7 +1384,7 @@ test("referenced ResourceLibrary removal stays blocked with bounded evidence", a
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/") && request.method() !== "GET") {
+    if (request.url().includes("/api/") && request.method() !== "GET") {
       writes.push(`${request.method()} ${request.url()}`);
     }
   });
@@ -1409,14 +1407,14 @@ test("referenced ResourceLibrary removal stays blocked with bounded evidence", a
   await dialog
     .getByRole("button", { name: "前往整理规则处理识别规则引用" })
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/rules\?section=recognitionRules$/);
+  await expect(page).toHaveURL(/\/rules\?section=recognitionRules$/);
   await expect(
     page.getByRole("heading", { name: "整理规则", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("row", { name: /movie-library/ })).toBeVisible();
   expect(writes).toEqual([]);
   await page.goBack();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
 });
 
@@ -1432,7 +1430,7 @@ test("automation-only ResourceLibrary references open the current Automation man
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/") && request.method() !== "GET") {
+    if (request.url().includes("/api/") && request.method() !== "GET") {
       writes.push(`${request.method()} ${request.url()}`);
     }
   });
@@ -1455,7 +1453,7 @@ test("automation-only ResourceLibrary references open the current Automation man
       name: "前往自动化管理处理自动化定义引用",
     })
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
   await expect(
     page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
   ).toBeVisible();
@@ -1465,7 +1463,7 @@ test("automation-only ResourceLibrary references open the current Automation man
   expect(writes).toEqual([]);
 
   await page.goBack();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
 });
 
@@ -1481,7 +1479,7 @@ test("mixed ResourceLibrary references expose both current management entries", 
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/") && request.method() !== "GET") {
+    if (request.url().includes("/api/") && request.method() !== "GET") {
       writes.push(`${request.method()} ${request.url()}`);
     }
   });
@@ -1501,10 +1499,10 @@ test("mixed ResourceLibrary references expose both current management entries", 
   await dialog
     .getByRole("button", { name: "前往整理规则处理识别规则引用" })
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/rules\?section=recognitionRules$/);
+  await expect(page).toHaveURL(/\/rules\?section=recognitionRules$/);
   await expect(page.getByRole("row", { name: /movie-library/ })).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
 
   await page.getByRole("button", { name: "资源库操作 source" }).click();
@@ -1515,14 +1513,14 @@ test("mixed ResourceLibrary references expose both current management entries", 
       name: "前往自动化管理处理自动化定义引用",
     })
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  await expect(page).toHaveURL(/\/operations\/automation$/);
   const row = page.getByRole("row", { name: /Nightly automation/ });
   await expect(row).toBeVisible();
   await expect(row.getByRole("button", { name: "编辑" })).toBeVisible();
   expect(writes).toEqual([]);
 
   await page.goBack();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
 });
 
@@ -1546,7 +1544,7 @@ test("a stale removal confirmation keeps the dialog open with a re-review action
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       if (
         init?.method === "DELETE" &&
-        String(input).endsWith("/api/v1/resource-libraries/lib-a")
+        String(input).endsWith("/api/resource-libraries/lib-a")
       ) {
         const body = JSON.parse(String(init.body));
         return originalFetch(input, {
@@ -1997,7 +1995,7 @@ test("Task52.2 ResourceLibrary refresh keeps one reserved busy state without pus
   expect(rowsBefore).not.toBeNull();
   const filesReads = () =>
     requests.filter((request) =>
-      request.url.includes("/api/v1/resource-libraries/"),
+      request.url.includes("/api/resource-libraries/"),
     ).length;
 
   // A fast re-read: the refresh really repeats (read count grows), yet no
@@ -2012,7 +2010,7 @@ test("Task52.2 ResourceLibrary refresh keeps one reserved busy state without pus
   // A slow re-read: one stable busy line fades into the reserved slot while
   // the already-read rows stay readable and exactly where they were.
   await page.route(
-    /\/api\/v1\/resource-libraries\/[^/]+\/files(?:\?|$)/,
+    /\/api\/resource-libraries\/[^/]+\/files(?:\?|$)/,
     async (route) => {
       const response = await route.fetch();
       await new Promise((resolve) => setTimeout(resolve, 1_300));

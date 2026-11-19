@@ -255,7 +255,7 @@ class RunOnceSourceOwnershipTests(unittest.TestCase):
                 status, reply = case.request(
                     value,
                     "POST",
-                    f"/api/v1/operations/automation/task-definitions/{definition_id}/run-once",
+                    f"/api/operations/automation/task-definitions/{definition_id}/run-once",
                     body,
                 )
                 self.assertEqual(202, status, reply)
@@ -311,7 +311,7 @@ class RunOnceSourceOwnershipTests(unittest.TestCase):
             status, discovery = case.request(
                 value,
                 "POST",
-                "/api/v1/resource-libraries/library/files/discoveries",
+                "/api/resource-libraries/library/files/discoveries",
                 {
                     "paths": ["Movies"],
                     "autoPrepare": True,

@@ -14,7 +14,7 @@ import { transferStatusMessage } from "./TransferDialog";
 /**
  * Component/router proof for the Task 38.4 MediaLibrary bounded Copy/Move
  * transfer journey (Slice 38 RO-5/RO-6/RO-7), driven from
- * `/ui-v2/medialib/files`.
+ * `/medialib/files`.
  *
  * The cases below prove the operator journey — select bounded items, choose an
  * enabled destination MediaLibrary and a bounded destination directory, preview
@@ -175,8 +175,8 @@ function stubTransferSurface(options: TransferStubOptions = {}) {
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
-      if (url === "/api/v1/system/status") {
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/system/status") {
         return jsonResponse({
           authority: "MANAGED",
           configurationActive: true,
@@ -237,12 +237,12 @@ function stubTransferSurface(options: TransferStubOptions = {}) {
                 {
                   action: "pause",
                   available: true,
-                  path: `/api/v1/tasks/${projectionMatch[1]}/pause`,
+                  path: `/api/tasks/${projectionMatch[1]}/pause`,
                 },
                 {
                   action: "cancel",
                   available: true,
-                  path: `/api/v1/tasks/${projectionMatch[1]}/cancel`,
+                  path: `/api/tasks/${projectionMatch[1]}/cancel`,
                 },
                 { action: "resume", available: false },
               ],
@@ -368,8 +368,9 @@ function stubTransferSurface(options: TransferStubOptions = {}) {
           202,
         );
       }
-      const browseMatch =
-        /\/api\/v1\/media-libraries\/([^/]+)\/files(\?.*)?$/.exec(url);
+      const browseMatch = /\/api\/media-libraries\/([^/]+)\/files(\?.*)?$/.exec(
+        url,
+      );
       if (browseMatch !== null) {
         const libraryId = decodeURIComponent(browseMatch[1]);
         const params = new URL(url, "http://x").searchParams;
@@ -391,7 +392,7 @@ function stubTransferSurface(options: TransferStubOptions = {}) {
 
 async function openPage(): Promise<void> {
   authStore.setToken(TOKEN);
-  renderApp("/ui-v2/medialib/files");
+  renderApp("/medialib/files");
   expect(await screen.findByRole("heading", { name: "媒体库" })).toBeVisible();
   await screen.findByRole("table");
 }
@@ -445,7 +446,7 @@ describe("MediaLibrary bounded Copy/Move transfer", () => {
       conflictMode: "fail",
     });
     expect(stub.impactReads[0]).toContain(
-      "/api/v1/media-libraries/movies/files/transfer-impact",
+      "/api/media-libraries/movies/files/transfer-impact",
     );
     // The dialog follows the durable identity instead of resubmitting.
     const dialog = await screen.findByRole("dialog", { name: "复制进度" });

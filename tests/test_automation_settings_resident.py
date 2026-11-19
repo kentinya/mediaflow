@@ -1025,7 +1025,7 @@ class CurrentConsumerMembershipTests(ResidentAdoptionFixture):
             statuses: list[str] = []
             environ = {
                 "REQUEST_METHOD": "GET",
-                "PATH_INFO": "/api/v1/operations/automation/settings",
+                "PATH_INFO": "/api/operations/automation/settings",
                 "QUERY_STRING": "",
                 "CONTENT_LENGTH": "0",
                 "wsgi.input": io.BytesIO(b""),

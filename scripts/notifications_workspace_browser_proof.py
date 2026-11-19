@@ -260,7 +260,7 @@ const webhookId = process.env.MF_PROOF_WEBHOOK_ID;
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  await page.goto(base + '/ui-v2/operations/notifications');
+  await page.goto(base + '/operations/notifications');
   await page.getByLabel('API token').fill(token);
   await page.getByRole('button', { name: 'Connect' }).click();
   await expect(page.getByRole('heading', { name: '通知', exact: true })).toBeVisible();
@@ -341,7 +341,7 @@ const browser = await chromium.launch({ headless: true });
 const screenshots = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  await page.goto(base + '/ui-v2/operations/notifications');
+  await page.goto(base + '/operations/notifications');
   await page.getByLabel('API token').fill(token);
   await page.getByRole('button', { name: 'Connect' }).click();
   await expect(page.getByRole('heading', { name: '通知', exact: true })).toBeVisible();
@@ -374,12 +374,12 @@ try {
   // The same existing editor deep link, opened as a READ principal after
   // re-authentication, must not offer a fillable form, save or signed test.
   const draftBeforeViewer = await api(
-    `/api/v1/operations/notifications/webhooks/${webhookId}/draft`,
+    `/api/operations/notifications/webhooks/${webhookId}/draft`,
   );
   const viewerPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   try {
     await viewerPage.goto(
-      base + `/ui-v2/operations/notifications/editor/${webhookId}`,
+      base + `/operations/notifications/editor/${webhookId}`,
     );
     await viewerPage.getByLabel('API token').fill(viewerToken);
     await viewerPage.getByRole('button', { name: 'Connect' }).click();
@@ -410,7 +410,7 @@ try {
     await viewerPage.close();
   }
   const draftAfterViewer = await api(
-    `/api/v1/operations/notifications/webhooks/${webhookId}/draft`,
+    `/api/operations/notifications/webhooks/${webhookId}/draft`,
   );
   if (
     draftAfterViewer.draft?.revisionId !== draftBeforeViewer.draft?.revisionId ||
@@ -426,13 +426,13 @@ try {
   // Python API: save, validate and publish. The browser still holds local,
   // unsaved input against the now-published revision.
   const draftDocument = await api(
-    `/api/v1/operations/notifications/webhooks/${webhookId}/draft`,
+    `/api/operations/notifications/webhooks/${webhookId}/draft`,
   );
   const openDraft = draftDocument.draft;
   if (!openDraft) throw new Error('the successor Draft was not open');
   const webhook = openDraft.webhook;
   await api(
-    `/api/v1/configuration/revisions/${openDraft.revisionId}/objects/webhooks/${webhookId}`,
+    `/api/configuration/revisions/${openDraft.revisionId}/objects/webhooks/${webhookId}`,
     {
       method: 'PUT',
       body: JSON.stringify({
@@ -452,10 +452,10 @@ try {
     },
   );
   const validated = await api(
-    `/api/v1/configuration/revisions/${openDraft.revisionId}/validate`,
+    `/api/configuration/revisions/${openDraft.revisionId}/validate`,
     { method: 'POST', body: '{}' },
   );
-  await api(`/api/v1/operations/notifications/webhooks/${webhookId}/activate-draft`, {
+  await api(`/api/operations/notifications/webhooks/${webhookId}/activate-draft`, {
     method: 'POST',
     body: JSON.stringify({
       expectedRevisionId: openDraft.revisionId,

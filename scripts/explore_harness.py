@@ -1,7 +1,7 @@
 """Explore real-Python browser harness (Task 51.1 / Slice 51).
 
-One process serves the built V2 artifact (``/ui-v2/*`` through the real
-``MediaFlowApi`` static layer) and the real ``/api/v1/explore/*`` boundary over
+One process serves the built V2 artifact at the Web root (through the real
+``MediaFlowApi`` static layer) and the real ``/api/explore/*`` boundary over
 a temporary SQLite runtime database. The production ``TMDBAdapter`` stack
 (``TMDBProvider`` over ``TMDBClient``/``HttpxTransport``) is driven with an
 in-process ``httpx.MockTransport`` fake upstream: no real TMDB account,
@@ -545,7 +545,7 @@ def main(argv: list[str] | None = None) -> int:
         handler_class=QuietHandler,
     ) as server:
         print(
-            f"explore harness: http://{args.host}:{args.port}/ui-v2/ (database {database})",
+            f"explore harness: http://{args.host}:{args.port}/ (database {database})",
             flush=True,
         )
         try:

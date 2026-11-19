@@ -123,7 +123,7 @@ try {
   const writes = [];
   let activationBody = null;
   page.on('request', request => {
-    if (request.method() !== 'GET' && request.url().includes('/api/v1/configuration'))
+    if (request.method() !== 'GET' && request.url().includes('/api/configuration'))
       writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
     if (request.method() !== 'GET' &&
         /\/(tasks|jobs|scan|preview|organize)(\/|$)/.test(new URL(request.url()).pathname))
@@ -131,16 +131,16 @@ try {
     if (request.method() === 'POST' && request.url().endsWith('/activate'))
       activationBody = request.postDataJSON();
   });
-  await page.goto(base + '/ui-v2/storage');
+  await page.goto(base + '/storage');
   await page.getByLabel('API token').fill(token);
   await page.getByRole('button', {name:'Connect'}).click();
   await expect(page.getByRole('heading', {name:'存储管理'})).toBeVisible();
   await expect(page.getByText('尚未完成首次设置')).toBeVisible();
   await expect(page.getByRole('table')).toHaveCount(0);
   const handoff = page.getByRole('link', {name:'去完成设置'});
-  await expect(handoff).toHaveAttribute('href','/ui-v2/configuration?returnTo=storage');
+  await expect(handoff).toHaveAttribute('href','/configuration?returnTo=storage');
   await handoff.click();
-  await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
+  await expect(page).toHaveURL(/\/configuration\?returnTo=storage$/);
   await expect(page.getByText('需要首次设置', {exact:true})).toBeVisible();
   await expect(page.getByRole('button', {name:'创建首个草稿'})).toBeVisible();
   if (writes.length !== 0) throw new Error('opening Settings wrote configuration or started work');
@@ -148,17 +148,17 @@ try {
   await page.getByRole('button', {name:'创建首个草稿'}).click();
   await expect(page.getByText('已有草稿待恢复', {exact:true})).toBeVisible();
   await expect(page.getByRole('button', {name:/恢复草稿/})).toBeVisible();
-  if (writes.length !== 1 || writes[0] !== 'POST /api/v1/configuration/drafts/first')
+  if (writes.length !== 1 || writes[0] !== 'POST /api/configuration/drafts/first')
     throw new Error('first Draft was not created by one explicit action');
 
   // Return to Storage and revisit Settings: the existing Draft is recovered,
   // and navigation never creates another one.
   await page.getByRole('link', {name:'返回上一页'}).click();
-  await expect(page).toHaveURL(/\/ui-v2\/storage$/);
+  await expect(page).toHaveURL(/\/storage$/);
   await expect(page.getByText(/继续已有的设置草稿/)).toBeVisible();
   await expect(page.getByRole('table')).toHaveCount(0);
   await page.getByRole('link', {name:'去完成设置'}).click();
-  await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
+  await expect(page).toHaveURL(/\/configuration\?returnTo=storage$/);
   await expect(page.getByText('已有草稿待恢复', {exact:true})).toBeVisible();
   await page.getByRole('button', {name:/恢复草稿/}).click();
   await expect(page.getByRole('heading', {name:'高级配置'})).toBeVisible();
@@ -175,13 +175,13 @@ try {
       /^POST \/api\/v1\/configuration\/revisions\/[^/]+\/validate$/.test(path)))
     throw new Error('the explicit validation action was not observed');
   await page.getByRole('button', {name:'激活配置'}).click();
-  await expect(page).toHaveURL(/\/ui-v2\/storage$/);
+  await expect(page).toHaveURL(/\/storage$/);
   await expect(page.getByRole('heading', {name:'存储管理'})).toBeVisible();
   await expect(page.getByText('尚未完成首次设置')).toHaveCount(0);
   await expect(page.getByRole('table')).toHaveCount(0);
   await expect(page.getByText('当前 Active 配置中没有存储对象。')).toBeVisible();
   if (!writes.some(path =>
-      path.startsWith('POST /api/v1/configuration/revisions/') &&
+      path.startsWith('POST /api/configuration/revisions/') &&
       path.endsWith('/activate')))
     throw new Error('activation did not follow explicit validation');
   if (!activationBody || activationBody.checked !== true)
@@ -219,7 +219,7 @@ const token = process.env.MF_PROOF_TOKEN;
 const browser = await chromium.launch({headless:true});
 try {
   const page = await browser.newPage();
-  await page.goto(base + '/ui-v2/storage');
+  await page.goto(base + '/storage');
   await page.getByLabel('API token').fill(token);
   await page.getByRole('button', {name:'Connect'}).click();
   await expect(page.getByRole('heading', {name:'存储管理'})).toBeVisible();
@@ -268,8 +268,8 @@ def run_management_only(root: Path) -> None:
     process = process_for(config, port)
     try:
         wait_for_health(process, base)
-        before_status = request_json(base, "/api/v1/configuration/status")
-        before_storage = request_json(base, "/api/v1/operations/storage-management/inventory")
+        before_status = request_json(base, "/api/configuration/status")
+        before_storage = request_json(base, "/api/operations/storage-management/inventory")
         if (
             before_status.get("setupRequired") is not True
             or before_status.get("active") is not None
@@ -283,13 +283,13 @@ def run_management_only(root: Path) -> None:
             or setup.get("managedActivation") is not False
         ):
             raise RuntimeError("no-Active setup authority fabricated a Draft or activation")
-        if setup.get("setupPath") != "/ui-v2/configuration":
+        if setup.get("setupPath") != "/configuration":
             raise RuntimeError("Storage setup authority did not use native Settings")
         before_tasks = table_count(database, "tasks")
         browser_evidence = run_browser(base, NO_ACTIVE_BROWSER)
 
-        after_status = request_json(base, "/api/v1/configuration/status")
-        after_inventory = request_json(base, "/api/v1/operations/storage-management/inventory")
+        after_status = request_json(base, "/api/configuration/status")
+        after_inventory = request_json(base, "/api/operations/storage-management/inventory")
         if (
             after_status.get("emptyActive") is not True
             or after_status.get("setupRequired") is not False
@@ -353,7 +353,7 @@ def run_healthy_local(root: Path) -> None:
     process = process_for(config, port)
     try:
         wait_for_health(process, base)
-        inventory = request_json(base, "/api/v1/operations/storage-management/inventory")
+        inventory = request_json(base, "/api/operations/storage-management/inventory")
         setup = inventory.get("setup", {})
         if inventory.get("available") is not True or setup.get("setupRequired") is not False:
             raise RuntimeError("healthy managed Active was confused with first setup")

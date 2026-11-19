@@ -126,17 +126,17 @@ class DashboardApiRetirementTests(unittest.TestCase):
                 time.sleep(0.2)
 
             # A supported read answers 200 for the legal READ identity.
-            status, body = _fetch(f"{base}/api/v1/auth/principal", READER_TOKEN)
+            status, body = _fetch(f"{base}/api/auth/principal", READER_TOKEN)
             self.assertEqual(status, 200, body)
             self.assertEqual(json.loads(body), {"principal_id": "probe-reader"})
 
-            _, unknown_plain = _fetch(f"{base}/api/v1/not-a-supported-route", READER_TOKEN)
+            _, unknown_plain = _fetch(f"{base}/api/not-a-supported-route", READER_TOKEN)
             _, unknown_query = _fetch(
-                f"{base}/api/v1/not-a-supported-route?recentLimit=10", READER_TOKEN
+                f"{base}/api/not-a-supported-route?recentLimit=10", READER_TOKEN
             )
-            status, retired = _fetch(f"{base}/api/v1/dashboard", READER_TOKEN)
+            status, retired = _fetch(f"{base}/api/dashboard", READER_TOKEN)
             self.assertEqual(status, 404, retired)
-            status, retired_query = _fetch(f"{base}/api/v1/dashboard?recentLimit=10", READER_TOKEN)
+            status, retired_query = _fetch(f"{base}/api/dashboard?recentLimit=10", READER_TOKEN)
             self.assertEqual(status, 404, retired_query)
             self.assertEqual(json.loads(retired), json.loads(unknown_plain))
             self.assertEqual(json.loads(retired), json.loads(unknown_query))
@@ -145,7 +145,7 @@ class DashboardApiRetirementTests(unittest.TestCase):
             self.assertNotIn("recentLimit", retired_query.decode("utf-8"))
 
             # No identity still follows the global unauthenticated rule.
-            status, unauthenticated = _fetch(f"{base}/api/v1/dashboard?recentLimit=10")
+            status, unauthenticated = _fetch(f"{base}/api/dashboard?recentLimit=10")
             self.assertEqual(status, 401, unauthenticated)
             error_code = json.loads(unauthenticated).get("error", {}).get("code")
             self.assertEqual(error_code, "unauthorized")

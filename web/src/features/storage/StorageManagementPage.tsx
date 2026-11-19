@@ -7,8 +7,8 @@
  * check. Task 39.2 adds the typed four-step Add/Edit drawer whose page-local
  * Save publishes one checked Active successor through the same application
  * command the API exposes. All data derives from the exact immutable Active
- * snapshot via `/api/v1/operations/storage-management/*` and
- * `/api/v1/storages*`; no recursive Storage read, scan, Provider call,
+ * snapshot via `/api/operations/storage-management/*` and
+ * `/api/storages*`; no recursive Storage read, scan, Provider call,
  * Job/Task or mutation happens on load, filter or search. Copy,
  * enable/disable and removal remain a subsequent mutation unit.
  */

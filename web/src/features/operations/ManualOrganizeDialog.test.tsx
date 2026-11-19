@@ -253,7 +253,7 @@ function makeBackend() {
       choice: {
         available: true,
         method: "POST",
-        path: `/api/v1/operations/organize/intents/${INTENT_ID}/items/{itemId}/choice`,
+        path: `/api/operations/organize/intents/${INTENT_ID}/items/{itemId}/choice`,
         requiresVersion: false,
         sideEffects: "none",
         refusal: null,
@@ -419,8 +419,7 @@ function makeBackend() {
       };
     }
     const execute = (value["actions"] as Json)["execute"] as Json;
-    execute["path"] =
-      `/api/v1/operations/organize/previews/${previewId}/execute`;
+    execute["path"] = `/api/operations/organize/previews/${previewId}/execute`;
     return value;
   };
 
@@ -548,7 +547,7 @@ function makeBackend() {
       const url = String(input);
       const method = init?.method ?? "GET";
 
-      if (url === "/api/v1/system/status") {
+      if (url === "/api/system/status") {
         return jsonResponse({
           system: {
             configuration_valid: true,
@@ -662,7 +661,7 @@ function makeBackend() {
       }
 
       if (
-        url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}` &&
+        url === `/api/operations/organize/discoveries/${DISCOVERY_ID}` &&
         method === "GET"
       ) {
         state.discoveryReads += 1;
@@ -731,7 +730,7 @@ function makeBackend() {
             ] as Json;
             prepare["available"] = true;
             prepare["path"] =
-              `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`;
+              `/api/operations/organize/discoveries/${DISCOVERY_ID}/analyze`;
           }
           return jsonResponse(intermediate);
         }
@@ -739,7 +738,7 @@ function makeBackend() {
       }
 
       if (
-        url === `/api/v1/tasks/organize-task-1/items/problem-item-1/recovery` &&
+        url === `/api/tasks/organize-task-1/items/problem-item-1/recovery` &&
         method === "GET"
       ) {
         return jsonResponse(
@@ -751,7 +750,7 @@ function makeBackend() {
 
       if (
         url ===
-          `/api/v1/tasks/organize-task-1/items/problem-item-1/recovery/metadata-search` &&
+          `/api/tasks/organize-task-1/items/problem-item-1/recovery/metadata-search` &&
         method === "POST"
       ) {
         const body = JSON.parse(String(init?.body ?? "{}")) as Json;
@@ -799,7 +798,7 @@ function makeBackend() {
 
       if (
         url ===
-          `/api/v1/tasks/organize-task-1/items/problem-item-1/recovery/decision` &&
+          `/api/tasks/organize-task-1/items/problem-item-1/recovery/decision` &&
         method === "POST"
       ) {
         calls.recoveryDecisionPosts.push(
@@ -819,7 +818,7 @@ function makeBackend() {
 
       if (
         url ===
-          `/api/v1/tasks/organize-task-1/items/problem-item-1/recovery/continue` &&
+          `/api/tasks/organize-task-1/items/problem-item-1/recovery/continue` &&
         method === "POST"
       ) {
         calls.recoveryContinuePosts.push(
@@ -838,7 +837,7 @@ function makeBackend() {
 
       if (
         url ===
-          `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze` &&
+          `/api/operations/organize/discoveries/${DISCOVERY_ID}/analyze` &&
         method === "POST"
       ) {
         calls.analyzePosts.push(JSON.parse(String(init?.body ?? "{}")) as Json);
@@ -873,14 +872,14 @@ function makeBackend() {
       }
 
       if (
-        url === `/api/v1/operations/organize/intents/${INTENT_ID}` &&
+        url === `/api/operations/organize/intents/${INTENT_ID}` &&
         method === "GET"
       ) {
         return jsonResponse(intentDocument());
       }
 
       const choiceMatch = url.match(
-        /^\/api\/v1\/operations\/organize\/intents\/intent-1\/items\/([^/]+)\/choice$/,
+        /^\/api\/operations\/organize\/intents\/intent-1\/items\/([^/]+)\/choice$/,
       );
       if (choiceMatch !== null && method === "POST") {
         const itemId = choiceMatch[1] ?? "";
@@ -894,7 +893,7 @@ function makeBackend() {
       }
 
       const previewMatch = url.match(
-        /^\/api\/v1\/operations\/organize\/previews\/([^/?]+)$/,
+        /^\/api\/operations\/organize\/previews\/([^/?]+)$/,
       );
       if (previewMatch !== null && method === "GET") {
         const previewId = previewMatch[1] ?? "";
@@ -908,7 +907,7 @@ function makeBackend() {
       }
 
       if (
-        url.startsWith("/api/v1/operations/organize/executions") &&
+        url.startsWith("/api/operations/organize/executions") &&
         method === "GET"
       ) {
         return jsonResponse({
@@ -921,7 +920,7 @@ function makeBackend() {
       }
 
       const admissionMatch = url.match(
-        /^\/api\/v1\/operations\/organize\/previews\/([^/?]+)\/admission/,
+        /^\/api\/operations\/organize\/previews\/([^/?]+)\/admission/,
       );
       if (admissionMatch !== null && method === "GET") {
         const previewId = admissionMatch[1] ?? "";
@@ -966,7 +965,7 @@ function makeBackend() {
       }
 
       const executeMatch = url.match(
-        /^\/api\/v1\/operations\/organize\/previews\/([^/?]+)\/execute$/,
+        /^\/api\/operations\/organize\/previews\/([^/?]+)\/execute$/,
       );
       if (executeMatch !== null && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as Json;
@@ -1008,7 +1007,7 @@ function makeBackend() {
               detail: {
                 available: true,
                 method: "GET",
-                path: "/api/v1/operations/organize/executions/exec-1",
+                path: "/api/operations/organize/executions/exec-1",
                 nextAction: "inspect the durable task",
                 reason: null,
                 sideEffects: "none",
@@ -1017,7 +1016,7 @@ function makeBackend() {
               task: {
                 available: true,
                 method: "GET",
-                path: "/api/v1/operations/tasks/task-handoff-1",
+                path: "/api/operations/tasks/task-handoff-1",
                 nextAction: "inspect the durable task",
                 reason: null,
                 sideEffects: "none",
@@ -1093,7 +1092,7 @@ function makeBackend() {
             detail: {
               available: true,
               method: "GET",
-              path: "/api/v1/operations/organize/executions/exec-1",
+              path: "/api/operations/organize/executions/exec-1",
               nextAction: "inspect the durable task",
               reason: null,
               sideEffects: "none",
@@ -1102,7 +1101,7 @@ function makeBackend() {
             task: {
               available: true,
               method: "GET",
-              path: "/api/v1/operations/tasks/task-handoff-1",
+              path: "/api/operations/tasks/task-handoff-1",
               nextAction: "inspect the durable task",
               reason: null,
               sideEffects: "none",
@@ -1163,7 +1162,7 @@ async function openDialog(
   configure?.(backend);
   vi.stubGlobal("fetch", backend.fetchMock);
   authStore.setToken(TOKEN);
-  const { router } = renderApp("/ui-v2/resourcelib/files");
+  const { router } = renderApp("/resourcelib/files");
   await screen.findByRole("table");
   if (selection === undefined) {
     await user.click(screen.getByRole("checkbox", { name: "选择全部" }));
@@ -1697,7 +1696,7 @@ describe("ManualOrganizeDialog", () => {
 
     // The first card entry owns one in-app history destination, so this is
     // the same browser-back path an operator can take from the Files page.
-    backend.router.history.push("/ui-v2/resourcelib/files");
+    backend.router.history.push("/resourcelib/files");
     backend.router.history.back();
     const backPrompt = await screen.findByRole("alertdialog");
     expect(card()).toBeVisible();
@@ -2126,7 +2125,7 @@ describe("ManualOrganizeDialog", () => {
     window.history.replaceState(
       routerState,
       "",
-      "/ui-v2/resourcelib/files?resourceLibraryId=source",
+      "/resourcelib/files?resourceLibraryId=source",
     );
     const user = userEvent.setup();
     await openDialog(user);

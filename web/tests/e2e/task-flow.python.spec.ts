@@ -61,7 +61,7 @@ async function runOnceState(
 }
 
 async function publishRunOnceDefinition(page: Page): Promise<string> {
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
   ).toBeVisible();
@@ -89,7 +89,7 @@ async function publishRunOnceDefinition(page: Page): Promise<string> {
   if (!created)
     throw new Error("created definition missing from harness state");
   DEFINITION_ID = created.id;
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   const row = page.getByRole("row").filter({ hasText: "Task flow harness" });
   await row.getByRole("button", { name: "运行一次" }).click();
   await expect(row.getByText("已提交")).toBeVisible();
@@ -98,7 +98,7 @@ async function publishRunOnceDefinition(page: Page): Promise<string> {
   if (!href) throw new Error("admitted list row has no Task Center link");
   const taskId = new URL(href, page.url()).searchParams.get("run");
   if (!taskId) throw new Error("admitted list link has no Task identity");
-  expect(page.url()).toContain("/ui-v2/operations/automation");
+  expect(page.url()).toContain("/operations/automation");
   return taskId;
 }
 
@@ -133,7 +133,7 @@ test("a mixed file population completes the flow with independent file facts", a
 
   // The Task Center All view reads the flow status ("已完成") and the ended
   // result summary reads the independent per-file facts.
-  await connectOn(page, "/ui-v2/operations");
+  await connectOn(page, "/operations");
   const table = page.getByRole("table");
   await table.waitFor();
   const row = table.getByRole("row").filter({ hasText: "电影" });
@@ -166,7 +166,7 @@ test("a mixed file population completes the flow with independent file facts", a
   // same Task, with its own bounded file facts — never a file-derived
   // "执行失败" label for a completed Task.
   const records = await page.request.get(
-    `${BASE}/api/v1/operations/automation/records?limit=20`,
+    `${BASE}/api/operations/automation/records?limit=20`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(records.ok()).toBe(true);
@@ -192,7 +192,7 @@ test("a mixed file population completes the flow with independent file facts", a
   // original record identity without any replay or new run.
   await page.request.post("/__harness__/restart");
   const reopened = await page.request.get(
-    `${BASE}/api/v1/operations/automation/records?limit=20`,
+    `${BASE}/api/operations/automation/records?limit=20`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(reopened.ok()).toBe(true);
@@ -206,7 +206,7 @@ test("a mixed file population completes the flow with independent file facts", a
   expect(reopenedRecord!.recordOutcome.statement).toBe(
     record!.recordOutcome.statement,
   );
-  await connectOn(page, `/ui-v2/operations?run=${taskId}`);
+  await connectOn(page, `/operations?run=${taskId}`);
   const reopenedDetail = page.getByRole("dialog", {
     name: "运行详情",
   });
@@ -265,10 +265,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
 
   // The real operator recovery journey: saved decision → same-Task analysis
   // → exact summary → explicit confirmation.
-  await connectOn(
-    page,
-    `/ui-v2/operations?run=${taskId}&item=${conflict!.itemId}`,
-  );
+  await connectOn(page, `/operations?run=${taskId}&item=${conflict!.itemId}`);
   const recovery = page.getByRole("region", { name: "条目审核与恢复" });
   await expect(
     recovery.getByRole("heading", { name: "待处理的目标冲突决策" }),
@@ -310,7 +307,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   // so the proof asserts the exact DELTA of this Task's failure.
   const readMetrics = async () =>
     (await (
-      await page.request.get(`${BASE}/api/v1/operations/automation/metrics`, {
+      await page.request.get(`${BASE}/api/operations/automation/metrics`, {
         headers,
       })
     ).json()) as {
@@ -342,7 +339,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   // recovered claim — with the real file effects beside it.  Earlier tests
   // of this spec leave their own ended 电影 runs in the same harness
   // process, so the exact row is selected by its durable flow status.
-  await connectOn(page, "/ui-v2/operations");
+  await connectOn(page, "/operations");
   const table = page.getByRole("table");
   await table.waitFor();
   // An exact-text ``has`` filter: an earlier test's completed 电影 row whose
@@ -407,7 +404,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   const readRecords = async (outcome: string) =>
     (await (
       await page.request.get(
-        `${BASE}/api/v1/operations/automation/records?limit=100&outcome=${outcome}`,
+        `${BASE}/api/operations/automation/records?limit=100&outcome=${outcome}`,
         { headers },
       )
     ).json()) as { total: number; items: Array<{ task_id: string | null }> };
@@ -422,7 +419,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
 
   // The Task-flow metric counts this Task as one failure, exactly once.
   const metrics = (await (
-    await page.request.get(`${BASE}/api/v1/operations/automation/metrics`, {
+    await page.request.get(`${BASE}/api/operations/automation/metrics`, {
       headers,
     })
   ).json()) as {
@@ -457,7 +454,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   expect(untouched.successItemStatus).toBe("success");
   await page.request.post("/__harness__/restart");
   const reopenedRecords = await page.request.get(
-    `${BASE}/api/v1/operations/automation/records?limit=20`,
+    `${BASE}/api/operations/automation/records?limit=20`,
     { headers },
   );
   const reopenedPage = (await reopenedRecords.json()) as {
@@ -473,7 +470,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   expect(reopenedRecord).toBeTruthy();
   expect(reopenedRecord!.status).toBe("failed");
   expect(reopenedRecord!.recordOutcome.status).toBe("failed");
-  await connectOn(page, `/ui-v2/operations?run=${taskId}`);
+  await connectOn(page, `/operations?run=${taskId}`);
   const reopenedDetail = page.getByRole("dialog", { name: "运行详情" });
   await reopenedDetail.waitFor();
   await expect(
@@ -486,7 +483,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   // intentionally lost on reload, so the narrow pass re-connects through the
   // same deep-link continuation journey the shell provides.
   await page.setViewportSize({ width: 390, height: 844 });
-  await connectOn(page, `/ui-v2/operations?run=${taskId}`);
+  await connectOn(page, `/operations?run=${taskId}`);
   const narrowDetail = page.getByRole("dialog", { name: "运行详情" });
   await narrowDetail.waitFor();
   await expect(
@@ -512,7 +509,7 @@ test("an acknowledged cancellation is its own flow outcome in the Task Center", 
   expect(state.taskId).toBeTruthy();
   const headers = { Authorization: `Bearer ${ADMIN_TOKEN}` };
   const selected = await (
-    await page.request.get(`${BASE}/api/v1/operations/runs/${state.taskId}`, {
+    await page.request.get(`${BASE}/api/operations/runs/${state.taskId}`, {
       headers,
     })
   ).json();
@@ -530,7 +527,7 @@ test("an acknowledged cancellation is its own flow outcome in the Task Center", 
   });
   expect(cancel.ok()).toBe(true);
 
-  await connectOn(page, "/ui-v2/operations");
+  await connectOn(page, "/operations");
   const table = page.getByRole("table");
   await table.waitFor();
   const row = table.getByRole("row").filter({ hasText: "已取消" });
@@ -539,7 +536,7 @@ test("an acknowledged cancellation is its own flow outcome in the Task Center", 
   // The cancelled Task stays in the records and the all-ended population; it
   // never becomes active again.
   const records = await page.request.get(
-    `${BASE}/api/v1/operations/automation/records?limit=20&outcome=cancelled`,
+    `${BASE}/api/operations/automation/records?limit=20&outcome=cancelled`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(records.ok()).toBe(true);

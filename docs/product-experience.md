@@ -143,7 +143,7 @@ MoviePilot 的筛选式探索是交互参考，使用 MediaFlow 现有中文浅�
 原 Slice51/52 的接受身份保持。
 
 - **目标／入口：** 用户进入“探索”浏览电影／剧集或找指定作品。侧栏和默认认证后目的地
-  为 `/ui-v2/explore`，其他合法深链仍回原目标。旧 Dashboard Web 页面与入口移除，旧路径
+  为 `/explore`，其他合法深链仍回原目标。旧 Dashboard Web 页面与入口移除，旧路径
   使用普通未找到；无跳转、旧页面／别名／说明页兼容。复用现有 Provider 配置和就绪条件，
   缺配置说明实际恢复步骤；不专门建设无 Active／无库独立启动流程，自然可用不刻意禁用。
 - **可见状态／浏览：** 默认热门电影，明确切换剧集。主内容不显示单独的页面标题，探索
@@ -650,7 +650,7 @@ silently publish unrelated Draft changes.
 ## First-time setup
 
 - **Goal/entry:** authenticate a management-only installation and open `系统设置`
-  (`/ui-v2/configuration`) or a setup-required page. Viewers get read state and admin guidance.
+  (`/configuration`) or a setup-required page. Viewers get read state and admin guidance.
 - **State/action:** distinguish no Draft, resumable Draft, empty Active and broken prior Active.
   Explicitly create the first Draft, inspect/export labelled JSON and activate empty or populated
   configuration. No mandatory media forms or generated Storage/type/policy defaults.
@@ -673,7 +673,7 @@ V1's complete-configuration setup remains a compatibility path, not the native e
 
 ## Storage management and root recovery
 
-- **Goal/entry:** inspect or maintain configured locations through `存储管理` (`/ui-v2/storage`).
+- **Goal/entry:** inspect or maintain configured locations through `存储管理` (`/storage`).
 - **State/action:** real provider/identity/root, enabled/read-only/readiness and library references;
   typed add/edit/copy/enable/disable/reference-safe removal, or explicit Connection/Read check.
   No secrets/private host paths or mutation-based capability probes.
@@ -690,7 +690,7 @@ never automatically Add again, reset the database or move media. Existing saved 
 
 ## Recognition and rules
 
-- **Goal/entry:** manage the RecognitionRule→RecognitionType→four-policy graph at `/ui-v2/rules`,
+- **Goal/entry:** manage the RecognitionRule→RecognitionType→four-policy graph at `/rules`,
   or inspect recognition/metadata decisions from an explicit test, Preview or Task recovery.
 - **State:** actual Active, object identity/enabled state/references/readiness and separate unsaved
   candidate. Overview, bindings, types, rules and Metadata/Naming/Classification/Organize inventories
@@ -827,7 +827,7 @@ and deployment are deferred. C→A identity, exact publication, audit/redaction 
 
 ## Real Storage Files
 
-- **Goal/entry:** browse physical sources at `文件` (`/ui-v2/resourcelib/files`) or a
+- **Goal/entry:** browse physical sources at `文件` (`/resourcelib/files`) or a
   ResourceLibrary link; MediaLibrary has the separate destination journey below.
 - **State:** enabled ResourceLibrary cards, exact relative root/breadcrumb, bounded deterministic live
   entries/list/grid, paging, selection and meaningful capability/error state. No FileIndex membership,
@@ -928,8 +928,8 @@ stale authority and explicitly resubmit only after unknown outcomes have been ve
 
 ## CURRENT — MediaLibrary files and separate ResourceLibrary navigation
 
-- **Goal/entry:** maintain destination files at `媒体库` (`/ui-v2/medialib/files`). Old `/ui-v2/library`
-  and `/ui-v2/library/files` provide explicit recovery links without automatic work or redirect.
+- **Goal/entry:** maintain destination files at `媒体库` (`/medialib/files`). Old `/library`
+  and `/library/files` provide explicit recovery links without automatic work or redirect.
 - **State/action:** the shared cards/exact breadcrumbs/list-grid/selection/paging, without a page-local directory tree, ordinary
   maintenance and Add/Edit/removal above. No library-card statistics/placeholders/thumbnails or
   thumbnail collection. Per-file size, selected count/known size and bounded impact remain visible.
@@ -1426,7 +1426,7 @@ a 403 retains identity and offers legal navigation. Disconnect clears token/cach
 Show loading/empty/success/transport/malformed/unauthorized/forbidden/unavailable/not-found distinctly.
 Refresh/list/navigation create no work or media mutation. Explicit Explore reads may contact the
 Provider for bounded metadata/artwork. Other status/list/navigation reads remain Provider-free.
-Python serves the only current Web entry at `/ui-v2/` and retains API-principal identity.
+Python serves the only current Web entry at `/` and retains API-principal identity.
 
 ### Task Center integration
 

@@ -213,7 +213,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             root = Path(directory)
             _repository, service, _objects, _active, _runtime, api = self._active_api(root)
             before = service.active().document["resourceLibraries"][0]
-            status, projection = request(api, "/api/v1/resource-libraries/source/edit")
+            status, projection = request(api, "/api/resource-libraries/source/edit")
             self.assertEqual(status, 200, projection)
             expected = projection["active"]
             self.assertEqual(
@@ -230,16 +230,14 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                 "expectedVersion": expected["version"],
                 "expectedDigest": expected["digest"],
             }
-            status, edited = request(
-                api, "/api/v1/resource-libraries/source", method="PUT", body=body
-            )
+            status, edited = request(api, "/api/resource-libraries/source", method="PUT", body=body)
             self.assertEqual(status, 200, edited)
             after = service.active().document["resourceLibraries"][0]
             self.assertEqual(after["name"], "Edited Source")
             self.assertEqual(after.get("extensions"), before.get("extensions"))
             stale_status, stale = request(
                 api,
-                "/api/v1/resource-libraries/source",
+                "/api/resource-libraries/source",
                 method="PUT",
                 body={**body, "name": "Stale overwrite"},
             )
@@ -274,7 +272,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                     "stableSizeDurationSeconds": 60,
                 },
             )
-            status, saved = request(api, "/api/v1/resource-libraries", method="POST", body=body)
+            status, saved = request(api, "/api/resource-libraries", method="POST", body=body)
             self.assertEqual(200, status, saved)
             self.assertEqual(["Movies/**"], saved["resourceLibrary"]["includeRules"], saved)
             self.assertEqual(60, saved["resourceLibrary"]["stability"]["stableSizeDurationSeconds"])
@@ -300,7 +298,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             # The default exclude rules are preserved when the field is omitted.
             legacy_status, legacy = request(
                 api,
-                "/api/v1/resource-libraries",
+                "/api/resource-libraries",
                 method="POST",
                 body=self._save_body(resourceLibraryId="legacy-library"),
             )
@@ -326,7 +324,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             _repository, service, _objects, _active, _runtime, api = self._active_api(root)
             status, saved = request(
                 api,
-                "/api/v1/resource-libraries",
+                "/api/resource-libraries",
                 method="POST",
                 body=self._save_body(
                     resourceLibraryId="policy-library",
@@ -335,7 +333,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(200, status, saved)
-            status, projection = request(api, "/api/v1/resource-libraries/policy-library/edit")
+            status, projection = request(api, "/api/resource-libraries/policy-library/edit")
             self.assertEqual(200, status, projection)
             self.assertEqual(["Movies/**"], projection["resourceLibrary"]["includeRules"])
             self.assertEqual(
@@ -346,7 +344,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             active = projection["active"]
             status, edited = request(
                 api,
-                "/api/v1/resource-libraries/policy-library",
+                "/api/resource-libraries/policy-library",
                 method="PUT",
                 body={
                     "resourceLibraryId": "policy-library",
@@ -384,7 +382,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             ):
                 status, refused = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=self._save_body(resourceLibraryId="bad-library", **overrides),
                 )
@@ -398,20 +396,20 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             for library_id in ("second", "third"):
                 status, response = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=self._save_body(resourceLibraryId=library_id),
                 )
                 self.assertEqual(status, 200, response)
             active = service.active()
             self.assertNotEqual(active.version, active.revision_sequence)
-            status, projection = request(api, "/api/v1/resource-libraries/source/edit")
+            status, projection = request(api, "/api/resource-libraries/source/edit")
             self.assertEqual(status, 200, projection)
             self.assertEqual(projection["active"]["revisionSequence"], active.revision_sequence)
             self.assertTrue(all(item["enabled"] for item in projection["storages"]))
             status, edited = request(
                 api,
-                "/api/v1/resource-libraries/source",
+                "/api/resource-libraries/source",
                 method="PUT",
                 body={
                     "resourceLibraryId": "source",
@@ -439,7 +437,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             configuration_repository, service, _objects, active, _runtime_repository, api = values
             status, response = request(
                 api,
-                "/api/v1/resource-libraries",
+                "/api/resource-libraries",
                 method="POST",
                 body=self._save_body(),
             )
@@ -453,7 +451,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             )
             browse_status, browse = request(
                 api,
-                "/api/v1/resource-libraries/new-library/files",
+                "/api/resource-libraries/new-library/files",
                 token="admin-token",
             )
             self.assertEqual(browse_status, 200)
@@ -493,7 +491,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=body,
                 )
@@ -528,7 +526,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
 
             status, response = request(
                 api,
-                "/api/v1/resource-libraries",
+                "/api/resource-libraries",
                 method="POST",
                 body=self._save_body(),
             )
@@ -560,7 +558,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
 
             status, response = request(
                 api,
-                "/api/v1/resource-libraries",
+                "/api/resource-libraries",
                 method="POST",
                 body=self._save_body(),
             )
@@ -589,7 +587,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
 
             status, response = request(
                 api,
-                "/api/v1/resource-libraries",
+                "/api/resource-libraries",
                 method="POST",
                 body=self._save_body(),
             )
@@ -611,7 +609,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
 
             status, response = request(
                 api,
-                "/api/v1/resource-libraries",
+                "/api/resource-libraries",
                 method="POST",
                 body=self._save_body(storageId="disabled-storage"),
             )
@@ -634,7 +632,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             source.fail = True
             status, response = request(
                 api,
-                "/api/v1/resource-libraries",
+                "/api/resource-libraries",
                 method="POST",
                 body=self._save_body(),
             )
@@ -651,7 +649,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=self._save_body(resourceLibraryId="runtime-failure"),
                 )
@@ -666,7 +664,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             _repository, service, _objects, active, _runtime_repository, api = values
             status, response = request(
                 api,
-                "/api/v1/resource-libraries",
+                "/api/resource-libraries",
                 method="POST",
                 body=self._save_body(enabled=False),
             )
@@ -681,7 +679,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             self.assertFalse(saved["enabled"])
             browse_status, browse = request(
                 api,
-                "/api/v1/resource-libraries/new-library/files",
+                "/api/resource-libraries/new-library/files",
                 token="admin-token",
             )
             self.assertIn(browse_status, {403, 404, 409})
@@ -711,7 +709,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=self._save_body(resourceLibraryId="race-library"),
                 )
@@ -761,7 +759,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=self._save_body(resourceLibraryId="version-race-library"),
                 )
@@ -804,7 +802,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                 )
                 status, response = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=self._save_body(),
                     token=f"limited-token-{index}",
@@ -835,7 +833,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=self._save_body(resourceLibraryId="create-failure"),
                 )
@@ -851,7 +849,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=self._save_body(resourceLibraryId="validate-failure"),
                 )
@@ -862,7 +860,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             with patch.object(service, "validate", return_value=active):
                 status, response = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=self._save_body(resourceLibraryId="invalid-status"),
                 )
@@ -877,7 +875,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             ):
                 status, response = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=self._save_body(resourceLibraryId="activation-failure"),
                 )
@@ -900,7 +898,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             source.fail = True
             status, response = request(
                 api,
-                "/api/v1/resource-libraries",
+                "/api/resource-libraries",
                 method="POST",
                 body=self._save_body(resourceLibraryId="retry-library"),
             )
@@ -911,7 +909,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             source.fail = False
             status, response = request(
                 api,
-                "/api/v1/resource-libraries",
+                "/api/resource-libraries",
                 method="POST",
                 body=self._save_body(resourceLibraryId="retry-library"),
             )
@@ -957,7 +955,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             with provider_factory, task_create, organizer_execute, scanner:
                 status, response = request(
                     api,
-                    "/api/v1/resource-libraries",
+                    "/api/resource-libraries",
                     method="POST",
                     body=self._save_body(resourceLibraryId="side-effect-free"),
                 )

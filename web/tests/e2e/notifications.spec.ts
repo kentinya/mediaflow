@@ -23,7 +23,7 @@ const DRAFT_REVISION = "notification-draft-rev-e2e-001";
 const DELIVERY_ID = "delivery-e2e-001";
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -41,12 +41,12 @@ async function connectOn(
 
 async function openNotifications(page: Page) {
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
   await page
     .getByRole("link", { name: "Notifications", exact: true })
     .first()
     .click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/notifications$/);
+  await expect(page).toHaveURL(/\/operations\/notifications$/);
   await expect(
     page.getByRole("heading", { name: "通知", exact: true }),
   ).toBeVisible();
@@ -106,7 +106,7 @@ test("the Operations landing links the Notification workspace with the exact Act
   // coordinated card over the still-visible list.
   await page.getByRole("link", { name: "查看定义" }).click();
   await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
+    new RegExp(`/operations/notifications/webhooks/${WEBHOOK_ID}$`),
   );
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(
@@ -121,7 +121,7 @@ test("the signed test sends exactly one bound request and never touches deliveri
   await openNotifications(page);
   await page.getByRole("link", { name: "查看定义" }).click();
   await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
+    new RegExp(`/operations/notifications/webhooks/${WEBHOOK_ID}$`),
   );
   await expect(
     page.getByRole("dialog").getByText("密钥引用：已就绪", { exact: true }),
@@ -169,14 +169,14 @@ test("the editor journey saves, validates and checked-activates the Webhook-only
   await expect(page.getByText(/草稿 · 版本/)).toBeVisible();
   await page.getByRole("link", { name: "查看定义" }).click();
   await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
+    new RegExp(`/operations/notifications/webhooks/${WEBHOOK_ID}$`),
   );
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "编辑草稿" })
     .click();
   await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}$`),
+    new RegExp(`/operations/notifications/editor/${WEBHOOK_ID}$`),
   );
   await expect(
     page.getByRole("heading", { name: "编辑 Webhook ops-webhook" }),
@@ -204,7 +204,7 @@ test("the editor journey saves, validates and checked-activates the Webhook-only
   await page.getByLabel("我确认把当前已检查的草稿发布为新的已生效配置").check();
   await activate.click();
   await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
+    new RegExp(`/operations/notifications/webhooks/${WEBHOOK_ID}$`),
   );
   await expect(page.getByText(/草稿已发布为已生效配置/)).toBeVisible();
 
@@ -235,9 +235,7 @@ test("an authorized operator creates a Webhook definition inside the open Draft"
   await page.getByRole("button", { name: "创建后继草稿" }).click();
   await expect(page.getByText(/草稿 · 版本/)).toBeVisible();
   await page.getByRole("link", { name: "新建 Webhook" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/notifications\/webhooks\/new$/,
-  );
+  await expect(page).toHaveURL(/\/operations\/notifications\/webhooks\/new$/);
   await expect(
     page.getByRole("button", { name: "读取最新草稿状态" }),
   ).toBeVisible();
@@ -251,7 +249,7 @@ test("an authorized operator creates a Webhook definition inside the open Draft"
   await page.getByRole("checkbox", { name: /task\.completed/ }).check();
   await page.getByRole("button", { name: "保存到草稿" }).click();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/notifications\/webhooks\/created-webhook$/,
+    /\/operations\/notifications\/webhooks\/created-webhook$/,
   );
   await expect(
     page.getByRole("heading", { name: "Webhook created-webhook" }),
@@ -281,11 +279,11 @@ test("an authorized operator copies a definition and toggles it inside the Draft
   await page.getByRole("button", { name: "创建后继草稿" }).click();
   await page.getByRole("link", { name: "查看定义" }).click();
   await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
+    new RegExp(`/operations/notifications/webhooks/${WEBHOOK_ID}$`),
   );
   await page.getByRole("button", { name: "复制到草稿" }).click();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/notifications\/webhooks\/ops-webhook-copy$/,
+    /\/operations\/notifications\/webhooks\/ops-webhook-copy$/,
   );
   await expect(
     page.getByRole("heading", { name: "Webhook ops-webhook-copy" }),
@@ -424,7 +422,7 @@ test("a split-identity activation success document never renders as success", as
   await expect(page.getByText(/命令结果未知/)).toBeVisible();
   // The rejected activation is never replayed and nothing was activated.
   await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}$`),
+    new RegExp(`/operations/notifications/editor/${WEBHOOK_ID}$`),
   );
 
   const evidence = await notificationsEvidence(page);
@@ -444,7 +442,7 @@ test("the delivery list filters dead letters and the detail card requeues with e
   // through the supported boundary continuation drives the same recovery.
   await connectOn(
     page,
-    "/ui-v2/operations/notifications/deliveries?status=dead-letter",
+    "/operations/notifications/deliveries?status=dead-letter",
   );
   await expect(page).toHaveURL(/status=dead-letter/);
   await expect(
@@ -457,7 +455,7 @@ test("the delivery list filters dead letters and the detail card requeues with e
   await page.getByRole("link", { name: "查看投递" }).first().click();
   await expect(page).toHaveURL(
     new RegExp(
-      `/ui-v2/operations/notifications/deliveries/${DELIVERY_ID}(\\?status=dead-letter)?$`,
+      `/operations/notifications/deliveries/${DELIVERY_ID}(\\?status=dead-letter)?$`,
     ),
   );
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -537,7 +535,7 @@ test("unauthorized principals see bounded states and no executable controls", as
   page,
 }) => {
   // Unknown token: the entry boundary rejects the connection entirely.
-  await page.goto("/ui-v2/operations/notifications");
+  await page.goto("/operations/notifications");
   await page.getByLabel("API token").fill("wrong-token");
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -545,7 +543,7 @@ test("unauthorized principals see bounded states and no executable controls", as
   ).toBeVisible();
   // A rejected authority keeps the operator in place on the intended route;
   // no token value ever entered a URL or persistent store.
-  await expect(page).toHaveURL(new RegExp(`/ui-v2/operations/notifications$`));
+  await expect(page).toHaveURL(new RegExp(`/operations/notifications$`));
 });
 
 test("an unauthenticated deep entry continues to the exact Notification route once connected", async ({
@@ -553,7 +551,7 @@ test("an unauthenticated deep entry continues to the exact Notification route on
 }) => {
   await connectOn(
     page,
-    `/ui-v2/operations/notifications/deliveries?status=dead-letter`,
+    `/operations/notifications/deliveries?status=dead-letter`,
   );
   await expect(page).toHaveURL(/status=dead-letter/);
   await expect(
@@ -577,9 +575,7 @@ test("keyboard-only operators can reach the workspace, filter deliveries and rec
   await openNotifications(page);
   await page.getByRole("link", { name: "查看投递记录" }).focus();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/notifications\/deliveries/,
-  );
+  await expect(page).toHaveURL(/\/operations\/notifications\/deliveries/);
   await page.getByRole("link", { name: "查看投递" }).first().focus();
   await page.keyboard.press("Enter");
   await page.getByLabel("我确认重新入队这条精确的死信投递").focus();

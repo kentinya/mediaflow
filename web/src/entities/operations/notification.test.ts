@@ -28,7 +28,7 @@ function offeredAction(
     available: true,
     reason: null,
     method: "POST",
-    path: "/api/v1/operations/notifications/webhooks/ops/test",
+    path: "/api/operations/notifications/webhooks/ops/test",
     requiresConfirmation: false,
     sideEffects: "one_signed_test_request",
     durableOutcome: "no durable change",
@@ -64,8 +64,8 @@ function definitionPayload(
   id: string,
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  const operationsRoute = `/api/v1/operations/notifications/webhooks/${id}`;
-  const draftRoute = `/api/v1/configuration/revisions/rev-draft/objects/webhooks/${id}`;
+  const operationsRoute = `/api/operations/notifications/webhooks/${id}`;
+  const draftRoute = `/api/configuration/revisions/rev-draft/objects/webhooks/${id}`;
   return {
     ...webhookDocumentPayload(id),
     definitionState: "active",
@@ -141,7 +141,7 @@ function definitionPayload(
         available: true,
         reason: null,
         method: "POST",
-        path: "/api/v1/configuration/revisions/rev-1/successor",
+        path: "/api/configuration/revisions/rev-1/successor",
         requiresConfirmation: false,
         sideEffects: "none",
         durableOutcome: "a successor Draft is stored",
@@ -229,7 +229,7 @@ describe("webhook definition", () => {
     expect(model.definitionState).toBe("active");
     expect(model.actions.activate.requiresConfirmation).toBe(true);
     expect(model.actions.detail.path).toBe(
-      "/api/v1/operations/notifications/webhooks/ops",
+      "/api/operations/notifications/webhooks/ops",
     );
   });
 
@@ -257,7 +257,7 @@ describe("webhook definition", () => {
     const payload = definitionPayload("ops");
     const actions = payload.actions as Record<string, unknown>;
     actions.test = offeredAction({
-      path: "/api/v1/operations/notifications/webhooks/other/test",
+      path: "/api/operations/notifications/webhooks/other/test",
     });
     expect(() => normalizeWebhookDefinition(payload)).toThrow(
       NotificationNormalizationError,
@@ -323,7 +323,7 @@ describe("notification definitions page", () => {
           available: true,
           reason: null,
           method: "POST",
-          path: "/api/v1/configuration/revisions/rev-1/successor",
+          path: "/api/configuration/revisions/rev-1/successor",
           requiresConfirmation: false,
           sideEffects: "none",
           durableOutcome: "a successor Draft is stored",
@@ -504,7 +504,7 @@ describe("notification delivery detail", () => {
           available: true,
           reason: null,
           method: "POST",
-          path: "/api/v1/notifications/delivery-1/requeue",
+          path: "/api/notifications/delivery-1/requeue",
           requiresConfirmation: true,
           sideEffects: "delivery_queue_state_only",
           durableOutcome: "the delivery returns to pending",
@@ -521,7 +521,7 @@ describe("notification delivery detail", () => {
     expect(model.lease.state).toBe("not_leased");
     expect(model.recovery.availableActions).toEqual(["requeue-dead-letter"]);
     expect(model.actions.requeue?.path).toBe(
-      "/api/v1/notifications/delivery-1/requeue",
+      "/api/notifications/delivery-1/requeue",
     );
     expect(model.actions.resolveStale).toBeNull();
     expect(model.recovery.evidence[0].duplicateImplication).toContain(
@@ -798,7 +798,7 @@ describe("notification action transport", () => {
         available: true,
         reason: null,
         method: "POST",
-        path: "/api/v1/notifications/delivery-9/resolve-stale",
+        path: "/api/notifications/delivery-9/resolve-stale",
         requiresConfirmation: true,
         sideEffects: "delivery_queue_state_only",
         durableOutcome: "the expired lease is resolved",
@@ -818,7 +818,7 @@ describe("notification action transport", () => {
           available: true,
           reason: null,
           method: "POST",
-          path: "/api/v1/notifications/delivery-9/resolve-stale",
+          path: "/api/notifications/delivery-9/resolve-stale",
           requiresConfirmation: true,
           sideEffects: "delivery_queue_state_only",
           durableOutcome: "the expired lease is resolved",
@@ -861,7 +861,7 @@ describe("draft-only list item", () => {
           available: true,
           reason: null,
           method: "GET",
-          path: "/api/v1/operations/notifications/webhooks/draft-only-webhook",
+          path: "/api/operations/notifications/webhooks/draft-only-webhook",
           sideEffects: "none",
           durableOutcome: null,
           nextAction: "inspect",
@@ -870,7 +870,7 @@ describe("draft-only list item", () => {
           available: true,
           reason: null,
           method: "POST",
-          path: "/api/v1/operations/notifications/webhooks/draft-only-webhook/test",
+          path: "/api/operations/notifications/webhooks/draft-only-webhook/test",
           requiresConfirmation: false,
           sideEffects: "one_signed_test_request",
           durableOutcome: "no durable change",
@@ -880,7 +880,7 @@ describe("draft-only list item", () => {
           available: true,
           reason: null,
           method: "PUT",
-          path: "/api/v1/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook",
+          path: "/api/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook",
           requiresConfirmation: false,
           sideEffects: "none",
           durableOutcome: "stored",
@@ -890,7 +890,7 @@ describe("draft-only list item", () => {
           available: true,
           reason: null,
           method: "POST",
-          path: "/api/v1/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook/copy",
+          path: "/api/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook/copy",
           requiresConfirmation: false,
           sideEffects: "none",
           durableOutcome: "copied",
@@ -900,7 +900,7 @@ describe("draft-only list item", () => {
           available: true,
           reason: null,
           method: "POST",
-          path: "/api/v1/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook/enable",
+          path: "/api/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook/enable",
           requiresConfirmation: false,
           sideEffects: "none",
           durableOutcome: "enabled in draft",
@@ -910,7 +910,7 @@ describe("draft-only list item", () => {
           available: true,
           reason: null,
           method: "POST",
-          path: "/api/v1/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook/disable",
+          path: "/api/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook/disable",
           requiresConfirmation: false,
           sideEffects: "none",
           durableOutcome: "disabled in draft",
@@ -920,7 +920,7 @@ describe("draft-only list item", () => {
           available: true,
           reason: null,
           method: "POST",
-          path: "/api/v1/configuration/revisions/rev-1/successor",
+          path: "/api/configuration/revisions/rev-1/successor",
           requiresConfirmation: false,
           sideEffects: "none",
           durableOutcome: "successor draft",
@@ -930,7 +930,7 @@ describe("draft-only list item", () => {
           available: true,
           reason: null,
           method: "POST",
-          path: "/api/v1/operations/notifications/webhooks/draft-only-webhook/activate-draft",
+          path: "/api/operations/notifications/webhooks/draft-only-webhook/activate-draft",
           requiresConfirmation: true,
           sideEffects: "none",
           durableOutcome: "published",

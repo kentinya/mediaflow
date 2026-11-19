@@ -39,7 +39,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
     def _admit(self, value, paths, *, auto_prepare=True, request_id=REQUEST_ID):
         return self.request(
             value,
-            "/api/v1/resource-libraries/library/files/discoveries",
+            "/api/resource-libraries/library/files/discoveries",
             "POST",
             {"paths": list(paths), "autoPrepare": auto_prepare, "requestId": request_id},
         )
@@ -292,7 +292,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual([], value.target.mutations)
             self.assertEqual(1, len(value.repository.list_tasks()))
             # The operator readback counts every admitted file exactly once.
-            status, detail = self.request(value, f"/api/v1/operations/runs/{task_id}")
+            status, detail = self.request(value, f"/api/operations/runs/{task_id}")
             self.assertEqual(200, status, detail)
             self.assertEqual(count, detail["total_items"])
             self.assertEqual([], detail["problem_types"])
@@ -311,7 +311,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             for action in ("pause", "resume"):
                 status, refused = self.request(
                     value,
-                    f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/{action}",
+                    f"/api/operations/organize/discoveries/{discovery.discovery_id}/{action}",
                     "POST",
                     {"expectedVersion": discovery.version},
                 )
@@ -340,7 +340,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             task = value.repository.get_task(task_id)
             # The Task Center projection no longer advertises pause or resume:
             # the retired controls are absent, not merely withheld.
-            status, detail = self.request(value, f"/api/v1/tasks/{task_id}")
+            status, detail = self.request(value, f"/api/tasks/{task_id}")
             self.assertEqual(200, status, detail)
             action_names = {action["action"] for action in detail["lifecycle"]["actions"]}
             self.assertEqual({"cancel"}, action_names)
@@ -348,7 +348,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             for action in ("pause", "resume"):
                 status, refused = self.request(
                     value,
-                    f"/api/v1/tasks/{task_id}/{action}",
+                    f"/api/tasks/{task_id}/{action}",
                     "POST",
                     {"expectedUpdatedAt": task.updated_at.isoformat()},
                 )
@@ -378,7 +378,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             task = value.repository.get_task(task_id)
             status, refused = self.request(
                 value,
-                f"/api/v1/tasks/{task_id}/pause",
+                f"/api/tasks/{task_id}/pause",
                 "POST",
                 {"expectedUpdatedAt": task.updated_at.isoformat()},
             )
@@ -403,7 +403,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
 
             status, cancelled = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/cancel",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/cancel",
                 "POST",
                 {"expectedVersion": discovery.version},
             )
@@ -458,13 +458,11 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             item = value.repository.list_items(task_id)[0]
             self.assertEqual("waiting_recognition", item.status.value)
 
-            status, checkpoint = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
-            )
+            status, checkpoint = self.request(value, f"/api/tasks/{task_id}/items/{item.item_id}")
             self.assertEqual(200, status, checkpoint)
             status, decision = self.request(
                 value,
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 "POST",
                 {
                     "kind": "recognition",
@@ -479,7 +477,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             current = value.repository.get_media_discovery(discovery.discovery_id)
             status, accepted = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
                 "POST",
                 {"expectedVersion": current.version},
             )
@@ -491,7 +489,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
 
             status, preview = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{discovery.preview_id}",
+                f"/api/operations/organize/previews/{discovery.preview_id}",
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -501,7 +499,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
 
             status, admitted_execution = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{discovery.preview_id}/execute",
+                f"/api/operations/organize/previews/{discovery.preview_id}/execute",
                 "POST",
                 {
                     "confirmation": True,
@@ -556,11 +554,11 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
         return provider
 
     def _decide_recognition(self, value, task_id, item, recognition_type_id="A"):
-        status, checkpoint = self.request(value, f"/api/v1/tasks/{task_id}/items/{item.item_id}")
+        status, checkpoint = self.request(value, f"/api/tasks/{task_id}/items/{item.item_id}")
         self.assertEqual(200, status, checkpoint)
         status, decision = self.request(
             value,
-            f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+            f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
             "POST",
             {
                 "kind": "recognition",
@@ -574,13 +572,11 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
     def _ignore(self, value, task_id, item):
         """Ignore one item through the existing Tasks recovery endpoint."""
 
-        status, detail = self.request(
-            value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
-        )
+        status, detail = self.request(value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery")
         self.assertEqual(200, status, detail)
         status, ignored = self.request(
             value,
-            f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery",
+            f"/api/tasks/{task_id}/items/{item.item_id}/recovery",
             "POST",
             {
                 "actionId": "ignore",
@@ -591,11 +587,11 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
         return detail
 
     def _resolve_conflict(self, value, task_id, item, strategy="rename"):
-        status, checkpoint = self.request(value, f"/api/v1/tasks/{task_id}/items/{item.item_id}")
+        status, checkpoint = self.request(value, f"/api/tasks/{task_id}/items/{item.item_id}")
         self.assertEqual(200, status, checkpoint)
         status, decision = self.request(
             value,
-            f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+            f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
             "POST",
             {
                 "kind": "conflict",
@@ -612,14 +608,14 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
         current = value.repository.get_media_discovery(discovery.discovery_id)
         status, accepted = self.request(
             value,
-            f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+            f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
             "POST",
             {"expectedVersion": current.version},
         )
         self.assertEqual(200, status, accepted)
         fresh = self._drive(value, task_id)
         status, preview = self.request(
-            value, f"/api/v1/operations/organize/previews/{fresh.preview_id}"
+            value, f"/api/operations/organize/previews/{fresh.preview_id}"
         )
         self.assertEqual(200, status, preview)
         return preview
@@ -627,7 +623,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
     def _execute(self, value, task_id, preview, item_ids, *, steps=8):
         status, admitted = self.request(
             value,
-            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            f"/api/operations/organize/previews/{preview['previewId']}/execute",
             "POST",
             {
                 "confirmation": True,
@@ -683,7 +679,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             current = value.repository.get_media_discovery(discovery.discovery_id)
             status, accepted = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
                 "POST",
                 {"expectedVersion": current.version},
             )
@@ -706,7 +702,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
 
             status, preview = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{discovery.preview_id}",
+                f"/api/operations/organize/previews/{discovery.preview_id}",
             )
             self.assertEqual(200, status, preview)
             ready = [item["itemId"] for item in preview["items"] if item["status"] == "previewed"]
@@ -750,7 +746,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             current = value.repository.get_media_discovery(discovery.discovery_id)
             status, accepted = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
                 "POST",
                 {"expectedVersion": current.version},
             )
@@ -763,7 +759,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             status, preview = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{discovery.preview_id}",
+                f"/api/operations/organize/previews/{discovery.preview_id}",
             )
             self.assertEqual(200, status, preview)
             second_ready = [
@@ -840,7 +836,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             current = value.repository.get_media_discovery(discovery.discovery_id)
             status, accepted = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
                 "POST",
                 {"expectedVersion": current.version},
             )
@@ -853,13 +849,11 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 TaskQueueState.WAITING_HUMAN,
             )
 
-            status, checkpoint = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
-            )
+            status, checkpoint = self.request(value, f"/api/tasks/{task_id}/items/{item.item_id}")
             self.assertEqual(200, status, checkpoint)
             status, decision = self.request(
                 value,
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 "POST",
                 {
                     "kind": "metadata",
@@ -872,7 +866,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             current = value.repository.get_media_discovery(discovery.discovery_id)
             status, accepted = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
                 "POST",
                 {"expectedVersion": current.version},
             )
@@ -885,7 +879,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertIs(item.status, TaskItemStatus.WAITING_CONFIRM)
 
             status, preview = self.request(
-                value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+                value, f"/api/operations/organize/previews/{discovery.preview_id}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -930,12 +924,12 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             discovery = self._drive(value, task_id)
             for item in value.repository.list_items(task_id):
                 status, checkpoint = self.request(
-                    value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
+                    value, f"/api/tasks/{task_id}/items/{item.item_id}"
                 )
                 self.assertEqual(200, status, checkpoint)
                 status, decision = self.request(
                     value,
-                    f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                    f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                     "POST",
                     {
                         "kind": "recognition",
@@ -947,7 +941,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             current = value.repository.get_media_discovery(discovery.discovery_id)
             status, accepted = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
                 "POST",
                 {"expectedVersion": current.version},
             )
@@ -955,14 +949,14 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             discovery = self._drive(value, task_id)
             status, preview = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{discovery.preview_id}",
+                f"/api/operations/organize/previews/{discovery.preview_id}",
             )
             self.assertEqual(200, status, preview)
             ready = [item["itemId"] for item in preview["items"] if item["status"] == "previewed"]
             self.assertEqual(2, len(ready), preview)
             status, execution = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{discovery.preview_id}/execute",
+                f"/api/operations/organize/previews/{discovery.preview_id}/execute",
                 "POST",
                 {
                     "confirmation": True,
@@ -985,7 +979,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                     task = value.repository.get_task(task_id)
                     code, reply = self.request(
                         value,
-                        f"/api/v1/tasks/{task_id}/cancel",
+                        f"/api/tasks/{task_id}/cancel",
                         "POST",
                         {"expectedUpdatedAt": task.updated_at.isoformat()},
                     )
@@ -1087,12 +1081,12 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             discovery = self._drive(value, task_id)
             for item in value.repository.list_items(task_id):
                 status, checkpoint = self.request(
-                    value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
+                    value, f"/api/tasks/{task_id}/items/{item.item_id}"
                 )
                 self.assertEqual(200, status, checkpoint)
                 status, decision = self.request(
                     value,
-                    f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                    f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                     "POST",
                     {
                         "kind": "recognition",
@@ -1104,7 +1098,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             current = value.repository.get_media_discovery(discovery.discovery_id)
             status, accepted = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
                 "POST",
                 {"expectedVersion": current.version},
             )
@@ -1112,13 +1106,13 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             discovery = self._drive(value, task_id)
             status, preview = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{discovery.preview_id}",
+                f"/api/operations/organize/previews/{discovery.preview_id}",
             )
             self.assertEqual(200, status, preview)
             ready = [item["itemId"] for item in preview["items"] if item["status"] == "previewed"]
             status, execution = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{discovery.preview_id}/execute",
+                f"/api/operations/organize/previews/{discovery.preview_id}/execute",
                 "POST",
                 {
                     "confirmation": True,
@@ -1141,7 +1135,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                     task = value.repository.get_task(task_id)
                     code, reply = self.request(
                         value,
-                        f"/api/v1/tasks/{task_id}/cancel",
+                        f"/api/tasks/{task_id}/cancel",
                         "POST",
                         {"expectedUpdatedAt": task.updated_at.isoformat()},
                     )
@@ -1214,15 +1208,15 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
 
         return self.request(
             value,
-            f"/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue",
+            f"/api/tasks/{task_id}/items/{item_id}/recovery/continue",
             "POST",
             {"expectedCheckpointVersion": checkpoint_version},
         )
 
     def _task_api_counts(self, value, task_id):
-        status, task = self.request(value, f"/api/v1/tasks/{task_id}")
+        status, task = self.request(value, f"/api/tasks/{task_id}")
         self.assertEqual(200, status, task)
-        status, run = self.request(value, f"/api/v1/operations/runs/{task_id}")
+        status, run = self.request(value, f"/api/operations/runs/{task_id}")
         self.assertEqual(200, status, run)
         return (
             (task["total_items"], task["completed_items"], task["failed_items"]),
@@ -1390,7 +1384,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             preview, ready = self._ready_summary(value, task_id, discovery, ["Movies/One.2001.mkv"])
             status, execution = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                f"/api/operations/organize/previews/{preview['previewId']}/execute",
                 "POST",
                 {
                     "confirmation": True,
@@ -1409,7 +1403,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 task = value.repository.get_task(task_id)
                 code, reply = self.request(
                     value,
-                    f"/api/v1/tasks/{task_id}/cancel",
+                    f"/api/tasks/{task_id}/cancel",
                     "POST",
                     {"expectedUpdatedAt": task.updated_at.isoformat()},
                 )
@@ -1476,7 +1470,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             preview, ready = self._ready_summary(value, task_id, discovery, ["Movies/One.2001.mkv"])
             status, execution = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                f"/api/operations/organize/previews/{preview['previewId']}/execute",
                 "POST",
                 {
                     "confirmation": True,
@@ -1533,7 +1527,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             preview, ready = self._ready_summary(value, task_id, discovery, ["Movies/One.2001.mkv"])
             status, execution = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                f"/api/operations/organize/previews/{preview['previewId']}/execute",
                 "POST",
                 {
                     "confirmation": True,
@@ -1605,13 +1599,11 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             item = value.repository.list_items(task_id)[0]
             self.assertIs(item.status, TaskItemStatus.WAITING_RECOGNITION)
 
-            status, checkpoint = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
-            )
+            status, checkpoint = self.request(value, f"/api/tasks/{task_id}/items/{item.item_id}")
             self.assertEqual(200, status, checkpoint)
             status, decision = self.request(
                 value,
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 "POST",
                 {
                     "kind": "recognition",
@@ -1658,13 +1650,11 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertIs(item.status, TaskItemStatus.WAITING_METADATA)
             self.assertEqual(1, len(value.repository.list_tasks()))
 
-            status, checkpoint = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
-            )
+            status, checkpoint = self.request(value, f"/api/tasks/{task_id}/items/{item.item_id}")
             self.assertEqual(200, status, checkpoint)
             status, decision = self.request(
                 value,
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 "POST",
                 {
                     "kind": "metadata",
@@ -1692,7 +1682,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             # The summary and the explicit confirmation remain the existing
             # exact Files preview/execute boundary for this same Task.
             status, preview = self.request(
-                value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+                value, f"/api/operations/organize/previews/{discovery.preview_id}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -1743,13 +1733,11 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             task_id = admitted["organizeTaskId"]
             self._drive(value, task_id)
             item = value.repository.list_items(task_id)[0]
-            status, checkpoint = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
-            )
+            status, checkpoint = self.request(value, f"/api/tasks/{task_id}/items/{item.item_id}")
             self.assertEqual(200, status, checkpoint)
             status, decision = self.request(
                 value,
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 "POST",
                 {
                     "kind": "recognition",
@@ -1787,7 +1775,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 saving,
                 self.request(
                     value,
-                    f"/api/v1/tasks/{task_id}/items/{item.item_id}",
+                    f"/api/tasks/{task_id}/items/{item.item_id}",
                 )[1]["checkpoint_version"],
             )
             self.assertIsNotNone(value.repository.get_recognition_review_for_item(item.item_id))
@@ -1863,7 +1851,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             preview = value.repository.get_manual_preview(discovery.preview_id)
             old_pin = (preview.configuration_snapshot_id, preview.configuration_snapshot_digest)
             status, preview_document = self.request(
-                value, f"/api/v1/operations/organize/previews/{preview.preview_id}"
+                value, f"/api/operations/organize/previews/{preview.preview_id}"
             )
             self.assertEqual(200, status, preview_document)
             ready = [
@@ -1896,7 +1884,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             # capacity refuses it.  Nothing is consumed or mutated.
             status, refused = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview.preview_id}/execute",
+                f"/api/operations/organize/previews/{preview.preview_id}/execute",
                 "POST",
                 confirmation,
             )
@@ -1942,7 +1930,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             status, accepted = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview.preview_id}/execute",
+                f"/api/operations/organize/previews/{preview.preview_id}/execute",
                 "POST",
                 confirmation,
             )
@@ -2005,20 +1993,20 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(202, status, accepted)
             self._drive(value, task_id)
             status, detail = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             self.assertEqual("business_problem", detail["recoveryKind"])
             status, prepared = self.request(
                 value,
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/prepare-summary",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/prepare-summary",
                 "POST",
                 {"expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"]},
             )
             self.assertEqual(201, status, prepared)
             status, preview = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{prepared['preview_id']}",
+                f"/api/operations/organize/previews/{prepared['preview_id']}",
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -2048,7 +2036,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             }
             status, refused = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{prepared['preview_id']}/execute",
+                f"/api/operations/organize/previews/{prepared['preview_id']}/execute",
                 "POST",
                 confirmation,
             )
@@ -2067,7 +2055,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             status, confirmed = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{prepared['preview_id']}/execute",
+                f"/api/operations/organize/previews/{prepared['preview_id']}/execute",
                 "POST",
                 confirmation,
             )
@@ -2115,7 +2103,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             task_id = admitted["organizeTaskId"]
             discovery = self._drive(value, task_id)
             status, preview_document = self.request(
-                value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+                value, f"/api/operations/organize/previews/{discovery.preview_id}"
             )
             self.assertEqual(200, status, preview_document)
             ready = [
@@ -2144,7 +2132,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self._publish_capacity(value, 2)
             status, accepted = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{discovery.preview_id}/execute",
+                f"/api/operations/organize/previews/{discovery.preview_id}/execute",
                 "POST",
                 confirmation,
             )
@@ -2174,7 +2162,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             task = value.repository.get_task(task_id)
             status, cancelled = self.request(
                 value,
-                f"/api/v1/tasks/{task_id}/cancel",
+                f"/api/tasks/{task_id}/cancel",
                 "POST",
                 {"expectedUpdatedAt": task.updated_at.isoformat()},
             )
@@ -2279,7 +2267,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             task = value.repository.get_task(first)
             status, cancelled = self.request(
                 value,
-                f"/api/v1/tasks/{first}/cancel",
+                f"/api/tasks/{first}/cancel",
                 "POST",
                 {"expectedUpdatedAt": task.updated_at.isoformat()},
             )
@@ -2351,7 +2339,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(1, len(ready), preview)
             status, admitted_execution = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                f"/api/operations/organize/previews/{preview['previewId']}/execute",
                 "POST",
                 {
                     "confirmation": True,
@@ -2383,7 +2371,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             # The untouched second sibling saves its own decision and continues
             # its safe analysis on this same Task.
             self._decide_recognition(value, task_id, second)
-            checkpoint = self.request(value, f"/api/v1/tasks/{task_id}/items/{second.item_id}")[1]
+            checkpoint = self.request(value, f"/api/tasks/{task_id}/items/{second.item_id}")[1]
             status, accepted = self._continue_from_task_center(
                 value, task_id, second.item_id, checkpoint["checkpoint_version"]
             )
@@ -2396,7 +2384,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 TaskQueueState.WAITING_HUMAN,
             )
             status, preview = self.request(
-                value, f"/api/v1/operations/organize/previews/{fresh.preview_id}"
+                value, f"/api/operations/organize/previews/{fresh.preview_id}"
             )
             self.assertEqual(200, status, preview)
             second_ready = [
@@ -2431,7 +2419,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             status, preview = self.request(
-                value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+                value, f"/api/operations/organize/previews/{discovery.preview_id}"
             )
             self.assertEqual(200, status, preview)
             first = next(
@@ -2496,7 +2484,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             discovery = self._drive(value, task_id)
 
             status, detail = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             self.assertEqual("business_problem", detail["recoveryKind"])
@@ -2514,7 +2502,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             # Preparing the summary is a bounded re-read of that same record.
             status, prepared = self.request(
                 value,
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/prepare-summary",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/prepare-summary",
                 "POST",
                 {"expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"]},
             )
@@ -2525,7 +2513,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual([], value.target.mutations)
 
             status, preview = self.request(
-                value, f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+                value, f"/api/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -2534,7 +2522,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(1, len(ready), preview)
             status, confirmed = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
                 "POST",
                 {
                     "preparationId": preparation["preparation_id"],
@@ -2566,7 +2554,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             # execution item of the same source, so the current item is read.
             current_item = value.repository.list_items(task_id)[0]
             status, reread = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{current_item.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{current_item.item_id}/recovery"
             )
             self.assertEqual(200, status, reread)
             self.assertEqual("confirmed", reread["manualRecoveryPreparation"]["status"])
@@ -2611,13 +2599,11 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             item = value.repository.list_items(task_id)[0]
             self.assertIs(item.status, TaskItemStatus.WAITING_METADATA)
 
-            status, checkpoint = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}"
-            )
+            status, checkpoint = self.request(value, f"/api/tasks/{task_id}/items/{item.item_id}")
             self.assertEqual(200, status, checkpoint)
             status, decision = self.request(
                 value,
-                f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
                 "POST",
                 {
                     "kind": "metadata",
@@ -2635,7 +2621,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertIs(item.status, TaskItemStatus.WAITING_CONFIRM)
 
             status, detail = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             self.assertEqual("business_problem", detail["recoveryKind"])
@@ -2644,7 +2630,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual("prepared", preparation["status"])
 
             status, preview = self.request(
-                value, f"/api/v1/operations/organize/previews/{preparation['preview_id']}"
+                value, f"/api/operations/organize/previews/{preparation['preview_id']}"
             )
             self.assertEqual(200, status, preview)
             ready = [
@@ -2653,7 +2639,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(1, len(ready), preview)
             status, confirmed = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
                 "POST",
                 {
                     "preparationId": preparation["preparation_id"],
@@ -2678,12 +2664,12 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
     def _native_confirm(self, value, preparation, ready, *, expect=202):
         status, preview = self.request(
             value,
-            f"/api/v1/operations/organize/previews/{preparation['preview_id']}",
+            f"/api/operations/organize/previews/{preparation['preview_id']}",
         )
         self.assertEqual(200, status, preview)
         status, reply = self.request(
             value,
-            f"/api/v1/operations/organize/previews/{preparation['preview_id']}/execute",
+            f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
             "POST",
             {
                 "preparationId": preparation["preparation_id"],
@@ -2731,7 +2717,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(202, status, accepted)
             discovery = self._drive(value, task_id)
             status, detail = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             old_preparation = detail["manualRecoveryPreparation"]
@@ -2739,7 +2725,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 entry["itemId"]
                 for entry in self.request(
                     value,
-                    f"/api/v1/operations/organize/previews/{old_preparation['preview_id']}",
+                    f"/api/operations/organize/previews/{old_preparation['preview_id']}",
                 )[1]["items"]
                 if entry["status"] == "previewed"
             ]
@@ -2759,7 +2745,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
 
             # The plan the operator actually reviewed is the only one that runs.
             status, detail = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             current = detail["manualRecoveryPreparation"]
@@ -2812,7 +2798,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(202, status, accepted)
             self._drive(value, task_id)
             status, detail = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             preparation = detail["manualRecoveryPreparation"]
@@ -2820,7 +2806,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 entry["itemId"]
                 for entry in self.request(
                     value,
-                    f"/api/v1/operations/organize/previews/{preparation['preview_id']}",
+                    f"/api/operations/organize/previews/{preparation['preview_id']}",
                 )[1]["items"]
                 if entry["status"] == "previewed"
             ]
@@ -2829,7 +2815,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             # The original URL is readable immediately after admission, before
             # the Worker has run, and points at the admitted execution.
             status, before = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, before)
             self.assertEqual("confirmed", before["manualRecoveryPreparation"]["status"])
@@ -2840,7 +2826,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             for _ in range(8):
                 value.task_engine.run_next()
             status, after = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{item.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, after)
             self.assertEqual("confirmed", after["manualRecoveryPreparation"]["status"])
@@ -2896,7 +2882,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 if entry["source"]["path"] == "Movies/Two.2002.mkv"
             )
             status, detail = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{first.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{first.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             execution = self._native_confirm(
@@ -2908,7 +2894,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             # The unselected sibling keeps its own pending summary and does not
             # borrow the first file's execution.
             status, sibling = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{second.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{second.item_id}/recovery"
             )
             self.assertEqual(200, status, sibling)
             sibling_preparation = sibling["manualRecoveryPreparation"]
@@ -2924,14 +2910,14 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             # then confirm and execute it on the same Task.
             status, continued = self.request(
                 value,
-                f"/api/v1/tasks/{task_id}/items/{second.item_id}/recovery/continue",
+                f"/api/tasks/{task_id}/items/{second.item_id}/recovery/continue",
                 "POST",
                 {"expectedCheckpointVersion": sibling["checkpoint"]["checkpoint_version"]},
             )
             self.assertEqual(202, status, continued)
             fresh = self._drive(value, task_id)
             status, fresh_preview = self.request(
-                value, f"/api/v1/operations/organize/previews/{fresh.preview_id}"
+                value, f"/api/operations/organize/previews/{fresh.preview_id}"
             )
             self.assertEqual(200, status, fresh_preview)
             second_ready = [
@@ -2941,7 +2927,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             ]
             self.assertEqual([second_item_id], second_ready)
             status, detail = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{second.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{second.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             self._native_confirm(value, detail["manualRecoveryPreparation"], second_ready)
@@ -3063,7 +3049,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             status, detail = self.request(
-                value, f"/api/v1/tasks/{task_id}/items/{ignored_item.item_id}/recovery"
+                value, f"/api/tasks/{task_id}/items/{ignored_item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             self.assertEqual("ignored", detail["checkpoint"]["status"])
@@ -3132,7 +3118,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            status, run = self.request(value, f"/api/v1/operations/runs/{task_id}")
+            status, run = self.request(value, f"/api/operations/runs/{task_id}")
             self.assertEqual(200, status, run)
             self.assertTrue(run["lifecycle"]["terminal"])
             self.assertEqual("completed", run["status"])
@@ -3180,7 +3166,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertFalse(state.holds_capacity)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            status, run = self.request(value, f"/api/v1/operations/runs/{task_id}")
+            status, run = self.request(value, f"/api/operations/runs/{task_id}")
             self.assertEqual(200, status, run)
             self.assertTrue(run["lifecycle"]["terminal"])
             self.assertEqual("completed", run["status"])
@@ -3248,7 +3234,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             counts, run_counts = self._task_api_counts(value, task_id)
             self.assertEqual((1, 1, 1), counts)
             self.assertEqual((1, 1, 1), run_counts)
-            status, run = self.request(value, f"/api/v1/operations/runs/{task_id}")
+            status, run = self.request(value, f"/api/operations/runs/{task_id}")
             self.assertEqual(200, status, run)
             self.assertTrue(run["lifecycle"]["terminal"])
             self.assertEqual("completed", run["status"])
@@ -3302,7 +3288,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             items = {item.source_path: item for item in value.repository.list_items(task_id)}
             self.assertEqual(2, len(items))
             status, preview = self.request(
-                value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+                value, f"/api/operations/organize/previews/{discovery.preview_id}"
             )
             self.assertEqual(200, status, preview)
             first = next(

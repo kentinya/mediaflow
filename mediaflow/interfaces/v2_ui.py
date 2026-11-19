@@ -1,10 +1,10 @@
 """Read-only static serving boundary for the built V2 web artifact.
 
 The V2 frontend is built by Node/Vite from ``web/`` (build-time tooling only).
-The Python application serves the deterministic built artifact at the
-documented current ``/ui-v2/`` prefix without a Node production runtime.
-This module never touches repositories, Storage, Providers, Tasks, Jobs or
-execution services; it only reads files from the built artifact directory.
+The Python application serves the deterministic built artifact from the
+canonical Web root without a Node production runtime. This module never
+touches repositories, Storage, Providers, Tasks, Jobs or execution services;
+it only reads files from the built artifact directory.
 
 The artifact root resolves from the ``MEDIAFLOW_UI_V2_ASSET_ROOT`` environment
 variable when set (deployment-owned, used by container packaging), otherwise
@@ -18,7 +18,9 @@ import re
 import threading
 from pathlib import Path, PurePosixPath
 
-V2_UI_PREFIX = "/ui-v2"
+# The Web namespace shares the process root with the build artifact: the entry
+# document is ``/`` and every emitted asset keeps the URL Vite wrote for it.
+WEB_ROOT = "/"
 ASSET_ROOT_ENV = "MEDIAFLOW_UI_V2_ASSET_ROOT"
 _DEFAULT_ASSET_ROOT = Path(__file__).resolve().parents[2] / "web" / "dist"
 
@@ -36,21 +38,21 @@ _CONTENT_TYPES = {
     ".woff2": "font/woff2",
 }
 
-_INDEX_PATHS = (V2_UI_PREFIX, V2_UI_PREFIX + "/")
+_INDEX_PATHS = (WEB_ROOT,)
 
 # The one built-SPA deep route whose operator identity is backend data, not a
 # filename. The backend rules identifier contract
 # (``RulesWorkspaceCommandService``) accepts bounded IDs containing ``.``,
 # ``+``, ``@`` and internal spaces — including shapes such as ``proof.js``,
 # ``proof.env`` or ``proof.type.bak`` that merely look like files. A refresh or
-# direct entry of ``/ui-v2/rules/edit/<family>/<encoded-id>`` must therefore
-# receive the entry document regardless of how the identity segment reads. The
-# check below is anchored to that exact route shape: an allowlisted rules
-# family and exactly one identity segment using the backend's bounded ASCII
-# grammar. WSGI has already percent-decoded PATH_INFO, and traversal is refused
-# before this runs. Every other dotted path outside this route stays an
-# unknown asset that fails closed.
-_RULES_EDIT_PREFIX = V2_UI_PREFIX + "/rules/edit/"
+# direct entry of ``/rules/edit/<family>/<encoded-id>`` must therefore receive
+# the entry document regardless of how the identity segment reads. The check
+# below is anchored to that exact route shape: an allowlisted rules family and
+# exactly one identity segment using the backend's bounded ASCII grammar. WSGI
+# has already percent-decoded PATH_INFO, and traversal is refused before this
+# runs. Every other dotted path outside this route stays an unknown asset that
+# fails closed.
+_RULES_EDIT_PREFIX = "/rules/edit/"
 _RULES_EDIT_FAMILIES = frozenset(
     {
         "recognitionRules",
@@ -110,7 +112,7 @@ def load_v2_assets(root: Path) -> dict[str, tuple[str, bytes]]:
 
     Only allowlisted file types from the build output are served; unknown
     file types inside the artifact directory are never exposed. A missing or
-    empty artifact yields an empty map so every V2 request fails closed.
+    empty artifact yields an empty map so every Web request fails closed.
     """
 
     index = root / "index.html"
@@ -124,8 +126,8 @@ def load_v2_assets(root: Path) -> dict[str, tuple[str, bytes]]:
         if content_type is None:
             continue
         relative = file.relative_to(root).as_posix()
-        assets[f"{V2_UI_PREFIX}/{relative}"] = (content_type, file.read_bytes())
-    entry = assets.get(f"{V2_UI_PREFIX}/index.html")
+        assets[f"/{relative}"] = (content_type, file.read_bytes())
+    entry = assets.get("/index.html")
     if entry is None:
         return {}
     for path in _INDEX_PATHS:
@@ -156,14 +158,14 @@ def reset_v2_ui_cache() -> None:
 
 
 def v2_ui_asset(path: str) -> tuple[str, bytes] | None:
-    """Resolve one V2 UI request path; the caller has matched the prefix.
+    """Resolve one Web request path inside the canonical root namespace.
 
     Known built asset paths and the entry document are served. Unknown
-    client-side routes fall back to the entry document so deep V2 routes such
-    as ``/ui-v2/explore`` work. A dotted final segment is treated as an
-    unknown asset and rejected so only built artifact bytes ever leave the
-    process — except the one allowlisted rules edit route whose final segment
-    is a backend object identity (dots included), never a filename. Traversal
+    client-side routes fall back to the entry document so deep Web routes such
+    as ``/explore`` work. A dotted final segment is treated as an unknown
+    asset and rejected so only built artifact bytes ever leave the process —
+    except the one allowlisted rules edit route whose final segment is a
+    backend object identity (dots included), never a filename. Traversal
     attempts are always rejected.
     """
 
@@ -173,7 +175,7 @@ def v2_ui_asset(path: str) -> tuple[str, bytes] | None:
     if _is_rules_edit_route_shape(path):
         if not _is_rules_edit_route(path):
             return None
-        return assets.get(V2_UI_PREFIX + "/")
+        return assets.get(WEB_ROOT)
     asset = assets.get(path)
     if asset is not None:
         return asset
@@ -182,4 +184,4 @@ def v2_ui_asset(path: str) -> tuple[str, bytes] | None:
     # backend, not a request for artifact files.
     if PurePosixPath(path).suffix and not _is_rules_edit_route(path):
         return None
-    return assets.get(V2_UI_PREFIX + "/")
+    return assets.get(WEB_ROOT)

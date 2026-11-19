@@ -138,7 +138,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         active = self._activate_initial()
         status, response = request(
             self.api,
-            "/api/v1/configuration/drafts/successor",
+            "/api/configuration/drafts/successor",
             method="POST",
             body={},
             token="admin-token",
@@ -154,7 +154,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         active = self._activate_initial()
         status, response = request(
             self.api,
-            f"/api/v1/configuration/revisions/{active.revision_id}/successor",
+            f"/api/configuration/revisions/{active.revision_id}/successor",
             method="POST",
             body={},
             token="admin-token",
@@ -168,7 +168,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         before = tuple(revision.revision_id for revision in self.repository.list_revisions())
         status, response = request(
             self.api,
-            "/api/v1/configuration/revisions/not-the-active-revision/successor",
+            "/api/configuration/revisions/not-the-active-revision/successor",
             method="POST",
             body={},
             token="admin-token",
@@ -196,7 +196,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         before = tuple(revision.revision_id for revision in self.repository.list_revisions())
         status, response = request(
             self.api,
-            f"/api/v1/configuration/revisions/{draft.revision_id}/successor",
+            f"/api/configuration/revisions/{draft.revision_id}/successor",
             method="POST",
             body={},
             token="admin-token",
@@ -222,7 +222,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         before = tuple(revision.revision_id for revision in self.repository.list_revisions())
         status, response = request(
             self.api,
-            f"/api/v1/configuration/revisions/{first.revision_id}/successor",
+            f"/api/configuration/revisions/{first.revision_id}/successor",
             method="POST",
             body={},
             token="admin-token",
@@ -239,7 +239,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         self._activate_initial()
         status, _ = request(
             self.api,
-            "/api/v1/configuration/drafts/successor",
+            "/api/configuration/drafts/successor",
             method="POST",
             body={},
             token="readonly-token",
@@ -250,7 +250,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         self._activate_initial()
         status, response = request(
             self.api,
-            "/api/v1/configuration/drafts/successor",
+            "/api/configuration/drafts/successor",
             method="POST",
             body={"expectedActiveRevisionId": "stale-revision-id"},
             token="admin-token",
@@ -262,7 +262,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         self._activate_initial()
         status, response = request(
             self.api,
-            "/api/v1/configuration/drafts",
+            "/api/configuration/drafts",
             method="POST",
             body={"source": "active"},
             token="admin-token",
@@ -291,7 +291,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
             with self.subTest(section=section, action="disable"):
                 status, response = request(
                     self.api,
-                    f"/api/v1/configuration/revisions/{current_rev_id}/objects/{section}/{object_id}/disable",
+                    f"/api/configuration/revisions/{current_rev_id}/objects/{section}/{object_id}/disable",
                     method="POST",
                     body={"expectedVersion": current_version},
                     token="admin-token",
@@ -301,7 +301,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
             with self.subTest(section=section, action="enable"):
                 status, response = request(
                     self.api,
-                    f"/api/v1/configuration/revisions/{current_rev_id}/objects/{section}/{object_id}/enable",
+                    f"/api/configuration/revisions/{current_rev_id}/objects/{section}/{object_id}/enable",
                     method="POST",
                     body={"expectedVersion": current_version},
                     token="admin-token",
@@ -311,7 +311,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
             with self.subTest(section=section, action="copy"):
                 status, response = request(
                     self.api,
-                    f"/api/v1/configuration/revisions/{current_rev_id}/objects/{section}/{object_id}/copy",
+                    f"/api/configuration/revisions/{current_rev_id}/objects/{section}/{object_id}/copy",
                     method="POST",
                     body={"expectedVersion": current_version},
                     token="admin-token",
@@ -323,7 +323,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         with self.subTest(section="organizePolicies", action="copy"):
             status, response = request(
                 self.api,
-                f"/api/v1/configuration/revisions/{current_rev_id}/objects/organizePolicies/A/copy",
+                f"/api/configuration/revisions/{current_rev_id}/objects/organizePolicies/A/copy",
                 method="POST",
                 body={"expectedVersion": current_version},
                 token="admin-token",
@@ -334,7 +334,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         with self.subTest(section="organizePolicies", action="disable_fails"):
             status, response = request(
                 self.api,
-                f"/api/v1/configuration/revisions/{current_rev_id}/objects/organizePolicies/A/disable",
+                f"/api/configuration/revisions/{current_rev_id}/objects/organizePolicies/A/disable",
                 method="POST",
                 body={"expectedVersion": current_version},
                 token="admin-token",
@@ -347,7 +347,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         # Deleting storage referenced by resourceLibrary must fail
         status, response = request(
             self.api,
-            f"/api/v1/configuration/revisions/{draft.revision_id}/objects/storages/source-storage",
+            f"/api/configuration/revisions/{draft.revision_id}/objects/storages/source-storage",
             method="DELETE",
             body={"expectedVersion": draft.version},
             token="admin-token",
@@ -358,7 +358,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         # Copying a storage creates an unreferenced copy, which can be deleted
         status, copied = request(
             self.api,
-            f"/api/v1/configuration/revisions/{draft.revision_id}/objects/storages/source-storage/copy",
+            f"/api/configuration/revisions/{draft.revision_id}/objects/storages/source-storage/copy",
             method="POST",
             body={"expectedVersion": draft.version, "newId": "temp-storage"},
             token="admin-token",
@@ -366,7 +366,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
         self.assertEqual(status, 200)
         status, deleted = request(
             self.api,
-            f"/api/v1/configuration/revisions/{draft.revision_id}/objects/storages/temp-storage",
+            f"/api/configuration/revisions/{draft.revision_id}/objects/storages/temp-storage",
             method="DELETE",
             body={"expectedVersion": copied["version"]},
             token="admin-token",

@@ -2,7 +2,7 @@
  * Frontend-owned bounded Notification models.
  *
  * The Python contract exposes the V2 Notification journey as digest-free
- * operator documents under ``/api/v1/operations/notifications/``: a Webhook
+ * operator documents under ``/api/operations/notifications/``: a Webhook
  * definitions page with the exact immutable Active identity and open-Draft
  * state, a definition detail, a Draft editor document, a bounded signed-test
  * outcome, and a delivery detail with permission-aware recovery actions.
@@ -155,11 +155,10 @@ export type NotificationActionKind =
   | "delivery-requeue"
   | "delivery-resolve-stale";
 
-const OPERATIONS_WEBHOOKS_ROUTE = "/api/v1/operations/notifications/webhooks/";
-const OPERATIONS_DELIVERIES_ROUTE =
-  "/api/v1/operations/notifications/deliveries/";
-const CONFIGURATION_REVISIONS_ROUTE = "/api/v1/configuration/revisions/";
-const NOTIFICATIONS_ROUTE = "/api/v1/notifications/";
+const OPERATIONS_WEBHOOKS_ROUTE = "/api/operations/notifications/webhooks/";
+const OPERATIONS_DELIVERIES_ROUTE = "/api/operations/notifications/deliveries/";
+const CONFIGURATION_REVISIONS_ROUTE = "/api/configuration/revisions/";
+const NOTIFICATIONS_ROUTE = "/api/notifications/";
 
 type NotificationActionContract = ActionTransportContract;
 

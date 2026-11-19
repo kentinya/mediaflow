@@ -16,12 +16,12 @@ for (const width of [1536, 390]) {
     await page.setViewportSize({ width, height: width === 1536 ? 1024 : 844 });
     await page.request.post("/__test__/reset-automation");
     await page.route(
-      "**/api/v1/operations/automation/records?*",
+      "**/api/operations/automation/records?*",
       async (route) => {
         await route.fulfill({ json: prestartRecords });
       },
     );
-    await page.goto("/ui-v2/operations/automation");
+    await page.goto("/operations/automation");
     await page.getByLabel("API token").fill("e2e-viewer-token");
     await page.getByRole("button", { name: "Connect" }).click();
     const main = page.getByRole("main");
@@ -202,7 +202,7 @@ test("PATCH-20261107-1 removes the header refresh entry without skipping the cre
       requests.push(`${request.method()} ${new URL(request.url()).pathname}`);
     }
   });
-  await page.goto("/ui-v2/operations/automation");
+  await page.goto("/operations/automation");
   await page.getByLabel("API token").fill("e2e-viewer-token");
   await page.getByRole("button", { name: "Connect" }).click();
   const title = page.getByRole("heading", { name: "自动化", exact: true });
@@ -226,15 +226,14 @@ test("PATCH-20261107-1 removes the header refresh entry without skipping the cre
   await expect
     .poll(() =>
       requests.some(
-        (entry) =>
-          entry === "GET /api/v1/operations/automation/task-definitions",
+        (entry) => entry === "GET /api/operations/automation/task-definitions",
       ),
     )
     .toBe(true);
   await expect
     .poll(() =>
       requests.some(
-        (entry) => entry === "GET /api/v1/operations/automation/definitions",
+        (entry) => entry === "GET /api/operations/automation/definitions",
       ),
     )
     .toBe(true);

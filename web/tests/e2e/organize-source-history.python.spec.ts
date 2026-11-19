@@ -53,7 +53,7 @@ interface FileState {
 }
 
 async function connect(page: Page): Promise<void> {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -109,7 +109,7 @@ test("a recorded partial history warns, then the confirmed new organize takes ef
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await connect(page);
   await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await page
     .getByRole("button", { name: /source/ })
     .first()
@@ -160,7 +160,7 @@ test("a recorded partial history warns, then the confirmed new organize takes ef
   await page.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByText(/将整理 1 项/)).toBeVisible();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });

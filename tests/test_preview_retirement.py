@@ -147,32 +147,32 @@ class RetiredPreviewApiTests(unittest.TestCase):
 
     def test_old_preview_routes_are_ordinary_not_found(self):
         for method, path, body in (
-            ("POST", "/api/v1/operations/previews", {"scopeKind": "resource_library"}),
-            ("GET", "/api/v1/operations/previews", None),
-            ("GET", "/api/v1/operations/previews/p-1", None),
+            ("POST", "/api/operations/previews", {"scopeKind": "resource_library"}),
+            ("GET", "/api/operations/previews", None),
+            ("GET", "/api/operations/previews/p-1", None),
             (
                 "POST",
-                "/api/v1/automation/task-definitions/definition/preview",
+                "/api/automation/task-definitions/definition/preview",
                 {},
             ),
-            ("GET", "/api/v1/automation/task-definitions/definition/previews", None),
+            ("GET", "/api/automation/task-definitions/definition/previews", None),
             (
                 "GET",
-                "/api/v1/automation/task-definitions/definition/previews/p-1",
+                "/api/automation/task-definitions/definition/previews/p-1",
                 None,
             ),
             (
                 "POST",
-                "/api/v1/automation/task-definitions/definition/preview-analyses",
+                "/api/automation/task-definitions/definition/preview-analyses",
                 {},
             ),
             (
                 "POST",
-                "/api/v1/operations/organize/intents/intent-1/preview-analyses",
+                "/api/operations/organize/intents/intent-1/preview-analyses",
                 {"expectedVersion": 1},
             ),
-            ("GET", "/api/v1/operations/automation/preview-analyses", None),
-            ("GET", "/api/v1/operations/automation/preview-analyses/a-1", None),
+            ("GET", "/api/operations/automation/preview-analyses", None),
+            ("GET", "/api/operations/automation/preview-analyses/a-1", None),
         ):
             with self.subTest(method=method, path=path):
                 status, document = _request(self.api, method, path, body=body, token="admin-token")
@@ -183,13 +183,13 @@ class RetiredPreviewApiTests(unittest.TestCase):
         _request(
             self.api,
             "POST",
-            "/api/v1/automation/task-definitions/definition/preview",
+            "/api/automation/task-definitions/definition/preview",
             body={},
         )
         _request(
             self.api,
             "POST",
-            "/api/v1/operations/previews",
+            "/api/operations/previews",
             body={"scopeKind": "resource_library"},
         )
         self.assertEqual((), self.repository.list_tasks())
@@ -229,7 +229,7 @@ class RetainedRunOncePlanTests(unittest.TestCase):
         journey = AutomationOperatorJourneyTests()
         with journey._journey() as value:
             api = value.api
-            path = f"/api/v1/operations/automation/task-definitions/{_DEFINITION['id']}/run-once"
+            path = f"/api/operations/automation/task-definitions/{_DEFINITION['id']}/run-once"
             request_id = "preview-retirement-request-1"
             status, admitted = _request(
                 api,
@@ -340,7 +340,7 @@ class RetiredAuthoritySurfaceTests(unittest.TestCase):
             ):
                 status, refused = _request(
                     api,
-                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant",
+                    f"/api/automation/task-definitions/{_DEFINITION['id']}/grant",
                     method=method,
                     body=body,
                 )
@@ -348,7 +348,7 @@ class RetiredAuthoritySurfaceTests(unittest.TestCase):
                 self.assertEqual("not_found", refused["error"]["code"])
             status, state = _request(
                 api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant-state",
+                f"/api/automation/task-definitions/{_DEFINITION['id']}/grant-state",
             )
             self.assertEqual(404, status)
             self.assertEqual((), value.repository.list_tasks())

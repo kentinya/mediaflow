@@ -16,8 +16,8 @@ async function openFiles(
   await page.setViewportSize({ width: 760, height: 900 });
   const url =
     kind === "resource"
-      ? "/ui-v2/resourcelib/files?resourceLibraryId=source"
-      : "/ui-v2/medialib/files?mediaLibraryId=movies";
+      ? "/resourcelib/files?resourceLibraryId=source"
+      : "/medialib/files?mediaLibraryId=movies";
   await page.goto(origin === undefined ? url : new URL(url, origin).toString());
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
@@ -185,8 +185,8 @@ async function deleteOverInsecureLanHttp(
     // its Delete POST.
     const recoveryPath =
       kind === "resource"
-        ? "/ui-v2/resourcelib/files?resourceLibraryId=source"
-        : "/ui-v2/medialib/files?mediaLibraryId=movies";
+        ? "/resourcelib/files?resourceLibraryId=source"
+        : "/medialib/files?mediaLibraryId=movies";
     await page.goto(
       new URL(recoveryPath, "http://mediaflow.review.test:4185").toString(),
     );
@@ -694,7 +694,7 @@ async function readOperationStatus(
   testInfo: TestInfo,
   kind: "resource" | "media",
 ): Promise<void> {
-  const listUrl = `/api/v1/${
+  const listUrl = `/api/${
     kind === "resource" ? "resource-libraries/source" : "media-libraries/movies"
   }/file-operations`;
   const dialog = page.getByRole("dialog", { name: /当前页面操作状态/ });
@@ -823,7 +823,7 @@ async function mixedBatchLocalEvidence(
   kind: "resource" | "media",
 ): Promise<void> {
   const prefix = kind === "resource" ? "Resource" : "Media";
-  const listUrl = `/api/v1/${
+  const listUrl = `/api/${
     kind === "resource" ? "resource-libraries/source" : "media-libraries/movies"
   }/file-operations`;
   const authHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
@@ -1007,7 +1007,7 @@ async function bulkDirectoryLocalEvidence(
 ): Promise<void> {
   const prefix = kind === "resource" ? "Resource" : "Media";
   const library = kind === "resource" ? "source" : "movies";
-  const listUrl = `/api/v1/${
+  const listUrl = `/api/${
     kind === "resource" ? "resource-libraries/source" : "media-libraries/movies"
   }/file-operations`;
   const authHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
@@ -1401,7 +1401,7 @@ test("ResourceLibrary Files keeps a cancelled folder Move's known effects locall
   // is gated.  Pause/Continue are not offered at all; cancellation remains the
   // cooperative control that preserves already-recorded effects.
   const runningOperations = await page.request.get(
-    "/api/v1/resource-libraries/source/file-operations",
+    "/api/resource-libraries/source/file-operations",
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   const runningDocument = (await runningOperations.json()) as {
@@ -1412,14 +1412,14 @@ test("ResourceLibrary Files keeps a cancelled folder Move's known effects locall
   );
   expect(running).toBeTruthy();
   const runningDetail = await page.request.get(
-    `/api/v1/resource-libraries/source/files/operations/${running?.taskId}`,
+    `/api/resource-libraries/source/files/operations/${running?.taskId}`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   const runningDetailDocument = (await runningDetail.json()) as {
     version: string;
   };
   const cancelledResponse = await page.request.post(
-    `/api/v1/tasks/${running?.taskId}/cancel`,
+    `/api/tasks/${running?.taskId}/cancel`,
     {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
       data: { expectedUpdatedAt: runningDetailDocument.version },
@@ -1497,7 +1497,7 @@ test("ResourceLibrary Files keeps a cancelled folder Move's known effects locall
   // The retired resume route is an ordinary unknown route for the cancelled
   // transfer; the remaining child is never replayed.
   const operations = await page.request.get(
-    "/api/v1/resource-libraries/source/file-operations",
+    "/api/resource-libraries/source/file-operations",
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   const operationsDocument = (await operations.json()) as {
@@ -1509,12 +1509,12 @@ test("ResourceLibrary Files keeps a cancelled folder Move's known effects locall
   );
   expect(cancelled).toBeTruthy();
   const detail = await page.request.get(
-    `/api/v1/resource-libraries/source/files/operations/${cancelled?.taskId}`,
+    `/api/resource-libraries/source/files/operations/${cancelled?.taskId}`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   const detailDocument = (await detail.json()) as { version: string };
   const refused = await page.request.post(
-    `/api/v1/tasks/${cancelled?.taskId}/resume`,
+    `/api/tasks/${cancelled?.taskId}/resume`,
     {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
       data: { expectedUpdatedAt: detailDocument.version },
@@ -1650,7 +1650,7 @@ test.describe("disabled origin stays inspectable", () => {
     ).toBeVisible();
     await createFolderThroughNativePage(page, "resource");
     const before = await page.request.get(
-      `/api/v1/resource-libraries/${origin}/file-operations`,
+      `/api/resource-libraries/${origin}/file-operations`,
       { headers },
     );
     expect(before.ok()).toBe(true);
@@ -1673,14 +1673,14 @@ test.describe("disabled origin stays inspectable", () => {
       page.getByRole("heading", { name: "文件", exact: true }),
     ).toBeVisible();
     const history = await page.request.get(
-      `/api/v1/resource-libraries/${origin}/file-operations`,
+      `/api/resource-libraries/${origin}/file-operations`,
       { headers },
     );
     expect(history.ok()).toBe(true);
     expect(await history.json()).toMatchObject({ total: beforeTotal });
 
     const origins = await page.request.get(
-      "/api/v1/resource-libraries/operation-origins",
+      "/api/resource-libraries/operation-origins",
       { headers },
     );
     expect(origins.ok()).toBe(true);
@@ -1713,7 +1713,7 @@ test.describe("disabled origin stays inspectable", () => {
     // nothing: the backend still reports it disabled and the operation count is
     // unchanged.
     const afterRead = await page.request.get(
-      `/api/v1/resource-libraries/${origin}/file-operations`,
+      `/api/resource-libraries/${origin}/file-operations`,
       { headers },
     );
     expect(await afterRead.json()).toMatchObject({ total: beforeTotal });
@@ -1724,7 +1724,7 @@ test.describe("disabled origin stays inspectable", () => {
     // which reads the persisted kind.  Following it reopens local inspection
     // with no mutation and no live library rebinding.
     const operations = await page.request.get(
-      `/api/v1/resource-libraries/${origin}/file-operations`,
+      `/api/resource-libraries/${origin}/file-operations`,
       { headers },
     );
     const operationsDocument = (await operations.json()) as {
@@ -1732,7 +1732,7 @@ test.describe("disabled origin stays inspectable", () => {
     };
     const taskId = operationsDocument.items[0].taskId;
     const resolved = await page.request.get(
-      `/api/v1/files/operation-origin/${taskId}`,
+      `/api/files/operation-origin/${taskId}`,
       { headers },
     );
     expect(resolved.ok()).toBe(true);
@@ -1742,7 +1742,7 @@ test.describe("disabled origin stays inspectable", () => {
       resourceLibraryId: origin,
       sideEffects: "none",
     });
-    const deepLink = `/ui-v2/resourcelib/files?resourceLibraryId=${origin}&operationTaskId=${taskId}`;
+    const deepLink = `/resourcelib/files?resourceLibraryId=${origin}&operationTaskId=${taskId}`;
     await page.goto(new URL(deepLink, "http://127.0.0.1:4185").toString());
     await page.getByLabel("API token").fill(ADMIN_TOKEN);
     await page.getByRole("button", { name: "Connect" }).click();
@@ -1768,7 +1768,7 @@ async function libraryFileNames(
   path: string,
 ): Promise<string[]> {
   const response = await page.request.get(
-    `/api/v1/${namespace}/${libraryId}/files?path=${encodeURIComponent(path)}&limit=100`,
+    `/api/${namespace}/${libraryId}/files?path=${encodeURIComponent(path)}&limit=100`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   const responseText = await response.text();
@@ -1816,8 +1816,8 @@ test("both library edit cards accept a legal Active with an unnamed Storage and 
   for (const scenario of scenarios) {
     const url =
       scenario.kind === "resource"
-        ? `/ui-v2/resourcelib/files?resourceLibraryId=${scenario.libraryId}`
-        : `/ui-v2/medialib/files?mediaLibraryId=${scenario.libraryId}`;
+        ? `/resourcelib/files?resourceLibraryId=${scenario.libraryId}`
+        : `/medialib/files?mediaLibraryId=${scenario.libraryId}`;
     await page.goto(url);
     await page.getByLabel("API token").fill(ADMIN_TOKEN);
     await page.getByRole("button", { name: "Connect" }).click();
@@ -1863,7 +1863,7 @@ test("both library edit cards accept a legal Active with an unnamed Storage and 
     // The save published one real Active whose kind, ID, binding, root and
     // enabled state are preserved; only the explicitly edited name changed.
     const projection = await page.request.get(
-      `/api/v1/${scenario.namespace}/${scenario.libraryId}/edit`,
+      `/api/${scenario.namespace}/${scenario.libraryId}/edit`,
       { headers },
     );
     expect(projection.ok()).toBe(true);
@@ -1923,7 +1923,7 @@ const RECOVERY_KINDS: Record<
   }
 > = {
   resource: {
-    pagePath: "/ui-v2/resourcelib/files?resourceLibraryId=source",
+    pagePath: "/resourcelib/files?resourceLibraryId=source",
     namespace: "resource-libraries",
     libraryKey: "resourceLibrary",
     heading: "文件",
@@ -1938,7 +1938,7 @@ const RECOVERY_KINDS: Record<
     pathField: "storagePath",
   },
   media: {
-    pagePath: "/ui-v2/medialib/files?mediaLibraryId=movies",
+    pagePath: "/medialib/files?mediaLibraryId=movies",
     namespace: "media-libraries",
     libraryKey: "mediaLibrary",
     heading: "媒体库",
@@ -1961,7 +1961,7 @@ async function openRecoveryLibraryPage(
 ): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 900 });
   const basePath =
-    kind === "resource" ? "/ui-v2/resourcelib/files" : "/ui-v2/medialib/files";
+    kind === "resource" ? "/resourcelib/files" : "/medialib/files";
   const selectedId = libraryId ?? (kind === "resource" ? "source" : "movies");
   const search =
     kind === "resource"
@@ -2002,10 +2002,9 @@ async function readRecoveryProjection(
   id: string,
 ): Promise<Record<string, Record<string, unknown>>> {
   const spec = RECOVERY_KINDS[kind];
-  const response = await page.request.get(
-    `/api/v1/${spec.namespace}/${id}/edit`,
-    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
-  );
+  const response = await page.request.get(`/api/${spec.namespace}/${id}/edit`, {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
   expect(response.ok()).toBe(true);
   return (await response.json()) as Record<string, Record<string, unknown>>;
 }
@@ -2019,20 +2018,17 @@ for (const kind of ["resource", "media"] as const) {
     const addedName = `Recovery ${kind} library`;
     const editedName = `Recovered ${kind} edit`;
     let addPosts = 0;
-    await page.route(
-      new RegExp(`/api/v1/${spec.namespace}$`),
-      async (route) => {
-        if (route.request().method() !== "POST") {
-          await route.fallback();
-          return;
-        }
-        addPosts += 1;
-        // The real API publishes first; only the browser's success body is lost.
-        const response = await route.fetch();
-        expect(response.status()).toBe(200);
-        await route.abort("failed");
-      },
-    );
+    await page.route(new RegExp(`/api/${spec.namespace}$`), async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+      addPosts += 1;
+      // The real API publishes first; only the browser's success body is lost.
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      await route.abort("failed");
+    });
     await openRecoveryLibraryPage(page, kind);
     await fillRecoveryAddCard(page, kind, id, addedName);
     const addCard = page.getByRole("dialog", { name: spec.addDialog });
@@ -2069,13 +2065,13 @@ for (const kind of ["resource", "media"] as const) {
     await expect(
       page.getByRole("dialog", { name: spec.addDialog }),
     ).toHaveCount(0);
-    await page.unroute(new RegExp(`/api/v1/${spec.namespace}$`));
+    await page.unroute(new RegExp(`/api/${spec.namespace}$`));
 
     // Edit with a lost success body, then close/reopen the retained candidate.
     let editReads = 0;
     let editPuts = 0;
     await page.route(
-      new RegExp(`/api/v1/${spec.namespace}/${id}/edit$`),
+      new RegExp(`/api/${spec.namespace}/${id}/edit$`),
       async (route) => {
         editReads += 1;
         if (editReads === 2) {
@@ -2095,7 +2091,7 @@ for (const kind of ["resource", "media"] as const) {
       },
     );
     await page.route(
-      new RegExp(`/api/v1/${spec.namespace}/${id}$`),
+      new RegExp(`/api/${spec.namespace}/${id}$`),
       async (route) => {
         if (route.request().method() !== "PUT") {
           await route.fallback();
@@ -2211,7 +2207,7 @@ for (const kind of ["resource", "media"] as const) {
     page.on("response", (response) => {
       if (
         response.request().method() === "PUT" &&
-        response.url().endsWith(`/api/v1/${spec.namespace}/${id}`)
+        response.url().endsWith(`/api/${spec.namespace}/${id}`)
       ) {
         putStatuses.push(response.status());
       }
@@ -2272,7 +2268,7 @@ test("Task52.2 both Files pages keep one reserved refresh state over real reads,
   page,
 }) => {
   const DELAY =
-    /\/api\/v1\/(?:resource-libraries\/[^/]+|media-libraries\/[^/]+)\/files(?:\?|$)/;
+    /\/api\/(?:resource-libraries\/[^/]+|media-libraries\/[^/]+)\/files(?:\?|$)/;
 
   for (const kind of ["resource", "media"] as const) {
     await openFiles(page, kind);

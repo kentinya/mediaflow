@@ -566,9 +566,7 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                     configuration_service=managed,
                     bootstrap_document=document,
                 )
-                endpoint = (
-                    f"/api/v1/configuration/revisions/{edited.revision_id}/destination-preview"
-                )
+                endpoint = f"/api/configuration/revisions/{edited.revision_id}/destination-preview"
                 status, response = request(
                     api,
                     endpoint,

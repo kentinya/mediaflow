@@ -172,12 +172,12 @@ def __getattr__(name: str) -> object:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-# The existing V1 operator console owns first-Draft creation/resume, the guided
-# setup flow, checked validation and checked activation.  The V2 Storage
-# workspace only continues that journey, so it links to this one fixed native V2
-# same-origin route.  It is a constant, never an operator-supplied redirect
-# target, and it carries no token, claim or revision identifier.
-_V2_SETTINGS_PATH = "/ui-v2/configuration"
+# The current settings page owns first-Draft creation/resume, the setup flow,
+# checked validation and checked activation.  The Storage workspace only
+# continues that journey, so it links to this one fixed canonical same-origin
+# route.  It is a constant, never an operator-supplied redirect target, and it
+# carries no token, claim or revision identifier.
+_V2_SETTINGS_PATH = "/configuration"
 
 
 class _DestinationPreviewFailure(ValueError):

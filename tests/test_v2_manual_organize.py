@@ -5,13 +5,13 @@ This module drives the real ``MediaFlowApi`` over a real managed runtime, real
 intent/Preview/execution services and the real admitted-execution Worker.  It
 proves the Slice 33 manual Organize journey end to end:
 
-``POST /api/v1/resource-libraries/{resourceLibraryId}/files/organize``
-``GET  /api/v1/operations/organize/intents/{intentId}``
-``POST /api/v1/operations/organize/intents/{intentId}/items/{itemId}/choice``
-``POST /api/v1/operations/organize/intents/{intentId}/previews``
-``GET  /api/v1/operations/organize/previews/{previewId}``
-``POST /api/v1/operations/organize/previews/{previewId}/execute``
-``GET  /api/v1/operations/organize/executions/{executionId}``
+``POST /api/resource-libraries/{resourceLibraryId}/files/organize``
+``GET  /api/operations/organize/intents/{intentId}``
+``POST /api/operations/organize/intents/{intentId}/items/{itemId}/choice``
+``POST /api/operations/organize/intents/{intentId}/previews``
+``GET  /api/operations/organize/previews/{previewId}``
+``POST /api/operations/organize/previews/{previewId}/execute``
+``GET  /api/operations/organize/executions/{executionId}``
 
 Every assertion is about durable behavior: no Storage mutation happens before
 admission, only the Processing Worker executes admitted work, exactly one
@@ -438,7 +438,7 @@ class _JourneyFixtureMixin:
         relative = path or value.file_paths[0]
         status, intent = self._request(
             value,
-            "/api/v1/resource-libraries/library/files/organize",
+            "/api/resource-libraries/library/files/organize",
             "POST",
             {"paths": [relative]},
         )
@@ -446,8 +446,7 @@ class _JourneyFixtureMixin:
         item = intent["items"][0]
         status, intent = self._request(
             value,
-            f"/api/v1/operations/organize/intents/{intent['intentId']}"
-            f"/items/{item['itemId']}/choice",
+            f"/api/operations/organize/intents/{intent['intentId']}/items/{item['itemId']}/choice",
             "POST",
             {
                 "expectedVersion": intent["version"],
@@ -547,7 +546,7 @@ class _JourneyFixtureMixin:
         body.update(overrides)
         return self._request(
             value,
-            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            f"/api/operations/organize/previews/{preview['previewId']}/execute",
             "POST",
             body,
             token=token,
@@ -571,7 +570,7 @@ class _JourneyFixtureMixin:
         kwargs = {} if token is None else {"token": token}
         status, document = self._request(
             value,
-            f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+            f"/api/operations/organize/intents/{intent['intentId']}/previews",
             "POST",
             {"expectedVersion": intent["version"]},
             **kwargs,
@@ -584,7 +583,7 @@ class _JourneyFixtureMixin:
         preview_id = self._drive_intent_analysis(value, discovery_id)
         status, preview = self._request(
             value,
-            f"/api/v1/operations/organize/previews/{preview_id}",
+            f"/api/operations/organize/previews/{preview_id}",
             **kwargs,
         )
         self.assertEqual(200, status, preview)
@@ -617,7 +616,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, analysis = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                f"/api/operations/organize/intents/{intent['intentId']}/previews",
                 "POST",
                 {"expectedVersion": intent["version"]},
             )
@@ -640,7 +639,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # A lost-response repeat converges on the same run and Task.
             status, repeated = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                f"/api/operations/organize/intents/{intent['intentId']}/previews",
                 "POST",
                 {"expectedVersion": intent["version"]},
             )
@@ -657,7 +656,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertIsNotNone(analyzed.preview_id)
             status, preview = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{analyzed.preview_id}",
+                f"/api/operations/organize/previews/{analyzed.preview_id}",
             )
             self.assertEqual(200, status, preview)
             status, execution = self._execute(value, preview, intent)
@@ -684,13 +683,13 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # intent entry then re-analyzes the same durable discovery.
             status, detail = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+                f"/api/operations/organize/intents/{intent['intentId']}",
             )
             self.assertEqual(200, status, detail)
             item = detail["items"][0]
             status, edited = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 "POST",
                 {
@@ -705,7 +704,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual(200, status, edited)
             status, analysis = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                f"/api/operations/organize/intents/{intent['intentId']}/previews",
                 "POST",
                 {"expectedVersion": edited["version"]},
             )
@@ -722,7 +721,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, repeated = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                f"/api/operations/organize/intents/{intent['intentId']}/previews",
                 "POST",
                 {"expectedVersion": edited["version"]},
             )
@@ -737,7 +736,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertNotEqual(old_preview, analyzed.preview_id)
             status, preview = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{analyzed.preview_id}",
+                f"/api/operations/organize/previews/{analyzed.preview_id}",
             )
             self.assertEqual(200, status, preview)
             self.assertEqual("A", preview["items"][0]["choice"]["recognitionTypeId"])
@@ -764,7 +763,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertIsNone(legacy.organize_task_id)
             status, preview = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview_id}",
+                f"/api/operations/organize/previews/{preview_id}",
             )
             self.assertEqual(200, status, preview)
             status, execution = self._execute(value, preview, intent)
@@ -794,7 +793,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
         self.assertEqual(len(names), len(value.file_paths))
         status, intent = self._request(
             value,
-            "/api/v1/resource-libraries/library/files/organize",
+            "/api/resource-libraries/library/files/organize",
             "POST",
             {"paths": list(value.file_paths)},
         )
@@ -803,7 +802,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
         for item in intent["items"]:
             status, intent = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 "POST",
                 {
@@ -891,7 +890,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             )
             status, preview_document = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview.preview_id}",
+                f"/api/operations/organize/previews/{preview.preview_id}",
             )
             self.assertEqual(200, status, preview_document)
             status, original = self._execute(value, preview_document, intent)
@@ -921,7 +920,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             )
             status, outcome = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview_document['previewId']}"
+                f"/api/operations/organize/previews/{preview_document['previewId']}"
                 f"/admission?{query}",
             )
             self.assertEqual(200, status, outcome)
@@ -988,7 +987,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, outcome = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview_document['previewId']}"
+                f"/api/operations/organize/previews/{preview_document['previewId']}"
                 f"/admission?{query}",
             )
             self.assertEqual(200, status, outcome)
@@ -1016,7 +1015,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             )
             status, preview_document = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview.preview_id}",
+                f"/api/operations/organize/previews/{preview.preview_id}",
             )
             self.assertEqual(200, status, preview_document)
             status, original = self._execute(value, preview_document, intent)
@@ -1107,7 +1106,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             )
             status, outcome = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview_document['previewId']}"
+                f"/api/operations/organize/previews/{preview_document['previewId']}"
                 f"/admission?{query}",
             )
             self.assertEqual(200, status, outcome)
@@ -1140,7 +1139,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
         with self.journey(names=(short_path, long_path), source_storage=source) as value:
             status, intent = self._request(
                 value,
-                "/api/v1/resource-libraries/library/files/organize",
+                "/api/resource-libraries/library/files/organize",
                 "POST",
                 {"paths": [long_path]},
             )
@@ -1149,7 +1148,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, detail = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+                f"/api/operations/organize/intents/{intent['intentId']}",
             )
             self.assertEqual(200, status, detail)
             self.assertEqual(long_path, detail["items"][0]["source"]["path"])
@@ -1157,7 +1156,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             item = detail["items"][0]
             status, reviewed = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 "POST",
                 {
@@ -1198,7 +1197,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # row is required; the exact bytes must survive admission.
             status, intent = self._request(
                 value,
-                "/api/v1/resource-libraries/library/files/organize",
+                "/api/resource-libraries/library/files/organize",
                 "POST",
                 {"paths": [long_path]},
             )
@@ -1207,7 +1206,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, detail = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+                f"/api/operations/organize/intents/{intent['intentId']}",
             )
             self.assertEqual(200, status, detail)
             self.assertEqual(long_path, detail["items"][0]["source"]["path"])
@@ -1215,7 +1214,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             item = detail["items"][0]
             status, reviewed = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 "POST",
                 {
@@ -1251,7 +1250,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, detail = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+                f"/api/operations/organize/intents/{intent['intentId']}",
             )
             self.assertEqual(200, status)
             self.assertEqual(intent["version"], detail["version"])
@@ -1300,7 +1299,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, outcome = self._request(
                 value,
-                f"/api/v1/operations/organize/executions/{execution['executionId']}",
+                f"/api/operations/organize/executions/{execution['executionId']}",
             )
             self.assertEqual(200, status)
             self.assertEqual("completed", outcome["status"])
@@ -1327,7 +1326,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # A stale intent/item version is rejected atomically with no change.
             status, error = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 "POST",
                 {
@@ -1343,8 +1342,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # A cross-intent item identity fails closed.
             status, error = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
-                "/items/unknown-item/choice",
+                f"/api/operations/organize/intents/{intent['intentId']}/items/unknown-item/choice",
                 "POST",
                 {"expectedVersion": intent["version"], "recognitionTypeId": "C"},
             )
@@ -1355,7 +1353,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # earlier Preview as no longer current evidence.
             status, edited = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 "POST",
                 {
@@ -1373,7 +1371,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, stale_preview = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}",
+                f"/api/operations/organize/previews/{preview['previewId']}",
             )
             self.assertEqual(200, status)
             self.assertFalse(stale_preview["actions"]["execute"]["available"])
@@ -1392,14 +1390,14 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             body = {"expectedVersion": intent["version"]}
             status, first = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                f"/api/operations/organize/intents/{intent['intentId']}/previews",
                 "POST",
                 body,
             )
             self.assertEqual(201, status, first)
             status, repeated = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                f"/api/operations/organize/intents/{intent['intentId']}/previews",
                 "POST",
                 body,
             )
@@ -1431,7 +1429,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             intent = self._create_reviewed_intent(value)
             status, before = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+                f"/api/operations/organize/intents/{intent['intentId']}",
             )
             self.assertEqual(200, status)
             self.assertIsNone(before["latestPlan"])
@@ -1446,7 +1444,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, restored = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+                f"/api/operations/organize/intents/{intent['intentId']}",
             )
             self.assertEqual(200, status)
             latest_plan = restored["latestPlan"]
@@ -1461,7 +1459,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # starts no analysis, Provider lookup, Task, plan or mutation.
             status, reread = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+                f"/api/operations/organize/intents/{intent['intentId']}",
             )
             self.assertEqual(200, status)
             self.assertEqual(latest_plan, reread["latestPlan"])
@@ -1484,7 +1482,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             item = intent["items"][0]
             status, edited = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 "POST",
                 {
@@ -1499,7 +1497,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual(200, status, edited)
             status, historical = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+                f"/api/operations/organize/intents/{intent['intentId']}",
             )
             self.assertEqual(200, status)
             self.assertEqual(preview["previewId"], historical["latestPlan"]["previewId"])
@@ -1514,7 +1512,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # A viewer cannot even create the durable Files intent.
             status, error = self._request(
                 value,
-                "/api/v1/resource-libraries/library/files/organize",
+                "/api/resource-libraries/library/files/organize",
                 "POST",
                 {"paths": [value.file_paths[0]]},
                 token=VIEWER_TOKEN,
@@ -1524,7 +1522,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # A manager may review and Preview but can never execute.
             status, error = self._request(
                 value,
-                "/api/v1/resource-libraries/library/files/organize",
+                "/api/resource-libraries/library/files/organize",
                 "POST",
                 {"paths": [value.file_paths[0]]},
                 token=MANAGER_TOKEN,
@@ -1533,7 +1531,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             item = error["items"][0]
             status, error = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{error['intentId']}"
+                f"/api/operations/organize/intents/{error['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 "POST",
                 {
@@ -1551,7 +1549,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertFalse(preview["actions"]["execute"]["available"])
             status, error = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                f"/api/operations/organize/previews/{preview['previewId']}/execute",
                 "POST",
                 {
                     "confirmation": True,
@@ -1575,7 +1573,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             ):
                 status, error = self._request(
                     value,
-                    "/api/v1/resource-libraries/library/files/organize",
+                    "/api/resource-libraries/library/files/organize",
                     "POST",
                     body,
                 )
@@ -1607,7 +1605,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             ):
                 status, error = self._request(
                     value,
-                    f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                    f"/api/operations/organize/previews/{preview['previewId']}/execute",
                     "POST",
                     body,
                 )
@@ -1714,7 +1712,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, outcome = self._request(
                 value,
-                f"/api/v1/operations/organize/executions/{execution['executionId']}",
+                f"/api/operations/organize/executions/{execution['executionId']}",
             )
             self.assertEqual(200, status)
             self.assertEqual("failed", outcome["status"])
@@ -1731,7 +1729,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # Task stays queued and no plan or execution authority is invented.
             status, analysis = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                f"/api/operations/organize/intents/{intent['intentId']}/previews",
                 "POST",
                 {"expectedVersion": intent["version"]},
             )
@@ -1761,7 +1759,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             value.worker_service.stop_worker("worker-1")
             status, replayed = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}",
+                f"/api/operations/organize/previews/{preview['previewId']}",
             )
             self.assertEqual(200, status)
             self.assertFalse(replayed["actions"]["execute"]["available"])
@@ -1778,7 +1776,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
                     with self.subTest(query=query, token=token):
                         status, body = self._request(
                             value,
-                            f"/api/v1/operations/manual-actions?{query}",
+                            f"/api/operations/manual-actions?{query}",
                             token=token,
                         )
                         self.assertEqual(404, status, body)
@@ -1893,7 +1891,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
         with self.journey() as value:
             status, body = self._request(
                 value,
-                "/api/v1/resource-libraries/library/files/organize",
+                "/api/resource-libraries/library/files/organize",
                 "POST",
                 {"paths": [value.file_paths[0]]},
             )
@@ -1901,13 +1899,13 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertIn("intentId", body)
             status, preview = self._request(
                 value,
-                f"/api/v1/manual-intents/{body['intentId']}/preview",
+                f"/api/manual-intents/{body['intentId']}/preview",
                 "POST",
                 {"expectedVersion": body["version"]},
             )
             self.assertEqual(404, status, preview)
             self.assertEqual("not_found", preview["error"]["code"])
-            status, tasks = self._request(value, "/api/v1/tasks")
+            status, tasks = self._request(value, "/api/tasks")
             self.assertEqual(200, status, tasks)
 
 
@@ -1920,7 +1918,7 @@ class _ExactAdmissionMixin:
         self.assertEqual(len(names), len(value.file_paths))
         status, intent = self._request(
             value,
-            "/api/v1/resource-libraries/library/files/organize",
+            "/api/resource-libraries/library/files/organize",
             "POST",
             {"paths": list(value.file_paths)},
         )
@@ -1929,7 +1927,7 @@ class _ExactAdmissionMixin:
         for item in intent["items"]:
             status, intent = self._request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 "POST",
                 {
@@ -2011,7 +2009,7 @@ class ExactAdmissionResolutionTests(_JourneyFixtureMixin, _ExactAdmissionMixin, 
                 # its own analysis publishes the exact remaining scope.
                 status, analyzed = self._request(
                     value,
-                    f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                    f"/api/operations/organize/intents/{intent['intentId']}/previews",
                     "POST",
                     {"expectedVersion": intent["version"]},
                 )
@@ -2019,7 +2017,7 @@ class ExactAdmissionResolutionTests(_JourneyFixtureMixin, _ExactAdmissionMixin, 
                 preview_id = self._drive_intent_analysis(value, analyzed["analysis"]["discoveryId"])
                 self.assertIsNotNone(preview_id)
                 status, preview = self._request(
-                    value, f"/api/v1/operations/organize/previews/{preview_id}"
+                    value, f"/api/operations/organize/previews/{preview_id}"
                 )
                 self.assertEqual(200, status, preview)
             self.assertEqual(len(names), len(seen))
@@ -2196,7 +2194,7 @@ class AdmissionReconciliationReadTests(
         )
         return self._request(
             value,
-            f"/api/v1/operations/organize/previews/{preview_id}/admission?{query}",
+            f"/api/operations/organize/previews/{preview_id}/admission?{query}",
             token=token,
         )
 
@@ -2415,7 +2413,7 @@ class AdmissionReconciliationReadTests(
             )
             status, error = self._request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}/admission?{query}",
+                f"/api/operations/organize/previews/{preview['previewId']}/admission?{query}",
             )
             self.assertEqual(400, status, error)
             # The read binds the executing principal: even a READ principal
@@ -2844,7 +2842,7 @@ class FilesAdmissionJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
     def admit(self, value, paths, *, token: str = OPERATOR_TOKEN):
         return self.request(
             value,
-            "/api/v1/resource-libraries/library/files/organize",
+            "/api/resource-libraries/library/files/organize",
             "POST",
             {"paths": list(paths)},
             token=token,
@@ -2942,7 +2940,7 @@ class FilesAdmissionJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             preview = self._preview_via_durable_analysis(value, intent)
             status, execution = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                f"/api/operations/organize/previews/{preview['previewId']}/execute",
                 "POST",
                 {
                     "confirmation": True,
@@ -2980,7 +2978,7 @@ class FilesAdmissionJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, document = self.request(
                 value,
-                f"/api/v1/operations/organize/executions/{execution['executionId']}",
+                f"/api/operations/organize/executions/{execution['executionId']}",
             )
             self.assertEqual(200, status, document)
             self.assertEqual(2, len(document["items"]))
@@ -3000,7 +2998,7 @@ class FilesAdmissionJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             preview = self._preview_via_durable_analysis(value, intent)
             status, execution = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                f"/api/operations/organize/previews/{preview['previewId']}/execute",
                 "POST",
                 {
                     "confirmation": True,
@@ -3036,8 +3034,7 @@ class FilesAdmissionJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
     def save_choice(self, value, intent, item, body, *, token: str = OPERATOR_TOKEN):
         return self.request(
             value,
-            f"/api/v1/operations/organize/intents/{intent['intentId']}"
-            f"/items/{item['itemId']}/choice",
+            f"/api/operations/organize/intents/{intent['intentId']}/items/{item['itemId']}/choice",
             "POST",
             {"expectedVersion": intent["version"], **body},
             token=token,
@@ -3126,7 +3123,7 @@ class FilesAdmissionJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             stored_before = value.repository.get_manual_intent(intent["intentId"])
             status, document = self.request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 "POST",
                 {"expectedVersion": intent["version"] + 5, "recognitionTypeId": "C"},
@@ -3144,7 +3141,7 @@ class FilesAdmissionJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual("C", updated["items"][0]["choice"]["recognitionTypeId"])
             status, refreshed = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}",
+                f"/api/operations/organize/previews/{preview['previewId']}",
             )
             self.assertEqual(200, status, refreshed)
             self.assertFalse(refreshed["current"])
@@ -3245,7 +3242,7 @@ class DefaultAssemblySaveChoiceTests(_JourneyFixtureMixin, unittest.TestCase):
     def admit(self, value, paths):
         return self.request(
             value,
-            "/api/v1/resource-libraries/source/files/organize",
+            "/api/resource-libraries/source/files/organize",
             method="POST",
             body={"paths": list(paths)},
         )
@@ -3265,7 +3262,7 @@ class DefaultAssemblySaveChoiceTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, updated = self.request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 method="POST",
                 body={
@@ -3303,7 +3300,7 @@ class DefaultAssemblySaveChoiceTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual(201, status, intent)
             item = intent["items"][0]
             choice_path = (
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice"
             )
             body = {"expectedVersion": intent["version"], "recognitionTypeId": "C"}
@@ -3390,7 +3387,7 @@ class DefaultAssemblySaveChoiceTests(_JourneyFixtureMixin, unittest.TestCase):
 
             status, updated = self.request(
                 value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 method="POST",
                 body={

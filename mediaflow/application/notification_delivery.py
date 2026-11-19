@@ -525,7 +525,7 @@ class NotificationDeliveryService:
         if not callable(repository):
             return
         route = (
-            f"/api/v1/notifications/{previous.delivery_id}/{action}"
+            f"/api/notifications/{previous.delivery_id}/{action}"
             f"?from={previous.status.value}&to={updated.status.value}"
             f"&attempts={updated.attempts}"
         )

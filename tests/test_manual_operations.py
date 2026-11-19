@@ -450,7 +450,7 @@ class RetiredManualActionMatrixTests(unittest.TestCase):
             "scopeKind=host_path",
         ):
             with self.subTest(query=query):
-                status, body = _get(api, f"/api/v1/operations/manual-actions?{query}")
+                status, body = _get(api, f"/api/operations/manual-actions?{query}")
                 self.assertEqual(404, status)
                 self.assertEqual("not_found", body["error"]["code"])
 
@@ -458,7 +458,7 @@ class RetiredManualActionMatrixTests(unittest.TestCase):
 class RetiredServerBoundPreviewTests(unittest.TestCase):
     """The standalone current-source Preview product is retired.
 
-    ``/api/v1/operations/previews`` no longer serves an independent product;
+    ``/api/operations/previews`` no longer serves an independent product;
     its old inputs get an ordinary not-found answer after normal authentication
     and create no Preview record.
     """
@@ -488,16 +488,16 @@ class RetiredServerBoundPreviewTests(unittest.TestCase):
         for method, path, body in (
             (
                 "POST",
-                "/api/v1/operations/previews",
+                "/api/operations/previews",
                 {"scopeKind": "resource_library", "resourceLibraryId": "library"},
             ),
-            ("GET", "/api/v1/operations/previews", None),
+            ("GET", "/api/operations/previews", None),
             (
                 "GET",
-                "/api/v1/operations/previews?scopeKind=resource_library&scopeId=library",
+                "/api/operations/previews?scopeKind=resource_library&scopeId=library",
                 None,
             ),
-            ("GET", "/api/v1/operations/previews/nonexistent", None),
+            ("GET", "/api/operations/previews/nonexistent", None),
         ):
             with self.subTest(method=method, path=path):
                 if method == "POST":

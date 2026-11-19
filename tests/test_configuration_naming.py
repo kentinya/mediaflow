@@ -436,7 +436,7 @@ class ManagedNamingPolicyJourneyTests(unittest.TestCase):
                 )
                 draft = managed.import_draft(document, actor="operator")
                 collection = (
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/objects/namingPolicies"
+                    f"/api/configuration/revisions/{draft.revision_id}/objects/namingPolicies"
                 )
                 original_document = copy.deepcopy(draft.document)
                 for label, template in (
@@ -487,7 +487,7 @@ class ManagedNamingPolicyJourneyTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 status, evidence = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/naming-preview",
+                    f"/api/configuration/revisions/{draft.revision_id}/naming-preview",
                     method="POST",
                     body={
                         "expectedVersion": created["version"],
@@ -505,7 +505,7 @@ class ManagedNamingPolicyJourneyTests(unittest.TestCase):
                 self.assertEqual(evidence["status"], "completed")
                 status, detail = request(
                     api,
-                    f"/api/v1/configuration/revisions/{draft.revision_id}/objects",
+                    f"/api/configuration/revisions/{draft.revision_id}/objects",
                 )
                 self.assertEqual(status, 200)
                 self.assertFalse(detail["namingPreview"]["stale"])

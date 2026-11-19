@@ -256,7 +256,7 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                             )
                             status, result = _request(
                                 api,
-                                "/api/v1/storage/files?storageId=storage",
+                                "/api/storage/files?storageId=storage",
                             )
                             self.assertEqual(status, 200)
                             self.assertEqual(result["surface"], "files")
@@ -284,7 +284,7 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 active = _activate(managed, document)
                 api = _api(task_repository, managed, document)
 
-                status, files = _request(api, "/api/v1/resource-libraries/resources/files")
+                status, files = _request(api, "/api/resource-libraries/resources/files")
                 self.assertEqual(status, 200)
                 self.assertEqual(files["surface"], "files")
                 self.assertEqual(files["resourceLibrary"]["id"], "resources")
@@ -297,19 +297,19 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 self.assertNotIn("fileId", files["entries"][0])
 
                 # The retired catalog surface no longer exists at all.
-                status, _ = _request(api, "/api/v1/file-index")
+                status, _ = _request(api, "/api/file-index")
                 self.assertEqual(status, 404)
                 self.assertEqual(task_repository.list_tasks(), ())
 
                 draft_document = json.loads(json.dumps(document))
                 draft_document["storages"][0]["rootPath"] = str(second)
                 _draft = managed.import_draft(draft_document, actor="tester")
-                status, files = _request(api, "/api/v1/storage/files?storageId=storage")
+                status, files = _request(api, "/api/storage/files?storageId=storage")
                 self.assertEqual(status, 200)
                 self.assertEqual([item["name"] for item in files["entries"]], ["active-only.mkv"])
 
                 active_second = _activate(managed, draft_document)
-                status, files = _request(api, "/api/v1/storage/files?storageId=storage")
+                status, files = _request(api, "/api/storage/files?storageId=storage")
                 self.assertEqual(status, 200)
                 self.assertEqual(files["configuration"]["revisionId"], active_second.revision_id)
                 self.assertEqual([item["name"] for item in files["entries"]], ["draft-only.mkv"])
@@ -339,7 +339,7 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 )
                 _activate(managed, document)
                 api = _api(task_repository, managed, document)
-                status, files = _request(api, "/api/v1/resource-libraries/resources/files")
+                status, files = _request(api, "/api/resource-libraries/resources/files")
                 self.assertEqual(status, 200)
                 entries = {entry["name"]: entry for entry in files["entries"]}
                 # RO-6: a regular file is a directly reviewable primary source
@@ -381,14 +381,14 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
 
                 status, first_page = _request(
                     api,
-                    "/api/v1/storage/files?storageId=storage&limit=1",
+                    "/api/storage/files?storageId=storage&limit=1",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(first_page["sideEffects"], "none")
                 self.assertTrue(first_page["nextCursor"])
                 status, second_page = _request(
                     api,
-                    "/api/v1/storage/files?storageId=storage&limit=1&cursor="
+                    "/api/storage/files?storageId=storage&limit=1&cursor="
                     + first_page["nextCursor"],
                 )
                 self.assertEqual(status, 200)
@@ -397,7 +397,7 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 )
                 status, error = _request(
                     api,
-                    "/api/v1/storage/files?storageId=storage&resourceLibrary=resources"
+                    "/api/storage/files?storageId=storage&resourceLibrary=resources"
                     "&limit=1&cursor=" + first_page["nextCursor"],
                 )
                 self.assertEqual(status, 400)
@@ -405,7 +405,7 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
 
                 status, nested = _request(
                     api,
-                    "/api/v1/storage/files?storageId=storage&path=nested",
+                    "/api/storage/files?storageId=storage&path=nested",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(nested["breadcrumbs"][-1]["path"], "nested")
@@ -413,7 +413,7 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 self.assertEqual((root / "nested" / "b.mkv").read_bytes(), original)
                 status, empty = _request(
                     api,
-                    "/api/v1/storage/files?storageId=storage&path=empty",
+                    "/api/storage/files?storageId=storage&path=empty",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(empty["entries"], [])
@@ -421,17 +421,17 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
 
                 status, error = _request(
                     api,
-                    "/api/v1/storage/files?storageId=storage&path=../outside",
+                    "/api/storage/files?storageId=storage&path=../outside",
                 )
                 self.assertEqual(status, 400)
                 self.assertEqual(error["error"]["code"], "storage_browser_invalid_path")
-                status, error = _request(api, "/api/v1/storage/files?storageId=storage", token=None)
+                status, error = _request(api, "/api/storage/files?storageId=storage", token=None)
                 self.assertEqual(status, 401)
                 self.assertEqual(error["error"]["code"], "unauthorized")
 
                 status, error = _request(
                     api,
-                    "/api/v1/storage/files?storageId=storage&resourceLibrary=missing",
+                    "/api/storage/files?storageId=storage&resourceLibrary=missing",
                 )
                 self.assertEqual(status, 404)
                 self.assertEqual(
@@ -458,7 +458,7 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                     document,
                     storage_adapters={"storage": _PermissionDeniedStorage()},
                 )
-                status, error = _request(api, "/api/v1/storage/files?storageId=storage")
+                status, error = _request(api, "/api/storage/files?storageId=storage")
                 self.assertEqual(status, 403)
                 details = error["error"]["details"]
                 self.assertEqual(details["category"], "permission_denied")
@@ -482,7 +482,7 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                     bootstrap_database_path=str(database),
                 )
                 api = _api(task_repository, managed, document)
-                status, error = _request(api, "/api/v1/storage/files?storageId=storage")
+                status, error = _request(api, "/api/storage/files?storageId=storage")
                 self.assertEqual(status, 503)
                 self.assertEqual(error["error"]["code"], "configuration_unavailable")
                 self.assertEqual(error["error"]["details"]["authority"], "MANAGED")

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Isolated real-Python browser harness for V2 Operations (Tasks 42.1–42.3).
 
-One process serves both the built V2 artifact (``/ui-v2/*`` through the
+One process serves both the built V2 artifact at the Web root (through the
 production static-serving boundary) and the real ``MediaFlowApi`` over one
 temporary SQLite runtime database, so Playwright drives the exact packaged
 Python stack instead of a Node fake. Every seeded run is created through a
 real supported producer or the real Worker claim/linkage path:
 
-- ``POST /api/v1/jobs`` admits a durable pending Job through the supported
+- ``POST /api/jobs`` admits a durable pending Job through the supported
   remote organize entry (explicit execute intent, enabled checked switch and
   one issued one-shot execution authorization); the same request from the
   viewer principal must answer 403, so no permission is bypassed;
@@ -2039,7 +2039,7 @@ def _request_intent_plan_via_durable_analysis(state: AppState, intent: dict, *, 
     status, analysis = wsgi_request(
         state.api,
         "POST",
-        f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+        f"/api/operations/organize/intents/{intent['intentId']}/previews",
         body={"expectedVersion": intent["version"]},
         token=HARNESS_ADMIN_TOKEN,
     )
@@ -2062,7 +2062,7 @@ def _request_intent_plan_via_durable_analysis(state: AppState, intent: dict, *, 
     status, preview = wsgi_request(
         state.api,
         "GET",
-        f"/api/v1/operations/organize/previews/{preview_id}",
+        f"/api/operations/organize/previews/{preview_id}",
         token=HARNESS_ADMIN_TOKEN,
     )
     if status != 200:
@@ -2135,7 +2135,7 @@ def run_manual_organize_once(state: AppState) -> dict[str, str]:
         status, intent = wsgi_request(
             state.api,
             "POST",
-            "/api/v1/resource-libraries/source/files/organize",
+            "/api/resource-libraries/source/files/organize",
             body={"paths": ["One.2001.mkv"]},
             token=HARNESS_ADMIN_TOKEN,
         )
@@ -2145,8 +2145,7 @@ def run_manual_organize_once(state: AppState) -> dict[str, str]:
         status, intent = wsgi_request(
             state.api,
             "POST",
-            f"/api/v1/operations/organize/intents/{intent['intentId']}"
-            f"/items/{item['itemId']}/choice",
+            f"/api/operations/organize/intents/{intent['intentId']}/items/{item['itemId']}/choice",
             body={
                 "expectedVersion": intent["version"],
                 "expectedItemVersion": item["version"],
@@ -2165,7 +2164,7 @@ def run_manual_organize_once(state: AppState) -> dict[str, str]:
         status, execution = wsgi_request(
             state.api,
             "POST",
-            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            f"/api/operations/organize/previews/{preview['previewId']}/execute",
             body={
                 "confirmation": True,
                 "itemIds": [value["itemId"] for value in preview["items"]],
@@ -2744,7 +2743,7 @@ def seed_recorded_unknown_history(state: AppState, *, filename: str) -> dict[str
         status, admitted = wsgi_request(
             state.api,
             "POST",
-            "/api/v1/resource-libraries/source/files/discoveries",
+            "/api/resource-libraries/source/files/discoveries",
             body={
                 "paths": [filename],
                 "autoPrepare": True,
@@ -2770,7 +2769,7 @@ def seed_recorded_unknown_history(state: AppState, *, filename: str) -> dict[str
         status, preview = wsgi_request(
             state.api,
             "GET",
-            f"/api/v1/operations/organize/previews/{preview_id}",
+            f"/api/operations/organize/previews/{preview_id}",
             token=HARNESS_ADMIN_TOKEN,
         )
         if status != 200:
@@ -2778,7 +2777,7 @@ def seed_recorded_unknown_history(state: AppState, *, filename: str) -> dict[str
         status, execution = wsgi_request(
             state.api,
             "POST",
-            f"/api/v1/operations/organize/previews/{preview_id}/execute",
+            f"/api/operations/organize/previews/{preview_id}/execute",
             body={
                 "confirmation": True,
                 "itemIds": [value["itemId"] for value in preview["items"]],
@@ -2889,7 +2888,7 @@ def seed_batch_summary_recovery(state: AppState) -> dict[str, object]:
         status, intent = wsgi_request(
             state.api,
             "POST",
-            "/api/v1/resource-libraries/source/files/organize",
+            "/api/resource-libraries/source/files/organize",
             body={"paths": list(names)},
             token=HARNESS_ADMIN_TOKEN,
         )
@@ -2899,7 +2898,7 @@ def seed_batch_summary_recovery(state: AppState) -> dict[str, object]:
             status, intent = wsgi_request(
                 state.api,
                 "POST",
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 body={
                     "expectedVersion": intent["version"],
@@ -2919,7 +2918,7 @@ def seed_batch_summary_recovery(state: AppState) -> dict[str, object]:
         status, execution = wsgi_request(
             state.api,
             "POST",
-            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            f"/api/operations/organize/previews/{preview['previewId']}/execute",
             body={
                 "confirmation": True,
                 "itemIds": [value["itemId"] for value in preview["items"]],
@@ -3128,7 +3127,7 @@ def seed_task_item_recovery_journey(
         status, admitted = wsgi_request(
             state.api,
             "POST",
-            "/api/v1/resource-libraries/source/files/discoveries",
+            "/api/resource-libraries/source/files/discoveries",
             body={"paths": [filename], "autoPrepare": True},
             token=HARNESS_ADMIN_TOKEN,
         )
@@ -3148,7 +3147,7 @@ def seed_task_item_recovery_journey(
         status, discovery_document = wsgi_request(
             state.api,
             "GET",
-            f"/api/v1/operations/organize/discoveries/{discovery_id}",
+            f"/api/operations/organize/discoveries/{discovery_id}",
             token=HARNESS_ADMIN_TOKEN,
         )
         if status != 200 or not discovery_document.get("intentId"):
@@ -3160,7 +3159,7 @@ def seed_task_item_recovery_journey(
         status, intent = wsgi_request(
             state.api,
             "GET",
-            f"/api/v1/operations/organize/intents/{intent_id}",
+            f"/api/operations/organize/intents/{intent_id}",
             token=HARNESS_ADMIN_TOKEN,
         )
         if status != 200:
@@ -3198,7 +3197,7 @@ def seed_task_item_recovery_journey(
             status, intent = wsgi_request(
                 state.api,
                 "POST",
-                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/api/operations/organize/intents/{intent['intentId']}"
                 f"/items/{item['itemId']}/choice",
                 body={
                     "expectedVersion": intent["version"],
@@ -5984,8 +5983,7 @@ def main(argv: list[str] | None = None) -> int:
         handler_class=QuietHandler,
     ) as server:
         print(
-            f"operations inventory harness: http://{args.host}:{args.port}/ui-v2/ "
-            f"(database {database})",
+            f"operations inventory harness: http://{args.host}:{args.port}/ (database {database})",
             flush=True,
         )
         try:

@@ -103,13 +103,13 @@ describe("storageFilesUrl", () => {
       cursor: "a+b/c",
     });
     expect(url).toBe(
-      "/api/v1/resource-libraries/resources/files?path=Movies%2FNew+%26+Old&cursor=a%2Bb%2Fc",
+      "/api/resource-libraries/resources/files?path=Movies%2FNew+%26+Old&cursor=a%2Bb%2Fc",
     );
   });
 
   it("omits optional fields when not selected", () => {
     expect(storageFilesUrl({ resourceLibraryId: "resources" })).toBe(
-      "/api/v1/resource-libraries/resources/files",
+      "/api/resource-libraries/resources/files",
     );
   });
 });
@@ -138,7 +138,7 @@ describe("fetchSystemStatus", () => {
       enabled: true,
     });
     const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(input).toBe("/api/v1/system/status");
+    expect(input).toBe("/api/system/status");
     expect(init.method).toBe("GET");
     expect((init.headers as Record<string, string>).Authorization).toBe(
       `Bearer ${TOKEN}`,
@@ -363,7 +363,7 @@ describe("saveResourceLibrary", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(input).toBe("/api/v1/resource-libraries");
+    expect(input).toBe("/api/resource-libraries");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({
       resourceLibraryId: "new-library",

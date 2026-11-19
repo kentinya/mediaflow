@@ -1,5 +1,5 @@
 /**
- * Frontend-owned entity for the allowlisted `GET /api/v1/system/status`
+ * Frontend-owned entity for the allowlisted `GET /api/system/status`
  * projection used by the Library Storage Files journey.
  *
  * It carries only the minimum allowlisted fields needed to identify a managed

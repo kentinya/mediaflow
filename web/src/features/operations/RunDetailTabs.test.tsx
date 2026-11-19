@@ -846,7 +846,7 @@ function recoveryPreviewDocument(): Record<string, unknown> {
   (preview["selection"] as Record<string, unknown>)["unselectedItemIds"] = [];
   const actions = preview["actions"] as Record<string, Record<string, unknown>>;
   actions["execute"]!["path"] =
-    "/api/v1/operations/organize/previews/preview-1/execute";
+    "/api/operations/organize/previews/preview-1/execute";
   return preview;
 }
 
@@ -876,8 +876,8 @@ function confirmedExecutionDocument(): Record<string, unknown> {
     Record<string, unknown>
   >;
   actions["detail"]!["path"] =
-    "/api/v1/operations/organize/executions/execution-1";
-  actions["task"]!["path"] = "/api/v1/operations/tasks/task-001";
+    "/api/operations/organize/executions/execution-1";
+  actions["task"]!["path"] = "/api/operations/tasks/task-001";
   return execution;
 }
 
@@ -960,28 +960,28 @@ function stubDetailJourney(
   return stubFetch(async (input, init) => {
     const url = String(input);
     requested.push(url);
-    if (url === "/api/v1/auth/principal") {
+    if (url === "/api/auth/principal") {
       return jsonResponse({ principal_id: "test-principal" });
     }
-    if (url.startsWith("/api/v1/tasks/task-001/items/item-1/recovery")) {
+    if (url.startsWith("/api/tasks/task-001/items/item-1/recovery")) {
       if (options.recoveryItem1 !== undefined) {
         return options.recoveryItem1(input, init);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     }
-    if (url.startsWith("/api/v1/tasks/task-001/items/item-2/recovery")) {
+    if (url.startsWith("/api/tasks/task-001/items/item-2/recovery")) {
       if (options.recovery !== undefined) {
         return options.recovery(input, init);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     }
-    if (url.startsWith("/api/v1/operations/organize/previews/")) {
+    if (url.startsWith("/api/operations/organize/previews/")) {
       if (options.planSummary !== undefined) {
         return options.planSummary(input, init);
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     }
-    if (url.startsWith("/api/v1/operations/runs?")) {
+    if (url.startsWith("/api/operations/runs?")) {
       return jsonResponse({
         items: [overviewDocument()],
         limit: 20,
@@ -1001,18 +1001,18 @@ function stubDetailJourney(
         next_cursor: null,
       });
     }
-    if (url === "/api/v1/operations/runs/task-001") {
+    if (url === "/api/operations/runs/task-001") {
       return jsonResponse(overviewDocument());
     }
-    if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
+    if (url.startsWith("/api/operations/runs/task-001/items/item-2")) {
       return jsonResponse(evidenceDocument());
     }
-    if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+    if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
       return jsonResponse(
         options.evidenceItem1 ?? manualExecutionEvidenceDocument(),
       );
     }
-    if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+    if (url.startsWith("/api/operations/runs/task-001/items?")) {
       const status = new URLSearchParams(url.split("?")[1] ?? "").get("status");
       if (status === "waiting") {
         return jsonResponse(
@@ -1035,10 +1035,10 @@ function stubDetailJourney(
       }
       return jsonResponse(itemsPageDocument());
     }
-    if (url.startsWith("/api/v1/operations/runs/task-001/items")) {
+    if (url.startsWith("/api/operations/runs/task-001/items")) {
       return jsonResponse(itemsPageDocument());
     }
-    if (url.startsWith("/api/v1/operations/runs/task-001/records?")) {
+    if (url.startsWith("/api/operations/runs/task-001/records?")) {
       const kind = new URLSearchParams(url.split("?")[1] ?? "").get("kind");
       if (kind === "log") {
         return jsonResponse(
@@ -1052,13 +1052,13 @@ function stubDetailJourney(
       }
       return jsonResponse(recordsPageDocument());
     }
-    if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+    if (url.startsWith("/api/operations/runs/task-001/records")) {
       return jsonResponse(recordsPageDocument());
     }
-    if (url.startsWith("/api/v1/operations/runs/task-001/export")) {
+    if (url.startsWith("/api/operations/runs/task-001/export")) {
       return jsonResponse(exportPackageDocument());
     }
-    if (url === "/api/v1/workers/readiness") {
+    if (url === "/api/workers/readiness") {
       return jsonResponse({
         ready: true,
         condition: "ready",
@@ -1072,7 +1072,7 @@ function stubDetailJourney(
         expectedRuntimeSchemaVersion: 42,
       });
     }
-    if (url === "/api/v1/management/readiness") {
+    if (url === "/api/management/readiness") {
       return jsonResponse({
         available: true,
         infrastructureReady: true,
@@ -1097,7 +1097,7 @@ describe("selected-run detail tabs", () => {
   it("renders the item table with its reading-area column hooks (B50.2-03)", async () => {
     stubDetailJourney();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
@@ -1125,7 +1125,7 @@ describe("selected-run detail tabs", () => {
   it("reads flow status, processed range and independent file results without standing tutorials", async () => {
     stubDetailJourney();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     // The first block answers where the flow is; the processed range follows;
@@ -1169,7 +1169,7 @@ describe("selected-run detail tabs", () => {
   it("PATCH-20261107-1 keeps flow, processed range and independent file results in reading order", async () => {
     stubDetailJourney();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const flow = await within(detail).findByRole("region", {
@@ -1232,22 +1232,22 @@ describe("selected-run detail tabs", () => {
     });
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(overviewDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+      if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
         return jsonResponse(withAttachment);
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
         return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
         return jsonResponse(recordsPageDocument());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&item=item-1");
+    renderApp("/operations?run=task-001&item=item-1");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const evidence = await findInlineEvidence(detail);
@@ -1273,22 +1273,22 @@ describe("selected-run detail tabs", () => {
     ).checkpoint.effects.certainty = "attempted_unverified";
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(overviewDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+      if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
         return jsonResponse(unknown);
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
         return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
         return jsonResponse(recordsPageDocument());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&item=item-1");
+    renderApp("/operations?run=task-001&item=item-1");
     let detail = await screen.findByRole("dialog", { name: "运行详情" });
     let evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：a.mkv");
@@ -1298,21 +1298,21 @@ describe("selected-run detail tabs", () => {
     const missing = manualExecutionEvidenceDocument({ results: [] });
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(overviewDocument({ status: "completed" }));
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+      if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
         return jsonResponse(missing);
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
         return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
         return jsonResponse(recordsPageDocument());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
-    renderApp("/ui-v2/operations?run=task-001&item=item-1");
+    renderApp("/operations?run=task-001&item=item-1");
     detail = await screen.findByRole("dialog", { name: "运行详情" });
     evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：a.mkv");
@@ -1345,13 +1345,13 @@ describe("selected-run detail tabs", () => {
     ) => {
       stubFetch(async (input) => {
         const url = String(input);
-        if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+        if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
           return jsonResponse(document);
         }
         return stubDetailJourneyResponse(url);
       });
       authStore.setToken(TOKEN);
-      renderApp("/ui-v2/operations?run=task-001&item=item-1");
+      renderApp("/operations?run=task-001&item=item-1");
       const detail = await screen.findByRole("dialog", { name: "运行详情" });
       const evidence = await findInlineEvidence(detail);
       await within(evidence).findByText("文件证据：a.mkv");
@@ -1496,7 +1496,7 @@ describe("selected-run detail tabs", () => {
       recoveryItem1: async () => jsonResponse(successRecovery),
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&item=item-1");
+    renderApp("/operations?run=task-001&item=item-1");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const evidence = await findInlineEvidence(detail);
@@ -1563,7 +1563,7 @@ describe("selected-run detail tabs", () => {
     const requested: string[] = [];
     stubDetailJourney(requested);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText(/source:movies\/a\.mkv/);
@@ -1592,7 +1592,7 @@ describe("selected-run detail tabs", () => {
     const detailRequest = requested.find((url) =>
       url.includes("status=waiting"),
     );
-    expect(detailRequest).toContain("/api/v1/operations/runs/task-001/items");
+    expect(detailRequest).toContain("/api/operations/runs/task-001/items");
   });
 
   it("PATCH-20261111-4 keeps the same file's unsaved title across an item filter change", async () => {
@@ -1605,7 +1605,7 @@ describe("selected-run detail tabs", () => {
           : jsonResponse({ error: { code: "not_found" } }, 404),
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText(/source:movies\/a\.mkv/);
@@ -1646,7 +1646,7 @@ describe("selected-run detail tabs", () => {
     const requested: string[] = [];
     stubDetailJourney(requested);
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations?run=task-001");
+    const { router } = renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await user.click(
@@ -1686,7 +1686,7 @@ describe("selected-run detail tabs", () => {
     const user = userEvent.setup();
     stubDetailJourney();
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations?run=task-001");
+    const { router } = renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText(/source:movies\/a\.mkv/);
@@ -1736,7 +1736,7 @@ describe("selected-run detail tabs", () => {
     const user = userEvent.setup();
     const fetchMock = stubDetailJourney();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
@@ -1803,22 +1803,22 @@ describe("selected-run detail tabs", () => {
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(overviewDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-9")) {
+      if (url.startsWith("/api/operations/runs/task-001/items/item-9")) {
         return jsonResponse(standaloneExecutionEvidenceDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
         return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
         return jsonResponse(recordsPageDocument());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&item=item-9");
+    renderApp("/operations?run=task-001&item=item-9");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
@@ -1838,9 +1838,7 @@ describe("selected-run detail tabs", () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(within(items).getAllByRole("row")).toHaveLength(2);
-    expect(requested).toContain(
-      "/api/v1/operations/runs/task-001/items/item-9",
-    );
+    expect(requested).toContain("/api/operations/runs/task-001/items/item-9");
   });
 
   it("PATCH-20261111-4 keeps exact item evidence readable while the item page is loading", async () => {
@@ -1852,22 +1850,22 @@ describe("selected-run detail tabs", () => {
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(overviewDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
+      if (url.startsWith("/api/operations/runs/task-001/items/item-2")) {
         return jsonResponse(evidenceDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
         return itemsGate;
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
         return jsonResponse(recordsPageDocument());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&item=item-2");
+    renderApp("/operations?run=task-001&item=item-2");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
@@ -1895,22 +1893,22 @@ describe("selected-run detail tabs", () => {
   it("PATCH-20261111-4 keeps exact item evidence when the item-list read fails", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(overviewDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
+      if (url.startsWith("/api/operations/runs/task-001/items/item-2")) {
         return jsonResponse(evidenceDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
         return jsonResponse({ error: { code: "unavailable" } }, 503);
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
         return jsonResponse(recordsPageDocument());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&item=item-2");
+    renderApp("/operations?run=task-001&item=item-2");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
@@ -1932,25 +1930,25 @@ describe("selected-run detail tabs", () => {
     });
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(overviewDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+      if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
         return formerGate;
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
+      if (url.startsWith("/api/operations/runs/task-001/items/item-2")) {
         return jsonResponse(evidenceDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
         return jsonResponse(itemsPageDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
         return jsonResponse(recordsPageDocument());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
@@ -2002,7 +2000,7 @@ describe("selected-run detail tabs", () => {
       },
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(
@@ -2094,7 +2092,7 @@ describe("selected-run detail tabs", () => {
       },
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations");
+    renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(
@@ -2210,7 +2208,7 @@ describe("selected-run detail tabs", () => {
       },
       planSummary: async (input) => {
         const url = String(input);
-        if (url === "/api/v1/operations/organize/previews/preview-1") {
+        if (url === "/api/operations/organize/previews/preview-1") {
           return jsonResponse(recoveryPreviewDocument());
         }
         confirmPosts += 1;
@@ -2218,7 +2216,7 @@ describe("selected-run detail tabs", () => {
       },
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations");
+    const { router } = renderApp("/operations");
 
     const table = await screen.findByRole("table");
     await user.click(
@@ -2269,7 +2267,7 @@ describe("selected-run detail tabs", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
     );
-    expect(router.history.location.pathname).toBe("/ui-v2/operations");
+    expect(router.history.location.pathname).toBe("/operations");
     // The closed card's selection is dropped from the URL, so nothing about
     // the in-flight confirm can restore it behind the operator's back.
     expect(router.history.location.search).not.toContain("run=");
@@ -2282,7 +2280,7 @@ describe("selected-run detail tabs", () => {
       releaseConfirm?.(jsonResponse(confirmedExecutionDocument(), 202));
     });
     expect(confirmPosts).toBe(1);
-    expect(router.history.location.pathname).toBe("/ui-v2/operations");
+    expect(router.history.location.pathname).toBe("/operations");
     expect(router.history.location.pathname).not.toContain(
       "organize/execution",
     );
@@ -2319,7 +2317,7 @@ describe("selected-run detail tabs", () => {
     const user = userEvent.setup();
     stubDetailJourney();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText(/source:movies\/a\.mkv/);
@@ -2413,7 +2411,7 @@ describe("selected-run detail tabs", () => {
     // explicitly unavailable, and never recompute anything.
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(overviewDocument());
       }
       if (url.includes("/items/item-9")) {
@@ -2428,7 +2426,7 @@ describe("selected-run detail tabs", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001&item=item-9");
+    renderApp("/operations?run=task-001&item=item-9");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const evidence = await within(detail).findByRole("region", {
@@ -2493,7 +2491,7 @@ describe("selected-run detail tabs", () => {
     const user = userEvent.setup();
     stubDetailJourney();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const exportButton = await within(detail).findByRole("button", {
@@ -2512,22 +2510,22 @@ describe("selected-run detail tabs", () => {
     const user = userEvent.setup();
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse(overviewDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/items")) {
+      if (url.startsWith("/api/operations/runs/task-001/items")) {
         return jsonResponse(itemsPageDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
         return jsonResponse(recordsPageDocument());
       }
-      if (url.startsWith("/api/v1/operations/runs/task-001/export")) {
+      if (url.startsWith("/api/operations/runs/task-001/export")) {
         return jsonResponse(
           { error: { code: "task_not_linked", message: "no task yet" } },
           409,
         );
       }
-      if (url.startsWith("/api/v1/operations/runs?")) {
+      if (url.startsWith("/api/operations/runs?")) {
         return jsonResponse({
           items: [overviewDocument()],
           limit: 20,
@@ -2550,7 +2548,7 @@ describe("selected-run detail tabs", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const exportButton = await within(detail).findByRole("button", {
@@ -2568,10 +2566,10 @@ describe("selected-run detail tabs", () => {
     stubFetch(async (input) => {
       requested.push(String(input));
       const url = String(input);
-      if (url === "/api/v1/operations/runs/task-001") {
+      if (url === "/api/operations/runs/task-001") {
         return jsonResponse({ error: { code: "forbidden" } }, 403);
       }
-      if (url.startsWith("/api/v1/operations/runs?")) {
+      if (url.startsWith("/api/operations/runs?")) {
         return jsonResponse({
           items: [overviewDocument()],
           limit: 20,
@@ -2594,7 +2592,7 @@ describe("selected-run detail tabs", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     expect(
       await screen.findByText(
@@ -2615,7 +2613,7 @@ describe("selected-run detail tabs", () => {
       return stubDetailJourneyResponse(url);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText(/source:movies\/a\.mkv/);
@@ -2635,10 +2633,10 @@ describe("selected-run detail tabs", () => {
 /** Split out so the GET-only test can reuse the full stub's responses. */
 function stubDetailJourneyResponse(url: string): Response {
   const notFound = jsonResponse({ error: { code: "not_found" } }, 404);
-  if (url === "/api/v1/auth/principal") {
+  if (url === "/api/auth/principal") {
     return jsonResponse({ principal_id: "test-principal" });
   }
-  if (url.startsWith("/api/v1/operations/runs?")) {
+  if (url.startsWith("/api/operations/runs?")) {
     return jsonResponse({
       items: [overviewDocument()],
       limit: 20,
@@ -2658,22 +2656,22 @@ function stubDetailJourneyResponse(url: string): Response {
       next_cursor: null,
     });
   }
-  if (url === "/api/v1/operations/runs/task-001") {
+  if (url === "/api/operations/runs/task-001") {
     return jsonResponse(overviewDocument());
   }
-  if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
+  if (url.startsWith("/api/operations/runs/task-001/items/item-2")) {
     return jsonResponse(evidenceDocument());
   }
-  if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+  if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
     return jsonResponse(manualExecutionEvidenceDocument());
   }
-  if (url.startsWith("/api/v1/operations/runs/task-001/items")) {
+  if (url.startsWith("/api/operations/runs/task-001/items")) {
     return jsonResponse(itemsPageDocument());
   }
-  if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+  if (url.startsWith("/api/operations/runs/task-001/records")) {
     return jsonResponse(recordsPageDocument());
   }
-  if (url === "/api/v1/workers/readiness") {
+  if (url === "/api/workers/readiness") {
     return jsonResponse({
       ready: true,
       condition: "ready",
@@ -2687,7 +2685,7 @@ function stubDetailJourneyResponse(url: string): Response {
       expectedRuntimeSchemaVersion: 42,
     });
   }
-  if (url === "/api/v1/management/readiness") {
+  if (url === "/api/management/readiness") {
     return jsonResponse({
       available: true,
       infrastructureReady: true,

@@ -194,7 +194,7 @@ describe("AutomationLifecyclePage", () => {
     let saved = definition();
     const commands: Call[] = [];
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (call.url === "/api/auth/principal") return principalResponse();
       if (
         call.url.endsWith("/automation/definitions") &&
         call.method === "GET"
@@ -286,7 +286,7 @@ describe("AutomationLifecyclePage", () => {
     let saved = definition();
     let completeSave: ((response: Response) => void) | undefined;
     recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (call.url === "/api/auth/principal") return principalResponse();
       if (call.url.endsWith("/automation/definitions") && call.method === "GET")
         return jsonResponse({ ...formAuthority(), active });
       if (call.url.endsWith("/nightly/removal-impact"))
@@ -334,7 +334,7 @@ describe("AutomationLifecyclePage", () => {
     let writes = 0;
     const fences: (string | undefined)[] = [];
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (call.url === "/api/auth/principal") return principalResponse();
       if (call.url.endsWith("/automation/definitions") && call.method === "GET")
         return jsonResponse({ ...formAuthority(), active });
       if (call.url.endsWith("/nightly/removal-impact"))
@@ -404,7 +404,7 @@ describe("AutomationLifecyclePage", () => {
 
   it("keeps enablement in the shared form and no longer offers lifecycle commands", async () => {
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return principalResponse();
       }
       if (
@@ -484,7 +484,7 @@ describe("AutomationLifecyclePage", () => {
 
   it("requires an explicit confirmation before the destructive removal", async () => {
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return principalResponse();
       }
       if (
@@ -531,7 +531,7 @@ describe("AutomationLifecyclePage", () => {
 
   it("calculates upcoming times without publishing anything", async () => {
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return principalResponse();
       }
       if (
@@ -581,7 +581,7 @@ describe("AutomationLifecyclePage", () => {
 
   it("renders no control when the authority document is malformed", async () => {
     recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return principalResponse();
       }
       if (
@@ -616,7 +616,7 @@ describe("AutomationLifecyclePage", () => {
     // render that bounded recovery, never a never-published Draft candidate and
     // never an editable definition.
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return principalResponse();
       }
       if (
@@ -672,7 +672,7 @@ describe("AutomationLifecyclePage", () => {
     // must publish the route's definition (the copy), never apply the
     // origin's retained input.
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return principalResponse();
       }
       if (
@@ -774,7 +774,7 @@ describe("AutomationLifecyclePage", () => {
     // P1-4 regression: the scope field is always submitted, so clearing it
     // and saving publishes the cleared scope.
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return principalResponse();
       }
       if (
@@ -833,7 +833,7 @@ describe("AutomationLifecyclePage", () => {
   it("accepts a fractional interval value", async () => {
     // P1-4 regression: interval seconds are finite positive numbers.
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return principalResponse();
       }
       if (
@@ -889,7 +889,7 @@ describe("AutomationLifecyclePage", () => {
 
   it("offers daily and weekly schedule conveniences compiled to Cron", async () => {
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return principalResponse();
       }
       if (
@@ -951,7 +951,7 @@ describe("AutomationLifecyclePage", () => {
     // blocks Save until the operator deliberately re-adopts the current
     // values, so a concurrent edit can never be silently overwritten.
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return principalResponse();
       }
       if (
@@ -997,7 +997,7 @@ describe("AutomationLifecyclePage", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const method = init?.method ?? "GET";
-        if (url === "/api/v1/auth/principal") {
+        if (url === "/api/auth/principal") {
           return principalResponse();
         }
         if (url.endsWith("/automation/definitions") && method === "GET") {
@@ -1086,7 +1086,7 @@ describe("AutomationLifecyclePage", () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const method = init?.method ?? "GET";
-        if (url === "/api/v1/auth/principal") {
+        if (url === "/api/auth/principal") {
           return principalResponse();
         }
         if (url.endsWith("/automation/definitions") && method === "GET") {
@@ -1211,7 +1211,7 @@ describe("AutomationLifecyclePage", () => {
     let saved = definition();
     let active = ACTIVE;
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (call.url === "/api/auth/principal") return principalResponse();
       if (call.url.endsWith("/automation/definitions") && call.method === "GET")
         return jsonResponse({ ...formAuthority(), active });
       if (call.url.endsWith("/nightly/removal-impact"))
@@ -1312,7 +1312,7 @@ describe("AutomationLifecyclePage", () => {
     };
     let peerRead = false;
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (call.url === "/api/auth/principal") return principalResponse();
       if (call.url.endsWith("/automation/definitions") && call.method === "GET")
         return jsonResponse({ ...formAuthority(), active: peerActive });
       if (call.url.endsWith("/nightly/removal-impact"))
@@ -1397,7 +1397,7 @@ describe("AutomationLifecyclePage", () => {
       digest: "e".repeat(64),
     };
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") return principalResponse();
+      if (call.url === "/api/auth/principal") return principalResponse();
       if (call.url.endsWith("/automation/definitions") && call.method === "GET")
         return jsonResponse({ ...formAuthority(), active: ACTIVE });
       if (call.url.endsWith("/nightly/removal-impact"))

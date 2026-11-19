@@ -1,8 +1,8 @@
 /**
  * Frontend-owned Task entity for the Operations workspace.
  *
- * The Python contract (`GET /api/v1/operations/tasks`,
- * `GET /api/v1/operations/tasks/{id}`) returns the bounded, secret-free
+ * The Python contract (`GET /api/operations/tasks`,
+ * `GET /api/operations/tasks/{id}`) returns the bounded, secret-free
  * operator projection: raw durable errors are already normalized into failure
  * evidence, and configuration digests, fingerprint values and configured
  * display roots are absent by contract.  Normalization is deliberately

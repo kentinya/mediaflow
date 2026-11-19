@@ -62,7 +62,7 @@ function recordingFetch(respond: (call: Call) => Response | undefined): {
       }
       if (
         call.method === "GET" &&
-        call.url.startsWith("/api/v1/operations/organize/executions?previewId=")
+        call.url.startsWith("/api/operations/organize/executions?previewId=")
       ) {
         return jsonResponse({
           journey: "organize",
@@ -94,7 +94,7 @@ function intentDocument(): Json {
   value["intentId"] = "intent-1";
   const actions = value["actions"] as Json;
   (actions["choice"] as Json)["path"] =
-    "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
+    "/api/operations/organize/intents/intent-1/items/{itemId}/choice";
   return value;
 }
 
@@ -132,7 +132,7 @@ function previewDocument(): Json {
   (actions["execute"] as Json)["available"] = true;
   (actions["execute"] as Json)["reason"] = null;
   (actions["execute"] as Json)["path"] =
-    "/api/v1/operations/organize/previews/preview-1/execute";
+    "/api/operations/organize/previews/preview-1/execute";
   return value;
 }
 
@@ -181,8 +181,8 @@ function executionDocument(): Json {
   value["taskId"] = "task-1";
   const actions = value["actions"] as Json;
   (actions["detail"] as Json)["path"] =
-    "/api/v1/operations/organize/executions/execution-1";
-  (actions["task"] as Json)["path"] = "/api/v1/operations/tasks/task-1";
+    "/api/operations/organize/executions/execution-1";
+  (actions["task"] as Json)["path"] = "/api/operations/tasks/task-1";
   return value;
 }
 
@@ -194,7 +194,7 @@ function previewExecuteAction(): Json {
       "one durable admitted execution and its Processing Worker outcome are stored; only OrganizerExecutor may then mutate Storage",
     method: "POST",
     nextAction: "confirm one Execute action for the selected exact items",
-    path: "/api/v1/operations/organize/previews/preview-1/execute",
+    path: "/api/operations/organize/previews/preview-1/execute",
     reason: null,
     requiresConfirmation: true,
     sideEffects: "reported_per_item",
@@ -226,23 +226,23 @@ async function openPlan(
   const { calls } = recordingFetch((call) => {
     const custom = options.respond?.(call);
     if (custom !== undefined) return custom;
-    if (call.url === "/api/v1/auth/principal") {
+    if (call.url === "/api/auth/principal") {
       return jsonResponse({ principal_id: "operator" });
     }
     if (
-      call.url === "/api/v1/operations/organize/intents/intent-1/previews" &&
+      call.url === "/api/operations/organize/intents/intent-1/previews" &&
       call.method === "POST"
     ) {
       return jsonResponse(analysis, 201);
     }
-    if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+    if (call.url.startsWith("/api/operations/organize/intents/intent-1")) {
       // A durable analysis invalidates the intent read; the refetch sees the
       // same durable association the Worker published, exactly like the real
       // backend re-reading the intent after the run's atomic publication.
       return jsonResponse(analysis);
     }
     if (
-      call.url === "/api/v1/operations/organize/previews/preview-1" &&
+      call.url === "/api/operations/organize/previews/preview-1" &&
       call.method === "GET"
     ) {
       return jsonResponse(detail);
@@ -251,7 +251,7 @@ async function openPlan(
   });
   authStore.setToken(TOKEN);
   const { router } = renderApp(
-    `/ui-v2/operations/organize/intent/intent-1${options.search ?? ""}`,
+    `/operations/organize/intent/intent-1${options.search ?? ""}`,
   );
   await screen.findByRole("heading", { name: "整理意图" });
   await user.click(await screen.findByRole("button", { name: "生成分析摘要" }));
@@ -280,17 +280,17 @@ describe("V2 manual Organize journey", () => {
       actions: {},
     };
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (
-        call.url === "/api/v1/operations/organize/intents/intent-1/previews" &&
+        call.url === "/api/operations/organize/intents/intent-1/previews" &&
         call.method === "POST"
       ) {
         analyzingRequested = true;
         return jsonResponse(analyzing, 201);
       }
-      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+      if (call.url.startsWith("/api/operations/organize/intents/intent-1")) {
         // The durable stage is read back by every later read of the same
         // intent, exactly as the real backend projects its own organize run.
         return jsonResponse(analyzingRequested ? analyzing : intentDocument());
@@ -298,7 +298,7 @@ describe("V2 manual Organize journey", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/intent/intent-1");
+    renderApp("/operations/organize/intent/intent-1");
 
     await screen.findByRole("heading", { name: "整理意图" });
     expect(screen.getByText(/版本 2/)).toBeVisible();
@@ -327,7 +327,7 @@ describe("V2 manual Organize journey", () => {
           (call) =>
             call.method === "POST" &&
             call.url.includes(
-              "/api/v1/operations/organize/intents/intent-1/items/item-1/choice",
+              "/api/operations/organize/intents/intent-1/items/item-1/choice",
             ),
         ),
       ).toBe(true),
@@ -354,8 +354,7 @@ describe("V2 manual Organize journey", () => {
       expect(
         calls.some(
           (call) =>
-            call.url ===
-              "/api/v1/operations/organize/intents/intent-1/previews" &&
+            call.url === "/api/operations/organize/intents/intent-1/previews" &&
             call.method === "POST",
         ),
       ).toBe(true),
@@ -363,7 +362,7 @@ describe("V2 manual Organize journey", () => {
     // The shared analysis carries the exact observed intent version and nothing else.
     const analysis = calls.find(
       (call) =>
-        call.url === "/api/v1/operations/organize/intents/intent-1/previews" &&
+        call.url === "/api/operations/organize/intents/intent-1/previews" &&
         call.method === "POST",
     );
     expect(analysis?.body).toMatchObject({ expectedVersion: 2 });
@@ -407,19 +406,19 @@ describe("V2 manual Organize journey", () => {
       },
     ];
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (call.url.includes("/items/item-1/choice") && call.method === "POST") {
         return jsonResponse(documentValue);
       }
-      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+      if (call.url.startsWith("/api/operations/organize/intents/intent-1")) {
         return jsonResponse(documentValue);
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/intent/intent-1");
+    renderApp("/operations/organize/intent/intent-1");
 
     await screen.findByRole("heading", { name: "整理意图" });
     const select = await screen.findByLabelText("元数据身份 item-1");
@@ -479,13 +478,13 @@ describe("V2 manual Organize journey", () => {
       recognitionTypeId: "A",
     };
     const { calls } = recordingFetch((call) => {
-      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+      if (call.url.startsWith("/api/operations/organize/intents/intent-1")) {
         return jsonResponse(intent);
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/intent/intent-1");
+    renderApp("/operations/organize/intent/intent-1");
 
     await screen.findByRole("heading", { name: "整理意图" });
     // RecognitionType C maps to A naming/classification/organize policies in
@@ -529,13 +528,13 @@ describe("V2 manual Organize journey", () => {
       recognitionTypeId: "A",
     };
     const { calls } = recordingFetch((call) => {
-      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+      if (call.url.startsWith("/api/operations/organize/intents/intent-1")) {
         return jsonResponse(intent);
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/intent/intent-1");
+    renderApp("/operations/organize/intent/intent-1");
 
     await screen.findByRole("heading", { name: "整理意图" });
     // Without touching the RecognitionType, the displayed naming policy is the
@@ -569,13 +568,13 @@ describe("V2 manual Organize journey", () => {
     const typeA = recognitionTypes.find((value) => value["id"] === "A")!;
     typeA["namingPolicyId"] = null;
     const { calls } = recordingFetch((call) => {
-      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+      if (call.url.startsWith("/api/operations/organize/intents/intent-1")) {
         return jsonResponse(intent);
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/intent/intent-1");
+    renderApp("/operations/organize/intent/intent-1");
 
     await screen.findByRole("heading", { name: "整理意图" });
     await screen.findByText(/缺少命名、分类或整理策略/);
@@ -598,13 +597,13 @@ describe("V2 manual Organize journey", () => {
       recognitionTypeId: "Z",
     };
     const { calls } = recordingFetch((call) => {
-      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+      if (call.url.startsWith("/api/operations/organize/intents/intent-1")) {
         return jsonResponse(intent);
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/intent/intent-1");
+    renderApp("/operations/organize/intent/intent-1");
 
     await screen.findByRole("heading", { name: "整理意图" });
     await screen.findByText(/没有识别类型“Z”/);
@@ -620,8 +619,7 @@ describe("V2 manual Organize journey", () => {
     const { calls, router } = await openPlan(user, {
       respond: (call) => {
         if (
-          call.url ===
-            "/api/v1/operations/organize/previews/preview-1/execute" &&
+          call.url === "/api/operations/organize/previews/preview-1/execute" &&
           call.method === "POST"
         ) {
           return jsonResponse(execution, 202);
@@ -648,7 +646,7 @@ describe("V2 manual Organize journey", () => {
         calls.some(
           (call) =>
             call.url ===
-              "/api/v1/operations/organize/previews/preview-1/execute" &&
+              "/api/operations/organize/previews/preview-1/execute" &&
             call.method === "POST",
         ),
       ).toBe(true),
@@ -672,7 +670,7 @@ describe("V2 manual Organize journey", () => {
       1,
     );
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
+      expect(router.history.location.pathname).toBe("/operations"),
     );
     const search = new URLSearchParams(router.history.location.search);
     expect(search.get("run")).toBe("task-1");
@@ -684,25 +682,25 @@ describe("V2 manual Organize journey", () => {
     // the execution page or a reconnect reads this exact plan again instead of
     // admitting another analysis or guessing a recent Task.
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/organize/intents/intent-1"
+        call.url === "/api/operations/organize/intents/intent-1"
       ) {
         return jsonResponse(intentDocumentWithPlan());
       }
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/organize/previews/preview-1"
+        call.url === "/api/operations/organize/previews/preview-1"
       ) {
         return jsonResponse(previewDocument());
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/intent/intent-1");
+    renderApp("/operations/organize/intent/intent-1");
 
     await screen.findByRole("heading", { name: "整理意图" });
     await screen.findByRole("heading", {
@@ -722,25 +720,25 @@ describe("V2 manual Organize journey", () => {
     const existing = executionDocument();
     existing["previewId"] = "preview-1";
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/organize/intents/intent-1"
+        call.url === "/api/operations/organize/intents/intent-1"
       ) {
         return jsonResponse(intentDocumentWithPlan());
       }
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/organize/previews/preview-1"
+        call.url === "/api/operations/organize/previews/preview-1"
       ) {
         return jsonResponse(previewDocument());
       }
       if (
         call.method === "GET" &&
         call.url.startsWith(
-          "/api/v1/operations/organize/executions?previewId=preview-1",
+          "/api/operations/organize/executions?previewId=preview-1",
         )
       ) {
         return jsonResponse({
@@ -754,7 +752,7 @@ describe("V2 manual Organize journey", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/intent/intent-1");
+    renderApp("/operations/organize/intent/intent-1");
 
     await screen.findByRole("heading", { name: "整理意图" });
     await screen.findByRole("heading", {
@@ -778,12 +776,12 @@ describe("V2 manual Organize journey", () => {
     const user = userEvent.setup();
     let planPersisted = false;
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/organize/intents/intent-1"
+        call.url === "/api/operations/organize/intents/intent-1"
       ) {
         // Before the explicit analysis the real intent has no plan; after it
         // the durable association returns the exact plan that was created.
@@ -793,7 +791,7 @@ describe("V2 manual Organize journey", () => {
       }
       if (
         call.method === "POST" &&
-        call.url === "/api/v1/operations/organize/intents/intent-1/previews"
+        call.url === "/api/operations/organize/intents/intent-1/previews"
       ) {
         planPersisted = true;
         // The durable analysis request returns the refreshed intent document;
@@ -803,14 +801,14 @@ describe("V2 manual Organize journey", () => {
       }
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/organize/previews/preview-1"
+        call.url === "/api/operations/organize/previews/preview-1"
       ) {
         return jsonResponse(previewDocument());
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations/organize/intent/intent-1");
+    const { router } = renderApp("/operations/organize/intent/intent-1");
     await screen.findByRole("heading", { name: "整理意图" });
     await user.click(
       await screen.findByRole("button", { name: "生成分析摘要" }),
@@ -851,25 +849,25 @@ describe("V2 manual Organize journey", () => {
     (actions["execute"] as Json)["reason"] =
       "this fixed plan is historical evidence and can no longer be executed";
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/organize/intents/intent-1"
+        call.url === "/api/operations/organize/intents/intent-1"
       ) {
         return jsonResponse(intentDocumentWithPlan("preview-1", false));
       }
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/organize/previews/preview-1"
+        call.url === "/api/operations/organize/previews/preview-1"
       ) {
         return jsonResponse(historical);
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/intent/intent-1");
+    renderApp("/operations/organize/intent/intent-1");
 
     await screen.findByRole("heading", { name: "整理意图" });
     await screen.findByRole("heading", {
@@ -887,25 +885,25 @@ describe("V2 manual Organize journey", () => {
     const foreign = previewDocument();
     foreign["intentId"] = "intent-other";
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/organize/intents/intent-1"
+        call.url === "/api/operations/organize/intents/intent-1"
       ) {
         return jsonResponse(intentDocumentWithPlan("preview-other"));
       }
       if (
         call.method === "GET" &&
-        call.url === "/api/v1/operations/organize/previews/preview-other"
+        call.url === "/api/operations/organize/previews/preview-other"
       ) {
         return jsonResponse(foreign);
       }
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/intent/intent-1");
+    renderApp("/operations/organize/intent/intent-1");
 
     await screen.findByRole("heading", { name: "整理意图" });
     await screen.findByRole("heading", {
@@ -923,7 +921,7 @@ describe("V2 manual Organize journey", () => {
       search: "?returnOps=status%3Dpaused%26run%3Dtask-source",
       respond: (call) => {
         if (
-          call.url === "/api/v1/operations/organize/previews/preview-1/execute"
+          call.url === "/api/operations/organize/previews/preview-1/execute"
         ) {
           return jsonResponse(execution, 202);
         }
@@ -944,7 +942,7 @@ describe("V2 manual Organize journey", () => {
       ).toHaveLength(1),
     );
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
+      expect(router.history.location.pathname).toBe("/operations"),
     );
     const search = new URLSearchParams(router.history.location.search);
     expect(search.get("run")).toBe("task-1");
@@ -959,7 +957,7 @@ describe("V2 manual Organize journey", () => {
       respond: (call) => {
         if (
           call.url.startsWith(
-            "/api/v1/operations/organize/executions?previewId=preview-1",
+            "/api/operations/organize/executions?previewId=preview-1",
           )
         ) {
           return jsonResponse({
@@ -998,7 +996,7 @@ describe("V2 manual Organize journey", () => {
       respond: (call) => {
         if (
           call.url.startsWith(
-            "/api/v1/operations/organize/executions?previewId=preview-1",
+            "/api/operations/organize/executions?previewId=preview-1",
           )
         ) {
           return jsonResponse({ error: { code: "unavailable" } }, 503);
@@ -1103,8 +1101,7 @@ describe("V2 manual Organize journey", () => {
       detail: value,
       respond: (call) => {
         if (
-          call.url ===
-            "/api/v1/operations/organize/previews/preview-1/execute" &&
+          call.url === "/api/operations/organize/previews/preview-1/execute" &&
           call.method === "POST"
         ) {
           return jsonResponse(execution, 202);
@@ -1119,7 +1116,7 @@ describe("V2 manual Organize journey", () => {
     await user.click(overwrite);
     await user.click(screen.getByRole("button", { name: "确认整理 1 项" }));
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
+      expect(router.history.location.pathname).toBe("/operations"),
     );
 
     const execute = calls.find((call) => call.url.endsWith("/execute"));
@@ -1267,7 +1264,7 @@ describe("V2 manual Organize journey", () => {
       // A traversal-shaped relative route is rejected too.
       (value) => {
         ((value["actions"] as Json)["execute"] as Json)["path"] =
-          "/api/v1/../../operations/organize/previews/preview-1/execute";
+          "/api/../../operations/organize/previews/preview-1/execute";
       },
       // A withholding action must still explain itself.
       (value) => {
@@ -1303,7 +1300,7 @@ describe("V2 manual Organize journey", () => {
       const { calls } = await openPlan(user, {
         detail: document,
         respond: (call) => {
-          if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+          if (call.url === "/api/operations/organize/previews/preview-1") {
             previewRequests.count += 1;
             return jsonResponse(document);
           }
@@ -1344,38 +1341,38 @@ describe("V2 manual Organize journey", () => {
       { ...previewExecuteAction(), method: "GET" },
       {
         ...previewExecuteAction(),
-        path: "/api/v1/operations/organize/previews/other-preview/execute",
+        path: "/api/operations/organize/previews/other-preview/execute",
       },
       {
         ...previewExecuteAction(),
-        path: "/api/v1/operations/tasks/task-1",
+        path: "/api/operations/tasks/task-1",
       },
       {
         // The plan's own read route without the /execute suffix is never the
         // mutating transport, even with the right method.
         ...previewExecuteAction(),
-        path: "/api/v1/operations/organize/previews/preview-1",
+        path: "/api/operations/organize/previews/preview-1",
       },
       {
         // An arbitrary descendant of the owned route is not the exact
         // published Execute route either.
         ...previewExecuteAction(),
-        path: "/api/v1/operations/organize/previews/preview-1/execute/extra",
+        path: "/api/operations/organize/previews/preview-1/execute/extra",
       },
       {
         // A same-object route with a wrong fixed suffix is malformed too.
         ...previewExecuteAction(),
-        path: "/api/v1/operations/organize/previews/preview-1/executes",
+        path: "/api/operations/organize/previews/preview-1/executes",
       },
       {
         // A non-URI-safe identity is never this object's transport: raw
         // angle brackets and braces are rejected fail-closed.
         ...previewExecuteAction(),
-        path: "/api/v1/operations/organize/previews/<preview>/execute",
+        path: "/api/operations/organize/previews/<preview>/execute",
       },
       {
         ...previewExecuteAction(),
-        path: "/api/v1/operations/organize/previews/preview-1/{execute}",
+        path: "/api/operations/organize/previews/preview-1/{execute}",
       },
     ];
     for (const transport of wrongTransports) {
@@ -1385,7 +1382,7 @@ describe("V2 manual Organize journey", () => {
       await openPlan(user, {
         detail: document,
         respond: (call) => {
-          if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+          if (call.url === "/api/operations/organize/previews/preview-1") {
             return jsonResponse(document);
           }
           return undefined;

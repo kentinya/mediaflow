@@ -51,10 +51,10 @@ function recordingFetch(respond: (call: Call) => Response | undefined): {
       if (response !== undefined) {
         return response;
       }
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: "automation-settings-admin" });
       }
-      if (call.url === "/api/v1/configuration/status") {
+      if (call.url === "/api/configuration/status") {
         // The System Settings page owns the form now, so its own status read
         // must succeed before the shared panel can render.
         return jsonResponse({
@@ -276,10 +276,10 @@ function heldSettingsRead(): {
         await held;
         return jsonResponse(settingsDocument());
       }
-      if (call.url === "/api/v1/auth/principal") {
+      if (call.url === "/api/auth/principal") {
         return jsonResponse({ principal_id: TOKEN });
       }
-      if (call.url === "/api/v1/configuration/status") {
+      if (call.url === "/api/configuration/status") {
         return jsonResponse(configurationStatus());
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
@@ -304,7 +304,7 @@ describe("Automation engine settings surface", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    const { router } = renderApp("/ui-v2/operations/automation?tab=settings");
+    const { router } = renderApp("/operations/automation?tab=settings");
     await screen.findByRole("heading", { name: "自动化" });
     // The unknown tab is not recognized, allowlisted or redirected: the same
     // Automation list fallback renders and no settings route or write occurs.
@@ -312,7 +312,7 @@ describe("Automation engine settings surface", () => {
       expect(router.state.location.pathname).toBe("/operations/automation"),
     );
     expect(
-      calls.some((call) => call.url.includes("/api/v1/system/settings")),
+      calls.some((call) => call.url.includes("/api/system/settings")),
     ).toBe(false);
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
   });
@@ -333,7 +333,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
 
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // The published target is stated as such, with its exact identity.
@@ -397,7 +397,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
 
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
@@ -473,7 +473,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
@@ -532,7 +532,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
 
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
@@ -602,7 +602,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
@@ -657,7 +657,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
 
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
@@ -712,10 +712,10 @@ describe("Automation engine settings surface", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const method = init?.method ?? "GET";
-        if (url === "/api/v1/auth/principal") {
+        if (url === "/api/auth/principal") {
           return jsonResponse({ principal_id: "automation-settings-admin" });
         }
-        if (url === "/api/v1/configuration/status") {
+        if (url === "/api/configuration/status") {
           return jsonResponse(configurationStatus());
         }
         if (url.includes("/operations/automation/settings")) {
@@ -775,7 +775,7 @@ describe("Automation engine settings surface", () => {
         return jsonResponse({ error: { code: "not_found" } }, 404);
       }),
     );
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
@@ -819,10 +819,10 @@ describe("Automation engine settings surface", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const method = init?.method ?? "GET";
-        if (url === "/api/v1/auth/principal") {
+        if (url === "/api/auth/principal") {
           return jsonResponse({ principal_id: "automation-settings-admin" });
         }
-        if (url === "/api/v1/configuration/status") {
+        if (url === "/api/configuration/status") {
           return jsonResponse(configurationStatus());
         }
         if (url.includes("/operations/automation/settings")) {
@@ -907,7 +907,7 @@ describe("Automation engine settings surface", () => {
         return jsonResponse({ error: { code: "not_found" } }, 404);
       }),
     );
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const jobs = within(panel).getByLabelText(
       /并行任务上限/,
@@ -1012,7 +1012,7 @@ describe("Automation engine settings surface", () => {
       return undefined;
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     let panel = await screen.findByRole("region", { name: "系统运行设置" });
     expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
     await userEvent.click(
@@ -1048,7 +1048,7 @@ describe("Automation engine settings surface", () => {
     cleanup();
     authStore.setToken(TOKEN);
     window.sessionStorage.setItem(storageKey, JSON.stringify(retained));
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     panel = await screen.findByRole("region", { name: "系统运行设置" });
     expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
     expect(
@@ -1164,7 +1164,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
     await userEvent.click(
@@ -1305,7 +1305,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
     expect(within(panel).getByText(/没有保存当时的编辑基线/)).toBeTruthy();
@@ -1379,7 +1379,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
 
     const workerAdoption = await screen.findByRole("region", {
       name: "Worker 轮询采用情况",
@@ -1432,7 +1432,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
 
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // The fabricated collective flag is refused: the page still says this is
@@ -1476,7 +1476,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
 
     expect(
       await screen.findByText(
@@ -1546,7 +1546,7 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/configuration");
+      await connect("/configuration");
       const panel = await screen.findByRole("region", {
         name: "系统运行设置",
       });
@@ -1661,7 +1661,7 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/configuration");
+      await connect("/configuration");
       const panel = await screen.findByRole("region", {
         name: "系统运行设置",
       });
@@ -1758,7 +1758,7 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/configuration");
+      await connect("/configuration");
       const panel = await screen.findByRole("region", {
         name: "系统运行设置",
       });
@@ -1894,7 +1894,7 @@ describe("Automation engine settings surface", () => {
           }
           return undefined;
         });
-        await connect("/ui-v2/configuration");
+        await connect("/configuration");
         return screen.findByRole("region", { name: "系统运行设置" });
       };
 
@@ -2078,7 +2078,7 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/configuration");
+      await connect("/configuration");
       const panel = await screen.findByRole("region", {
         name: "系统运行设置",
       });
@@ -2225,7 +2225,7 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/configuration");
+      await connect("/configuration");
       const panel = await screen.findByRole("region", {
         name: "系统运行设置",
       });
@@ -2341,7 +2341,7 @@ describe("Automation engine settings surface", () => {
         }
         return undefined;
       });
-      await connect("/ui-v2/configuration");
+      await connect("/configuration");
       const panel = await screen.findByRole("region", {
         name: "系统运行设置",
       });
@@ -2440,7 +2440,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    renderApp("/ui-v2/configuration");
+    renderApp("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // The unknown submission survived the reload and still blocks a new Save.
     expect(await within(panel).findByText(/上一次保存结果未知/)).toBeTruthy();
@@ -2535,7 +2535,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     expect(
       within(panel).getByText("全部相关常驻进程都已采用当前发布值"),
@@ -2604,7 +2604,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     const workerAdoption = screen.getByRole("region", {
       name: "Worker 轮询采用情况",
@@ -2675,7 +2675,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // Contradictory populations never become a collective success claim.
     expect(within(panel).getAllByText(/尚未整体采用/).length).toBeGreaterThan(
@@ -2729,7 +2729,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     const workerAdoption = await screen.findByRole("region", {
       name: "Worker 轮询采用情况",
     });
@@ -2766,7 +2766,7 @@ describe("Automation engine settings surface", () => {
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
 
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     expect(within(panel).getByText(/当前账号没有管理配置的权限/)).toBeTruthy();
@@ -2784,7 +2784,7 @@ describe("Automation engine settings surface", () => {
 describe("engine settings read handoff on System Settings (Slice52 RO-3)", () => {
   it("never flashes the engine wait line during a fast handoff", async () => {
     const heldRead = heldSettingsRead();
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     // The page's own configuration status has resolved, so the workspace and
     // the embedded engine read are both on screen while that read is still
     // inside its fast window. The observed defect (B52.2-02) was this wait
@@ -2821,7 +2821,7 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
 
   it("shows one stable engine wait state once the read is genuinely slow", async () => {
     const heldRead = heldSettingsRead();
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     expect(await screen.findByText("配置已生效")).toBeTruthy();
     // Past the shared reveal window the waiting line appears — one stable,
     // perceivable state while the read is outstanding, not a flicker.
@@ -2860,7 +2860,7 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
       }
       return undefined;
     });
-    await connect("/ui-v2/configuration");
+    await connect("/configuration");
     expect(await screen.findByText("配置已生效")).toBeTruthy();
     // The failed read is a direct answer on the existing bounded recovery,
     // never delayed behind a waiting presentation, and it stays read-only.

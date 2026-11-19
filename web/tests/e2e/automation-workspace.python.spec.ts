@@ -58,7 +58,7 @@ function recordApiCalls(
   const api: { method: string; path: string; url: string }[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname.startsWith("/api/v1/")) {
+    if (url.pathname.startsWith("/api/")) {
       api.push({
         method: request.method(),
         path: url.pathname,
@@ -81,7 +81,7 @@ async function publishDefinition(
   } = {},
 ): Promise<string> {
   const name = options.name ?? "Harness workspace";
-  await connectOn(page, "/ui-v2/operations/automation/lifecycle");
+  await connectOn(page, "/operations/automation/lifecycle");
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
   ).toBeVisible();
@@ -112,23 +112,20 @@ async function publishDefinition(
  * definition's edit card, then return to the list.
  */
 async function enableDefinitionFromEdit(page: Page): Promise<void> {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
-  );
+  await connectOn(page, `/operations/automation/lifecycle/${DEFINITION_ID}`);
   await expect(
     page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
   await page.getByLabel("启用定时计划").check();
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation(\?.*)?$/);
+  await expect(page).toHaveURL(/\/operations\/automation(\?.*)?$/);
   await expect(
     page.getByRole("heading", { name: "已保存并启用" }),
   ).toBeVisible();
 }
 
 async function runOnceFromList(page: Page, name: string): Promise<string> {
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await expect(
     page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
   ).toBeVisible();
@@ -142,7 +139,7 @@ async function runOnceFromList(page: Page, name: string): Promise<string> {
   const taskId = new URL(href, page.url()).searchParams.get("run");
   if (!taskId) throw new Error("admitted list link has no Task identity");
   expect(taskId).toMatch(/^[0-9a-f-]{36}$/);
-  expect(page.url()).toContain("/ui-v2/operations/automation");
+  expect(page.url()).toContain("/operations/automation");
   return taskId;
 }
 
@@ -160,7 +157,7 @@ test("the inventory reads full-population cards, filters and pages from the serv
     name: "Nightly workspace",
   });
 
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await expect(
     page.getByRole("heading", { name: "自动化", exact: true, level: 2 }),
   ).toBeVisible();
@@ -202,7 +199,7 @@ test("the inventory reads full-population cards, filters and pages from the serv
   const filtered = api.filter(
     (call) =>
       call.method === "GET" &&
-      call.path === "/api/v1/operations/automation/task-definitions" &&
+      call.path === "/api/operations/automation/task-definitions" &&
       call.url.includes("q=no-such-definition"),
   );
   expect(filtered.length).toBeGreaterThan(0);
@@ -225,7 +222,7 @@ test("the inventory reads full-population cards, filters and pages from the serv
   // A reload of the deep-linked route re-reads the same durable inventory.
   const before = await lifecycleState(page);
   expect(before.definitions.map((item) => item.id)).toEqual([DEFINITION_ID]);
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await expect(page.getByText("Nightly workspace")).toBeVisible();
   const after = await lifecycleState(page);
   expect(after.activeRevisionId).toBe(before.activeRevisionId);
@@ -251,7 +248,7 @@ test("the records tab reports this execution only, without recovery details", as
   // persists its formal organizing Task, so the record below is a real
   // admitted execution with a Task Center link — not a queue-only row.
 
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await page.getByRole("button", { name: "执行记录" }).click();
   await expect(
     page.getByRole("region", { name: "自动化执行记录" }),
@@ -338,7 +335,7 @@ test("the records page traverses beyond one page and back with its own filters",
   const headers = { Authorization: `Bearer ${ADMIN_TOKEN}` };
   for (const runId of seededBody.emitted.slice(2)) {
     const selectedResponse = await page.request.get(
-      `/api/v1/operations/runs/${runId}`,
+      `/api/operations/runs/${runId}`,
       { headers },
     );
     expect(selectedResponse.ok()).toBe(true);
@@ -354,7 +351,7 @@ test("the records page traverses beyond one page and back with its own filters",
     expect(response.ok()).toBe(true);
   }
 
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await page.getByRole("button", { name: "执行记录" }).click();
   const region = page.getByRole("region", { name: "自动化执行记录" });
   await expect(region).toBeVisible();
@@ -385,7 +382,7 @@ test("the records page traverses beyond one page and back with its own filters",
   const backward = page.waitForRequest((request) => {
     const url = new URL(request.url());
     return (
-      url.pathname === "/api/v1/operations/automation/records" &&
+      url.pathname === "/api/operations/automation/records" &&
       url.searchParams.get("direction") === "previous"
     );
   });
@@ -399,7 +396,7 @@ test("the records page traverses beyond one page and back with its own filters",
   expect(firstPageUrl).toContain(`rdefinition=${DEFINITION_ID}`);
 
   // A reload of the exact URL keeps the tab and the filter.
-  await connectOn(page, page.url().replace("/ui-v2/", "/ui-v2/"));
+  await connectOn(page, page.url().replace("/", "/"));
   const reloaded = page.getByRole("region", { name: "自动化执行记录" });
   await expect(reloaded).toBeVisible();
   await expect(page.getByLabel("定义")).toHaveValue(DEFINITION_ID);
@@ -471,7 +468,7 @@ test("a technical record preserves original results without a generic retry entr
   // Read Automation *before* the recovery: the original mixed result is
   // published as a historical fact with its failure stage and its handling
   // state, and no local recovery control is offered.
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await page.getByRole("button", { name: "执行记录" }).click();
   const region = page.getByRole("region", { name: "自动化执行记录" });
   await expect(region).toBeVisible();
@@ -524,7 +521,7 @@ test("a technical record preserves original results without a generic retry entr
   // actual effects/history, and prove that reads cannot replay a sibling.
   await connectOn(
     page,
-    `/ui-v2/operations?run=${executionBody.taskId}&item=${executionBody.failedItemId}`,
+    `/operations?run=${executionBody.taskId}&item=${executionBody.failedItemId}`,
   );
   const recovery = page.getByRole("region", { name: "条目证据" });
   // The failed item reads as its own factual history; the concrete reason sits
@@ -632,7 +629,7 @@ test("two technical failures retain independent evidence without false resolutio
 
   const recordReads = recordApiCalls(page);
   // The records row publishes both original reasons and no completion claim.
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await page.getByRole("button", { name: "执行记录" }).click();
   const region = page.getByRole("region", { name: "自动化执行记录" });
   await expect(region).toBeVisible();
@@ -688,7 +685,7 @@ test("two technical failures retain independent evidence without false resolutio
 
   // Both failures remain factual history. No unsupported technical recovery
   // control can hide one sibling or turn this partial run into success.
-  await connectOn(page, `/ui-v2/operations?run=${taskId}&item=${recoverOnly}`);
+  await connectOn(page, `/operations?run=${taskId}&item=${recoverOnly}`);
   const recovery = page.getByRole("region", { name: "条目证据" });
   await expect(
     recovery
@@ -744,7 +741,7 @@ test("the latest-result sort uses the real admitted history", async ({
   });
 
   const api = recordApiCalls(page);
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await expect(page.getByText("a-review-manual")).toBeVisible();
   await expect(page.getByText("z-review-never")).toBeVisible();
   // The manual definition publishes its real admitted result.
@@ -763,7 +760,7 @@ test("the latest-result sort uses the real admitted history", async ({
       api.some(
         (call) =>
           call.method === "GET" &&
-          call.path === "/api/v1/operations/automation/task-definitions" &&
+          call.path === "/api/operations/automation/task-definitions" &&
           call.url.includes("sort=latest"),
       ),
     )
@@ -812,7 +809,7 @@ test("a healthy empty history reads as no execution, not unavailable", async ({
   // published but never executed: the durable admitted-run read succeeds and
   // is simply empty. That is a legitimate "no execution yet" state, never an
   // unreadable history and never a fabricated run.
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await expect(page.getByText("Never-run workspace")).toBeVisible();
   const ownRow = page
     .getByRole("row")
@@ -832,7 +829,7 @@ test("the success-rate card uses the completed-plus-failed Task-flow denominator
 }, testInfo) => {
   const metricsRequest = async () => {
     const response = await page.request.get(
-      "/api/v1/operations/automation/metrics",
+      "/api/operations/automation/metrics",
       { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
     );
     expect(response.ok()).toBe(true);
@@ -878,7 +875,7 @@ test("the success-rate card uses the completed-plus-failed Task-flow denominator
     12,
   );
 
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   const statistics = page.getByRole("region", { name: "自动化统计" });
   const denominatorText = new RegExp(
     `评估 ${after.evaluatedCount} 次 · 已结束 ${after.monthToDateTerminal} 次`,
@@ -917,7 +914,7 @@ test("the workspace keeps narrow and wide layouts usable", async ({
     sourceScope: "电影",
     name: "Responsive workspace",
   });
-  await connectOn(page, "/ui-v2/operations/automation");
+  await connectOn(page, "/operations/automation");
   await expect(page.getByText("Responsive workspace")).toBeVisible();
 
   await page.setViewportSize({ width: 375, height: 720 });
@@ -944,5 +941,5 @@ test("the workspace keeps narrow and wide layouts usable", async ({
   await expect(
     page.getByRole("region", { name: "Worker 轮询采用情况" }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/configuration$/);
+  await expect(page).toHaveURL(/\/configuration$/);
 });

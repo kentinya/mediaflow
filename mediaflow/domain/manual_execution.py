@@ -462,7 +462,7 @@ class ManualExecutionItem:
             "effects": [effect.document() for effect in self.effects],
             "createdAt": self.created_at.isoformat(),
             "updatedAt": self.updated_at.isoformat(),
-            "checkpointPath": f"/api/v1/tasks/{self.task_id}/items/{self.task_item_id}",
+            "checkpointPath": f"/api/tasks/{self.task_id}/items/{self.task_item_id}",
         }
 
 

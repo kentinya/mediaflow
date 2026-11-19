@@ -440,9 +440,9 @@ class ManualRecoveryContinuationService:
             return None
         document = dict(preparation.document())
         document["hasExecutionAuthority"] = False
-        document["previewPath"] = "/api/v1/operations/organize/previews/" + preparation.preview_id
+        document["previewPath"] = "/api/operations/organize/previews/" + preparation.preview_id
         document["executionPath"] = (
-            "/api/v1/operations/organize/executions/" + execution.execution_id
+            "/api/operations/organize/executions/" + execution.execution_id
             if execution is not None
             else None
         )
@@ -531,9 +531,9 @@ class ManualRecoveryContinuationService:
                     "explicitly confirm the exact Organize action"
                 )
             ),
-            "previewPath": "/api/v1/operations/organize/previews/" + preview.preview_id,
+            "previewPath": "/api/operations/organize/previews/" + preview.preview_id,
             "executionPath": (
-                "/api/v1/operations/organize/executions/" + execution.execution_id
+                "/api/operations/organize/executions/" + execution.execution_id
                 if execution is not None
                 else None
             ),

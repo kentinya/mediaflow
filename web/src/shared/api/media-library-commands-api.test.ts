@@ -10,7 +10,7 @@ import {
 /**
  * MediaLibrary-scoped direct file commands (Task 38.3 / Slice 38 RO-5, RO-7).
  *
- * Every request must target the `/api/v1/media-libraries/{id}/files/...`
+ * Every request must target the `/api/media-libraries/{id}/files/...`
  * namespace with the same contract the ResourceLibrary journey already uses, and
  * every response must be normalized against the *media* identity key.  A
  * ResourceLibrary-shaped document therefore fails closed instead of being
@@ -116,7 +116,7 @@ describe("submitMediaLibraryDirectCommand", () => {
     });
     expect(result.ok).toBe(true);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/v1/media-libraries/movies/files/commands");
+    expect(url).toBe("/api/media-libraries/movies/files/commands");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({
       operation: "create_directory",
@@ -177,10 +177,8 @@ describe("submitMediaLibraryDirectCommand", () => {
     const [resourceUrl, mediaUrl] = fetchMock.mock.calls.map(
       (call) => (call as [string, RequestInit])[0],
     );
-    expect(resourceUrl).toBe(
-      "/api/v1/resource-libraries/movies/files/commands",
-    );
-    expect(mediaUrl).toBe("/api/v1/media-libraries/movies/files/commands");
+    expect(resourceUrl).toBe("/api/resource-libraries/movies/files/commands");
+    expect(mediaUrl).toBe("/api/media-libraries/movies/files/commands");
     expect(resourceUrl).not.toBe(mediaUrl);
   });
 
@@ -304,7 +302,7 @@ describe("fetchMediaLibraryTextFile", () => {
     expect(result.model.libraryId).toBe("movies");
     expect(result.model.content).toBe("<movie/>\n");
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/v1/media-libraries/movies/files/text?path=movie.nfo",
+      "/api/media-libraries/movies/files/text?path=movie.nfo",
     );
   });
 
@@ -314,7 +312,7 @@ describe("fetchMediaLibraryTextFile", () => {
     );
     await fetchMediaLibraryTextFile(TOKEN, "tv", "电影/SSH /inside.nfo");
     expect(fetchMock.mock.calls[0][0]).toBe(
-      `/api/v1/media-libraries/tv/files/text?path=${encodeURIComponent("电影/SSH /inside.nfo")}`,
+      `/api/media-libraries/tv/files/text?path=${encodeURIComponent("电影/SSH /inside.nfo")}`,
     );
   });
 
@@ -366,7 +364,7 @@ describe("fetchMediaLibraryDeleteImpact", () => {
     expect(result.ok).toBe(true);
     const url = fetchMock.mock.calls[0][0] as string;
     expect(
-      url.startsWith("/api/v1/media-libraries/movies/files/delete-impact?"),
+      url.startsWith("/api/media-libraries/movies/files/delete-impact?"),
     ).toBe(true);
     expect((url.match(/path=/g) ?? []).length).toBe(50);
   });
@@ -464,7 +462,7 @@ describe("fetchMediaLibraryDeleteStatus", () => {
       succeededItems: 1,
     });
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/v1/media-libraries/movies/files/deletes/task-1",
+      "/api/media-libraries/movies/files/deletes/task-1",
     );
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBeUndefined();
   });
@@ -483,7 +481,7 @@ describe("fetchMediaLibraryRenameEvidence", () => {
     expect(result.model.libraryKind).toBe("media");
     expect(result.model.evidence).toBe("v1." + "b".repeat(32));
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/v1/media-libraries/movies/files/rename-evidence?path=Season%201",
+      "/api/media-libraries/movies/files/rename-evidence?path=Season%201",
     );
   });
 

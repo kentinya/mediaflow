@@ -767,7 +767,7 @@ function normalizeFormValues(source: Record<string, unknown>): {
 }
 
 /**
- * Strict parse of `GET /api/v1/storages/{id}/edit`.
+ * Strict parse of `GET /api/storages/{id}/edit`.
  *
  * Any unsupported provider, malformed option or missing Active identity fails
  * closed so the drawer never prefills a guessed object or silently drops a

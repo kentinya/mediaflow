@@ -81,7 +81,7 @@ async function providerState(page: Page): Promise<ProviderState> {
 
 async function openFiles(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 960 });
-  await page.goto("/ui-v2/resourcelib/files?resourceLibraryId=source");
+  await page.goto("/resourcelib/files?resourceLibraryId=source");
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -145,7 +145,7 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
   await page.request.post("/__harness__/register-manual-worker");
   await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: /^确认整理 2 项$/ }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 
   let worker: ManualWorkerResult | null = null;

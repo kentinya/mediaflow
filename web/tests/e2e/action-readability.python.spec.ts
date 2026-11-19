@@ -267,7 +267,7 @@ async function focusByKeyboard(
 }
 
 async function openSurface(page: Page, path: string): Promise<void> {
-  await page.goto(`/ui-v2${path}`);
+  await page.goto(`${path}`);
   if ((await page.getByLabel("API token").count()) > 0) {
     await connect(page);
   }
@@ -296,7 +296,7 @@ test.describe("readable V2 actions", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1536, height: 1024 });
-    await page.goto("/ui-v2/");
+    await page.goto("/");
 
     // The token field and its label are part of the same login journey.
     const field = await measure(page, "#api-token");
@@ -347,10 +347,10 @@ test.describe("readable V2 actions", () => {
     await page.screenshot({ path: `${OUTPUT}/entry-invalid.png` });
 
     // A valid temporary token connects and continues to the recorded route.
-    await page.goto("/ui-v2/operations");
+    await page.goto("/operations");
     await expect(page.getByLabel("API token")).toBeVisible();
     await connect(page);
-    await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+    await expect(page).toHaveURL(/\/operations$/);
     // The credential is memory only: no browser storage carries it.
     const storage = await page.evaluate(() => ({
       local: JSON.stringify(window.localStorage),
@@ -392,7 +392,7 @@ test.describe("readable V2 actions", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1536, height: 1024 });
-    await page.goto("/ui-v2/");
+    await page.goto("/");
     await connect(page);
     await expect(page.locator("#main-content")).toBeVisible();
 
@@ -575,7 +575,7 @@ test.describe("readable V2 actions", () => {
         ["移动", "移动到…"],
       ]) {
         let releaseImpact: (() => void) | undefined;
-        const impactPattern = `**/api/v1/${kind === "resource" ? "resource-libraries/source" : "media-libraries/movies"}/files/delete-impact*`;
+        const impactPattern = `**/api/${kind === "resource" ? "resource-libraries/source" : "media-libraries/movies"}/files/delete-impact*`;
         if (command === "删除") {
           const held = new Promise<void>((resolve) => {
             releaseImpact = resolve;
@@ -650,7 +650,7 @@ test.describe("readable V2 actions", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1536, height: 1024 });
-    await page.goto("/ui-v2/resourcelib/files?resourceLibraryId=source");
+    await page.goto("/resourcelib/files?resourceLibraryId=source");
     await connect(page);
     await expect(page.locator("#main-content")).toBeVisible();
     await page.waitForTimeout(400);
@@ -713,7 +713,7 @@ test.describe("readable V2 actions", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1536, height: 1024 });
-    await page.goto("/ui-v2/resourcelib/files?resourceLibraryId=source");
+    await page.goto("/resourcelib/files?resourceLibraryId=source");
     await connect(page);
     await expect(page.locator("#main-content")).toBeVisible();
     await page.waitForTimeout(400);
@@ -749,7 +749,7 @@ test.describe("readable V2 actions", () => {
       hold.release = resolve;
     });
     await page.route(
-      "**/api/v1/resource-libraries/*/files/commands",
+      "**/api/resource-libraries/*/files/commands",
       async (route) => {
         submissions += 1;
         await held;
@@ -784,11 +784,11 @@ test.describe("readable V2 actions", () => {
     hold.release?.();
     await expect(dialog).toHaveCount(0);
     expect(submissions).toBe(1);
-    await page.unroute("**/api/v1/resource-libraries/*/files/commands");
+    await page.unroute("**/api/resource-libraries/*/files/commands");
 
     // A read-only principal keeps its permission guards: no new command
     // authority appears merely because actions became readable.
-    await page.goto("/ui-v2/resourcelib/files?resourceLibraryId=source");
+    await page.goto("/resourcelib/files?resourceLibraryId=source");
     await connect(page, READONLY_TOKEN);
     await page.waitForTimeout(600);
     // This principal can read, but the actual command endpoint refuses it.
@@ -816,31 +816,31 @@ test.describe("readable V2 actions", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1536, height: 1024 });
-    await page.goto("/ui-v2/operations");
+    await page.goto("/operations");
     await connect(page);
     await expect(page.locator("#main-content")).toBeVisible();
     await page.waitForTimeout(400);
 
     // Bounded read failure on the real route: the shell's factual error state
     // and its retry affordance stay readable.
-    await page.route("**/api/v1/operations/runs*", async (route) =>
+    await page.route("**/api/operations/runs*", async (route) =>
       route.fulfill({
         status: 503,
         contentType: "application/json",
         body: JSON.stringify({ error: { code: "service_unavailable" } }),
       }),
     );
-    await page.goto("/ui-v2/operations?view=ended");
+    await page.goto("/operations?view=ended");
     await connect(page);
     await expect(
       page.getByRole("heading", { name: /unavailable/i }).first(),
     ).toBeVisible();
     await expectSurfaceReadable(page, "Task Center read failure");
     await page.screenshot({ path: `${OUTPUT}/task-center-read-failure.png` });
-    await page.unroute("**/api/v1/operations/runs*");
+    await page.unroute("**/api/operations/runs*");
 
     // The same entry re-reads the real surface; no work was replayed.
-    await page.goto(`${BASE}/ui-v2/operations`);
+    await page.goto(`${BASE}/operations`);
     await connect(page);
     await expect(
       page.getByRole("heading", { name: "任务中心", exact: true }),
@@ -852,7 +852,7 @@ test.describe("readable V2 actions", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1536, height: 1024 });
-    await page.goto("/ui-v2/configuration");
+    await page.goto("/configuration");
     await connect(page);
     await expect(page.locator("#main-content")).toBeVisible();
     await page.waitForTimeout(400);
@@ -905,8 +905,7 @@ test.describe("readable V2 actions", () => {
     const held = new Promise<void>((resolve) => {
       hold.release = resolve;
     });
-    const exportPattern =
-      "**/api/v1/configuration/packages/export/configuration*";
+    const exportPattern = "**/api/configuration/packages/export/configuration*";
     await page.route(exportPattern, async (route) => {
       exportRequests += 1;
       await held;
@@ -973,7 +972,7 @@ test.describe("readable V2 actions", () => {
     const authorityHeld = new Promise<void>((resolve) => {
       authorityHold.release = resolve;
     });
-    const authorityPattern = "**/api/v1/operations/rules/form-authority";
+    const authorityPattern = "**/api/operations/rules/form-authority";
     await openSurface(page, "/rules?section=classificationPolicies");
     await page.route(authorityPattern, async (route) => {
       authorityReads += 1;

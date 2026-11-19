@@ -82,7 +82,7 @@ describe("RulesEditPage edit card", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    renderApp("/rules/edit/recognitionTypes/C");
     const dialog = await screen.findByRole("dialog", {
       name: "编辑识别类型 · Special",
     });
@@ -155,7 +155,7 @@ describe("RulesEditPage edit card", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    renderApp("/rules/edit/recognitionTypes/C");
     const dialog = await screen.findByRole("dialog", {
       name: "编辑识别类型 · Special",
     });
@@ -257,7 +257,7 @@ describe("RulesEditPage edit card", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/classificationPolicies/policy-a");
+    renderApp("/rules/edit/classificationPolicies/policy-a");
     const dialog = await screen.findByRole("dialog", {
       name: "编辑分类规则 · Movie classification",
     });
@@ -331,7 +331,7 @@ describe("RulesEditPage edit card", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    renderApp("/rules/edit/recognitionTypes/C");
     const dialog = await screen.findByRole("dialog", {
       name: "编辑识别类型 · Special",
     });
@@ -447,7 +447,7 @@ describe("RulesEditPage classification save recovery", () => {
       }),
     );
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/classificationPolicies/policy-a");
+    renderApp("/rules/edit/classificationPolicies/policy-a");
     await screen.findByRole("dialog", {
       name: "编辑分类规则 · Policy A",
     });
@@ -520,10 +520,10 @@ describe("RulesEditPage object identity", () => {
     // Each route is the exact production deep-link shape: the ID arrives
     // percent-encoded exactly as a refresh/reconnect would deliver it.
     const cases: readonly [string, string][] = [
-      ["/ui-v2/rules/edit/recognitionTypes/proof%2Btype", "proof+type"],
-      ["/ui-v2/rules/edit/recognitionTypes/proof%40type", "proof@type"],
-      ["/ui-v2/rules/edit/recognitionTypes/proof%20type", "proof type"],
-      ["/ui-v2/rules/edit/recognitionTypes/proof.type", "proof.type"],
+      ["/rules/edit/recognitionTypes/proof%2Btype", "proof+type"],
+      ["/rules/edit/recognitionTypes/proof%40type", "proof@type"],
+      ["/rules/edit/recognitionTypes/proof%20type", "proof type"],
+      ["/rules/edit/recognitionTypes/proof.type", "proof.type"],
     ];
     for (const [route, expectedId] of cases) {
       cleanup();
@@ -561,9 +561,9 @@ describe("RulesEditPage object identity", () => {
     );
     authStore.setToken("rules-token");
     for (const route of [
-      "/ui-v2/rules/edit/recognitionTypes/proof%2Ftype",
-      `/ui-v2/rules/edit/recognitionTypes/${"a".repeat(65)}`,
-      "/ui-v2/rules/edit/notAFamily/proof.type",
+      "/rules/edit/recognitionTypes/proof%2Ftype",
+      `/rules/edit/recognitionTypes/${"a".repeat(65)}`,
+      "/rules/edit/notAFamily/proof.type",
     ]) {
       cleanup();
       renderApp(route);
@@ -650,7 +650,7 @@ describe("RulesEditPage restored-draft pairing against a newer read", () => {
   /** 甲 opens object C, replaces the name and leaves without an explicit save. */
   async function leaveDraft(input: string): Promise<void> {
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    renderApp("/rules/edit/recognitionTypes/C");
     const dialog = await screen.findByRole("dialog", {
       name: "编辑识别类型 · Special",
     });
@@ -670,7 +670,7 @@ describe("RulesEditPage restored-draft pairing against a newer read", () => {
     harness.state.projection = v2Projection;
     harness.state.authority = { ...formAuthorityPayload, active: v2Active };
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    renderApp("/rules/edit/recognitionTypes/C");
     const dialog = await screen.findByRole("dialog", {
       name: "编辑识别类型 · Special",
     });
@@ -713,7 +713,7 @@ describe("RulesEditPage restored-draft pairing against a newer read", () => {
     harness.state.projection = v2Projection;
     harness.state.authority = { ...formAuthorityPayload, active: v2Active };
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    renderApp("/rules/edit/recognitionTypes/C");
     const dialog = await screen.findByRole("dialog", {
       name: "编辑识别类型 · Special",
     });
@@ -862,7 +862,7 @@ describe("RulesEditPage single-item test after a second administrator publishes 
   /** 甲 opens C at v1; the stub switches to乙's v2 Active before 甲 saves. */
   async function openAtV1(harness: ConflictHarness) {
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    renderApp("/rules/edit/recognitionTypes/C");
     const dialog = await screen.findByRole("dialog", {
       name: "编辑识别类型 · Special",
     });
@@ -927,7 +927,7 @@ describe("RulesEditPage single-item test after a second administrator publishes 
   it("re-checks the kept input onto v2, marks older evidence stale and reruns with the re-checked context", async () => {
     const harness = stubConflictJourney();
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    renderApp("/rules/edit/recognitionTypes/C");
     const dialog = await screen.findByRole("dialog", {
       name: "编辑识别类型 · Special",
     });

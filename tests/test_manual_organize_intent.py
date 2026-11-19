@@ -549,17 +549,17 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                 )
                 intent = manual.create((self.sources["one"],), actor="operator")
                 for path, method, body in (
-                    ("/api/v1/manual-intents", "GET", None),
-                    ("/api/v1/manual-intents", "POST", {"fileIds": ["one"]}),
-                    (f"/api/v1/manual-intents/{intent.intent_id}", "GET", None),
+                    ("/api/manual-intents", "GET", None),
+                    ("/api/manual-intents", "POST", {"fileIds": ["one"]}),
+                    (f"/api/manual-intents/{intent.intent_id}", "GET", None),
                     (
-                        f"/api/v1/manual-intents/{intent.intent_id}/items/"
+                        f"/api/manual-intents/{intent.intent_id}/items/"
                         f"{intent.items[0].item_id}/choice",
                         "PUT",
                         {"expectedVersion": 1, "recognitionTypeId": "A"},
                     ),
                     (
-                        "/api/v1/files/file-one/manual-intent",
+                        "/api/files/file-one/manual-intent",
                         "POST",
                         {},
                     ),

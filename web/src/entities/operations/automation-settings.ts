@@ -2,7 +2,7 @@
  * Frontend-owned bounded Automation engine-settings model.
  *
  * The backend publishes one focused, digest-free operator document under
- * `/api/v1/operations/automation/settings`. Two truths are kept strictly apart
+ * `/api/operations/automation/settings`. Two truths are kept strictly apart
  * here, exactly as the API states them:
  *
  * - the **published target** — the three shared runtime values of the current

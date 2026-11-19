@@ -116,7 +116,7 @@ function stubExploreFetch(): {
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       urls.push(url);
-      if (url.startsWith("/api/v1/explore/options")) {
+      if (url.startsWith("/api/explore/options")) {
         if (state.options !== null) return state.options(url);
         return jsonResponse(
           url.includes("mediaType=tv")
@@ -124,7 +124,7 @@ function stubExploreFetch(): {
             : exploreOptionsPayload,
         );
       }
-      if (url.startsWith("/api/v1/explore/search")) {
+      if (url.startsWith("/api/explore/search")) {
         if (state.search !== null) return state.search(url);
         const params = new URL(url, "http://explore.test").searchParams;
         const mediaType = params.get("mediaType") ?? "movie";
@@ -139,7 +139,7 @@ function stubExploreFetch(): {
           },
         });
       }
-      if (url.startsWith("/api/v1/explore/browse")) {
+      if (url.startsWith("/api/explore/browse")) {
         const behavior = state.browse ?? state.browseLater;
         if (behavior !== null) return behavior(url);
         const base = url.includes("mediaType=tv")
@@ -150,7 +150,7 @@ function stubExploreFetch(): {
           applied: conditionsEchoedIn(url),
         });
       }
-      if (/\/api\/v1\/explore\/(movie|tv)\/[1-9][0-9]*$/.test(url)) {
+      if (/\/api\/explore\/(movie|tv)\/[1-9][0-9]*$/.test(url)) {
         if (state.detail !== null) return state.detail(url);
         if (url.includes("/tv/")) {
           return jsonResponse({
@@ -220,7 +220,7 @@ describe("Explore homepage journey", () => {
   it("lands on the defaulted browse context with honest card state", async () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
 
     expect(await screen.findByRole("region", { name: "探索" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "探索" })).toBeNull();
@@ -233,15 +233,15 @@ describe("Explore homepage journey", () => {
     // The unrated work never renders a fabricated score.
     expect(within(unrated).queryByLabelText(/^TMDB 评分/)).toBeNull();
     expect(screen.getByText(/已应用:电影 · 热度优先/)).toBeVisible();
-    expect(stub.count("/api/v1/explore/browse?")).toBe(1);
-    expect(stub.count("/api/v1/explore/options?")).toBe(1);
+    expect(stub.count("/api/explore/browse?")).toBe(1);
+    expect(stub.count("/api/explore/options?")).toBe(1);
   });
 
   it("round-trips an explicit search mode without refetching browse", async () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     await user.type(screen.getByLabelText("作品名搜索"), "matrix");
@@ -252,7 +252,7 @@ describe("Explore homepage journey", () => {
       await screen.findByRole("button", { name: "The Matrix (1999)" }),
     ).toBeVisible();
     expect(stub.count("explore/search?mediaType=movie&query=matrix")).toBe(1);
-    const browseCallsAfterSearch = stub.count("/api/v1/explore/browse?");
+    const browseCallsAfterSearch = stub.count("/api/explore/browse?");
     expect(browseCallsAfterSearch).toBe(1);
 
     await user.click(screen.getByRole("button", { name: "退出搜索" }));
@@ -262,14 +262,14 @@ describe("Explore homepage journey", () => {
     ).toBeVisible();
     expect(screen.queryByText(/搜索模式/)).toBeNull();
     // The browse context returns from its own bounded cache, not a new read.
-    expect(stub.count("/api/v1/explore/browse?")).toBe(browseCallsAfterSearch);
+    expect(stub.count("/api/explore/browse?")).toBe(browseCallsAfterSearch);
   });
 
   it("isolates the TV type in its own context", async () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     await user.click(screen.getByRole("button", { name: "剧集" }));
@@ -292,7 +292,7 @@ describe("Explore homepage journey", () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     // The type is a labelled row, not an isolated control at the far right.
@@ -366,7 +366,7 @@ describe("Explore homepage journey", () => {
     await user.click(screen.getByRole("button", { name: "应用筛选" }));
     await waitFor(() => expect(screen.queryByText(/评分 ≥ /)).toBeNull());
     const browseUrls = stub.urls.filter((url) =>
-      url.startsWith("/api/v1/explore/browse"),
+      url.startsWith("/api/explore/browse"),
     );
     expect(browseUrls.at(-1)).not.toContain("minRating=");
     expect(browseUrls.at(-1)).toContain("minVotes=200");
@@ -376,7 +376,7 @@ describe("Explore homepage journey", () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     await user.click(screen.getByRole("button", { name: "更多筛选" }));
@@ -385,13 +385,13 @@ describe("Explore homepage journey", () => {
     await user.click(screen.getByRole("button", { name: "应用筛选" }));
     expect(await screen.findByText("取值范围 1–9999")).toBeVisible();
     expect(year).toHaveValue("0");
-    const readsAfterInvalid = stub.count("/api/v1/explore/browse?");
+    const readsAfterInvalid = stub.count("/api/explore/browse?");
 
     await user.clear(year);
     await user.type(year, "1999");
     await user.click(screen.getByRole("button", { name: "应用筛选" }));
     expect(await screen.findByText(/1999 年/)).toBeVisible();
-    expect(stub.count("/api/v1/explore/browse?")).toBe(readsAfterInvalid + 1);
+    expect(stub.count("/api/explore/browse?")).toBe(readsAfterInvalid + 1);
     expect(stub.urls.at(-1)).toContain("year=1999");
 
     const votes = screen.getByLabelText("最低评分人数");
@@ -399,14 +399,14 @@ describe("Explore homepage journey", () => {
     await user.click(screen.getByRole("button", { name: "应用筛选" }));
     expect(await screen.findByText("请输入整数")).toBeVisible();
     expect(votes).toHaveValue("1.5");
-    expect(stub.count("/api/v1/explore/browse?")).toBe(readsAfterInvalid + 1);
+    expect(stub.count("/api/explore/browse?")).toBe(readsAfterInvalid + 1);
   });
 
   it("separates an honest empty result from any failure", async () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
     stub.browseLater = () => jsonResponse(exploreEmptyPagePayload);
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
 
     expect(await screen.findByText("没有符合条件的作品")).toBeVisible();
     // A true empty set still has one page: forward paging is honestly closed.
@@ -424,7 +424,7 @@ describe("Explore homepage journey", () => {
         applied: { mediaType: "movie", page: 1, query: "不存在的影片" },
       });
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     await user.type(screen.getByLabelText("作品名搜索"), "不存在的影片");
@@ -439,7 +439,7 @@ describe("Explore homepage journey", () => {
     const stub = stubExploreFetch();
     stub.browse = () => providerEnvelope("provider_unavailable", 502);
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
 
     const failed = await screen.findByText("探索读取失败");
     expect(failed).toBeVisible();
@@ -456,14 +456,14 @@ describe("Explore homepage journey", () => {
     expect(
       await screen.findByRole("button", { name: "Inception (2019)" }),
     ).toBeVisible();
-    expect(stub.count("/api/v1/explore/browse?")).toBeGreaterThanOrEqual(2);
+    expect(stub.count("/api/explore/browse?")).toBeGreaterThanOrEqual(2);
   });
 
   it("keeps an upstream credential rejection separate from the principal", async () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
     stub.browse = () => providerEnvelope("provider_authentication_failed", 401);
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
 
     expect(await screen.findByText("探索读取失败")).toBeVisible();
     expect(screen.queryByText("身份被拒绝")).toBeNull();
@@ -476,7 +476,7 @@ describe("Explore homepage journey", () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
     stub.browse = () => providerEnvelope("unauthorized", 401);
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
 
     expect(await screen.findByText("身份被拒绝")).toBeVisible();
     await waitFor(() => expect(authStore.getToken()).toBeNull());
@@ -488,13 +488,13 @@ describe("Explore homepage journey", () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
     const user = userEvent.setup();
-    const { router } = renderApp("/ui-v2/explore");
+    const { router } = renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     // Path 1: close button.
     await user.click(screen.getByRole("button", { name: "Inception (2019)" }));
     expect(await screen.findByRole("dialog")).toBeVisible();
-    expect(stub.count("/api/v1/explore/movie/27205")).toBe(1);
+    expect(stub.count("/api/explore/movie/27205")).toBe(1);
     expect(router.state.location.search.detail).toBe("movie-27205");
     expect(
       await screen.findByRole("heading", { name: "Inception" }),
@@ -524,7 +524,7 @@ describe("Explore homepage journey", () => {
         ? jsonResponse(exploreEmptyPagePayload)
         : jsonResponse(exploreBrowsePayload);
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     await user.click(screen.getByRole("button", { name: "下一页" }));
@@ -544,7 +544,7 @@ describe("Explore homepage journey", () => {
       return jsonResponse(exploreBrowsePayload);
     };
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
 
     await screen.findByRole("button", { name: "Inception (2019)" });
     await user.click(screen.getByRole("button", { name: "下一页" }));
@@ -565,7 +565,7 @@ describe("Explore homepage journey", () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     // Browse anchor: movie + genre 动作 (after the catalog arrives).
@@ -574,7 +574,7 @@ describe("Explore homepage journey", () => {
     expect(
       await screen.findByText(/已应用:电影 · 热度优先 · 动作/),
     ).toBeVisible();
-    const browseCalls = stub.count("/api/v1/explore/browse?");
+    const browseCalls = stub.count("/api/explore/browse?");
 
     // Enter search, then switch the search's own type to TV.
     await user.type(screen.getByLabelText("作品名搜索"), "matrix");
@@ -606,7 +606,7 @@ describe("Explore homepage journey", () => {
     ).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText(/搜索模式/)).toBeNull();
     // The anchor context comes from its own bounded cache, not a new read.
-    expect(stub.count("/api/v1/explore/browse?")).toBe(browseCalls);
+    expect(stub.count("/api/explore/browse?")).toBe(browseCalls);
     expect(stub.count("explore/browse?mediaType=tv")).toBe(0);
   });
 
@@ -615,7 +615,7 @@ describe("Explore homepage journey", () => {
     const stub = stubExploreFetch();
     stub.options = () => providerEnvelope("provider_unavailable", 502);
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
 
     // The successful work list stays readable while the catalog fails.
     expect(
@@ -639,7 +639,7 @@ describe("Explore homepage journey", () => {
     expect(authStore.getToken()).toBe(TOKEN);
     expect(screen.queryByText("身份被拒绝")).toBeNull();
 
-    const browseCalls = stub.count("/api/v1/explore/browse?");
+    const browseCalls = stub.count("/api/explore/browse?");
     stub.options = null;
     await user.click(screen.getByRole("button", { name: "重新读取筛选选项" }));
 
@@ -647,7 +647,7 @@ describe("Explore homepage journey", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     const recoveredGenre = await screen.findByRole("button", { name: "动作" });
     expect(recoveredGenre).toBeEnabled();
-    expect(stub.count("/api/v1/explore/browse?")).toBe(browseCalls);
+    expect(stub.count("/api/explore/browse?")).toBe(browseCalls);
     // Real catalog options are back and legal to apply.
     await user.click(recoveredGenre);
     expect(
@@ -659,7 +659,7 @@ describe("Explore homepage journey", () => {
     authStore.setToken(TOKEN);
     const stub = stubExploreFetch();
     const user = userEvent.setup();
-    const { router, queryClient } = renderApp("/ui-v2/explore");
+    const { router, queryClient } = renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     await user.click(screen.getByRole("button", { name: "剧集" }));
@@ -739,7 +739,7 @@ describe("Explore homepage journey", () => {
     authStore.setToken(TOKEN);
     stubExploreFetch();
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     // No full attribution strip repeats at the bottom of the ordinary list.
@@ -776,7 +776,7 @@ describe("Explore homepage journey", () => {
     authStore.setToken(TOKEN);
     stubExploreFetch();
     const user = userEvent.setup();
-    const { router } = renderApp("/ui-v2/explore?detail=movie-27205");
+    const { router } = renderApp("/explore?detail=movie-27205");
 
     const dialog = await screen.findByRole("dialog");
     expect(
@@ -795,7 +795,7 @@ describe("Explore homepage journey", () => {
     const stub = stubExploreFetch();
     stub.detail = () => providerEnvelope("provider_unavailable", 502);
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     await user.click(screen.getByRole("button", { name: "Inception (2019)" }));
@@ -805,7 +805,7 @@ describe("Explore homepage journey", () => {
     expect(
       screen.getByRole("button", { name: "Inception (2019)" }),
     ).toBeVisible();
-    expect(stub.count("/api/v1/explore/movie/27205")).toBe(1);
+    expect(stub.count("/api/explore/movie/27205")).toBe(1);
 
     stub.detail = null;
     await user.click(
@@ -815,7 +815,7 @@ describe("Explore homepage journey", () => {
       await within(dialog).findByRole("heading", { name: "Inception" }),
     ).toBeVisible();
     expect(within(dialog).getByText("136 分钟")).toBeVisible();
-    expect(stub.count("/api/v1/explore/movie/27205")).toBe(2);
+    expect(stub.count("/api/explore/movie/27205")).toBe(2);
   });
 
   it("renders exactly one page and returns to a previous page without a new read", async () => {
@@ -826,7 +826,7 @@ describe("Explore homepage journey", () => {
         ? jsonResponse(exploreBrowsePage2Payload)
         : jsonResponse(exploreBrowsePayload);
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
     expect(screen.getByText(/第 1 \/ 3 页 · 共 42 个结果/)).toBeVisible();
 
@@ -847,7 +847,7 @@ describe("Explore homepage journey", () => {
     expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
     expect(screen.getByText(/已到可浏览末页/)).toBeVisible();
 
-    const readsAfterPage2 = stub.count("/api/v1/explore/browse?");
+    const readsAfterPage2 = stub.count("/api/explore/browse?");
     await user.click(screen.getByRole("button", { name: "上一页" }));
     expect(
       await screen.findByRole("button", { name: "Inception (2019)" }),
@@ -856,7 +856,7 @@ describe("Explore homepage journey", () => {
       screen.queryByRole("button", { name: "肖申克的救赎 (2019)" }),
     ).toBeNull();
     // Back to a visited page comes from the bounded page cache, not a read.
-    expect(stub.count("/api/v1/explore/browse?")).toBe(readsAfterPage2);
+    expect(stub.count("/api/explore/browse?")).toBe(readsAfterPage2);
   });
 
   it("starts every new condition set at page one", async () => {
@@ -870,7 +870,7 @@ describe("Explore homepage journey", () => {
             applied: conditionsEchoedIn(url),
           });
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
     await user.click(screen.getByRole("button", { name: "下一页" }));
     await screen.findByText(/第 2 \/ 2 页/);
@@ -891,11 +891,11 @@ describe("Explore homepage journey", () => {
         ? jsonResponse(exploreBrowsePage2Payload)
         : jsonResponse(exploreBrowsePayload);
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
     await user.click(screen.getByRole("button", { name: "下一页" }));
     await screen.findByText(/第 2 \/ 2 页/);
-    const browseReads = stub.count("/api/v1/explore/browse?");
+    const browseReads = stub.count("/api/explore/browse?");
 
     await user.type(screen.getByLabelText("作品名搜索"), "matrix");
     await user.click(screen.getByRole("button", { name: "搜索" }));
@@ -909,7 +909,7 @@ describe("Explore homepage journey", () => {
       await screen.findByRole("button", { name: "肖申克的救赎 (2019)" }),
     ).toBeVisible();
     expect(screen.getByText(/第 2 \/ 2 页/)).toBeVisible();
-    expect(stub.count("/api/v1/explore/browse?")).toBe(browseReads);
+    expect(stub.count("/api/explore/browse?")).toBe(browseReads);
   });
 
   it("keeps a late target-page answer from taking over a switched context", async () => {
@@ -930,7 +930,7 @@ describe("Explore homepage journey", () => {
       }
       return jsonResponse(exploreBrowsePayload);
     };
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     await user.click(screen.getByRole("button", { name: "下一页" }));
@@ -980,7 +980,7 @@ describe("Explore homepage journey", () => {
       }
       return jsonResponse({ ...exploreBrowsePayload, applied });
     };
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
 
     await user.click(screen.getByRole("button", { name: "下一页" }));
@@ -1017,7 +1017,7 @@ describe("Explore homepage journey", () => {
         applied: conditionsEchoedIn(url),
       });
     };
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
     scrollIntoView.mockClear();
 
@@ -1073,7 +1073,7 @@ describe("Explore homepage journey", () => {
         applied: conditionsEchoedIn(url),
       });
     };
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
     scrollIntoView.mockClear();
 
@@ -1122,7 +1122,7 @@ describe("Explore homepage journey", () => {
         applied: conditionsEchoedIn(url),
       });
     };
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
     scrollIntoView.mockClear();
 
@@ -1163,12 +1163,12 @@ describe("Explore homepage journey", () => {
         ? jsonResponse(exploreBrowsePage2Payload)
         : jsonResponse(exploreBrowsePayload);
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
     await user.click(screen.getByRole("button", { name: "下一页" }));
     await screen.findByRole("button", { name: "肖申克的救赎 (2019)" });
     const input = screen.getByLabelText("作品名搜索");
-    const browseReads = stub.count("/api/v1/explore/browse?");
+    const browseReads = stub.count("/api/explore/browse?");
 
     await user.type(input, "matrix");
     await user.click(screen.getByRole("button", { name: "搜索" }));
@@ -1183,7 +1183,7 @@ describe("Explore homepage journey", () => {
       await screen.findByRole("button", { name: "肖申克的救赎 (2019)" }),
     ).toBeVisible();
     expect(screen.getByText(/第 2 \/ 2 页/)).toBeVisible();
-    expect(stub.count("/api/v1/explore/browse?")).toBe(browseReads);
+    expect(stub.count("/api/explore/browse?")).toBe(browseReads);
     await waitFor(() => expect(input).toHaveFocus());
   });
 
@@ -1195,7 +1195,7 @@ describe("Explore homepage journey", () => {
         ? jsonResponse(exploreBrowsePage2Payload)
         : jsonResponse(exploreBrowsePayload);
     const user = userEvent.setup();
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     await screen.findByRole("button", { name: "Inception (2019)" });
     await user.click(screen.getByRole("button", { name: "下一页" }));
     await screen.findByRole("button", { name: "肖申克的救赎 (2019)" });
@@ -1206,7 +1206,7 @@ describe("Explore homepage journey", () => {
         screen.getByRole("button", { name: "肖申克的救赎 (2019)" }),
       ).toHaveFocus(),
     );
-    const browseReads = stub.count("/api/v1/explore/browse?");
+    const browseReads = stub.count("/api/explore/browse?");
     const input = screen.getByLabelText("作品名搜索");
 
     // Repeated searches with their own type switches push distinct search
@@ -1234,9 +1234,7 @@ describe("Explore homepage journey", () => {
     ).toBeVisible();
     expect(screen.getByText(/第 2 \/ 2 页/)).toBeVisible();
     await waitFor(() =>
-      expect(stub.count("/api/v1/explore/browse?")).toBeGreaterThan(
-        browseReads,
-      ),
+      expect(stub.count("/api/explore/browse?")).toBeGreaterThan(browseReads),
     );
     await waitFor(() => expect(input).toHaveFocus());
   });

@@ -132,7 +132,7 @@ describe("classification destination authoring", () => {
     const saves: Record<string, unknown>[] = [];
     stubFetch(REVISED_POLICY, saves);
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/classificationPolicies/class-a");
+    renderApp("/rules/edit/classificationPolicies/class-a");
     await screen.findByRole("dialog", {
       name: "编辑分类规则 · Movie classification",
     });
@@ -177,7 +177,7 @@ describe("classification destination authoring", () => {
     const saves: Record<string, unknown>[] = [];
     stubFetch(LEGACY_POLICY, saves);
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/classificationPolicies/class-a");
+    renderApp("/rules/edit/classificationPolicies/class-a");
     await screen.findByRole("dialog", {
       name: "编辑分类规则 · Movie classification",
     });
@@ -205,7 +205,7 @@ describe("classification destination authoring", () => {
     const saves: Record<string, unknown>[] = [];
     stubFetch(LEGACY_POLICY, saves);
     authStore.setToken("rules-token");
-    renderApp("/ui-v2/rules/edit/classificationPolicies/class-a");
+    renderApp("/rules/edit/classificationPolicies/class-a");
     await screen.findByRole("dialog", {
       name: "编辑分类规则 · Movie classification",
     });

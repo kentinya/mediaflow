@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
  * MediaLibrary bounded direct file maintenance browser proof for Slice 38
  * (RO-5/RO-6/RO-7, Task 38.3): Create Folder, Create supported Text File,
  * single-item Rename, bounded text Open/Edit/Save and Delete, driven entirely
- * from `/ui-v2/medialib/files`.
+ * from `/medialib/files`.
  *
  * Runs against the built V2 artifact plus the local fake API only. Every token
  * is a throwaway non-secret value; no production service, credential, user media
@@ -34,7 +34,7 @@ async function openMediaLibrary(
   search = "",
   token = VIEWER_TOKEN,
 ): Promise<void> {
-  await page.goto("/ui-v2/medialib/files" + search);
+  await page.goto("/medialib/files" + search);
   await connectAs(page, token);
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
@@ -403,10 +403,10 @@ test("the maintenance journey never addresses the ResourceLibrary namespace", as
   const fileRequests = requests.filter((url) => url.includes("/files"));
   expect(fileRequests.length).toBeGreaterThan(2);
   expect(
-    fileRequests.every((url) => url.includes("/api/v1/media-libraries/")),
+    fileRequests.every((url) => url.includes("/api/media-libraries/")),
   ).toBe(true);
   expect(
-    fileRequests.some((url) => url.includes("/api/v1/resource-libraries/")),
+    fileRequests.some((url) => url.includes("/api/resource-libraries/")),
   ).toBe(false);
 });
 

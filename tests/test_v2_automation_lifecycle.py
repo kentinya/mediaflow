@@ -30,7 +30,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfi
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
-BASE = "/api/v1/operations/automation/definitions"
+BASE = "/api/operations/automation/definitions"
 ADMIN_TOKEN = "automation-lifecycle-admin"
 VIEWER_TOKEN = "automation-lifecycle-viewer"
 MANAGER_TOKEN = "automation-lifecycle-manager"
@@ -296,7 +296,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
     def test_form_effects_after_checked_rules_save_use_canonical_operations(self) -> None:
         for library in self.document["mediaLibraries"]:
             (self.root / "target" / library["rootPath"]).mkdir(parents=True, exist_ok=True)
-        path = "/api/v1/operations/rules/objects/organizePolicies/A"
+        path = "/api/operations/rules/objects/organizePolicies/A"
         status, projection = self.request("GET", path)
         self.assertEqual(status, 200)
         status, _ = self.request("PUT", path, {**self.authority(), "object": projection["object"]})
@@ -359,7 +359,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         )
 
     def test_unknown_rules_operation_is_rejected_without_changing_form_authority(self) -> None:
-        path = "/api/v1/operations/rules/objects/organizePolicies/A"
+        path = "/api/operations/rules/objects/organizePolicies/A"
         _, before = self.request("GET", BASE)
         _, projection = self.request("GET", path)
         status, _ = self.request(
@@ -523,28 +523,26 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(self.ids(), [])
 
-        status, detail = self.request(
-            "GET", "/api/v1/operations/automation/task-definitions/nightly"
-        )
+        status, detail = self.request("GET", "/api/operations/automation/task-definitions/nightly")
         self.assertEqual(status, 200)
         self.assertEqual(detail["definition"]["definitionState"], "historical")
         self.assertEqual(detail["definition"]["historicalState"], "removed")
         self.assertEqual(detail["definition"]["name"], "Automation nightly")
 
         status, occurrences = self.request(
-            "GET", "/api/v1/operations/automation/task-definitions/nightly/occurrences"
+            "GET", "/api/operations/automation/task-definitions/nightly/occurrences"
         )
         self.assertEqual(status, 200)
         self.assertEqual(occurrences["definitionId"], "nightly")
         self.assertEqual(occurrences["historicalState"], "removed")
 
         # The V1 detail and grant surfaces also resolve the removed history.
-        status, legacy = self.request("GET", "/api/v1/automation/task-definitions/nightly")
+        status, legacy = self.request("GET", "/api/automation/task-definitions/nightly")
         self.assertEqual(status, 200)
         self.assertEqual(legacy["definition"]["definitionState"], "historical")
 
         # The retired grant surface answers like any unknown route.
-        status, _unknown = self.request("GET", "/api/v1/automation/task-definitions/nightly/grant")
+        status, _unknown = self.request("GET", "/api/automation/task-definitions/nightly/grant")
         self.assertEqual(status, 404)
 
     def test_retained_history_is_read_only(self) -> None:
@@ -554,9 +552,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self.request("POST", BASE, {**self.authority(), "object": _definition()})
         status, _removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
         self.assertEqual(status, 200)
-        status, _body = self.request(
-            "POST", "/api/v1/automation/task-definitions/nightly/grant", {}
-        )
+        status, _body = self.request("POST", "/api/automation/task-definitions/nightly/grant", {})
         self.assertEqual(status, 404)
 
     def test_retained_history_survives_publications_beyond_every_former_window(
@@ -577,9 +573,9 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         """
 
         routes = (
-            "/api/v1/operations/automation/task-definitions/nightly",
-            "/api/v1/operations/automation/task-definitions/nightly/occurrences",
-            "/api/v1/automation/task-definitions/nightly",
+            "/api/operations/automation/task-definitions/nightly",
+            "/api/operations/automation/task-definitions/nightly/occurrences",
+            "/api/automation/task-definitions/nightly",
         )
 
         def assert_historical() -> None:
@@ -685,20 +681,18 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         repository.latest_command_audit_sequence = failing_latest
         try:
             status, body = self.request(
-                "GET", "/api/v1/operations/automation/task-definitions/nightly"
+                "GET", "/api/operations/automation/task-definitions/nightly"
             )
             self.assertEqual(status, 503, body)
             self.assertNotIn("definition", body)
-            status, _legacy = self.request("GET", "/api/v1/automation/task-definitions/nightly")
+            status, _legacy = self.request("GET", "/api/automation/task-definitions/nightly")
             self.assertEqual(status, 503)
         finally:
             repository.list_command_audits_before = real_before
             repository.latest_command_audit_sequence = real_latest
 
         # The real readers resolve the same route truthfully.
-        status, detail = self.request(
-            "GET", "/api/v1/operations/automation/task-definitions/nightly"
-        )
+        status, detail = self.request("GET", "/api/operations/automation/task-definitions/nightly")
         self.assertEqual(status, 200)
         self.assertEqual(detail["definition"]["definitionState"], "historical")
 
@@ -754,7 +748,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         repository.latest_command_audit_sequence = failing_latest
         try:
             status, body = self.request(
-                "GET", "/api/v1/operations/automation/task-definitions/nightly"
+                "GET", "/api/operations/automation/task-definitions/nightly"
             )
             self.assertEqual(status, 503, body)
             # The Draft candidate was never substituted for the real history.
@@ -764,9 +758,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             repository.latest_command_audit_sequence = real_latest
 
         # With the real readers the published history wins over the Draft.
-        status, detail = self.request(
-            "GET", "/api/v1/operations/automation/task-definitions/nightly"
-        )
+        status, detail = self.request("GET", "/api/operations/automation/task-definitions/nightly")
         self.assertEqual(status, 200)
         self.assertEqual(detail["definition"]["definitionState"], "historical")
         self.assertEqual(detail["definition"]["name"], "Published historical name")
@@ -823,9 +815,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             )
             self.assertEqual(status, 200)
 
-        status, detail = self.request(
-            "GET", "/api/v1/operations/automation/task-definitions/nightly"
-        )
+        status, detail = self.request("GET", "/api/operations/automation/task-definitions/nightly")
         self.assertEqual(status, 200, detail)
         self.assertEqual(detail["definition"]["definitionState"], "historical")
         self.assertEqual(detail["definition"]["historicalState"], "removed")
@@ -919,9 +909,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         status, _removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
         self.assertEqual(status, 200)
 
-        status, detail = self.request(
-            "GET", "/api/v1/operations/automation/task-definitions/nightly"
-        )
+        status, detail = self.request("GET", "/api/operations/automation/task-definitions/nightly")
         self.assertEqual(status, 200)
         self.assertEqual(detail["definition"]["definitionState"], "historical")
         self.assertEqual(detail["definition"]["historicalState"], "removed")
@@ -936,7 +924,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self.assertEqual(projection["definition"]["name"], "Automation nightly")
 
         # The V1 detail surface agrees.
-        status, legacy = self.request("GET", "/api/v1/automation/task-definitions/nightly")
+        status, legacy = self.request("GET", "/api/automation/task-definitions/nightly")
         self.assertEqual(status, 200)
         self.assertEqual(legacy["definition"]["name"], "Automation nightly")
 
@@ -1002,9 +990,9 @@ class AutomationLifecycleApiTests(unittest.TestCase):
 
         revision_id = self._publish_remove_and_retain_draft("NEVER PUBLISHED B draft")
         routes = (
-            "/api/v1/operations/automation/task-definitions/nightly",
-            "/api/v1/automation/task-definitions/nightly",
-            "/api/v1/operations/automation/task-definitions/nightly/occurrences",
+            "/api/operations/automation/task-definitions/nightly",
+            "/api/automation/task-definitions/nightly",
+            "/api/operations/automation/task-definitions/nightly/occurrences",
             f"{BASE}/nightly",
             f"{BASE}/nightly/copy-candidate",
             f"{BASE}/nightly/removal-impact",
@@ -1053,9 +1041,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
 
         # A definition with genuinely no published evidence is still a real
         # 404, and the Draft itself stays inspectable through its own route.
-        status, _absent = self.request(
-            "GET", "/api/v1/operations/automation/task-definitions/ghost"
-        )
+        status, _absent = self.request("GET", "/api/operations/automation/task-definitions/ghost")
         self.assertEqual(status, 404)
 
     def test_corrupt_published_history_does_not_release_the_draft_via_api(self) -> None:
@@ -1070,7 +1056,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self._corrupt_published_section(revision_id, "corrupt section")
 
         for route in (
-            "/api/v1/operations/automation/task-definitions/nightly",
+            "/api/operations/automation/task-definitions/nightly",
             f"{BASE}/nightly",
         ):
             with self.subTest(route=route):
@@ -1103,9 +1089,9 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self._corrupt_published_section(revision_id, "corrupt section")
 
         for route in (
-            "/api/v1/automation/task-definitions/nightly",
-            "/api/v1/automation/task-definitions/nightly/occurrences",
-            "/api/v1/operations/automation/task-definitions/nightly",
+            "/api/automation/task-definitions/nightly",
+            "/api/automation/task-definitions/nightly/occurrences",
+            "/api/operations/automation/task-definitions/nightly",
             f"{BASE}/nightly",
         ):
             with self.subTest(route=route):
@@ -1119,7 +1105,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
                 self.assertNotEqual(body["error"]["code"], "not_found")
 
         # A definition that genuinely never existed is still a real 404.
-        status, _absent = self.request("GET", "/api/v1/automation/task-definitions/never-published")
+        status, _absent = self.request("GET", "/api/automation/task-definitions/never-published")
         self.assertEqual(status, 404)
 
     def test_copy_intent_binds_to_the_submitted_intent(self) -> None:
@@ -1405,11 +1391,11 @@ class AutomationLifecycleApiTests(unittest.TestCase):
 
     def test_existing_v1_surfaces_remain_compatible(self) -> None:
         self.request("POST", BASE, {**self.authority(), "object": _definition()})
-        status, legacy = self.request("GET", "/api/v1/automation/task-definitions")
+        status, legacy = self.request("GET", "/api/automation/task-definitions")
         self.assertEqual(status, 200)
         self.assertIn("configuration", legacy)
         self.assertEqual(legacy["items"][0]["id"], "nightly")
-        status, operations = self.request("GET", "/api/v1/operations/automation/task-definitions")
+        status, operations = self.request("GET", "/api/operations/automation/task-definitions")
         self.assertEqual(status, 200)
         self.assertEqual(operations["items"][0]["id"], "nightly")
         _assert_operator_document_clean(operations)

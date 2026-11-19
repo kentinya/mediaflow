@@ -24,7 +24,7 @@ async function connectOn(page: Page, path: string): Promise<void> {
 }
 
 async function openStorage(page: Page): Promise<void> {
-  await connectOn(page, "/ui-v2/storage");
+  await connectOn(page, "/storage");
   await expect(page.getByRole("heading", { name: "存储管理" })).toBeVisible();
 }
 
@@ -60,8 +60,8 @@ test("views, adds and edits through centered cards with exact readback", async (
   page.on("request", (request) => {
     if (
       ["POST", "PUT", "DELETE", "PATCH"].includes(request.method()) &&
-      (request.url().includes("/api/v1/storages") ||
-        request.url().includes("/api/v1/operations/storage-management"))
+      (request.url().includes("/api/storages") ||
+        request.url().includes("/api/operations/storage-management"))
     ) {
       mutations.push(`${request.method()} ${new URL(request.url()).pathname}`);
     }
@@ -117,7 +117,7 @@ test("views, adds and edits through centered cards with exact readback", async (
   await expect(row).toBeVisible();
   await expect(row.getByText(storageId, { exact: true })).toBeVisible();
   const createCommands = mutations.filter((entry) =>
-    entry.startsWith("POST /api/v1/storages"),
+    entry.startsWith("POST /api/storages"),
   );
   expect(createCommands).toHaveLength(1);
 
@@ -133,7 +133,7 @@ test("views, adds and edits through centered cards with exact readback", async (
   await edit.getByRole("button", { name: "下一步" }).click();
   await edit.getByRole("button", { name: "下一步" }).click();
   const putBefore = mutations.filter((entry) =>
-    entry.startsWith("PUT /api/v1/storages"),
+    entry.startsWith("PUT /api/storages"),
   ).length;
   await edit.getByRole("button", { name: "保存并激活" }).click();
   await expect(edit).toHaveCount(0);
@@ -141,8 +141,7 @@ test("views, adds and edits through centered cards with exact readback", async (
     page.getByRole("row").filter({ hasText: "浏览器存储卡已编辑" }),
   ).toBeVisible();
   expect(
-    mutations.filter((entry) => entry.startsWith("PUT /api/v1/storages"))
-      .length,
+    mutations.filter((entry) => entry.startsWith("PUT /api/storages")).length,
   ).toBe(putBefore + 1);
 
   // Reopening reads the durable successor rather than reusing form memory.
@@ -163,7 +162,7 @@ test("keeps in-flight Add and Edit cards open on backdrop clicks", async ({
   page.on("request", (request) => {
     if (
       ["POST", "PUT"].includes(request.method()) &&
-      request.url().includes("/api/v1/storages")
+      request.url().includes("/api/storages")
     ) {
       commands.push(request.method());
     }
@@ -180,7 +179,7 @@ test("keeps in-flight Add and Edit cards open on backdrop clicks", async ({
   const addRequestStarted = new Promise<void>((resolve) => {
     addStarted = resolve;
   });
-  await page.route(/\/api\/v1\/storages$/, async (route) => {
+  await page.route(/\/api\/storages$/, async (route) => {
     if (route.request().method() === "POST") {
       addStarted();
       await addGate;
@@ -217,7 +216,7 @@ test("keeps in-flight Add and Edit cards open on backdrop clicks", async ({
     page.getByRole("row").filter({ hasText: createdName }),
   ).toBeVisible();
   expect(commands.filter((method) => method === "POST")).toHaveLength(1);
-  await page.unroute(/\/api\/v1\/storages$/);
+  await page.unroute(/\/api\/storages$/);
 
   // The narrow viewport keeps the same in-flight protection; the click lands
   // on the tiny real gutter around the full-width card.
@@ -239,7 +238,7 @@ test("keeps in-flight Add and Edit cards open on backdrop clicks", async ({
   const editRequestStarted = new Promise<void>((resolve) => {
     editStarted = resolve;
   });
-  await page.route(/\/api\/v1\/storages\/ui-pending-save$/, async (route) => {
+  await page.route(/\/api\/storages\/ui-pending-save$/, async (route) => {
     if (route.request().method() === "PUT") {
       editStarted();
       await editGate;
@@ -261,7 +260,7 @@ test("keeps in-flight Add and Edit cards open on backdrop clicks", async ({
     page.getByRole("row").filter({ hasText: "保存中存储已编辑" }),
   ).toBeVisible();
   expect(commands.filter((method) => method === "PUT")).toHaveLength(1);
-  await page.unroute(/\/api\/v1\/storages\/ui-pending-save$/);
+  await page.unroute(/\/api\/storages\/ui-pending-save$/);
 
   // A known rejection after the same backdrop gesture still lands in the
   // retained card with the exact submitted input and no automatic replay.
@@ -276,7 +275,7 @@ test("keeps in-flight Add and Edit cards open on backdrop clicks", async ({
   const duplicateRequestStarted = new Promise<void>((resolve) => {
     duplicateStarted = resolve;
   });
-  await page.route(/\/api\/v1\/storages$/, async (route) => {
+  await page.route(/\/api\/storages$/, async (route) => {
     if (route.request().method() === "POST") {
       duplicateStarted();
       await duplicateGate;
@@ -310,7 +309,7 @@ test("keeps in-flight Add and Edit cards open on backdrop clicks", async ({
   );
   await duplicateCard.getByRole("button", { name: "取消" }).click();
   await expect(duplicateCard).toHaveCount(0);
-  await page.unroute(/\/api\/v1\/storages$/);
+  await page.unroute(/\/api\/storages$/);
 });
 
 test("keeps a duplicate rejection inside the card and preserves the input", async ({
@@ -353,7 +352,7 @@ test("keeps a slow detail card stable and discards its late response after close
 }) => {
   await openStorage(page);
   await page.route(
-    /\/api\/v1\/operations\/storage-management\/storage\/source-storage$/,
+    /\/api\/operations\/storage-management\/storage\/source-storage$/,
     async (route) => {
       if (route.request().method() === "GET") {
         await new Promise((resolve) => setTimeout(resolve, 450));
@@ -373,7 +372,7 @@ test("keeps a slow detail card stable and discards its late response after close
   await page.waitForTimeout(600);
   await expect(card(page, "存储详情 Source")).toHaveCount(0);
   await page.unroute(
-    /\/api\/v1\/operations\/storage-management\/storage\/source-storage$/,
+    /\/api\/operations\/storage-management\/storage\/source-storage$/,
   );
 
   await page.getByRole("button", { name: "查看 Source" }).click();
@@ -504,7 +503,7 @@ test("closes view, add and edit cards through the shared visible exit", async ({
   page.on("request", (request) => {
     if (
       ["POST", "PUT", "DELETE", "PATCH"].includes(request.method()) &&
-      request.url().includes("/api/v1/storages")
+      request.url().includes("/api/storages")
     ) {
       mutations.push(`${request.method()} ${new URL(request.url()).pathname}`);
     }

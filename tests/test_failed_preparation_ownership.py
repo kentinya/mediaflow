@@ -81,7 +81,7 @@ class WholeFlowPassFailureReleasesEveryFileTests(_SupersededHandoffFixture):
 
             # The ended flow's run detail keeps the preparation identity but
             # publishes the backend eligibility fact: no execution entry.
-            code, body = self.request(value, f"/api/v1/operations/runs/{old_id}")
+            code, body = self.request(value, f"/api/operations/runs/{old_id}")
             self.assertEqual(200, code, body)
             self.assertEqual(
                 {
@@ -149,7 +149,7 @@ class EndedFlowOldSummaryRefusalTests(_SupersededHandoffFixture):
 
             status, _reanalysis = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
                 method="POST",
                 body={"expectedVersion": discovery.version},
             )
@@ -177,7 +177,7 @@ class EndedFlowOldSummaryRefusalTests(_SupersededHandoffFixture):
                 },
             )
 
-            code, body = self.request(value, f"/api/v1/operations/runs/{old_id}")
+            code, body = self.request(value, f"/api/operations/runs/{old_id}")
             self.assertEqual(200, code, body)
             self.assertFalse(body["filesPreparation"]["continuable"])
 
@@ -196,7 +196,7 @@ class EndedFlowOldSummaryRefusalTests(_SupersededHandoffFixture):
             selected = [item["itemId"] for item in preview["items"]]
             status, refused = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                f"/api/operations/organize/previews/{preview['previewId']}/execute",
                 method="POST",
                 body={
                     "confirmation": True,
@@ -243,7 +243,7 @@ class EndedFlowOldSummaryRefusalTests(_SupersededHandoffFixture):
             # the engine's own ``_fail_discovery`` boundary fails the flow.
             status, _body = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
                 method="POST",
                 body={"expectedVersion": discovery.version},
             )
@@ -264,7 +264,7 @@ class EndedFlowOldSummaryRefusalTests(_SupersededHandoffFixture):
             # fact, without touching the durable record.
             status, refused = self.request(
                 value,
-                f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+                f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
                 method="POST",
                 body={"expectedVersion": record.version},
             )
@@ -280,7 +280,7 @@ class EndedFlowOldSummaryRefusalTests(_SupersededHandoffFixture):
             # predicate's reason, and an ended native next action instead of a
             # promise that a Worker is analysing this record.
             code, document = self.request(
-                value, f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}"
+                value, f"/api/operations/organize/discoveries/{discovery.discovery_id}"
             )
             self.assertEqual(200, code, document)
             self.assertEqual(
@@ -296,12 +296,12 @@ class EndedFlowOldSummaryRefusalTests(_SupersededHandoffFixture):
             # The original summary is still reachable as read-only history
             # through both existing associations the Web page uses.
             code, intent = self.request(
-                value, f"/api/v1/operations/organize/intents/{preview['intentId']}"
+                value, f"/api/operations/organize/intents/{preview['intentId']}"
             )
             self.assertEqual(200, code, intent)
             self.assertEqual(preview["previewId"], intent["latestPlan"]["previewId"])
             code, reopened = self.request(
-                value, f"/api/v1/operations/organize/previews/{preview['previewId']}"
+                value, f"/api/operations/organize/previews/{preview['previewId']}"
             )
             self.assertEqual(200, code, reopened)
             self.assertTrue(reopened["zeroMutation"])
@@ -356,7 +356,7 @@ class MixedBatchPerFileReleaseTests(_SupersededHandoffFixture):
             self.assertEqual(TaskItemStatus.WAITING_CONFIRM, items["Movies/Two.2002.mkv"].status)
             self.assertEqual(PersistentTaskStatus.RUNNING, value.repository.get_task(old_id).status)
 
-            code, body = self.request(value, f"/api/v1/operations/runs/{old_id}")
+            code, body = self.request(value, f"/api/operations/runs/{old_id}")
             self.assertEqual(200, code, body)
             # The Task flow is unfinished and still holds a legal continuation,
             # so the Task Center keeps the execution-nature entry for Two.
@@ -387,7 +387,7 @@ class MixedBatchPerFileReleaseTests(_SupersededHandoffFixture):
             )
             status, refused = self.request(
                 value,
-                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                f"/api/operations/organize/previews/{preview['previewId']}/execute",
                 method="POST",
                 body={
                     "confirmation": True,
@@ -425,7 +425,7 @@ class MixedBatchPerFileReleaseTests(_SupersededHandoffFixture):
             new_id = admitted["organizeTaskId"]
             discovery = self._drive(value, new_id)
             _status, fresh_preview = self.request(
-                value, f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+                value, f"/api/operations/organize/previews/{discovery.preview_id}"
             )
             self.assertEqual(200, _status, fresh_preview)
             self.confirm(value, fresh_preview)
@@ -455,7 +455,7 @@ class HealthyWaitingSummaryStaysContinuableTests(_SupersededHandoffFixture):
             )
             discovery_id = value.repository.get_media_discovery_for_task(old_id).discovery_id
 
-            code, body = self.request(value, f"/api/v1/operations/runs/{old_id}")
+            code, body = self.request(value, f"/api/operations/runs/{old_id}")
             self.assertEqual(200, code, body)
             self.assertEqual(
                 {
@@ -468,7 +468,7 @@ class HealthyWaitingSummaryStaysContinuableTests(_SupersededHandoffFixture):
 
             # The same summary is reopenable and still the current plan.
             status, reopened = self.request(
-                value, f"/api/v1/operations/organize/previews/{preview['previewId']}"
+                value, f"/api/operations/organize/previews/{preview['previewId']}"
             )
             self.assertEqual(200, status, reopened)
             self.assertTrue(reopened["current"])
@@ -484,7 +484,7 @@ class HealthyWaitingSummaryStaysContinuableTests(_SupersededHandoffFixture):
 
             # The completed flow keeps its read-only preparation identity: the
             # work truly ended, so no execution-nature entry remains.
-            code, body = self.request(value, f"/api/v1/operations/runs/{old_id}")
+            code, body = self.request(value, f"/api/operations/runs/{old_id}")
             self.assertEqual(200, code, body)
             self.assertFalse(body["filesPreparation"]["continuable"])
 
@@ -518,7 +518,7 @@ class ConfirmationCrossingFlowFailureTests(_SupersededHandoffFixture):
         self.assertIsNotNone(discovery)
         status, body = self.request(
             value,
-            f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze",
+            f"/api/operations/organize/discoveries/{discovery.discovery_id}/analyze",
             method="POST",
             body={"expectedVersion": discovery.version},
         )
@@ -582,7 +582,7 @@ class ConfirmationCrossingFlowFailureTests(_SupersededHandoffFixture):
             # The Web's own reader contract: the healthy flow document with the
             # backend's real nested keys.
             code, detail = self.request(
-                value, f"/api/v1/operations/organize/discoveries/{discovery_id}"
+                value, f"/api/operations/organize/discoveries/{discovery_id}"
             )
             self.assertEqual(200, code, detail)
             self.assertEqual(
@@ -602,7 +602,7 @@ class ConfirmationCrossingFlowFailureTests(_SupersededHandoffFixture):
             with patch.object(value.executions, "_validate_current_storage", side_effect=crossing):
                 status, refused = self.request(
                     value,
-                    f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                    f"/api/operations/organize/previews/{preview['previewId']}/execute",
                     method="POST",
                     body={
                         "confirmation": True,
@@ -617,7 +617,7 @@ class ConfirmationCrossingFlowFailureTests(_SupersededHandoffFixture):
 
             # The ended flow's own document for the Web, with real keys.
             code, detail = self.request(
-                value, f"/api/v1/operations/organize/discoveries/{discovery_id}"
+                value, f"/api/operations/organize/discoveries/{discovery_id}"
             )
             self.assertEqual(200, code, detail)
             self.assertEqual(

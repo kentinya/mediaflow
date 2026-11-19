@@ -38,7 +38,7 @@ const VIEWS: readonly { readonly view: string; readonly label: string }[] = [
 ];
 
 async function connect(page: Page): Promise<void> {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -57,7 +57,7 @@ test("capture the eight task-center views and the problem-file states", async ({
   await connect(page);
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
   const views = page.getByRole("navigation", { name: "任务中心视图" });
   await expect(views).toBeVisible();
 
@@ -190,7 +190,7 @@ test("capture the eight task-center views and the problem-file states", async ({
   // Capture a bounded read-failure state separately from the authenticated
   // re-entry state. The route is removed before reconnect so it cannot mask
   // the real Python service or leave a failed fixture active.
-  await page.route("**/api/v1/operations/runs*", async (route) =>
+  await page.route("**/api/operations/runs*", async (route) =>
     route.fulfill({
       status: 503,
       contentType: "application/json",
@@ -211,7 +211,7 @@ test("capture the eight task-center views and the problem-file states", async ({
     path: `${OUTPUT}/task-center-read-failure.png`,
     fullPage: false,
   });
-  await page.unroute("**/api/v1/operations/runs*");
+  await page.unroute("**/api/operations/runs*");
 });
 
 test("capture the in-context creation summary and confirmation journey", async ({
@@ -224,7 +224,7 @@ test("capture the in-context creation summary and confirmation journey", async (
   // complete analysis; the screenshots show the real durable state.
   mkdirSync(OUTPUT, { recursive: true });
   await request.post(`${BASE}/__harness__/register-manual-worker`);
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -235,7 +235,7 @@ test("capture the in-context creation summary and confirmation journey", async (
   // own library strip, never from a second picker entry.
   await expect(page.getByRole("link", { name: "新建整理任务" })).toHaveCount(0);
   await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
   await page
     .getByRole("button", { name: /source/ })
     .first()

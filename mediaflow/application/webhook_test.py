@@ -320,7 +320,7 @@ class WebhookTestService:
                     actor,
                     "POST",
                     (
-                        f"/api/v1/configuration/revisions/{revision.revision_id}/objects/webhooks/"
+                        f"/api/configuration/revisions/{revision.revision_id}/objects/webhooks/"
                         f"{webhook_id}/test?version={revision.version}&digest={revision.digest}"
                         f"&category={category}"
                     )[:500],

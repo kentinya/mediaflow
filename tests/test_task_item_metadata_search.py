@@ -247,7 +247,7 @@ class MetadataSearchYearTests(unittest.TestCase):
 
     def _checkpoint_version(self, value, task_id: str, item_id: str) -> str:
         status, detail = self.request(
-            value, "GET", f"/api/v1/tasks/{task_id}/items/{item_id}/recovery"
+            value, "GET", f"/api/tasks/{task_id}/items/{item_id}/recovery"
         )
         self.assertEqual(200, status, detail)
         self.assertEqual("metadata_correction", detail["decision"]["kind"], detail)
@@ -257,7 +257,7 @@ class MetadataSearchYearTests(unittest.TestCase):
         return self.request(
             value,
             "POST",
-            f"/api/v1/tasks/{task_id}/items/{item_id}/recovery/metadata-search",
+            f"/api/tasks/{task_id}/items/{item_id}/recovery/metadata-search",
             body,
             token=token,
         )
@@ -516,7 +516,7 @@ class MetadataSearchYearTests(unittest.TestCase):
             status, decided = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item_id}/recovery/decision",
                 {
                     "kind": "metadata_correction",
                     "expectedCheckpointVersion": version,
@@ -530,7 +530,7 @@ class MetadataSearchYearTests(unittest.TestCase):
             status, continued = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue",
+                f"/api/tasks/{task_id}/items/{item_id}/recovery/continue",
                 {
                     "expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"],
                 },
@@ -555,7 +555,7 @@ class MetadataSearchYearTests(unittest.TestCase):
             status, decided = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item_id}/recovery/decision",
+                f"/api/tasks/{task_id}/items/{item_id}/recovery/decision",
                 {
                     "kind": "metadata_correction",
                     "expectedCheckpointVersion": version,
@@ -568,7 +568,7 @@ class MetadataSearchYearTests(unittest.TestCase):
             status, continued = self.request(
                 value,
                 "POST",
-                f"/api/v1/tasks/{task_id}/items/{item_id}/recovery/continue",
+                f"/api/tasks/{task_id}/items/{item_id}/recovery/continue",
                 {
                     "expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"],
                 },

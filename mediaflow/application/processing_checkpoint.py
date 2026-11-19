@@ -195,7 +195,7 @@ class ProcessingCheckpointService:
                 if value.item_id == item_id
             )
         blockers: list[CheckpointBlocker] = []
-        review_path = f"/api/v1/tasks/{task.task_id}/items/{item.item_id}/recovery"
+        review_path = f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery"
         review_specs = (
             ("recognition", "get_recognition_review_for_item"),
             ("metadata", "get_metadata_review_for_item"),
@@ -627,9 +627,12 @@ def _safe_path(value) -> str | None:
 def _checkpoint_hash_blocker_resolution_path(value: CheckpointBlocker) -> str:
     """Historical route input that keeps an unchanged checkpoint digest stable.
 
-    These strings are never returned to an operator, used for routing or read
-    as a current transport.  They reproduce the exact hash input accepted by
-    earlier checkpoints so existing preparations and requests remain confirmable.
+    These versioned strings are never returned to an operator, used for routing
+    or read as a current transport: the operator projection publishes the
+    current Task recovery path from ``_safe_blocker``.  They reproduce the exact
+    hash input accepted by earlier checkpoints, so an existing preparation,
+    summary or request pinned by that version remains confirmable after the
+    public routes moved to the canonical namespace.
     """
 
     prefix = {
@@ -671,7 +674,7 @@ def _safe_blocker(value: CheckpointBlocker) -> CheckpointBlocker:
         _safe_identifier(value.status),
         task_id,
         item_id,
-        f"/api/v1/tasks/{task_id}/items/{item_id}/recovery",
+        f"/api/tasks/{task_id}/items/{item_id}/recovery",
     )
 
 

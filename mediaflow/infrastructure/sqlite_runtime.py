@@ -2620,7 +2620,7 @@ class SQLiteTaskRepository:
                         row["status"],
                         row["task_id"],
                         row["item_id"],
-                        f"/api/v1/tasks/{row['task_id']}/items/{row['item_id']}/recovery",
+                        f"/api/tasks/{row['task_id']}/items/{row['item_id']}/recovery",
                     )
                 )
         audits_by_item: dict[str, list[CheckpointAudit]] = {}
@@ -2739,7 +2739,7 @@ class SQLiteTaskRepository:
                         value["status"],
                         value["task_id"],
                         value["item_id"],
-                        f"/api/v1/tasks/{value['task_id']}/items/{value['item_id']}/recovery",
+                        f"/api/tasks/{value['task_id']}/items/{value['item_id']}/recovery",
                     )
                     for value in blocker_row
                 )

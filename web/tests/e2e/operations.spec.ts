@@ -51,7 +51,7 @@ const COMPLETED_ENDED_ROW = new RegExp(
 );
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
-  await page.goto("/ui-v2/");
+  await page.goto("/");
   await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
@@ -59,7 +59,7 @@ async function connect(page: Page, token: string = VIEWER_TOKEN) {
 
 async function openOperations(page: Page) {
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
 }
 
 /** Open one exact run in the Task Center through its own URL state. */
@@ -67,7 +67,7 @@ async function openCenterRun(page: Page, runId: string) {
   await connect(page);
   // A direct reload of a selected-run URL drops the memory-only token, so the
   // exact selection is re-entered through the real reconnect boundary.
-  await page.goto(`/ui-v2/operations?run=${encodeURIComponent(runId)}`);
+  await page.goto(`/operations?run=${encodeURIComponent(runId)}`);
   if (await page.getByLabel("API token").isVisible()) {
     await page.getByLabel("API token").fill(VIEWER_TOKEN);
     await page.getByRole("button", { name: "Connect" }).click();
@@ -105,7 +105,7 @@ test("任务中心 inventory shows the run list, views and workspace links", asy
   // navigation from the task center; it neither invents nor carries returnOps.
   await expect(
     page.getByRole("link", { name: "Files", exact: true }),
-  ).toHaveAttribute("href", "/ui-v2/resourcelib/files");
+  ).toHaveAttribute("href", "/resourcelib/files");
   // Entry has no selection: the detail panel is closed.
   await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
 });
@@ -142,11 +142,11 @@ test("the submitted creation-date range survives reload and re-authentication", 
 test("an unauthenticated deep entry reconnects to the same filtered center view", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/operations?view=ended&status=failed");
+  await page.goto("/operations?view=ended&status=failed");
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?/);
+  await expect(page).toHaveURL(/\/operations\?/);
   await expect(page).toHaveURL(/view=ended/);
   await expect(page).not.toHaveURL(/status=/);
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
@@ -173,12 +173,12 @@ test("the retired Task/Job collections and identities are ordinary not-found rou
     if (request.url().includes("/api/")) apiRequests.push(request.url());
   });
   for (const path of [
-    "/ui-v2/operations/tasks",
-    "/ui-v2/operations/tasks?status=failed&command=preview",
-    "/ui-v2/operations/tasks/task-001",
-    "/ui-v2/operations/jobs",
-    "/ui-v2/operations/jobs/job-005",
-    "/ui-v2/operations/jobs/does-not-exist",
+    "/operations/tasks",
+    "/operations/tasks?status=failed&command=preview",
+    "/operations/tasks/task-001",
+    "/operations/jobs",
+    "/operations/jobs/job-005",
+    "/operations/jobs/does-not-exist",
   ]) {
     await page.goto(path);
     await expect(
@@ -253,14 +253,14 @@ test("the operations read and the rendered page stay free of a hostile historica
   // The V2 workspace reads the bounded center projection, not the retired
   // compatibility Task/Job document, so no fingerprint value is fetched at all.
   expect(
-    requested.some((url) => url.includes("/api/v1/operations/runs/job-001")),
+    requested.some((url) => url.includes("/api/operations/runs/job-001")),
   ).toBe(true);
   expect(
     requested.some(
       (url) =>
-        (url.includes("/api/v1/tasks/job-001") ||
-          url.includes("/api/v1/operations/tasks/job-001")) &&
-        !url.includes("/api/v1/operations/runs/"),
+        (url.includes("/api/tasks/job-001") ||
+          url.includes("/api/operations/tasks/job-001")) &&
+        !url.includes("/api/operations/runs/"),
     ),
   ).toBe(false);
 });
@@ -270,7 +270,7 @@ test("a terminal run exposes no control and no request is sent", async ({
 }) => {
   const posts: string[] = [];
   page.on("request", (request) => {
-    if (request.method() === "POST" && request.url().includes("/api/v1/")) {
+    if (request.method() === "POST" && request.url().includes("/api/")) {
       posts.push(request.url());
     }
   });
@@ -294,7 +294,7 @@ test("a retired Task identity is never resolved into a guessed current context",
   page.on("request", (request) => {
     if (request.url().includes("/api/")) apiRequests.push(request.url());
   });
-  await page.goto("/ui-v2/operations/tasks/does-not-exist");
+  await page.goto("/operations/tasks/does-not-exist");
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
@@ -306,7 +306,7 @@ test("a retired Task identity is never resolved into a guessed current context",
 test("an unknown Operations route renders the not-found boundary", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/operations/tasks/task-001/unknown");
+  await page.goto("/operations/tasks/task-001/unknown");
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
@@ -319,9 +319,7 @@ test("the 媒体库 entry and Operations workspace cross-link without a retired 
   await page.getByRole("link", { name: "Library" }).click();
   // The entry reaches the MediaLibrary page, and its address records the
   // enabled library actually being browsed at its root.
-  await expect(page).toHaveURL(
-    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
-  );
+  await expect(page).toHaveURL(/\/medialib\/files\?mediaLibraryId=movies$/);
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();
@@ -330,7 +328,7 @@ test("the 媒体库 entry and Operations workspace cross-link without a retired 
   // The media library's own search must never be carried into the arrived
   // Operations URL by a remounted previous page.
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expect(page).toHaveURL(/\/operations$/);
   expect(page.url()).not.toContain("mediaLibraryId");
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
@@ -379,12 +377,12 @@ test("dropping credential-like Operations search state on reconnect", async ({
   page.on("console", (message) => consoleMessages.push(message.text()));
   // A deep entry carrying an unknown, credential-like key must be reduced to
   // the allowlisted route before the reconnect continuation replays it.
-  await page.goto("/ui-v2/operations?view=ended&status=failed&token=secret");
+  await page.goto("/operations?view=ended&status=failed&token=secret");
   await expect(page.getByLabel("API token")).toBeVisible();
   expect(page.url()).not.toContain("token=secret");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?/);
+  await expect(page).toHaveURL(/\/operations\?/);
   await expect(page).toHaveURL(/view=ended/);
   await expect(page).not.toHaveURL(/status=/);
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
@@ -618,12 +616,12 @@ test("the selected run detail is a centered card and the list keeps its width", 
 test("an unauthenticated deep entry reconnects to the selected run overview", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/operations?view=ended&status=failed&run=job-005");
+  await page.goto("/operations?view=ended&status=failed&run=job-005");
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   // The view and exact selection survive; the removed hidden filter does not.
-  await expect(page).toHaveURL(/\/ui-v2\/operations\?/);
+  await expect(page).toHaveURL(/\/operations\?/);
   await expect(page).not.toHaveURL(/status=/);
   await expect(page).toHaveURL(/view=ended/);
   await expect(page).toHaveURL(/run=job-005/);
@@ -677,7 +675,7 @@ test("item and record filters page on the server and survive a reload", async ({
 }) => {
   const requests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/operations/runs/")) {
+    if (request.url().includes("/api/operations/runs/")) {
       requests.push(request.url());
     }
   });
@@ -928,7 +926,7 @@ test("PATCH-20261107-1 states an unconfirmed target result instead of a confirme
   // is still unverified; only that effect facet is changed on the real fake
   // response so the same operator entry is exercised.
   await page.route(
-    "**/api/v1/operations/runs/job-001/items/item-001",
+    "**/api/operations/runs/job-001/items/item-001",
     async (route) => {
       const response = await route.fetch();
       const document = (await response.json()) as {
@@ -1012,10 +1010,10 @@ test("a retired pre-Task Job run identity stays bounded unavailable", async ({
   // Every detail read is a GET: reading admits no work.
   const mutating = methods.filter(
     (entry) =>
-      entry.includes("/api/v1/operations/runs/") && !entry.startsWith("GET "),
+      entry.includes("/api/operations/runs/") && !entry.startsWith("GET "),
   );
   expect(mutating).toEqual([]);
-  expect(methods.some((entry) => entry.includes("/api/v1/jobs"))).toBe(false);
+  expect(methods.some((entry) => entry.includes("/api/jobs"))).toBe(false);
 });
 
 test("PATCH-20261113-1 keeps equal-status attempts as two complete history entries", async ({
@@ -1024,7 +1022,7 @@ test("PATCH-20261113-1 keeps equal-status attempts as two complete history entri
   // Two distinct durable rows may have the same status. Use the existing
   // evidence read and its real fixture shape; no new product route is added.
   await page.route(
-    "**/api/v1/operations/runs/task-001/items/item-001",
+    "**/api/operations/runs/task-001/items/item-001",
     async (route) => {
       const response = await route.fetch();
       const document = await response.json();
@@ -1045,7 +1043,7 @@ test("PATCH-20261113-1 keeps equal-status attempts as two complete history entri
   await openCenterRun(page, "task-001");
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/v1/") && request.method() !== "GET") {
+    if (request.url().includes("/api/") && request.method() !== "GET") {
       writes.push(request.method());
     }
   });
@@ -1078,7 +1076,7 @@ test("PATCH-20261113-1 attributes different next steps within one file diagnosis
   page,
 }) => {
   await page.route(
-    "**/api/v1/operations/runs/task-001/items/item-002",
+    "**/api/operations/runs/task-001/items/item-002",
     async (route) => {
       const response = await route.fetch();
       const document = await response.json();

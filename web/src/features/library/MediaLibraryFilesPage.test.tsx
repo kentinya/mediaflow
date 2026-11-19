@@ -151,8 +151,8 @@ describe("MediaLibrary Files journey", () => {
   it("lists enabled libraries and browses the selected library's live entries", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
-      if (url.startsWith("/api/v1/media-libraries/movies/files")) {
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
+      if (url.startsWith("/api/media-libraries/movies/files")) {
         return jsonResponse(
           filesDocument("movies", "", [
             entry("Breaking Bad", "Breaking Bad", { directory: true }),
@@ -160,7 +160,7 @@ describe("MediaLibrary Files journey", () => {
           ]),
         );
       }
-      if (url.startsWith("/api/v1/media-libraries/tv/files")) {
+      if (url.startsWith("/api/media-libraries/tv/files")) {
         return jsonResponse(
           filesDocument("tv", "", [
             entry("Show.S01E01.mkv", "Show.S01E01.mkv"),
@@ -170,7 +170,7 @@ describe("MediaLibrary Files journey", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     expect(
       await screen.findByRole("heading", { name: "媒体库" }),
@@ -215,7 +215,7 @@ describe("MediaLibrary Files journey", () => {
   it("lets a focused MediaLibrary folder button handle Enter without opening the row menu", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
       if (url.includes("path=Breaking+Bad")) {
         return jsonResponse(
           filesDocument("movies", "Breaking Bad", [
@@ -231,7 +231,7 @@ describe("MediaLibrary Files journey", () => {
     });
     const user = userEvent.setup();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     const row = await screen.findByRole("row", {
       name: "文件条目 Breaking Bad",
@@ -254,7 +254,7 @@ describe("MediaLibrary Files journey", () => {
     stubFetch(async (input) => {
       const url = String(input);
       calls.push(url);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
       if (
         url.includes("path=Breaking+Bad") ||
         url.includes("path=Breaking%20Bad")
@@ -277,7 +277,7 @@ describe("MediaLibrary Files journey", () => {
     });
     const user = userEvent.setup();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     const folderRow = await screen.findByRole("row", {
       name: "文件条目 Breaking Bad",
@@ -310,7 +310,7 @@ describe("MediaLibrary Files journey", () => {
   it("records the exact library and relative directory in the route on navigation", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
       if (url.includes("path=Breaking+Bad")) {
         return jsonResponse(
           filesDocument("movies", "Breaking Bad", [
@@ -326,7 +326,7 @@ describe("MediaLibrary Files journey", () => {
     });
     const user = userEvent.setup();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     // Selecting an enabled library at its root is itself a recoverable
     // location, so the address already names the library being browsed.
@@ -363,7 +363,7 @@ describe("MediaLibrary Files journey", () => {
   it("switching library replaces the previous library's directory in the route", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
       if (url.includes("/media-libraries/tv/files")) {
         return jsonResponse(
           filesDocument("tv", "", [entry("电影", "电影", { directory: true })]),
@@ -378,9 +378,7 @@ describe("MediaLibrary Files journey", () => {
     const user = userEvent.setup();
     authStore.setToken(TOKEN);
     setMediaRouteState("mediaLibraryId=movies&path=Breaking%20Bad");
-    renderApp(
-      "/ui-v2/medialib/files?mediaLibraryId=movies&path=Breaking%20Bad",
-    );
+    renderApp("/medialib/files?mediaLibraryId=movies&path=Breaking%20Bad");
 
     await screen.findByRole("row", { name: /Season 1/ });
     await user.click(await screen.findByRole("button", { name: "夸克网盘" }));
@@ -396,7 +394,7 @@ describe("MediaLibrary Files journey", () => {
   it("records the library actually browsed when the requested one is unavailable", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
       return jsonResponse(
         filesDocument("movies", "", [
           entry("Breaking Bad", "Breaking Bad", { directory: true }),
@@ -406,7 +404,7 @@ describe("MediaLibrary Files journey", () => {
     authStore.setToken(TOKEN);
     setMediaRouteState("mediaLibraryId=disabled-library&path=Breaking%20Bad");
     renderApp(
-      "/ui-v2/medialib/files?mediaLibraryId=disabled-library&path=Breaking%20Bad",
+      "/medialib/files?mediaLibraryId=disabled-library&path=Breaking%20Bad",
     );
 
     expect(
@@ -425,12 +423,12 @@ describe("MediaLibrary Files journey", () => {
     const user = userEvent.setup();
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
       return jsonResponse(filesDocument("movies", "", []));
     });
     authStore.setToken(TOKEN);
     setMediaRouteState("mediaLibraryId=movies&path=..%2Foutside");
-    renderApp("/ui-v2/medialib/files?mediaLibraryId=movies&path=..%2Foutside");
+    renderApp("/medialib/files?mediaLibraryId=movies&path=..%2Foutside");
 
     expect(
       await screen.findByRole("heading", { name: "路径无效" }),
@@ -452,8 +450,8 @@ describe("MediaLibrary Files journey", () => {
   it("orders the current page, shares exact selection with the grid and keeps column widths across views", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
-      if (url.startsWith("/api/v1/media-libraries/movies/files")) {
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
+      if (url.startsWith("/api/media-libraries/movies/files")) {
         return jsonResponse(
           filesDocument("movies", "", [
             entry("Zeta.txt", "Zeta.txt", { size: 100 }),
@@ -466,7 +464,7 @@ describe("MediaLibrary Files journey", () => {
     });
     const user = userEvent.setup();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     await screen.findByRole("table");
     const nameHeader = screen.getByRole("columnheader", { name: /名称/ });
@@ -550,8 +548,8 @@ describe("MediaLibrary Files journey", () => {
     let failBravo = false;
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
-      if (url.startsWith("/api/v1/media-libraries/movies/files")) {
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
+      if (url.startsWith("/api/media-libraries/movies/files")) {
         const parsed = new URL(url, "http://x");
         const requestedPath = parsed.searchParams.get("path") ?? "";
         if (requestedPath === "Bravo") {
@@ -600,7 +598,7 @@ describe("MediaLibrary Files journey", () => {
     });
     const user = userEvent.setup();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     await screen.findByRole("row", { name: "文件条目 alpha.mkv" });
     const nameHeader = screen.getByRole("columnheader", { name: /名称/ });
@@ -683,7 +681,7 @@ describe("MediaLibrary Files journey", () => {
   it("supports list/grid, selection summary and honest cursor paging", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
       if (url.includes("cursor=page-2")) {
         return jsonResponse(
           filesDocument("movies", "", [entry("second.mkv", "second.mkv")]),
@@ -700,7 +698,7 @@ describe("MediaLibrary Files journey", () => {
     });
     const user = userEvent.setup();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     await screen.findByRole("table");
     expect(await screen.findByRole("button", { name: "下一页" })).toBeEnabled();
@@ -727,7 +725,7 @@ describe("MediaLibrary Files journey", () => {
   it("shows truthful recovery for a missing directory and a cross-kind cursor", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
       if (url.includes("path=gone")) {
         return jsonResponse(
           {
@@ -766,7 +764,7 @@ describe("MediaLibrary Files journey", () => {
     });
     authStore.setToken(TOKEN);
     setMediaRouteState("mediaLibraryId=movies&path=gone");
-    renderApp("/ui-v2/medialib/files?mediaLibraryId=movies&path=gone");
+    renderApp("/medialib/files?mediaLibraryId=movies&path=gone");
 
     expect(
       await screen.findByRole("heading", { name: "Directory not found" }),
@@ -781,12 +779,12 @@ describe("MediaLibrary Files journey", () => {
   it("explains an unavailable requested library and selects an enabled one", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
       return jsonResponse(filesDocument("movies", "", []));
     });
     authStore.setToken(TOKEN);
     setMediaRouteState("mediaLibraryId=disabled-library");
-    renderApp("/ui-v2/medialib/files?mediaLibraryId=disabled-library");
+    renderApp("/medialib/files?mediaLibraryId=disabled-library");
 
     expect(
       await screen.findByText(
@@ -800,7 +798,7 @@ describe("MediaLibrary Files journey", () => {
       jsonResponse({ error: { code: "unauthorized" } }, 401),
     );
     authStore.setToken("expired-token");
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
     expect(
       await screen.findByRole("heading", { name: "Not authorized" }),
     ).toBeVisible();
@@ -808,8 +806,8 @@ describe("MediaLibrary Files journey", () => {
     // system status, and neither read is replayed after a 401.
     const requestedUrls = fetchMock.mock.calls.map((call) => String(call[0]));
     expect(requestedUrls.sort()).toEqual([
-      "/api/v1/media-libraries",
-      "/api/v1/system/status",
+      "/api/media-libraries",
+      "/api/system/status",
     ]);
     expect(new Set(requestedUrls).size).toBe(requestedUrls.length);
   });
@@ -821,8 +819,8 @@ describe("MediaLibrary Files journey", () => {
     });
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return listResponse;
-      if (url === "/api/v1/system/status") {
+      if (url === "/api/media-libraries") return listResponse;
+      if (url === "/api/system/status") {
         return jsonResponse({
           system: {
             configuration_valid: true,
@@ -836,7 +834,7 @@ describe("MediaLibrary Files journey", () => {
       throw new Error(`unexpected test request: ${url}`);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     const loading = await screen.findByRole("status", {
       name: "正在读取媒体库信息",
@@ -871,7 +869,7 @@ describe("MediaLibrary Files journey", () => {
     });
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
       if (url.includes("/media-libraries/tv/files")) {
         return jsonResponse(
           filesDocument("tv", "", [entry("电影", "电影", { directory: true })]),
@@ -890,7 +888,7 @@ describe("MediaLibrary Files journey", () => {
       );
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     const folderRow = await screen.findByRole("row", {
       name: "文件条目 Breaking Bad",
@@ -940,8 +938,8 @@ describe("MediaLibrary Files journey", () => {
     let editReads = 0;
     stubFetch(async (input, init) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
-      if (url === "/api/v1/system/status") {
+      if (url === "/api/media-libraries") return jsonResponse(LIBRARIES);
+      if (url === "/api/system/status") {
         return jsonResponse({
           system: {
             configuration_valid: true,
@@ -952,13 +950,13 @@ describe("MediaLibrary Files journey", () => {
           resource_libraries: { total: 0, truncated: false, items: [] },
         });
       }
-      if (url.startsWith("/api/v1/media-libraries/movies/files")) {
+      if (url.startsWith("/api/media-libraries/movies/files")) {
         return jsonResponse(
           filesDocument("movies", "", [entry("poster.jpg", "poster.jpg")]),
         );
       }
       if (
-        url === "/api/v1/media-libraries/movies/edit" &&
+        url === "/api/media-libraries/movies/edit" &&
         init?.method === undefined
       ) {
         editReads += 1;
@@ -989,7 +987,7 @@ describe("MediaLibrary Files journey", () => {
           sideEffects: "none",
         });
       }
-      if (url === "/api/v1/media-libraries/movies" && init?.method === "PUT") {
+      if (url === "/api/media-libraries/movies" && init?.method === "PUT") {
         const body = JSON.parse(String(init.body ?? "{}")) as Record<
           string,
           unknown
@@ -1036,7 +1034,7 @@ describe("MediaLibrary Files journey", () => {
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
 
     expect(await screen.findByText("poster.jpg")).toBeVisible();
     await user.click(
@@ -1097,9 +1095,9 @@ describe("retired Library routes", () => {
     authStore.setToken(TOKEN);
 
     for (const path of [
-      "/ui-v2/library",
-      "/ui-v2/library/files",
-      "/ui-v2/library/files?path=Movies",
+      "/library",
+      "/library/files",
+      "/library/files?path=Movies",
     ]) {
       cleanup();
       renderApp(path);

@@ -1,9 +1,9 @@
 /**
  * Frontend-owned bounded Preview entity for the Operations workspace.
  *
- * The Python contract (`POST /api/v1/operations/previews`,
- * `GET /api/v1/operations/previews/{previewId}`,
- * `GET /api/v1/operations/previews`) returns one exact bounded preview
+ * The Python contract (`POST /api/operations/previews`,
+ * `GET /api/operations/previews/{previewId}`,
+ * `GET /api/operations/previews`) returns one exact bounded preview
  * document produced by `manual_preview_operator_document`: the persisted
  * analysis findings are preserved, while every fingerprint/digest value,
  * occurrence identity, raw executor input and absolute host root is projected

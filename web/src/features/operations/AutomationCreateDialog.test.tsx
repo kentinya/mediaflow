@@ -234,10 +234,9 @@ async function expectReady() {
 describe("AutomationCreateDialog", () => {
   it("presents the grouped form with an off-by-default enable choice and no exposed internal ID", async () => {
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(authority());
@@ -292,16 +291,15 @@ describe("AutomationCreateDialog", () => {
 
   it("submits one disabled create command with the exact Active fence and stable ID", async () => {
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(authority());
       }
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "POST"
       ) {
         return jsonResponse(publication());
@@ -326,7 +324,7 @@ describe("AutomationCreateDialog", () => {
     const creates = calls.filter(
       (call) =>
         call.method === "POST" &&
-        call.url === "/api/v1/operations/automation/definitions",
+        call.url === "/api/operations/automation/definitions",
     );
     expect(creates).toHaveLength(1);
     expect(creates[0].body).toMatchObject({
@@ -356,10 +354,9 @@ describe("AutomationCreateDialog", () => {
   it("keeps a 409 conflict and rechecks the Active fence only on explicit request", async () => {
     let activeRevision = ACTIVE_REVISION;
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse({
@@ -372,7 +369,7 @@ describe("AutomationCreateDialog", () => {
         });
       }
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "POST"
       ) {
         if (call.body?.expectedRevisionId !== activeRevision) {
@@ -401,7 +398,7 @@ describe("AutomationCreateDialog", () => {
     const creates = calls.filter(
       (call) =>
         call.method === "POST" &&
-        call.url === "/api/v1/operations/automation/definitions",
+        call.url === "/api/operations/automation/definitions",
     );
     expect(creates).toHaveLength(2);
     expect(creates[1].body?.expectedRevisionId).toBe("active-create-peer");
@@ -409,16 +406,15 @@ describe("AutomationCreateDialog", () => {
 
   it("retains an unknown create outcome and reconciles it without a second create", async () => {
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(authority());
       }
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "POST"
       ) {
         throw new Error("response lost");
@@ -444,7 +440,7 @@ describe("AutomationCreateDialog", () => {
     const creates = calls.filter(
       (call) =>
         call.method === "POST" &&
-        call.url === "/api/v1/operations/automation/definitions",
+        call.url === "/api/operations/automation/definitions",
     );
     expect(creates).toHaveLength(1);
     const reconcile = calls.find((call) =>
@@ -458,15 +454,14 @@ describe("AutomationCreateDialog", () => {
 
   it("keeps the directory picker bounded and clears an old library scope visibly", async () => {
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(authority());
       }
-      if (call.url.startsWith("/api/v1/resource-libraries/source/files")) {
+      if (call.url.startsWith("/api/resource-libraries/source/files")) {
         return jsonResponse(
           filesDocument("", [
             directoryEntry("电影", "电影"),
@@ -510,10 +505,9 @@ describe("AutomationCreateDialog", () => {
   it("invalidates an old preview immediately and ignores its late response", async () => {
     const previewResolvers: Array<(response: Response) => void> = [];
     recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(authority());
@@ -565,10 +559,9 @@ describe("AutomationCreateDialog", () => {
 
   it("keeps the close choice and command outcome above the scrolling fields", async () => {
     recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(authority());
@@ -612,16 +605,15 @@ describe("AutomationCreateDialog", () => {
   it("shows one in-flight creation state and does not submit or reconcile twice", async () => {
     let releaseCreate: ((response: Response) => void) | null = null;
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(authority());
       }
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "POST"
       ) {
         return new Promise<Response>((resolve) => {
@@ -653,7 +645,7 @@ describe("AutomationCreateDialog", () => {
       calls.filter(
         (call) =>
           call.method === "POST" &&
-          call.url === "/api/v1/operations/automation/definitions",
+          call.url === "/api/operations/automation/definitions",
       ),
     ).toHaveLength(1);
 
@@ -674,16 +666,15 @@ describe("AutomationCreateDialog", () => {
 
   it("locates a rejected time plan at its field and keeps the submitted input", async () => {
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(authority());
       }
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "POST"
       ) {
         return jsonResponse(
@@ -740,17 +731,16 @@ describe("AutomationCreateDialog", () => {
       calls.filter(
         (call) =>
           call.method === "POST" &&
-          call.url === "/api/v1/operations/automation/definitions",
+          call.url === "/api/operations/automation/definitions",
       ),
     ).toHaveLength(1);
   });
 
   it("asks before discarding edited input and keeps editing when asked", async () => {
     recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(authority());
@@ -776,16 +766,15 @@ describe("AutomationCreateDialog", () => {
   });
   it("creates and enables through one submission when the choice is explicit", async () => {
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(authority());
       }
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "POST"
       ) {
         return jsonResponse(publication("create"));
@@ -813,7 +802,7 @@ describe("AutomationCreateDialog", () => {
     const creates = calls.filter(
       (call) =>
         call.method === "POST" &&
-        call.url === "/api/v1/operations/automation/definitions",
+        call.url === "/api/operations/automation/definitions",
     );
     expect(creates).toHaveLength(1);
     // The explicit choice rides beside the candidate; the candidate itself
@@ -826,10 +815,9 @@ describe("AutomationCreateDialog", () => {
 
   it("keeps enablement unavailable with its reason when the principal lacks scheduled permission", async () => {
     const calls = recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(
@@ -851,7 +839,7 @@ describe("AutomationCreateDialog", () => {
         );
       }
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "POST"
       ) {
         return jsonResponse(publication());
@@ -874,7 +862,7 @@ describe("AutomationCreateDialog", () => {
     const creates = calls.filter(
       (call) =>
         call.method === "POST" &&
-        call.url === "/api/v1/operations/automation/definitions",
+        call.url === "/api/operations/automation/definitions",
     );
     expect(creates).toHaveLength(1);
     expect(creates[0].body).not.toHaveProperty("enabled");
@@ -882,16 +870,15 @@ describe("AutomationCreateDialog", () => {
 
   it("reports the durable enablement truth instead of the local toggle", async () => {
     recordingFetch((call) => {
-      if (call.url === "/api/v1/auth/principal")
-        return jsonResponse(principal());
+      if (call.url === "/api/auth/principal") return jsonResponse(principal());
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "GET"
       ) {
         return jsonResponse(authority());
       }
       if (
-        call.url === "/api/v1/operations/automation/definitions" &&
+        call.url === "/api/operations/automation/definitions" &&
         call.method === "POST"
       ) {
         // The backend published the definition disabled despite the toggle:

@@ -30,7 +30,7 @@ function lifecycle(overrides: Record<string, unknown> = {}) {
         action: "cancel",
         label: "Cancel Task",
         method: "POST",
-        path: "/api/v1/tasks/{id}/cancel",
+        path: "/api/tasks/{id}/cancel",
         available: false,
         unavailableReason: "a completed Task cannot be cancelled",
         confirmationRequired: false,

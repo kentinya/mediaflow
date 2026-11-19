@@ -548,7 +548,7 @@ class StorageSetupCheckTests(unittest.TestCase):
                 try:
                     status, result = request(
                         api,
-                        f"/api/v1/configuration/revisions/{revision.revision_id}/storage-check",
+                        f"/api/configuration/revisions/{revision.revision_id}/storage-check",
                         method="POST",
                         body={
                             "storageId": "smb-check",
@@ -561,14 +561,14 @@ class StorageSetupCheckTests(unittest.TestCase):
                     self.assertEqual(result["storageId"], "smb-check")
                     status, collection = request(
                         api,
-                        f"/api/v1/configuration/revisions/{revision.revision_id}/storage-checks",
+                        f"/api/configuration/revisions/{revision.revision_id}/storage-checks",
                         token="viewer-token",
                     )
                     self.assertEqual(status, 200)
                     self.assertEqual(collection["total"], 1)
                     status, denied = request(
                         api,
-                        f"/api/v1/configuration/revisions/{revision.revision_id}/storage-check",
+                        f"/api/configuration/revisions/{revision.revision_id}/storage-check",
                         method="POST",
                         body={
                             "storageId": "smb-check",
@@ -581,7 +581,7 @@ class StorageSetupCheckTests(unittest.TestCase):
                     self.assertEqual(denied["error"]["code"], "forbidden")
                     status, detail = request(
                         api,
-                        f"/api/v1/configuration/revisions/{revision.revision_id}/storage-checks/smb-check",
+                        f"/api/configuration/revisions/{revision.revision_id}/storage-checks/smb-check",
                         token="viewer-token",
                     )
                     self.assertEqual(status, 200)

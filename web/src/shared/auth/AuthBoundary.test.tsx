@@ -32,7 +32,7 @@ afterEach(() => {
 
 describe("AuthBoundary", () => {
   it("redirects an unauthenticated deep route to entry and preserves the intended path", async () => {
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
     // AuthBoundary redirects to / and stores the supported MediaLibrary Files
     // route as the intended continuation target.
     expect(await screen.findByLabelText("API token")).toBeVisible();
@@ -43,7 +43,7 @@ describe("AuthBoundary", () => {
   });
 
   it("records no intention for a retired route", async () => {
-    for (const path of ["/ui-v2/library/files", "/ui-v2/review"]) {
+    for (const path of ["/library/files", "/review"]) {
       cleanup();
       renderApp(path);
       expect(
@@ -55,7 +55,7 @@ describe("AuthBoundary", () => {
   });
 
   it("redirects an unauthenticated Explore deep entry and preserves /explore", async () => {
-    renderApp("/ui-v2/explore");
+    renderApp("/explore");
     expect(await screen.findByLabelText("API token")).toBeVisible();
     expect(authStore.getIntendedPath()).toBe("/explore");
     expect(
@@ -64,13 +64,13 @@ describe("AuthBoundary", () => {
   });
 
   it("does not register an intention when entering from the root", async () => {
-    renderApp("/ui-v2/");
+    renderApp("/");
     expect(authStore.getIntendedPath()).toBeNull();
     expect(await screen.findByLabelText("API token")).toBeVisible();
   });
 
   it("ignores unknown routes and does not set an intended path", async () => {
-    renderApp("/ui-v2/does-not-exist");
+    renderApp("/does-not-exist");
     expect(authStore.getIntendedPath()).toBeNull();
     expect(
       await screen.findByRole("heading", { name: "Route not found" }),
@@ -80,7 +80,7 @@ describe("AuthBoundary", () => {
   it("keeps a still-authenticated operator on the deep route", async () => {
     stubFetch(async (input) => {
       const url = String(input);
-      if (url === "/api/v1/media-libraries") {
+      if (url === "/api/media-libraries") {
         return jsonResponse({
           surface: "media_libraries",
           items: [],
@@ -88,7 +88,7 @@ describe("AuthBoundary", () => {
           sideEffects: "none",
         });
       }
-      if (url === "/api/v1/system/status") {
+      if (url === "/api/system/status") {
         return jsonResponse({
           system: {
             configuration_valid: true,
@@ -102,7 +102,7 @@ describe("AuthBoundary", () => {
       throw new Error(`unexpected test request: ${url}`);
     });
     authStore.setToken("boundary-token");
-    const { router } = renderApp("/ui-v2/medialib/files");
+    const { router } = renderApp("/medialib/files");
     expect(authStore.getIntendedPath()).toBeNull();
     // The explicit empty list is what produces the empty state; a still-pending
     // library read is never treated as the deep-route success signal.
@@ -118,7 +118,7 @@ describe("AuthBoundary", () => {
   it("replaces an earlier intention with the operator's newest route choice", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch(async () => jsonResponse({}, 503));
-    renderApp("/ui-v2/medialib/files");
+    renderApp("/medialib/files");
     expect(await screen.findByLabelText("API token")).toBeVisible();
     expect(authStore.getIntendedPath()).toBe("/medialib/files");
 
@@ -146,11 +146,11 @@ describe("AuthBoundary", () => {
     // Slice46 RO-4 removed the global Worker/resident block and its exclusive
     // readiness read, so the landing performs only its own inventory read.
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/operations/runs?limit=20",
+      "/api/operations/runs?limit=20",
       expect.objectContaining({ method: "GET" }),
     );
     expect(fetchMock).not.toHaveBeenCalledWith(
-      "/api/v1/operations/workers/readiness",
+      "/api/operations/workers/readiness",
       expect.anything(),
     );
   });
@@ -159,7 +159,7 @@ describe("AuthBoundary", () => {
     const fetchMock = stubFetch(async () => jsonResponse({}, 401));
     authStore.setToken("expired-token");
     authStore.setIntendedPath("/explore");
-    const { queryClient } = renderApp("/ui-v2/explore");
+    const { queryClient } = renderApp("/explore");
     // The 401 clears the rejected principal and its query cache while the
     // operator stays on the route behind a bounded unauthorized state; the
     // intended /explore destination survives for explicit re-entry. The
@@ -187,7 +187,7 @@ describe("AuthBoundary", () => {
     const fetchMock = stubFetch(async () => jsonResponse({}, 401));
     authStore.setToken("expired-token");
     renderApp(
-      "/ui-v2/resourcelib/files?resourceLibraryId=resources&path=movies&cursor=page-2&access_token=cando-not&unknown=x",
+      "/resourcelib/files?resourceLibraryId=resources&path=movies&cursor=page-2&access_token=cando-not&unknown=x",
     );
     // The bounded unauthorized state appears after the 401 effect runs.
     await screen.findByRole("heading", { name: "Not authorized" });

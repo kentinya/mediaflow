@@ -6,8 +6,8 @@ import { expect, test, type Page } from "@playwright/test";
  * Runs against the built V2 artifact plus the local fake API only. Every token
  * below is a throwaway non-secret value; no production service, credential,
  * user media or Storage is involved. The fake serves the object-lifecycle
- * documents on the real `/api/v1/operations/rules/objects/*` routes with the
- * real backend identifier grammar, and its static `/ui-v2/` serving mirrors the
+ * documents on the real `/api/operations/rules/objects/*` routes with the
+ * real backend identifier grammar, and its static `/` serving mirrors the
  * production Python dotted-ID entry exception, so this journey cannot pass
  * against a permissive fake that proves nothing.
  *
@@ -66,7 +66,7 @@ async function seedRecognitionType(
   objectId: string,
 ): Promise<void> {
   const authority = await page.request.get(
-    "/api/v1/operations/rules/form-authority",
+    "/api/operations/rules/form-authority",
     { headers: { Authorization: `Bearer ${VIEWER_TOKEN}` } },
   );
   if (!authority.ok()) throw new Error("authority read failed while seeding");
@@ -74,7 +74,7 @@ async function seedRecognitionType(
     active: { revisionId: string; version: number; digest: string };
   };
   const response = await page.request.post(
-    "/api/v1/operations/rules/objects/recognitionTypes",
+    "/api/operations/rules/objects/recognitionTypes",
     {
       headers: { Authorization: `Bearer ${VIEWER_TOKEN}` },
       data: {
@@ -105,7 +105,7 @@ test.describe("Rules object identity", () => {
     ]) {
       await seedRecognitionType(page, objectId);
     }
-    await page.goto("/ui-v2/rules/edit/recognitionTypes/proof.type");
+    await page.goto("/rules/edit/recognitionTypes/proof.type");
     await connectAs(page);
     // The built artifact served by the same boundary as production delivers
     // the entry document for the dotted route, and the editor opens the exact
@@ -135,7 +135,7 @@ test.describe("Rules object identity", () => {
     await openEditCard.getByRole("button", { name: "取消" }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await page.getByRole("button", { name: "Disconnect" }).click();
-    await page.goto("/ui-v2/rules/edit/recognitionTypes/proof.type");
+    await page.goto("/rules/edit/recognitionTypes/proof.type");
     await connectAs(page);
     await expect(
       page.getByRole("dialog", { name: /编辑识别类型 · .*proof\.type/ }),
@@ -149,7 +149,7 @@ test.describe("Rules object identity", () => {
     // direct entry is a fresh document, so the boundary continuation connects
     // first and returns to the same identity-bearing route.
     for (const objectId of ["proof.js", "proof.env", "proof.type.bak"]) {
-      await page.goto(`/ui-v2/rules/edit/recognitionTypes/${objectId}`);
+      await page.goto(`/rules/edit/recognitionTypes/${objectId}`);
       await connectAs(page);
       await expect(page.getByRole("heading", { name: objectId })).toBeVisible();
       await page.reload();
@@ -169,7 +169,7 @@ test.describe("Rules object identity", () => {
       // Each direct entry is a fresh document: the token is memory-only, so
       // every entry reconnects and the AuthBoundary continuation returns to
       // the same identity-bearing edit route.
-      await page.goto(`/ui-v2/rules/edit/recognitionTypes/${idCase.encoded}`);
+      await page.goto(`/rules/edit/recognitionTypes/${idCase.encoded}`);
       await connectAs(page);
       await expect(
         page.getByRole("heading", { name: idCase.raw }),
@@ -185,7 +185,7 @@ test.describe("Rules object identity", () => {
   }) => {
     const traffic = recordApiTraffic(page);
     await resetRules(page, "?empty=1");
-    await page.goto("/ui-v2/rules?section=recognitionTypes");
+    await page.goto("/rules?section=recognitionTypes");
     await connectAs(page);
     await expect(
       page.getByRole("heading", { name: "识别类型", exact: true }),
@@ -291,7 +291,7 @@ test.describe("Rules object identity", () => {
     // browser must issue no mutation.
     await resetRules(page, "?empty=1");
     await seedRecognitionType(page, "proof.js");
-    await page.goto("/ui-v2/rules?section=recognitionTypes");
+    await page.goto("/rules?section=recognitionTypes");
     await connectAs(page);
     await expect(
       page.getByRole("heading", { name: "识别类型", exact: true }),
@@ -301,14 +301,14 @@ test.describe("Rules object identity", () => {
     // A second authorized client removes the same unreferenced object with
     // the exact current Active authority, exactly like the real journey.
     const authority = await page.request.get(
-      "/api/v1/operations/rules/form-authority",
+      "/api/operations/rules/form-authority",
       { headers: { Authorization: `Bearer ${VIEWER_TOKEN}` } },
     );
     const document = (await authority.json()) as {
       active: { revisionId: string; version: number; digest: string };
     };
     const removal = await page.request.delete(
-      "/api/v1/operations/rules/objects/recognitionTypes/proof.js",
+      "/api/operations/rules/objects/recognitionTypes/proof.js",
       {
         headers: { Authorization: `Bearer ${VIEWER_TOKEN}` },
         data: {

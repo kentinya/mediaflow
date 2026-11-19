@@ -218,7 +218,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
                     "pending",
                     "task-1",
                     "item-1",
-                    "/api/v1/tasks/task-1/items/item-1/recovery",
+                    "/api/tasks/task-1/items/item-1/recovery",
                 ),
                 "snapshot_resolvable": True,
                 "raw_stage": "waiting_confirm",
@@ -528,13 +528,13 @@ class ProcessingCheckpointTests(unittest.TestCase):
                     self.assertEqual(blocker.kind, expected[table])
                     self.assertEqual(blocker.blocker_id, identifier)
                     self.assertEqual(
-                        f"/api/v1/tasks/{item.task_id}/items/{item.item_id}/recovery",
+                        f"/api/tasks/{item.task_id}/items/{item.item_id}/recovery",
                         blocker.resolution_path,
                     )
-                    self.assertNotIn("/api/v1/recognition-reviews", blocker.resolution_path)
-                    self.assertNotIn("/api/v1/metadata-reviews", blocker.resolution_path)
-                    self.assertNotIn("/api/v1/classification-reviews", blocker.resolution_path)
-                    self.assertNotIn("/api/v1/confirmations", blocker.resolution_path)
+                    self.assertNotIn("/api/recognition-reviews", blocker.resolution_path)
+                    self.assertNotIn("/api/metadata-reviews", blocker.resolution_path)
+                    self.assertNotIn("/api/classification-reviews", blocker.resolution_path)
+                    self.assertNotIn("/api/confirmations", blocker.resolution_path)
 
     def test_checkpoint_digest_is_stable_changes_and_survives_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -605,10 +605,10 @@ class ProcessingCheckpointTests(unittest.TestCase):
                     ),
                 )
                 status, full = request(
-                    api, "GET", f"/api/v1/tasks/{task.task_id}/items/{item.item_id}"
+                    api, "GET", f"/api/tasks/{task.task_id}/items/{item.item_id}"
                 )
                 self.assertEqual(status, 200)
-                status, detail = request(api, "GET", f"/api/v1/tasks/{task.task_id}")
+                status, detail = request(api, "GET", f"/api/tasks/{task.task_id}")
                 self.assertEqual(status, 200)
                 blocker = full["blocker"] or {}
                 self.assertEqual(
@@ -628,20 +628,20 @@ class ProcessingCheckpointTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(
-                    request(api, "GET", f"/api/v1/tasks/wrong/items/{item.item_id}")[0], 404
+                    request(api, "GET", f"/api/tasks/wrong/items/{item.item_id}")[0], 404
                 )
                 self.assertEqual(
-                    request(api, "GET", f"/api/v1/tasks/{task.task_id}/items/missing")[0], 404
+                    request(api, "GET", f"/api/tasks/{task.task_id}/items/missing")[0], 404
                 )
                 self.assertEqual(
                     request(
-                        api, "GET", f"/api/v1/tasks/{task.task_id}/items/{item.item_id}", token=None
+                        api, "GET", f"/api/tasks/{task.task_id}/items/{item.item_id}", token=None
                     )[0],
                     401,
                 )
                 self.assertEqual(
                     request_with_query(
-                        api, f"/api/v1/tasks/{task.task_id}/items/{item.item_id}", "unexpected=1"
+                        api, f"/api/tasks/{task.task_id}/items/{item.item_id}", "unexpected=1"
                     )[0],
                     400,
                 )
@@ -724,7 +724,7 @@ class CheckpointIdentityContinuityTests(unittest.TestCase):
             "resolved",
             "task-fixed-0001",
             "item-fixed-0001",
-            "/api/v1/tasks/task-fixed-0001/items/item-fixed-0001/recovery",
+            "/api/tasks/task-fixed-0001/items/item-fixed-0001/recovery",
         )
         audit = CheckpointAudit(
             "decision-fixed-0001",

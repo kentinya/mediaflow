@@ -549,7 +549,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.import_draft(document, actor="tester")
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions",
+                    "/api/automation/task-definitions",
                     method="POST",
                     body={
                         "revisionId": draft.revision_id,
@@ -567,14 +567,14 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 self.assertEqual(body["automationTaskDefinition"]["id"], "api-task")
                 stale, _ = _request(
                     api,
-                    "/api/v1/automation/task-definitions/api-task/enable",
+                    "/api/automation/task-definitions/api-task/enable",
                     method="POST",
                     body={"revisionId": draft.revision_id, "expectedVersion": draft.version},
                 )
                 self.assertEqual(stale, 409)
                 viewer_status, _ = _request(
                     api,
-                    "/api/v1/automation/task-definitions",
+                    "/api/automation/task-definitions",
                     method="POST",
                     body={"revisionId": draft.revision_id, "expectedVersion": 2, "definition": {}},
                     token="viewer-token",
@@ -601,7 +601,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
 
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions",
+                    "/api/automation/task-definitions",
                     method="POST",
                     body={
                         "revisionId": revision_id,
@@ -623,7 +623,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.require(revision_id)
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions/api-task",
+                    "/api/automation/task-definitions/api-task",
                     method="PUT",
                     body={
                         "revisionId": revision_id,
@@ -646,7 +646,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.require(revision_id)
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions/api-task/copy",
+                    "/api/automation/task-definitions/api-task/copy",
                     method="POST",
                     body={"revisionId": revision_id, "expectedVersion": draft.version},
                 )
@@ -657,7 +657,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.require(revision_id)
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions/api-task/enable",
+                    "/api/automation/task-definitions/api-task/enable",
                     method="POST",
                     body={"revisionId": revision_id, "expectedVersion": draft.version},
                 )
@@ -667,7 +667,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.require(revision_id)
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions/api-task/disable",
+                    "/api/automation/task-definitions/api-task/disable",
                     method="POST",
                     body={"revisionId": revision_id, "expectedVersion": draft.version},
                 )
@@ -679,8 +679,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.require(revision_id)
                 status, body = _request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}"
-                    "/objects/automationTaskDefinitions",
+                    f"/api/configuration/revisions/{revision_id}/objects/automationTaskDefinitions",
                     method="POST",
                     body={
                         "object": {
@@ -699,7 +698,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.require(revision_id)
                 status, body = _request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}"
+                    f"/api/configuration/revisions/{revision_id}"
                     "/objects/automationTaskDefinitions/cfg-task",
                     method="PUT",
                     body={
@@ -719,7 +718,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.require(revision_id)
                 status, body = _request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}"
+                    f"/api/configuration/revisions/{revision_id}"
                     "/objects/automationTaskDefinitions/cfg-task/copy",
                     method="POST",
                     body={"expectedVersion": draft.version},
@@ -731,7 +730,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.require(revision_id)
                 status, body = _request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}"
+                    f"/api/configuration/revisions/{revision_id}"
                     "/objects/automationTaskDefinitions/cfg-task/enable",
                     method="POST",
                     body={"expectedVersion": draft.version},
@@ -742,7 +741,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.require(revision_id)
                 status, body = _request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}"
+                    f"/api/configuration/revisions/{revision_id}"
                     "/objects/automationTaskDefinitions/cfg-task/disable",
                     method="POST",
                     body={"expectedVersion": draft.version},
@@ -754,7 +753,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.require(revision_id)
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions",
+                    "/api/automation/task-definitions",
                     query=f"revisionId={revision_id}",
                 )
                 self.assertEqual(status, 200)
@@ -767,7 +766,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 )
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions/api-task",
+                    "/api/automation/task-definitions/api-task",
                     query=f"revisionId={revision_id}",
                 )
                 self.assertEqual(status, 200)
@@ -778,14 +777,14 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 # Viewer may read but not mutate through either route family.
                 status, _ = _request(
                     api,
-                    "/api/v1/automation/task-definitions",
+                    "/api/automation/task-definitions",
                     query=f"revisionId={revision_id}",
                     token="viewer-token",
                 )
                 self.assertEqual(status, 200)
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions/api-task/disable",
+                    "/api/automation/task-definitions/api-task/disable",
                     method="POST",
                     body={"revisionId": revision_id, "expectedVersion": draft.version},
                     token="viewer-token",
@@ -794,7 +793,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 self.assertEqual(body["error"]["code"], "forbidden")
                 status, body = _request(
                     api,
-                    f"/api/v1/configuration/revisions/{revision_id}"
+                    f"/api/configuration/revisions/{revision_id}"
                     "/objects/automationTaskDefinitions/cfg-task/enable",
                     method="POST",
                     body={"expectedVersion": draft.version},
@@ -831,7 +830,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 def create(value, expected_version):
                     return _request(
                         api,
-                        "/api/v1/automation/task-definitions",
+                        "/api/automation/task-definitions",
                         method="POST",
                         body={
                             "revisionId": revision_id,
@@ -866,7 +865,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 disabled_draft = managed.import_draft(disabled_document, actor="tester")
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions",
+                    "/api/automation/task-definitions",
                     method="POST",
                     body={
                         "revisionId": disabled_draft.revision_id,
@@ -883,14 +882,14 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
 
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions/not-a-definition",
+                    "/api/automation/task-definitions/not-a-definition",
                     query=f"revisionId={revision_id}",
                 )
                 self.assertEqual(status, 404)
                 self.assertEqual(body["error"]["code"], "not_found")
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions/not-a-definition/copy",
+                    "/api/automation/task-definitions/not-a-definition/copy",
                     method="POST",
                     body={"revisionId": revision_id, "expectedVersion": draft.version},
                 )
@@ -926,7 +925,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 )
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions/api-task",
+                    "/api/automation/task-definitions/api-task",
                     method="PUT",
                     body={
                         "revisionId": active.revision_id,
@@ -956,7 +955,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 draft = managed.import_draft(document, actor="tester")
                 status, body = _request(
                     api,
-                    "/api/v1/automation/task-definitions",
+                    "/api/automation/task-definitions",
                     method="POST",
                     body={
                         "revisionId": draft.revision_id,
@@ -986,7 +985,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                     "digest": active.digest,
                 }
                 for _ in range(2):
-                    status, listing = _request(api, "/api/v1/automation/task-definitions")
+                    status, listing = _request(api, "/api/automation/task-definitions")
                     self.assertEqual(status, 200)
                     self.assertEqual(
                         {key: listing["configuration"][key] for key in expected},
@@ -996,7 +995,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                     self.assertEqual(listing["items"][0]["id"], "task")
                     status, detail = _request(
                         api,
-                        "/api/v1/automation/task-definitions/task",
+                        "/api/automation/task-definitions/task",
                     )
                     self.assertEqual(status, 200)
                     self.assertEqual(detail["definition"]["id"], "task")
@@ -1015,14 +1014,14 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                     bootstrap_database_path=str(root / "runtime.sqlite3"),
                 )
                 api = _api(runtime, managed, document)
-                status, listing = _request(api, "/api/v1/automation/task-definitions")
+                status, listing = _request(api, "/api/automation/task-definitions")
                 self.assertEqual(status, 200)
                 self.assertEqual(
                     {key: listing["configuration"][key] for key in expected},
                     expected,
                 )
                 self.assertEqual(listing["items"][0]["id"], "task")
-                status, detail = _request(api, "/api/v1/automation/task-definitions/task")
+                status, detail = _request(api, "/api/automation/task-definitions/task")
                 self.assertEqual(status, 200)
                 self.assertEqual(detail["definition"]["id"], "task")
                 self.assertEqual(detail["configuration"]["digest"], active.digest)

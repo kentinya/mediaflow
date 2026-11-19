@@ -197,7 +197,7 @@ class PackageExchangeService:
             actor=actor,
             action="configuration_package_export",
             outcome="allowed",
-            route="/api/v1/configuration/packages/export/configuration",
+            route="/api/configuration/packages/export/configuration",
             status=200,
             revision_id=revision.revision_id,
         )
@@ -317,7 +317,7 @@ class PackageExchangeService:
             actor=actor,
             action="result_package_export",
             outcome="allowed",
-            route="/api/v1/configuration/packages/export/results",
+            route="/api/configuration/packages/export/results",
             status=200,
             revision_id=None,
             task_id=task_id,
@@ -507,7 +507,7 @@ class PackageExchangeService:
             actor=actor,
             action="configuration_package_import",
             outcome="allowed",
-            route="/api/v1/configuration/packages",
+            route="/api/configuration/packages",
             status=201 if result["action"] == "created" else 200,
             revision_id=str(result["revision"].get("revisionId")),
         )

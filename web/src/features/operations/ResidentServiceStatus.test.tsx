@@ -49,7 +49,7 @@ it.each([
     expect(screen.getByRole("link", { name: "前往系统设置" })).toBeVisible();
     expect(screen.queryByText(/unsafe-canary/)).not.toBeInTheDocument();
     expect(fetcher).toHaveBeenCalledWith(
-      "/api/v1/management/readiness",
+      "/api/management/readiness",
       expect.any(Object),
     );
   },

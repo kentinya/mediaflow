@@ -172,7 +172,7 @@ class NotificationDeliveryDetailTests(unittest.TestCase):
                 delivery = publish(harness.repository)
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/notifications/{delivery.delivery_id}",
+                    f"/api/notifications/{delivery.delivery_id}",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(detail["deliveryId"], delivery.delivery_id)
@@ -197,7 +197,7 @@ class NotificationDeliveryDetailTests(unittest.TestCase):
                 # List and detail use the same deterministic delivery identity.
                 status, listing = request(
                     harness.api,
-                    "/api/v1/notifications",
+                    "/api/notifications",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(len(listing["items"]), 1)
@@ -207,7 +207,7 @@ class NotificationDeliveryDetailTests(unittest.TestCase):
                 # The same bounded projection is available to the read authority.
                 status, viewed = request(
                     harness.api,
-                    f"/api/v1/notifications/{delivery.delivery_id}",
+                    f"/api/notifications/{delivery.delivery_id}",
                     token="viewer-token",
                 )
                 self.assertEqual(status, 200)
@@ -216,7 +216,7 @@ class NotificationDeliveryDetailTests(unittest.TestCase):
                 for missing in ("missing-delivery", "../missing", "x" * 400):
                     status, error = request(
                         harness.api,
-                        f"/api/v1/notifications/{missing}",
+                        f"/api/notifications/{missing}",
                     )
                     self.assertEqual(status, 404, missing)
                     self.assertEqual(error["error"]["code"], "not_found")
@@ -245,7 +245,7 @@ class NotificationDeliveryDetailTests(unittest.TestCase):
                     with self.subTest(action=action):
                         status, denied = request(
                             harness.api,
-                            f"/api/v1/notifications/{delivery_id}/{action}",
+                            f"/api/notifications/{delivery_id}/{action}",
                             method="POST",
                             body=json.dumps(
                                 {
@@ -348,7 +348,7 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                 run_worker(harness.repository, webhook(max_attempts=1), FakeTransport(400))
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}",
+                    f"/api/notifications/{dead.delivery_id}",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(detail["status"], "dead-letter")
@@ -356,7 +356,7 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                 before = harness.repository.list_deliveries()
                 status, requeued = request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}/requeue",
+                    f"/api/notifications/{dead.delivery_id}/requeue",
                     method="POST",
                     body=json.dumps(
                         {
@@ -387,7 +387,7 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                 # A second requeue with the now-stale observed state fails closed.
                 status, conflict = request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}/requeue",
+                    f"/api/notifications/{dead.delivery_id}/requeue",
                     method="POST",
                     body=json.dumps(
                         {
@@ -417,11 +417,11 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                 run_worker(harness.repository, webhook(max_attempts=3), FakeTransport(204))
                 status, detail2 = request(
                     harness.api,
-                    f"/api/v1/notifications/{delivered.delivery_id}",
+                    f"/api/notifications/{delivered.delivery_id}",
                 )
                 status, ineligible = request(
                     harness.api,
-                    f"/api/v1/notifications/{delivered.delivery_id}/requeue",
+                    f"/api/notifications/{delivered.delivery_id}/requeue",
                     method="POST",
                     body=json.dumps(
                         {
@@ -449,7 +449,7 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                 )
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/notifications/{stale.delivery_id}",
+                    f"/api/notifications/{stale.delivery_id}",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(detail["lease"]["state"], "expired")
@@ -459,7 +459,7 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
 
                 status, resolved = request(
                     harness.api,
-                    f"/api/v1/notifications/{stale.delivery_id}/resolve-stale",
+                    f"/api/notifications/{stale.delivery_id}/resolve-stale",
                     method="POST",
                     body=json.dumps(
                         {
@@ -488,12 +488,12 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                 )
                 status, detail2 = request(
                     harness.api,
-                    f"/api/v1/notifications/{active.delivery_id}",
+                    f"/api/notifications/{active.delivery_id}",
                 )
                 self.assertEqual(detail2["lease"]["state"], "active")
                 status, unexpired = request(
                     harness.api,
-                    f"/api/v1/notifications/{active.delivery_id}/resolve-stale",
+                    f"/api/notifications/{active.delivery_id}/resolve-stale",
                     method="POST",
                     body=json.dumps(
                         {
@@ -513,11 +513,11 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                 run_worker(harness.repository, webhook(max_attempts=3), FakeTransport(204))
                 status, detail3 = request(
                     harness.api,
-                    f"/api/v1/notifications/{delivered.delivery_id}",
+                    f"/api/notifications/{delivered.delivery_id}",
                 )
                 status, not_delivering = request(
                     harness.api,
-                    f"/api/v1/notifications/{delivered.delivery_id}/resolve-stale",
+                    f"/api/notifications/{delivered.delivery_id}/resolve-stale",
                     method="POST",
                     body=json.dumps(
                         {
@@ -602,12 +602,12 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                 audits_before = harness.repository.list_security_audit(limit=500)
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}",
+                    f"/api/notifications/{dead.delivery_id}",
                 )
                 self.assertEqual(status, 200)
                 status, result = request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}/requeue",
+                    f"/api/notifications/{dead.delivery_id}/requeue",
                     method="POST",
                     body=json.dumps(
                         {
@@ -646,9 +646,7 @@ class NotificationDeliveryRecoveryTests(unittest.TestCase):
                     any(
                         item.action == "notification-recovery"
                         and item.outcome == "success"
-                        and item.route.startswith(
-                            f"/api/v1/notifications/{dead.delivery_id}/requeue"
-                        )
+                        and item.route.startswith(f"/api/notifications/{dead.delivery_id}/requeue")
                         for item in audits
                     )
                 )
@@ -669,12 +667,12 @@ class NotificationDeliveryCompatibilityTests(unittest.TestCase):
                 run_worker(harness.repository, webhook(max_attempts=1), transport)
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}",
+                    f"/api/notifications/{dead.delivery_id}",
                 )
                 self.assertEqual(detail["status"], "dead-letter")
                 status, requeued = request(
                     harness.api,
-                    f"/api/v1/notifications/{dead.delivery_id}/requeue",
+                    f"/api/notifications/{dead.delivery_id}/requeue",
                     method="POST",
                     body=json.dumps(
                         {
@@ -707,12 +705,12 @@ class NotificationDeliveryCompatibilityTests(unittest.TestCase):
                 )
                 status, detail2 = request(
                     harness.api,
-                    f"/api/v1/notifications/{stale.delivery_id}",
+                    f"/api/notifications/{stale.delivery_id}",
                 )
                 self.assertEqual(detail2["lease"]["state"], "expired")
                 status, resolved = request(
                     harness.api,
-                    f"/api/v1/notifications/{stale.delivery_id}/resolve-stale",
+                    f"/api/notifications/{stale.delivery_id}/resolve-stale",
                     method="POST",
                     body=json.dumps(
                         {
@@ -745,7 +743,7 @@ class NotificationDeliveryCompatibilityTests(unittest.TestCase):
                 revision_id = harness.draft.revision_id
                 status, created = request(
                     harness.api,
-                    f"/api/v1/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
                 )
@@ -766,7 +764,7 @@ class NotificationDeliveryCompatibilityTests(unittest.TestCase):
                 with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "top-secret-value"}):
                     status, test_result = request(
                         harness.api,
-                        f"/api/v1/configuration/revisions/{active.revision_id}"
+                        f"/api/configuration/revisions/{active.revision_id}"
                         "/objects/webhooks/ops-webhook/test",
                         method="POST",
                         body=json.dumps(
@@ -784,7 +782,7 @@ class NotificationDeliveryCompatibilityTests(unittest.TestCase):
                 # The delivery detail/recovery surface is still reachable.
                 status, detail = request(
                     harness.api,
-                    f"/api/v1/notifications/{delivery.delivery_id}",
+                    f"/api/notifications/{delivery.delivery_id}",
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(detail["deliveryId"], delivery.delivery_id)
