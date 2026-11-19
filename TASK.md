@@ -1,15 +1,15 @@
 # Task PATCH-20261120-1 — 修复后续季剧集匹配与逐文件元数据修正
 
-Next Action: B REVIEWS THE PATCH-20261120-1 CANDIDATE
+Next Action: DEVELOPER CORRECTS PATCH-20261120-1
 
-用户于 2026-11-20 授权激活独立 Task，Developer 已完成实施并交付 B 审查。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
+用户于 2026-11-20 授权激活独立 Task。B 审查首个候选后要求在同一 Task 内返工。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
 [独立缺陷流程](docs/development-workflow.md#31-independent-minor-bugs) · [现有逐项恢复流程](docs/product-experience.md#tasks-results-and-per-item-recovery) · [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/c8039f1f3d7bdfdb7fd927c75f99df0cb8a9e523/TASK.md#patch-20261119-2--b-验收-pass)
 
 ```text
 Task ID: PATCH-20261120-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
 Difficulty: High
 Test Level: T4
@@ -135,3 +135,35 @@ Worker 路径；未构造不存在的入口。
 - 自动匹配以确认阈值的标题证据加完整季集验证为条件；若真实 TMDB 返回多个同等节目且均有
   所需集数，按设计进入人工候选确认，需 B 用真实 Files API 核对两个入口的一致投影。
 - 修正原因复用既有 `outcome` 文本载体，未迁移历史记录；历史 pending/resolved 行按原状态读取。
+
+## B Review Result — FIX REQUIRED
+
+```text
+Reviewed Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
+Reviewed Implementation: bf3f81c2d59f31c96fa7cc1d7ad490a0f28501c1
+Reviewed Head: 42178555f06c3646ad8ff8d6432f07670cb77c64
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+B 使用现有 Files 整理受理、Worker 和逐文件恢复 API，配合临时 SQLite、Local Storage 与模拟 Provider，复测了八集。
+模拟 2024 年同名剧的第四季返回 404，八项仍都以 2019 年作品生成待确认摘要，Storage 变更为零。
+`PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest tests.test_metadata tests.test_metadata_correction tests.test_task_item_metadata_search`
+通过 65 项，`git diff --check` 与治理检查通过。发现下列两处阻塞后，全量和原生浏览器验收留待修正候选。
+
+### Developer 返工指导
+
+1. **修正后仍有多候选时，恢复同一文件的候选选择。** 从 Files 打开整理，选中需要确认的 S04E01 同名候选。
+   所选作品没有第四季，系统打开「修正作品搜索」。保存搜索条件并重新分析时，Provider 仍返回两个可比候选，现候选把文件置为失败并收掉修正入口。
+   复现使用「整理规则」现有的最大 Provider 请求数 `2`，因此首次和再次搜索都需人工选择。
+   `MetadataReviewService.create` 为同一文件生成相同的审核 ID，SQLite 仍尝试插入已存在的候选审核。
+   在现有候选审核写入路径上复用同一文件的记录，将当前候选替换、待选状态和等待项一起写入。保留之前的选择审计，旧确认版本不可用。
+   从同一个文件重新选择有正确季集的作品后，应进入新摘要确认。覆盖「候选确认 → 季集不符 → 只保存查询 → 再次候选确认 → 正确摘要」全链路，确认前保持零 Storage 变更。
+   在 `tests.test_manual_task_engine` 或 `tests.test_task_item_metadata_search` 的现有入口加回归，运行对应模块及 `tests.test_metadata_review`。
+2. **恢复电影的候选详情查询预算。** 从 Files 整理 `哈姆奈特.2025.mkv`，电影策略的最大 Provider 请求数为 `2`。
+   模拟搜索结果只返回 `Hamnet`，电影详情提供译名「哈姆奈特」。Base 使用一次搜索和一次详情查询到达待确认摘要。
+   候选在 `_enrich_candidates` 一律预留一次请求，电影只执行搜索便进入元数据修正。
+   让调用方按既有规则预留实际需要的季集请求，S02+ 校验分支沿用自身预算。补充电影在两次请求内通过译名匹配的回归，并运行 `tests.test_metadata` 和 `tests.test_manual_task_engine`。
+
+完成后运行上述受影响的测试及 `git diff --check`，交付新候选。B 在新候选上复核两段操作并执行本 Task 的 T4 验收。
