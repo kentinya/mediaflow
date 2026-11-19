@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,8 +20,11 @@ from mediaflow.application.strategy_test import (
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.metadata import (
+    CandidateMatchResult,
+    CandidateMatchStatus,
     MediaCandidate,
     MediaType,
+    MetadataIdentificationResult,
     MetadataIdentificationStatus,
 )
 from mediaflow.domain.metadata_correction import (
@@ -300,3 +305,115 @@ class MetadataCorrectionTests(unittest.TestCase):
                 stored = repository.get_metadata_correction(review.review_id)
                 self.assertEqual(stored.status.value, "pending")
                 self.assertNotIn("authorization", output.getvalue().casefold())
+
+
+def mismatch_identification(reason: str = "Season 4 is not available for 'Show' (2024)"):
+    return MetadataIdentificationResult(
+        MetadataIdentificationStatus.METADATA_MISMATCH,
+        identification().recognition_type,
+        match=CandidateMatchResult(CandidateMatchStatus.NOT_FOUND, reasons=(reason,)),
+        query="Show",
+    )
+
+
+class MetadataCorrectionReopenTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.configuration = development_strategy_configuration()
+        self.policy = next(
+            item for item in self.configuration.metadata_policies if item.policy_id == "B"
+        )
+
+    def _resolved_review(self, repository):
+        _, _, item = create_processing_item(repository)
+        service = MetadataCorrectionService(repository, self.configuration.metadata_policies)
+        review = service.create(
+            item,
+            identification(MetadataIdentificationStatus.NOT_FOUND, count=0),
+            self.policy,
+            ParseResult("Show", year=2024, season=4, episode=1, episodes=(1,)),
+        )
+        service.resolve(
+            review.review_id,
+            query="Show",
+            year=2024,
+            media_type="tv",
+            provider_id="2024",
+            actor="operator",
+            note="first decision",
+        )
+        item = replace(
+            repository.get_item(item.item_id),
+            status=TaskItemStatus.PROCESSING,
+            stage="analysis",
+        )
+        repository.upsert_item(item)
+        return service, item, review
+
+    def test_mismatch_reopens_the_same_item_review_and_preserves_its_audit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                service, item, review = self._resolved_review(repository)
+                reopened = service.create(
+                    item,
+                    mismatch_identification(),
+                    self.policy,
+                    ParseResult("Show", year=2024, season=4, episode=1, episodes=(1,)),
+                )
+                self.assertEqual(reopened.review_id, review.review_id)
+                self.assertEqual(reopened.status, MetadataCorrectionStatus.PENDING)
+                self.assertIn("metadata_mismatch | Season 4 is not available", reopened.outcome)
+                self.assertEqual(
+                    repository.get_item(item.item_id).status,
+                    TaskItemStatus.WAITING_METADATA_CORRECTION,
+                )
+                audit = repository.list_metadata_correction_audit(review.review_id)
+                self.assertEqual(len(audit), 1)
+                self.assertEqual(audit[0].note, "first decision")
+
+                service.resolve(
+                    reopened.review_id,
+                    query="Show",
+                    year=2019,
+                    media_type="tv",
+                    actor="operator",
+                    note="second decision",
+                )
+                self.assertEqual(
+                    len(repository.list_metadata_correction_audit(review.review_id)), 2
+                )
+
+    def test_reopen_failure_rolls_back_review_and_item_together(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                service, item, review = self._resolved_review(repository)
+            connection = sqlite3.connect(database)
+            connection.execute(
+                """CREATE TRIGGER reject_correction_reopen BEFORE UPDATE ON task_items
+                WHEN NEW.status='waiting_metadata_correction'
+                BEGIN SELECT RAISE(ABORT, 'injected'); END"""
+            )
+            connection.commit()
+            connection.close()
+            with SQLiteTaskRepository(database) as repository:
+                service = MetadataCorrectionService(
+                    repository, self.configuration.metadata_policies
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    service.create(
+                        item,
+                        mismatch_identification(),
+                        self.policy,
+                        ParseResult("Show", year=2024, season=4, episode=1, episodes=(1,)),
+                    )
+                self.assertEqual(
+                    repository.get_metadata_correction(review.review_id).status,
+                    MetadataCorrectionStatus.RESOLVED,
+                )
+                self.assertEqual(
+                    repository.get_item(item.item_id).status,
+                    TaskItemStatus.PROCESSING,
+                )
+                self.assertEqual(
+                    len(repository.list_metadata_correction_audit(review.review_id)), 1
+                )

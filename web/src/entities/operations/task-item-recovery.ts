@@ -38,6 +38,7 @@ export interface TaskItemDecision {
   readonly year: number | null;
   readonly mediaType: string | null;
   readonly providerId: string | null;
+  readonly reason: string | null;
   readonly canSearch: boolean;
   readonly choices: readonly RecoveryChoice[];
   readonly configuredStrategy: string | null;
@@ -298,6 +299,7 @@ function readDecision(payload: unknown): TaskItemDecision {
     year: nullableCount(source, "year"),
     mediaType: optionalText(source, "media_type"),
     providerId: optionalText(source, "provider_id"),
+    reason: optionalText(source, "reason"),
     canSearch: source["can_search"] === true,
     choices: rawChoices.map((value) => readChoice(value, kind)),
     configuredStrategy: optionalText(source, "configured_strategy"),

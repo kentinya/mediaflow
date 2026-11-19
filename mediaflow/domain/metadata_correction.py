@@ -7,6 +7,20 @@ from typing import Protocol
 
 from mediaflow.domain.task_persistence import PersistentTaskItem
 
+METADATA_CORRECTION_REASON_SEPARATOR = " | "
+
+
+def metadata_correction_outcome(status: str, reason: str | None) -> str:
+    """Store the status plus one bounded readable reason in the existing field."""
+
+    normalized = " ".join(reason.split())[:500] if reason else ""
+    return f"{status}{METADATA_CORRECTION_REASON_SEPARATOR}{normalized}" if normalized else status
+
+
+def metadata_correction_outcome_parts(value: str) -> tuple[str, str | None]:
+    status, separator, reason = value.partition(METADATA_CORRECTION_REASON_SEPARATOR)
+    return status, reason if separator and reason else None
+
 
 class MetadataCorrectionStatus(StrEnum):
     PENDING = "pending"
@@ -64,6 +78,9 @@ class MetadataCorrectionSelection:
 
 
 class MetadataCorrectionRepository(Protocol):
+    def reopen_metadata_correction(
+        self, review: MetadataCorrectionReview, item: PersistentTaskItem
+    ) -> None: ...
     def create_metadata_correction(
         self, review: MetadataCorrectionReview, item: PersistentTaskItem
     ) -> None: ...

@@ -16,6 +16,7 @@ from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.domain.metadata import MediaQueryType, MediaType
+from mediaflow.domain.metadata_correction import metadata_correction_outcome_parts
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.parser import ParseResult
 
@@ -515,13 +516,17 @@ class TaskItemRecoveryService:
                 for candidate in self._repository.list_metadata_review_candidates(blocker_id)[:100]
             ]
         elif kind == "metadata_correction":
+            outcome, reason = metadata_correction_outcome_parts(value.outcome)
+            has_decision = value.corrected_media_type is not None
             document.update(
                 {
                     "provider_id": value.provider_id,
                     "metadata_policy_id": value.metadata_policy_id,
-                    "query": value.original_query,
-                    "year": value.original_year,
-                    "media_type": value.original_media_type,
+                    "query": value.corrected_query or value.original_query,
+                    "year": value.corrected_year if has_decision else value.original_year,
+                    "media_type": value.corrected_media_type or value.original_media_type,
+                    "outcome": outcome,
+                    "reason": reason,
                     "can_search": True,
                 }
             )

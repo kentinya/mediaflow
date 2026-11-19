@@ -18,6 +18,7 @@ from mediaflow.domain.metadata_correction import (
     MetadataCorrectionRepository,
     MetadataCorrectionReview,
     MetadataCorrectionStatus,
+    metadata_correction_outcome,
 )
 from mediaflow.domain.parser import ParseResult
 from mediaflow.domain.task_persistence import PersistentTaskItem, TaskItemStatus
@@ -46,13 +47,23 @@ class MetadataCorrectionService:
         *,
         evidence: PipelineEvidence | None = None,
     ) -> MetadataCorrectionReview:
-        if identification.status is not MetadataIdentificationStatus.NOT_FOUND:
-            raise ValueError("metadata correction requires NotFound outcome")
+        if identification.status not in {
+            MetadataIdentificationStatus.NOT_FOUND,
+            MetadataIdentificationStatus.METADATA_MISMATCH,
+        }:
+            raise ValueError("metadata correction requires NotFound or Mismatch outcome")
         now = datetime.now(UTC)
+        outcome = metadata_correction_outcome(
+            identification.status.value, _identification_reason(identification)
+        )
+        existing = self._repository.get_metadata_correction_for_item(item.item_id)
+        if existing is not None:
+            return self._reopen(existing, item, outcome, evidence, now)
         media_type = {
             MediaQueryType.MOVIE: MediaType.MOVIE,
             MediaQueryType.TV: MediaType.TV,
         }.get(policy.query_type, MediaType.TV if parsed.season is not None else MediaType.MOVIE)
+        original_query = (parsed.title_candidate or identification.query).strip()
         review = MetadataCorrectionReview(
             str(uuid5(NAMESPACE_URL, f"metadata-correction:{item.item_id}")),
             item.task_id,
@@ -62,10 +73,10 @@ class MetadataCorrectionService:
             identification.recognition_type_id,
             policy.policy_id,
             policy.provider_id,
-            identification.query[: self.MAX_QUERY],
+            (original_query or identification.query)[: self.MAX_QUERY],
             parsed.year,
             media_type.value,
-            identification.status.value,
+            outcome,
             MetadataCorrectionStatus.PENDING,
             now,
             now,
@@ -87,6 +98,40 @@ class MetadataCorrectionService:
                     append(evidence)
             self._repository.create_metadata_correction(review, waiting)
         return review
+
+    def _reopen(
+        self,
+        review: MetadataCorrectionReview,
+        item: PersistentTaskItem,
+        outcome: str,
+        evidence: PipelineEvidence | None,
+        now: datetime,
+    ) -> MetadataCorrectionReview:
+        reopened = replace(
+            review,
+            status=MetadataCorrectionStatus.PENDING,
+            outcome=outcome,
+            updated_at=now,
+            decided_at=None,
+            actor=None,
+        )
+        waiting = replace(
+            item,
+            status=TaskItemStatus.WAITING_METADATA_CORRECTION,
+            stage="waiting_metadata_correction",
+            updated_at=now,
+            error=None,
+        )
+        reopen_atomic = getattr(self._repository, "reopen_metadata_correction_with_evidence", None)
+        if evidence is not None and callable(reopen_atomic):
+            reopen_atomic(reopened, waiting, evidence)
+        else:
+            if evidence is not None:
+                append = getattr(self._repository, "append_evidence", None)
+                if callable(append):
+                    append(evidence)
+            self._repository.reopen_metadata_correction(reopened, waiting)
+        return reopened
 
     def resolve(
         self,
@@ -166,3 +211,11 @@ class MetadataCorrectionService:
     def _text(value: str | None, limit: int) -> str | None:
         normalized = " ".join(value.split())[:limit] if value is not None else ""
         return normalized or None
+
+
+def _identification_reason(identification: MetadataIdentificationResult) -> str | None:
+    match = identification.match
+    if match is None:
+        return None
+    reasons = " ".join(" ".join(reason.split()) for reason in match.reasons if reason)
+    return reasons[:500] or None

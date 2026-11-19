@@ -4827,7 +4827,10 @@ class MediaDiscoveryService:
             return None
         if not items:
             return None
-        from mediaflow.application.recovery_decisions import ResolvedContinuationDecisions
+        from mediaflow.application.recovery_decisions import (
+            ResolvedContinuationDecisions,
+            keep_newest_metadata_decisions,
+        )
         from mediaflow.domain.classification_review import ClassificationReviewStatus
         from mediaflow.domain.metadata_correction import MetadataCorrectionStatus
         from mediaflow.domain.metadata_review import MetadataReviewStatus
@@ -4893,6 +4896,7 @@ class MediaDiscoveryService:
                 key = (confirmation.source_storage_id, confirmation.source_path)
                 if key in keys:
                     confirmations[key] = confirmation
+        keep_newest_metadata_decisions(metadata_reviews, metadata_corrections)
         if not (
             confirmations
             or metadata_reviews

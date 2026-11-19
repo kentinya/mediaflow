@@ -455,6 +455,7 @@ function makeBackend() {
           query: "Movie.01",
           year: 2001,
           media_type: "movie",
+          reason: "Season 4 is not available for '黑袍纠察队' (2024)",
           can_search: true,
           choices: [],
           allowed_strategies: [],
@@ -1287,6 +1288,9 @@ describe("ManualOrganizeDialog", () => {
     // its own TaskItem. The card must offer that native decision instead of a
     // dead generic failure.
     expect(within(card()).getByText(/没有找到匹配的作品/)).toBeVisible();
+    expect(
+      within(card()).getByText(/上次修正未通过验证：Season 4 is not available/),
+    ).toBeVisible();
     const title = screen.getByLabelText("搜索标题");
     expect(title).toHaveValue("Movie.01");
     // The native TaskItem decision is the single correction path: the older

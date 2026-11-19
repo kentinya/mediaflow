@@ -127,12 +127,20 @@ class MetadataCache:
             self._entries.pop(key, None)
 
 
+#: Distinguishes an automatic analysis (which keeps the parsed year as evidence)
+#: from an operator-edited search whose explicit year (including a cleared year)
+#: is a real Provider search condition.
+SEARCH_YEAR_NOT_PROVIDED = object()
+
+
 class CandidateMatcher:
     def match(
         self,
         parsed: ParseResult,
         candidates: tuple[MediaCandidate, ...],
         policy: MetadataPolicy,
+        *,
+        year_evidence_only: bool = False,
     ) -> CandidateMatchResult:
         expected_type = _expected_media_type(policy)
         filtered = tuple(
@@ -145,7 +153,10 @@ class CandidateMatcher:
                 CandidateMatchStatus.NOT_FOUND,
                 reasons=("No compatible candidates or usable title",),
             )
-        scored = tuple(self._score(parsed, candidate) for candidate in filtered)
+        scored = tuple(
+            self._score(parsed, candidate, year_evidence_only=year_evidence_only)
+            for candidate in filtered
+        )
         ordered = tuple(
             sorted(
                 scored,
@@ -182,7 +193,12 @@ class CandidateMatcher:
         )
 
     @staticmethod
-    def _score(parsed: ParseResult, candidate: MediaCandidate) -> CandidateScore:
+    def _score(
+        parsed: ParseResult,
+        candidate: MediaCandidate,
+        *,
+        year_evidence_only: bool = False,
+    ) -> CandidateScore:
         query_titles = tuple(
             dict.fromkeys((parsed.title_candidate, *parsed.alternative_title_candidates))
         )
@@ -217,7 +233,19 @@ class CandidateMatcher:
         components = [ScoreComponent("title", title_score, title_reason)]
         year_score = 0.0
         exact_year = False
-        if parsed.year is not None and candidate.year is not None:
+        if year_evidence_only:
+            if parsed.year is not None:
+                components.append(
+                    ScoreComponent(
+                        "year",
+                        0,
+                        f"parsed year {parsed.year} is retained as evidence only; "
+                        "required season/episodes verify the TV work",
+                    )
+                )
+            else:
+                components.append(ScoreComponent("year", 0, "parsed year evidence is unavailable"))
+        elif parsed.year is not None and candidate.year is not None:
             difference = abs(parsed.year - candidate.year)
             if difference == 0:
                 year_score, exact_year = 20.0, True
@@ -279,6 +307,7 @@ class MetadataIdentificationService:
         *,
         force_refresh: bool = False,
         media_type_override: MediaType | None = None,
+        search_year: object = SEARCH_YEAR_NOT_PROVIDED,
     ) -> MetadataIdentificationResult:
         if recognition.recognition_type is None:
             raise ValueError("metadata identification requires a resolved recognition type")
@@ -320,17 +349,56 @@ class MetadataIdentificationService:
                 if media_type_override is not None
                 else policy
             )
+            manual_search = search_year is not SEARCH_YEAR_NOT_PROVIDED
+            if (
+                manual_search
+                and search_year is not None
+                and (isinstance(search_year, bool) or not isinstance(search_year, int))
+            ):
+                raise ValueError("explicit search year must be an integer or None")
+            required_season = (
+                media_type is MediaType.TV
+                and parsed.season is not None
+                and parsed.season >= 2
+                and bool(parsed.episodes)
+            )
+            # An automatic S02+ analysis keeps the filename year as evidence and
+            # searches by title only, so an earlier first-air year cannot hide the
+            # work whose actual season/episodes are the deciding evidence.  An
+            # operator-edited search keeps the submitted year, including a cleared
+            # year, as a real Provider condition.
+            provider_year = (
+                search_year if manual_search else None if required_season else parsed.year
+            )
+            scoring_parsed = replace(parsed, year=search_year) if manual_search else parsed
+            provider_query = replace(scoring_parsed, year=provider_year)
             if media_type is MediaType.TV:
                 consume_request()
                 candidates = tuple(
-                    provider.search_tv(parsed, effective_policy, force_refresh=force_refresh)
+                    provider.search_tv(
+                        provider_query, effective_policy, force_refresh=force_refresh
+                    )
                 )
             else:
                 consume_request()
                 candidates = tuple(
-                    provider.search_movie(parsed, effective_policy, force_refresh=force_refresh)
+                    provider.search_movie(
+                        provider_query, effective_policy, force_refresh=force_refresh
+                    )
                 )
-            match = self._matcher.match(parsed, candidates, effective_policy)
+            if required_season:
+                return self._identify_tv_with_season_validation(
+                    recognition,
+                    scoring_parsed,
+                    candidates,
+                    effective_policy,
+                    provider,
+                    force_refresh,
+                    consume_request,
+                    lambda: remaining_requests,
+                    year_evidence_only=not manual_search,
+                )
+            match = self._matcher.match(scoring_parsed, candidates, effective_policy)
             enriched_identities = {}
             if (
                 match.status is not CandidateMatchStatus.MATCHED
@@ -340,14 +408,14 @@ class MetadataIdentificationService:
                 candidates, enriched_identities = self._enrich_candidates(
                     provider,
                     candidates,
-                    parsed,
+                    scoring_parsed,
                     media_type,
                     effective_policy,
                     force_refresh,
                     consume_request,
                     lambda: remaining_requests,
                 )
-                match = self._matcher.match(parsed, candidates, effective_policy)
+                match = self._matcher.match(scoring_parsed, candidates, effective_policy)
             if match.status is not CandidateMatchStatus.MATCHED or match.best_candidate is None:
                 status = {
                     CandidateMatchStatus.NEED_CONFIRM: MetadataIdentificationStatus.NEED_CONFIRM,
@@ -368,16 +436,21 @@ class MetadataIdentificationService:
                     match.best_candidate.provider_id, effective_policy, force_refresh=force_refresh
                 )
             if media_type is MediaType.TV:
-                identity = self._verify_episodes(
+                verification = self._verify_episodes(
                     provider, identity, parsed, effective_policy, force_refresh, consume_request
                 )
-                if identity is None:
+                if verification.identity is None:
                     return MetadataIdentificationResult(
                         MetadataIdentificationStatus.METADATA_MISMATCH,
                         recognition.recognition_type,
-                        match=match,
+                        match=replace(
+                            match,
+                            reasons=tuple(match.reasons)
+                            + ((verification.reason,) if verification.reason else ()),
+                        ),
                         query=parsed.title_candidate,
                     )
+                identity = verification.identity
             identity = replace(
                 identity,
                 regional_release_date=match.best_candidate.regional_release_date,
@@ -400,6 +473,188 @@ class MetadataIdentificationService:
                 error=error,
             )
 
+    def _identify_tv_with_season_validation(
+        self,
+        recognition,
+        parsed,
+        candidates,
+        policy,
+        provider,
+        force_refresh,
+        consume_request,
+        remaining_requests,
+        *,
+        year_evidence_only,
+    ) -> MetadataIdentificationResult:
+        """Identify an explicit S02+ TV file by its required season and episodes.
+
+        The parsed year stays in scoring evidence only for an automatic analysis.
+        Comparable candidates are verified through the Provider's season boundary;
+        one fully verified work may match automatically, while ambiguity or an
+        exhausted request budget stays an operator candidate decision.
+        """
+
+        match = self._matcher.match(
+            parsed, candidates, policy, year_evidence_only=year_evidence_only
+        )
+        if not match.candidate_scores:
+            return MetadataIdentificationResult(
+                MetadataIdentificationStatus.NOT_FOUND,
+                recognition.recognition_type,
+                match=match,
+                query=parsed.title_candidate,
+            )
+        enriched_identities: dict[str, object] = {}
+        if provider.capabilities.can_get_alternative_titles and policy.max_candidate_enrichments:
+            candidates, enriched_identities = self._enrich_candidates(
+                provider,
+                candidates,
+                parsed,
+                MediaType.TV,
+                policy,
+                force_refresh,
+                consume_request,
+                remaining_requests,
+                year_evidence_only=year_evidence_only,
+                reserve_requests=2,
+            )
+            match = self._matcher.match(
+                parsed, candidates, policy, year_evidence_only=year_evidence_only
+            )
+        comparable = tuple(
+            score
+            for score in match.candidate_scores
+            if score.total_score >= policy.confirmation_threshold
+        )
+        if not comparable:
+            return MetadataIdentificationResult(
+                MetadataIdentificationStatus.NOT_FOUND,
+                recognition.recognition_type,
+                match=replace(
+                    match,
+                    reasons=tuple(match.reasons)
+                    + ("No candidate had enough title evidence for a bounded season check",),
+                ),
+                query=parsed.title_candidate,
+            )
+        passed: list[tuple[object, object]] = []
+        failures: list[str] = []
+        unvalidated: tuple[object, ...] = ()
+        for index, score in enumerate(comparable):
+            if remaining_requests() <= 1:
+                unvalidated = comparable[index:]
+                break
+            consume_request()
+            try:
+                season_identity = provider.get_season(
+                    score.candidate.provider_id,
+                    parsed.season,
+                    policy,
+                    force_refresh=force_refresh,
+                )
+            except MetadataError as error:
+                if error.code is MetadataErrorCode.NOT_FOUND:
+                    failures.append(_season_not_found_reason(score.candidate, parsed.season))
+                    continue
+                raise
+            available = {item.episode for item in season_identity.episode_metadata}
+            missing = tuple(number for number in parsed.episodes if number not in available)
+            if missing:
+                failures.append(_episode_missing_reason(score.candidate, parsed.season, missing))
+                continue
+            passed.append((score, season_identity))
+        selected_scores = tuple(score for score, _ in passed) + tuple(unvalidated)
+        if unvalidated or len(passed) > 1:
+            reasons = tuple(
+                _season_verified_reason(score.candidate, parsed.season, parsed.episodes)
+                for score, _ in passed
+            ) + tuple(
+                _season_unvalidated_reason(score.candidate, parsed.season) for score in unvalidated
+            )
+            best = selected_scores[0]
+            return MetadataIdentificationResult(
+                MetadataIdentificationStatus.NEED_CONFIRM,
+                recognition.recognition_type,
+                match=CandidateMatchResult(
+                    CandidateMatchStatus.NEED_CONFIRM,
+                    best.candidate,
+                    best.total_score,
+                    selected_scores,
+                    reasons,
+                    tuple(failures[:6]),
+                ),
+                query=parsed.title_candidate,
+            )
+        if len(passed) == 1:
+            score, season_identity = passed[0]
+            identity = enriched_identities.get(score.candidate.provider_id)
+            if identity is None:
+                if remaining_requests() <= 0:
+                    return MetadataIdentificationResult(
+                        MetadataIdentificationStatus.NEED_CONFIRM,
+                        recognition.recognition_type,
+                        match=CandidateMatchResult(
+                            CandidateMatchStatus.NEED_CONFIRM,
+                            score.candidate,
+                            score.total_score,
+                            (score,),
+                            (_season_unvalidated_reason(score.candidate, parsed.season),),
+                            (),
+                        ),
+                        query=parsed.title_candidate,
+                    )
+                consume_request()
+                identity = provider.get_tv(
+                    score.candidate.provider_id, policy, force_refresh=force_refresh
+                )
+            available = {item.episode: item for item in season_identity.episode_metadata}
+            selected = tuple(available[number] for number in parsed.episodes)
+            identity = replace(
+                identity,
+                season=parsed.season,
+                episode=parsed.episodes[0],
+                episodes=parsed.episodes,
+                episode_title=selected[0].title,
+                episode_metadata=selected,
+                regional_release_date=score.candidate.regional_release_date,
+                confidence=score.total_score,
+                matched_by="candidate_matcher",
+                recognition_type_id=recognition.recognition_type.type_id,
+            )
+            reason = _season_verified_reason(score.candidate, parsed.season, parsed.episodes)
+            verified_score = replace(
+                score,
+                components=tuple(score.components)
+                + (ScoreComponent("season_episodes", 0, reason),),
+            )
+            return MetadataIdentificationResult(
+                MetadataIdentificationStatus.MATCHED,
+                recognition.recognition_type,
+                identity,
+                CandidateMatchResult(
+                    CandidateMatchStatus.MATCHED,
+                    score.candidate,
+                    score.total_score,
+                    (verified_score,),
+                    (reason,),
+                    tuple(failures[:6]),
+                ),
+                parsed.title_candidate,
+            )
+        return MetadataIdentificationResult(
+            MetadataIdentificationStatus.METADATA_MISMATCH,
+            recognition.recognition_type,
+            match=CandidateMatchResult(
+                CandidateMatchStatus.NOT_FOUND,
+                best_candidate=None,
+                score=0,
+                candidate_scores=(),
+                reasons=tuple(failures[:8])
+                or ("No comparable work verified the required season/episodes",),
+            ),
+            query=parsed.title_candidate,
+        )
+
     @staticmethod
     def _enrich_candidates(
         provider,
@@ -410,6 +665,9 @@ class MetadataIdentificationService:
         force_refresh,
         consume_request,
         remaining_requests,
+        *,
+        year_evidence_only: bool = False,
+        reserve_requests: int = 1,
     ):
         """Enrich only plausible candidates; year is a fetch filter, never match evidence alone."""
         preliminary = CandidateMatcher()
@@ -417,22 +675,33 @@ class MetadataIdentificationService:
         for search_rank, candidate in enumerate(candidates[: policy.max_candidates]):
             if candidate.media_type is not media_type:
                 continue
-            if parsed.year is not None and candidate.year is not None:
+            if not year_evidence_only and parsed.year is not None and candidate.year is not None:
                 year_distance = abs(parsed.year - candidate.year)
                 if year_distance > 1:
                     continue
             else:
                 year_distance = 2
-            score = preliminary._score(parsed, candidate).total_score
-            plausible.append((year_distance, -score, search_rank, candidate))
-        plausible.sort(key=lambda item: item[:3])
-        reserve = (
-            1 if media_type is MediaType.TV and parsed.season is not None and parsed.episodes else 0
+            score = preliminary._score(
+                parsed, candidate, year_evidence_only=year_evidence_only
+            ).total_score
+            sort_key = (
+                (-score, search_rank)
+                if year_evidence_only
+                else (
+                    year_distance,
+                    -score,
+                    search_rank,
+                )
+            )
+            plausible.append((sort_key, candidate))
+        plausible.sort(key=lambda item: item[0])
+        limit = min(
+            policy.max_candidate_enrichments,
+            max(0, remaining_requests() - reserve_requests),
         )
-        limit = min(policy.max_candidate_enrichments, max(0, remaining_requests() - reserve))
         enriched = {}
         replacements = {}
-        for _, _, _, candidate in plausible[:limit]:
+        for _, candidate in plausible[:limit]:
             consume_request()
             identity = (
                 provider.get_movie(candidate.provider_id, policy, force_refresh=force_refresh)
@@ -479,6 +748,8 @@ class MetadataIdentificationService:
         policy: MetadataPolicy,
         *,
         force_refresh: bool = False,
+        parsed: ParseResult | None = None,
+        missing_identity_is_mismatch: bool = False,
     ) -> MetadataIdentificationResult:
         if recognition.recognition_type is None:
             raise ValueError("metadata identification requires a resolved recognition type")
@@ -490,6 +761,21 @@ class MetadataIdentificationService:
                 identity = provider.get_movie(provider_id, policy, force_refresh=force_refresh)
             else:
                 identity = provider.get_tv(provider_id, policy, force_refresh=force_refresh)
+            if parsed is not None and media_type is MediaType.TV:
+                verification = self._verify_episodes(
+                    provider, identity, parsed, policy, force_refresh, None
+                )
+                if verification.identity is None:
+                    return MetadataIdentificationResult(
+                        MetadataIdentificationStatus.METADATA_MISMATCH,
+                        recognition.recognition_type,
+                        match=CandidateMatchResult(
+                            CandidateMatchStatus.NOT_FOUND,
+                            reasons=((verification.reason,) if verification.reason else ()),
+                        ),
+                        query=provider_id,
+                    )
+                identity = verification.identity
             identity = replace(
                 identity,
                 confidence=100,
@@ -503,6 +789,17 @@ class MetadataIdentificationService:
                 query=provider_id,
             )
         except MetadataError as error:
+            if error.code is MetadataErrorCode.NOT_FOUND and missing_identity_is_mismatch:
+                reason = (
+                    f"Provider {media_type.value} identity {provider_id!r} was not found; "
+                    "enter another identity or correct the search"
+                )
+                return MetadataIdentificationResult(
+                    MetadataIdentificationStatus.METADATA_MISMATCH,
+                    recognition.recognition_type,
+                    match=CandidateMatchResult(CandidateMatchStatus.NOT_FOUND, reasons=(reason,)),
+                    query=provider_id,
+                )
             return MetadataIdentificationResult(
                 MetadataIdentificationStatus.PROVIDER_ERROR,
                 recognition.recognition_type,
@@ -513,25 +810,95 @@ class MetadataIdentificationService:
     @staticmethod
     def _verify_episodes(provider, identity, parsed, policy, force_refresh, consume_request):
         if parsed.season is None or not parsed.episodes:
-            return replace(
-                identity, season=parsed.season, episode=parsed.episode, episodes=parsed.episodes
+            return _EpisodeVerification(
+                replace(
+                    identity,
+                    season=parsed.season,
+                    episode=parsed.episode,
+                    episodes=parsed.episodes,
+                ),
+                None,
             )
-        consume_request()
-        season = provider.get_season(
-            identity.provider_id, parsed.season, policy, force_refresh=force_refresh
-        )
+        if consume_request is not None:
+            consume_request()
+        try:
+            season = provider.get_season(
+                identity.provider_id, parsed.season, policy, force_refresh=force_refresh
+            )
+        except MetadataError as error:
+            if error.code is MetadataErrorCode.NOT_FOUND:
+                return _EpisodeVerification(None, _season_not_found_reason(identity, parsed.season))
+            raise
         available = {item.episode: item for item in season.episode_metadata}
-        if any(number not in available for number in parsed.episodes):
-            return None
+        missing = tuple(number for number in parsed.episodes if number not in available)
+        if missing:
+            return _EpisodeVerification(
+                None, _episode_missing_reason(identity, parsed.season, missing)
+            )
         selected = tuple(available[number] for number in parsed.episodes)
-        return replace(
-            identity,
-            season=parsed.season,
-            episode=parsed.episodes[0],
-            episodes=parsed.episodes,
-            episode_title=selected[0].title,
-            episode_metadata=selected,
+        return _EpisodeVerification(
+            replace(
+                identity,
+                season=parsed.season,
+                episode=parsed.episodes[0],
+                episodes=parsed.episodes,
+                episode_title=selected[0].title,
+                episode_metadata=selected,
+            ),
+            None,
         )
+
+
+@dataclass(frozen=True)
+class _EpisodeVerification:
+    identity: object | None
+    reason: str | None
+
+
+def _candidate_label(candidate) -> str:
+    year = f" ({candidate.year})" if getattr(candidate, "year", None) is not None else ""
+    return f"{candidate.title!r}{year}"
+
+
+def _format_episodes(values) -> str:
+    ordered = sorted(dict.fromkeys(values))
+    if not ordered:
+        return ""
+    ranges: list[str] = []
+    start = previous = ordered[0]
+    for number in ordered[1:]:
+        if number == previous + 1:
+            previous = number
+            continue
+        ranges.append(str(start) if start == previous else f"{start}-{previous}")
+        start = previous = number
+    ranges.append(str(start) if start == previous else f"{start}-{previous}")
+    return ", ".join(ranges)
+
+
+def _season_not_found_reason(candidate, season: int) -> str:
+    return f"Season {season} is not available for {_candidate_label(candidate)}"
+
+
+def _episode_missing_reason(candidate, season: int, missing) -> str:
+    return (
+        f"Season {season} for {_candidate_label(candidate)} is missing "
+        f"episode(s) {_format_episodes(missing)}"
+    )
+
+
+def _season_verified_reason(candidate, season: int, episodes) -> str:
+    return (
+        f"Season {season} episodes {_format_episodes(episodes)} verified on "
+        f"{_candidate_label(candidate)}"
+    )
+
+
+def _season_unvalidated_reason(candidate, season: int) -> str:
+    return (
+        f"Season {season} for {_candidate_label(candidate)} was not verified within "
+        "the Provider request budget"
+    )
 
 
 def _expected_media_type(policy: MetadataPolicy) -> MediaType | None:

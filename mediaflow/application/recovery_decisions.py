@@ -86,6 +86,27 @@ def continuation_decision_item_ids(
     return (source_item_id,)[:limit]
 
 
+def keep_newest_metadata_decisions(
+    metadata_reviews: dict[tuple[str, str], object],
+    metadata_corrections: dict[tuple[str, str], object],
+) -> None:
+    """Keep only the newest resolved Metadata decision per source.
+
+    A candidate selection can prove season/episodes wrong on re-analysis and
+    publish a newer correction for the same item; the opposite order is also
+    possible when a later correction search finds ambiguous candidates.  Both
+    decisions are legal history, but exactly one may drive the next analysis.
+    """
+
+    for key in set(metadata_reviews) & set(metadata_corrections):
+        review_time = getattr(metadata_reviews[key], "updated_at", None)
+        correction_time = getattr(metadata_corrections[key], "updated_at", None)
+        if review_time is None or (correction_time is not None and correction_time >= review_time):
+            metadata_reviews.pop(key, None)
+        else:
+            metadata_corrections.pop(key, None)
+
+
 def collect_resolved_continuation_decisions(
     repository,
     *,
@@ -158,6 +179,7 @@ def collect_resolved_continuation_decisions(
             continue
         recognition_reviews[(review.source_storage_id, review.source_path)] = review
 
+    keep_newest_metadata_decisions(metadata_reviews, metadata_corrections)
     return ResolvedContinuationDecisions(
         confirmations=confirmations,
         metadata_reviews=metadata_reviews,

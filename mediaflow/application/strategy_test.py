@@ -405,6 +405,7 @@ class StrategyTestRunner:
         storage_id: str = "strategy-test",
         metadata_selection: MetadataSelection | None = None,
         metadata_correction: MetadataCorrectionSelection | None = None,
+        metadata_correction_mismatch_editable: bool = False,
         metadata_identity: MediaIdentity | None = None,
         synthetic_identity: MediaIdentity | None = None,
         durable_identity: MediaIdentity | None = None,
@@ -638,6 +639,8 @@ class StrategyTestRunner:
                         metadata_correction.provider_id,
                         corrected_type,
                         metadata_policy,
+                        parsed=parsed,
+                        missing_identity_is_mismatch=metadata_correction_mismatch_editable,
                     )
                 else:
                     corrected = replace(
@@ -650,6 +653,7 @@ class StrategyTestRunner:
                         corrected,
                         metadata_policy,
                         media_type_override=corrected_type,
+                        search_year=metadata_correction.year,
                     )
             elif metadata_selection is not None:
                 if metadata_selection.recognition_type != recognition.recognition_type_id:
@@ -683,6 +687,8 @@ class StrategyTestRunner:
                     metadata_selection.provider_id,
                     selected_type,
                     metadata_policy,
+                    parsed=parsed,
+                    missing_identity_is_mismatch=True,
                 )
             else:
                 metadata = identification.identify(recognition, parsed, metadata_policy)

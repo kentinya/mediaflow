@@ -28,7 +28,14 @@ from unittest.mock import patch
 
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
-from mediaflow.domain.metadata import MediaCandidate, MediaType
+from mediaflow.domain.metadata import (
+    EpisodeIdentity,
+    MediaCandidate,
+    MediaIdentity,
+    MediaType,
+    MetadataError,
+    MetadataErrorCode,
+)
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 from tests.test_automation_entrance_recovery import (
@@ -105,6 +112,76 @@ class RecordingYearProvider(SyntheticMetadataProvider):
     def get_tv(self, provider_id, policy=None, **kwargs):
         self.identity_lookups.append(provider_id)
         return super().get_tv(provider_id, policy, **kwargs)
+
+
+class ReopeningProvider(RecordingYearProvider):
+    """The same year-sensitive provider, with a real unknown TV identity."""
+
+    def get_tv(self, provider_id, policy=None, **kwargs):
+        self.identity_lookups.append(provider_id)
+        if provider_id == "bad":
+            raise MetadataError(MetadataErrorCode.NOT_FOUND, "identity not found")
+        return super().get_tv(provider_id, policy, **kwargs)
+
+
+class CandidateMismatchProvider(SyntheticMetadataProvider):
+    """Two same-title/year candidates whose seasons only one can satisfy."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            (
+                MediaCandidate("tmdb", "2019", MediaType.TV, "Probe", year=2025),
+                MediaCandidate("tmdb", "wrong", MediaType.TV, "Probe", year=2025),
+            ),
+            episodes=(1, 2),
+        )
+        self.season_calls = []
+
+    def get_season(self, provider_id, season, policy=None, **kwargs):
+        self.calls += 1
+        self.season_calls.append((provider_id, season))
+        if provider_id == "wrong":
+            raise MetadataError(MetadataErrorCode.NOT_FOUND, "season not found")
+        return super().get_season(provider_id, season, policy, **kwargs)
+
+
+class SeasonAwareTheBoysProvider(SyntheticMetadataProvider):
+    """Two same-title works: only the 2019 identity owns S04E01-E08."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            (
+                MediaCandidate("tmdb", "2024", MediaType.TV, "黑袍纠察队", year=2024),
+                MediaCandidate("tmdb", "2019", MediaType.TV, "黑袍纠察队", year=2019),
+            )
+        )
+        self.search_years = []
+        self.season_calls = []
+
+    def search_tv(self, query, policy=None, **kwargs):
+        self.calls += 1
+        self.search_years.append(query.year)
+        if query.title_candidate != "黑袍纠察队":
+            return ()
+        return self._candidates
+
+    def get_season(self, provider_id, season, policy=None, **kwargs):
+        self.calls += 1
+        self.season_calls.append((provider_id, season))
+        if provider_id == "2024":
+            raise MetadataError(MetadataErrorCode.NOT_FOUND, "season not found")
+        if provider_id == "2019" and season == 4:
+            return MediaIdentity(
+                "tmdb",
+                provider_id,
+                MediaType.TV,
+                "黑袍纠察队",
+                season=season,
+                episode_metadata=tuple(
+                    EpisodeIdentity(number, f"Episode {number}") for number in range(1, 9)
+                ),
+            )
+        return super().get_season(provider_id, season, policy, **kwargs)
 
 
 class MetadataSearchYearTests(unittest.TestCase):
@@ -588,6 +665,252 @@ class MetadataSearchYearTests(unittest.TestCase):
             )
             self.assertEqual(["901"], provider.identity_lookups)
             self.assertTrue((value.source_root / TV_MEDIA).exists())
+
+    def test_s04_batch_uses_the_season_verified_work_and_keeps_a_mixed_correction_sibling(self):
+        provider = SeasonAwareTheBoysProvider()
+        with entrance_journey(
+            self,
+            recognition_rules=[TV_RULE],
+            provider_registry=MetadataProviderRegistry((provider,)),
+            viewer_token=VIEWER_TOKEN,
+        ) as value:
+            for number in range(1, 9):
+                self._write_media(value, f"黑袍纠察队.2024.S04E{number:02d}.mkv")
+            self._write_media(value, "未知剧.2024.S04E01.mkv")
+            self._run_cli(value, "organize", "--execute", "--limit", "20")
+            (task,) = value.repository.list_tasks()
+            items = value.repository.list_items(task.task_id)
+            for _ in range(20):
+                settled = {
+                    "waiting_confirm",
+                    "waiting_metadata_correction",
+                    "failed",
+                }
+                if all(item.status.value in settled for item in items):
+                    break
+                self._resident_pass(value, prefix="the-boys-s04")
+                items = value.repository.list_items(task.task_id)
+            self.assertEqual(len(items), 9)
+            by_title = {}
+            for item in items:
+                evidence = value.repository.list_evidence_for_item(item.item_id, limit=4)
+                metadata = next(
+                    (
+                        section.value
+                        for record in evidence
+                        if (section := record.section("metadata")).available
+                        and section.value is not None
+                    ),
+                    {},
+                )
+                by_title[item.source_path] = (item, metadata)
+            for number in range(1, 9):
+                name = f"黑袍纠察队.2024.S04E{number:02d}.mkv"
+                item, metadata = by_title[name]
+                self.assertEqual("success", item.status.value, (name, item))
+                self.assertIn(f"S04E{number:02d}", str(item.destination_path), item)
+                self.assertEqual("2019", metadata.get("providerId"), (name, metadata))
+                self.assertEqual(4, metadata.get("season"), (name, metadata))
+                self.assertEqual([number], metadata.get("episodes"), (name, metadata))
+                self.assertIn(
+                    f"Season 4 episodes {number} verified",
+                    " ".join(metadata.get("matchReasons") or ()),
+                    (name, metadata),
+                )
+            unknown, unknown_metadata = by_title["未知剧.2024.S04E01.mkv"]
+            self.assertEqual("waiting_metadata_correction", unknown.status.value)
+            status, detail = self.request(
+                value,
+                "GET",
+                f"/api/tasks/{task.task_id}/items/{unknown.item_id}/recovery",
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual("metadata_correction", detail["decision"]["kind"])
+            self.assertIn("No compatible candidates", detail["decision"]["reason"])
+            self.assertEqual(unknown.item_id, detail["item_id"])
+            self.assertEqual([None] * 9, provider.search_years)
+            self.assertEqual(
+                8,
+                len([path for path in value.target_root.rglob("*.mkv") if path.is_file()]),
+            )
+            self.assertFalse(
+                any(
+                    "未知剧" in path.name for path in value.target_root.rglob("*") if path.is_file()
+                )
+            )
+
+    def test_wrong_saved_tv_identity_reopens_the_same_editable_decision(self):
+        provider = ReopeningProvider()
+        with self.correction_journey(provider, tv=True) as value:
+            task_id, item_id, review_id = self._ids(value)
+            version = self._checkpoint_version(value, task_id, item_id)
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task_id}/items/{item_id}/recovery/decision",
+                {
+                    "kind": "metadata_correction",
+                    "expectedCheckpointVersion": version,
+                    "query": "Probe",
+                    "year": 2025,
+                    "mediaType": "tv",
+                    "providerId": "bad",
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task_id}/items/{item_id}/recovery/continue",
+                {
+                    "expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"],
+                },
+            )
+            self.assertEqual(202, status, continued)
+            self.assertIsNotNone(self._resident_pass(value, prefix="bad-identity"))
+            item = value.repository.get_item(item_id)
+            self.assertEqual("waiting_metadata_correction", item.status.value, item)
+            reopened = value.repository.get_metadata_correction(review_id)
+            self.assertEqual("pending", reopened.status.value)
+            self.assertEqual(1, len(value.repository.list_metadata_correction_audit(review_id)))
+
+            status, detail = self.request(
+                value,
+                "GET",
+                f"/api/tasks/{task_id}/items/{item_id}/recovery",
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual("metadata_correction", detail["decision"]["kind"])
+            self.assertEqual(review_id, detail["decision"]["review_id"])
+            self.assertIn("was not found", detail["decision"]["reason"])
+            self.assertEqual("Probe", detail["decision"]["query"])
+            self.assertEqual(1, len(value.repository.list_metadata_correction_audit(review_id)))
+
+            status, corrected = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task_id}/items/{item_id}/recovery/decision",
+                {
+                    "kind": "metadata_correction",
+                    "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                    "query": "Probe",
+                    "year": 2024,
+                    "mediaType": "tv",
+                    "providerId": "901",
+                },
+            )
+            self.assertEqual(200, status, corrected)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task_id}/items/{item_id}/recovery/continue",
+                {
+                    "expectedCheckpointVersion": corrected["checkpoint"]["checkpoint_version"],
+                },
+            )
+            self.assertEqual(202, status, continued)
+            self.assertIsNotNone(self._resident_pass(value, prefix="corrected-identity"))
+            item = value.repository.get_item(item_id)
+            self.assertEqual("waiting_confirm", item.status.value, item)
+            self.assertEqual(2, len(value.repository.list_metadata_correction_audit(review_id)))
+            self.assertTrue((value.source_root / TV_MEDIA).exists())
+            self.assertFalse(any(path.is_file() for path in value.target_root.rglob("*")))
+
+    def test_failed_candidate_selection_then_correction_uses_only_the_newest_decision(self):
+        provider = CandidateMismatchProvider()
+        with entrance_journey(
+            self,
+            recognition_rules=[TV_RULE],
+            provider_registry=MetadataProviderRegistry((provider,)),
+            viewer_token=VIEWER_TOKEN,
+        ) as value:
+            self._write_media(value, TV_MEDIA)
+            self._run_cli(value, "organize", "--execute", "--limit", "5")
+            (task,) = value.repository.list_tasks()
+            (item,) = value.repository.list_items(task.task_id)
+            for _ in range(8):
+                if item.status.value in {
+                    "waiting_metadata",
+                    "waiting_metadata_correction",
+                    "waiting_confirm",
+                }:
+                    break
+                self._resident_pass(value, prefix="candidate-start")
+                item = value.repository.get_item(item.item_id)
+            self.assertEqual("waiting_metadata", item.status.value, item)
+
+            status, detail = self.request(
+                value,
+                "GET",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery",
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual("metadata", detail["decision"]["kind"])
+            wrong = next(
+                choice
+                for choice in detail["decision"]["candidates"]
+                if choice["provider_id"] == "wrong"
+            )
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "metadata",
+                    "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                    "candidateRank": wrong["rank"],
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/continue",
+                {
+                    "expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"],
+                },
+            )
+            self.assertEqual(202, status, continued)
+            self.assertIsNotNone(self._resident_pass(value, prefix="candidate-wrong"))
+            item = value.repository.get_item(item.item_id)
+            self.assertEqual("waiting_metadata_correction", item.status.value, item)
+
+            status, correction = self.request(
+                value,
+                "GET",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery",
+            )
+            self.assertEqual(200, status, correction)
+            self.assertEqual("metadata_correction", correction["decision"]["kind"])
+            self.assertIn("Season 1", correction["decision"]["reason"])
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "metadata_correction",
+                    "expectedCheckpointVersion": correction["checkpoint"]["checkpoint_version"],
+                    "query": "Probe",
+                    "year": 2025,
+                    "mediaType": "tv",
+                    "providerId": "2019",
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/continue",
+                {
+                    "expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"],
+                },
+            )
+            self.assertEqual(202, status, continued)
+            self.assertIsNotNone(self._resident_pass(value, prefix="newest-decision"))
+            item = value.repository.get_item(item.item_id)
+            self.assertEqual("waiting_confirm", item.status.value, item)
+            self.assertTrue((value.source_root / TV_MEDIA).exists())
+            self.assertFalse(any(path.is_file() for path in value.target_root.rglob("*")))
 
     def _ids(self, value):
         (task,) = value.repository.list_tasks()

@@ -262,6 +262,7 @@ function metadataCorrectionRecovery(resolved = false): Record<string, unknown> {
           query: "Probe",
           year: 2001,
           media_type: "movie",
+          reason: "Season 4 is not available for '黑袍纠察队' (2024)",
           can_search: true,
           choices: [],
           allowed_strategies: [],
@@ -515,6 +516,9 @@ describe("TaskItemRecoveryPanel", () => {
 
     const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
     await within(panel).findByLabelText("搜索标题");
+    expect(
+      within(panel).getByText(/上次修正未通过验证：Season 4 is not available/),
+    ).toBeVisible();
     const year = within(panel).getByLabelText("年份(可留空)");
     // The saved original year 2001 prefills the correction form.
     expect(year).toHaveValue(2001);
@@ -690,6 +694,9 @@ describe("TaskItemRecoveryPanel", () => {
 
     const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
     await within(panel).findByLabelText("搜索标题");
+    expect(
+      within(panel).getByText(/上次修正未通过验证：Season 4 is not available/),
+    ).toBeVisible();
     const year = within(panel).getByLabelText("年份(可留空)");
     await user.clear(year);
     await user.type(year, "1869");

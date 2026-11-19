@@ -522,7 +522,11 @@ class MediaOrganizerService:
                     return item
                 if (
                     strategy.metadata
-                    and strategy.metadata.status is MetadataIdentificationStatus.NOT_FOUND
+                    and strategy.metadata.status
+                    in {
+                        MetadataIdentificationStatus.NOT_FOUND,
+                        MetadataIdentificationStatus.METADATA_MISMATCH,
+                    }
                     and strategy.metadata_policy
                     and self._task_coordinator
                     and tracked_item
@@ -1171,6 +1175,7 @@ class MediaOrganizerService:
             metadata_correction=self._metadata_corrections.get(
                 (resource_library.storage_id, storage_path)
             ),
+            metadata_correction_mismatch_editable=True,
             classification_selection=self._classification_selections.get(
                 (resource_library.storage_id, storage_path)
             ),
@@ -1720,7 +1725,11 @@ class MediaOrganizerService:
                 else "WAITING_METADATA_CORRECTION"
                 if item.strategy
                 and item.strategy.metadata
-                and item.strategy.metadata.status is MetadataIdentificationStatus.NOT_FOUND
+                and item.strategy.metadata.status
+                in {
+                    MetadataIdentificationStatus.NOT_FOUND,
+                    MetadataIdentificationStatus.METADATA_MISMATCH,
+                }
                 else "WAITING_CLASSIFICATION"
                 if item.strategy
                 and item.strategy.classification
@@ -1792,7 +1801,10 @@ class MediaOrganizerService:
                     MetadataIdentificationStatus.AMBIGUOUS,
                 }:
                     return "waiting_metadata"
-                if metadata.status is MetadataIdentificationStatus.NOT_FOUND:
+                if metadata.status in {
+                    MetadataIdentificationStatus.NOT_FOUND,
+                    MetadataIdentificationStatus.METADATA_MISMATCH,
+                }:
                     return "waiting_metadata_correction"
             if (
                 strategy.classification is not None

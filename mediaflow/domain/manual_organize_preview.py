@@ -227,7 +227,7 @@ def manual_preview_plan_problem(plan: dict[str, object] | None) -> str | None:
             status = metadata.get("status")
             if status in ("need_confirm", "ambiguous"):
                 return "metadata"
-            if status == "not_found":
+            if status in ("not_found", "metadata_mismatch"):
                 return "metadata_correction"
         classification = analysis.get("classification")
         if isinstance(classification, dict) and classification.get("status") == "unclassified":

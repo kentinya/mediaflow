@@ -1975,6 +1975,13 @@ function DecisionForm(props: {
           {DIALOG_DECISION_INTROS[decision.kind]}
         </p>
       ) : null}
+      {decision.kind === "metadata_correction" && decision.reason ? (
+        <p
+          className={dialog ? "mf-organize-decision-hint" : "mf-dashboard-meta"}
+        >
+          上次修正未通过验证：{decision.reason}
+        </p>
+      ) : null}
 
       {!dialog &&
         decision.kind === "recognition" &&

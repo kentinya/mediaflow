@@ -949,3 +949,278 @@ class MetadataServiceAndCacheTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SeasonRecordingProvider(FakeProvider):
+    """One local TV Provider whose season availability is explicit per candidate."""
+
+    capabilities = ProviderCapabilities(True, True, True, True, True, False, False)
+
+    def __init__(self, candidates, seasons) -> None:
+        super().__init__()
+        self.candidates = tuple(candidates)
+        self.seasons = dict(seasons)
+        self.search_years = []
+
+    def search_tv(self, query, policy=None, **kwargs):
+        self.search_years.append(query.year)
+        self.calls.append("search_tv")
+        return self.candidates
+
+    def get_tv(self, provider_id, policy=None, **kwargs):
+        self.calls.append(f"get_tv:{provider_id}")
+        candidate = next(
+            (item for item in self.candidates if item.provider_id == provider_id), None
+        )
+        if candidate is None:
+            raise MetadataError(MetadataErrorCode.NOT_FOUND, "identity not found")
+        return MediaIdentity(
+            "tmdb",
+            provider_id,
+            MediaType.TV,
+            candidate.title,
+            candidate.original_title,
+            candidate.year,
+        )
+
+    def get_season(self, provider_id, season, policy=None, **kwargs):
+        self.calls.append(f"get_season:{provider_id}:{season}")
+        episodes = self.seasons.get(provider_id)
+        if episodes is None:
+            raise MetadataError(MetadataErrorCode.NOT_FOUND, "season not found")
+        return MediaIdentity(
+            "tmdb",
+            provider_id,
+            MediaType.TV,
+            "Season",
+            season=season,
+            episode_metadata=tuple(
+                EpisodeIdentity(number, f"Episode {number}") for number in episodes
+            ),
+        )
+
+
+class TVSeasonIdentificationTests(unittest.TestCase):
+    """S02+ TV files are verified by season/episodes, not the filename premiere year."""
+
+    def setUp(self) -> None:
+        self.policy = policy(
+            MediaType.TV,
+            max_provider_requests=6,
+            confirmation_threshold=70,
+            automatic_threshold=90,
+        )
+        self.recognition = RecognitionResult(RecognitionType("B", "B"), "rule-b")
+        self.parsed = ParseResult("黑袍纠察队", year=2024, season=4, episode=1, episodes=(1,))
+
+    @staticmethod
+    def candidates():
+        return (
+            MediaCandidate("tmdb", "2024", MediaType.TV, "黑袍纠察队", year=2024),
+            MediaCandidate("tmdb", "2019", MediaType.TV, "黑袍纠察队", year=2019),
+        )
+
+    def test_automatic_s02_search_keeps_year_as_evidence_and_matches_the_verified_work(self):
+        provider = SeasonRecordingProvider(self.candidates(), {"2019": tuple(range(1, 9))})
+        result = MetadataIdentificationService(MetadataProviderRegistry((provider,))).identify(
+            self.recognition, self.parsed, self.policy
+        )
+
+        self.assertEqual(result.status, MetadataIdentificationStatus.MATCHED)
+        self.assertEqual(result.identity.provider_id, "2019")
+        self.assertEqual(result.identity.season, 4)
+        self.assertEqual(result.identity.episodes, (1,))
+        self.assertEqual(provider.search_years, [None])
+        year_component = next(
+            item for item in result.match.candidate_scores[0].components if item.name == "year"
+        )
+        self.assertEqual(year_component.score, 0)
+        self.assertIn("evidence only", year_component.reason)
+        self.assertIn("Season 4 episodes 1 verified", result.match.reasons[0])
+        self.assertIn("Season 4 is not available", result.match.warnings[0])
+
+    def test_candidate_order_does_not_change_the_single_verified_work(self):
+        outcomes = []
+        for candidates in (self.candidates(), tuple(reversed(self.candidates()))):
+            provider = SeasonRecordingProvider(candidates, {"2019": tuple(range(1, 9))})
+            result = MetadataIdentificationService(MetadataProviderRegistry((provider,))).identify(
+                self.recognition, self.parsed, self.policy
+            )
+            outcomes.append(result.identity.provider_id)
+        self.assertEqual(outcomes, ["2019", "2019"])
+
+    def test_multiple_verified_works_require_candidate_confirmation(self):
+        provider = SeasonRecordingProvider(
+            self.candidates(),
+            {"2024": tuple(range(1, 9)), "2019": tuple(range(1, 9))},
+        )
+        result = MetadataIdentificationService(MetadataProviderRegistry((provider,))).identify(
+            self.recognition, self.parsed, self.policy
+        )
+
+        self.assertEqual(result.status, MetadataIdentificationStatus.NEED_CONFIRM)
+        self.assertEqual(
+            {score.candidate.provider_id for score in result.match.candidate_scores},
+            {"2019", "2024"},
+        )
+        self.assertTrue(
+            all("verified" in reason for reason in result.match.reasons),
+            result.match.reasons,
+        )
+
+    def test_season_missing_episode_is_a_readable_mismatch(self):
+        provider = SeasonRecordingProvider(self.candidates(), {"2024": (2, 3), "2019": (2, 3)})
+        result = MetadataIdentificationService(MetadataProviderRegistry((provider,))).identify(
+            self.recognition, self.parsed, self.policy
+        )
+
+        self.assertEqual(result.status, MetadataIdentificationStatus.METADATA_MISMATCH)
+        self.assertEqual(result.match.candidate_scores, ())
+        self.assertTrue(
+            any("missing episode(s) 1" in reason for reason in result.match.reasons),
+            result.match.reasons,
+        )
+
+    def test_all_comparable_works_without_the_season_are_a_readable_mismatch(self):
+        provider = SeasonRecordingProvider(self.candidates(), {})
+        result = MetadataIdentificationService(MetadataProviderRegistry((provider,))).identify(
+            self.recognition, self.parsed, self.policy
+        )
+
+        self.assertEqual(result.status, MetadataIdentificationStatus.METADATA_MISMATCH)
+        self.assertEqual(result.match.candidate_scores, ())
+        self.assertEqual(len(result.match.reasons), 2)
+        self.assertTrue(
+            all("Season 4 is not available" in reason for reason in result.match.reasons),
+            result.match.reasons,
+        )
+
+    def test_exhausted_budget_keeps_unvalidated_candidates_for_confirmation(self):
+        provider = SeasonRecordingProvider(self.candidates(), {"2019": tuple(range(1, 9))})
+        result = MetadataIdentificationService(MetadataProviderRegistry((provider,))).identify(
+            self.recognition,
+            self.parsed,
+            replace(self.policy, max_provider_requests=3),
+        )
+
+        self.assertEqual(result.status, MetadataIdentificationStatus.NEED_CONFIRM)
+        self.assertEqual(len(result.match.candidate_scores), 2)
+        self.assertTrue(
+            any("request budget" in reason for reason in result.match.reasons),
+            result.match.reasons,
+        )
+
+    def test_season_transport_failure_remains_a_technical_provider_error(self):
+        class TimeoutProvider(SeasonRecordingProvider):
+            def get_season(self, provider_id, season, policy=None, **kwargs):
+                raise MetadataError(MetadataErrorCode.TIMEOUT, "slow provider")
+
+        provider = TimeoutProvider(self.candidates(), {})
+        result = MetadataIdentificationService(MetadataProviderRegistry((provider,))).identify(
+            self.recognition, self.parsed, self.policy
+        )
+
+        self.assertEqual(result.status, MetadataIdentificationStatus.PROVIDER_ERROR)
+        self.assertIs(result.error.code, MetadataErrorCode.TIMEOUT)
+
+    def test_first_season_and_movie_keep_the_existing_year_filter(self):
+        tv_provider = SeasonRecordingProvider(
+            (MediaCandidate("tmdb", "10", MediaType.TV, "Show", year=2020),),
+            {"10": (1,)},
+        )
+        tv_result = MetadataIdentificationService(
+            MetadataProviderRegistry((tv_provider,))
+        ).identify(
+            self.recognition,
+            ParseResult("Show", year=2020, season=1, episode=1, episodes=(1,)),
+            self.policy,
+        )
+        self.assertEqual(tv_result.status, MetadataIdentificationStatus.MATCHED)
+        self.assertEqual(tv_provider.search_years, [2020])
+
+        movie_provider = SeasonRecordingProvider(
+            (MediaCandidate("tmdb", "603", MediaType.MOVIE, "Probe", year=2024),),
+            {},
+        )
+        movie_provider.search_movie = lambda query, policy=None, **kwargs: (
+            movie_provider.search_years.append(query.year)
+            or (MediaCandidate("tmdb", "603", MediaType.MOVIE, "Probe", year=2024),)
+        )
+        movie_provider.get_movie = lambda provider_id, policy=None, **kwargs: MediaIdentity(
+            "tmdb", provider_id, MediaType.MOVIE, "Probe", year=2024
+        )
+        movie_result = MetadataIdentificationService(
+            MetadataProviderRegistry((movie_provider,))
+        ).identify(
+            self.recognition,
+            ParseResult("Probe", year=2024),
+            policy(MediaType.MOVIE),
+        )
+        self.assertEqual(movie_result.status, MetadataIdentificationStatus.MATCHED)
+        self.assertEqual(movie_provider.search_years, [2024])
+
+    def test_operator_year_is_the_search_condition_and_cleared_year_is_unbounded(self):
+        provider = SeasonRecordingProvider(
+            (MediaCandidate("tmdb", "2019", MediaType.TV, "黑袍纠察队", year=2019),),
+            {"2019": tuple(range(1, 9))},
+        )
+        service = MetadataIdentificationService(MetadataProviderRegistry((provider,)))
+
+        explicit = service.identify(
+            self.recognition,
+            self.parsed,
+            self.policy,
+            search_year=2019,
+        )
+        cleared = service.identify(
+            self.recognition,
+            self.parsed,
+            self.policy,
+            search_year=None,
+        )
+
+        self.assertEqual(explicit.status, MetadataIdentificationStatus.MATCHED)
+        self.assertEqual(cleared.status, MetadataIdentificationStatus.MATCHED)
+        self.assertEqual(provider.search_years, [2019, None])
+
+    def test_direct_tv_identity_is_episode_verified_and_mismatch_stays_editable(self):
+        provider = SeasonRecordingProvider(
+            (
+                MediaCandidate("tmdb", "2019", MediaType.TV, "黑袍纠察队", year=2019),
+                MediaCandidate("tmdb", "wrong", MediaType.TV, "黑袍纠察队", year=2024),
+            ),
+            {"2019": (1, 2)},
+        )
+        service = MetadataIdentificationService(MetadataProviderRegistry((provider,)))
+
+        good = service.identify_by_provider_id(
+            self.recognition,
+            "2019",
+            MediaType.TV,
+            self.policy,
+            parsed=self.parsed,
+            missing_identity_is_mismatch=True,
+        )
+        wrong_season = service.identify_by_provider_id(
+            self.recognition,
+            "wrong",
+            MediaType.TV,
+            self.policy,
+            parsed=self.parsed,
+            missing_identity_is_mismatch=True,
+        )
+        missing = service.identify_by_provider_id(
+            self.recognition,
+            "missing",
+            MediaType.TV,
+            self.policy,
+            parsed=self.parsed,
+            missing_identity_is_mismatch=True,
+        )
+
+        self.assertEqual(good.status, MetadataIdentificationStatus.MATCHED)
+        self.assertEqual(good.identity.episodes, (1,))
+        self.assertEqual(wrong_season.status, MetadataIdentificationStatus.METADATA_MISMATCH)
+        self.assertIn("Season 4 is not available", wrong_season.match.reasons[0])
+        self.assertEqual(missing.status, MetadataIdentificationStatus.METADATA_MISMATCH)
+        self.assertIn("was not found", missing.match.reasons[0])

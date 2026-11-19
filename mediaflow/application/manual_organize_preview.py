@@ -1751,6 +1751,7 @@ class ManualOrganizePreviewService:
             storage_id=source_library.storage_id,
             metadata_selection=metadata_selection,
             metadata_correction=metadata_correction,
+            metadata_correction_mismatch_editable=True,
             metadata_identity=metadata_identity,
             durable_identity=durable_identity,
             classification_selection=classification_selection,
@@ -1834,11 +1835,18 @@ class ManualOrganizePreviewService:
                         if getattr(value, "enabled", False)
                     ),
                 )
-            if status is MetadataIdentificationStatus.NOT_FOUND:
+            if status in {
+                MetadataIdentificationStatus.NOT_FOUND,
+                MetadataIdentificationStatus.METADATA_MISMATCH,
+            }:
                 outcome = _PreviewOutcome(
                     ManualPreviewItemStatus.BLOCKED,
                     plan=self._partial_plan(strategy, item, type_policy),
-                    error="metadata identity was not found under the pinned MetadataPolicy",
+                    error=(
+                        "metadata identity was not found under the pinned MetadataPolicy"
+                        if status is MetadataIdentificationStatus.NOT_FOUND
+                        else "Provider metadata did not verify the file season or episodes"
+                    ),
                     next_action=(
                         "correct the metadata search title/year or choose a Provider identity "
                         "for this source, then rerun the analysis"
@@ -2351,6 +2359,15 @@ class ManualOrganizePreviewService:
         analysis runs and reports its own bounded blocker.
         """
 
+        if bound.metadata_review is not None and bound.metadata_correction is not None:
+            review_time = getattr(bound.metadata_review, "updated_at", None)
+            correction_time = getattr(bound.metadata_correction, "updated_at", None)
+            if review_time is None or (
+                correction_time is not None and correction_time >= review_time
+            ):
+                bound = replace(bound, metadata_review=None)
+            else:
+                bound = replace(bound, metadata_correction=None)
         if bound.metadata_review is not None:
             review = bound.metadata_review
             provider = getattr(review, "selected_provider", None)

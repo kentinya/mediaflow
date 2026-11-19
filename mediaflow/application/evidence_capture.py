@@ -121,7 +121,7 @@ def _default_outcome(strategy, plan, execution, error) -> str:
         if metadata is not None:
             if metadata.status.value in {"need_confirm", "ambiguous"}:
                 return "waiting_metadata"
-            if metadata.status.value == "not_found":
+            if metadata.status.value in {"not_found", "metadata_mismatch"}:
                 return "waiting_metadata_correction"
         if (
             strategy.classification is not None

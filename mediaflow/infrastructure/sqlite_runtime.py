@@ -3095,6 +3095,51 @@ class SQLiteTaskRepository:
             if cursor.rowcount != 1:
                 raise ValueError("metadata correction TaskItem is not processing")
 
+    def reopen_metadata_correction(self, review, item: PersistentTaskItem) -> None:
+        with self._lock, self._connection:
+            self._reopen_metadata_correction_locked(review, item, None)
+
+    def reopen_metadata_correction_with_evidence(
+        self, review, item: PersistentTaskItem, evidence: PipelineEvidence | None
+    ) -> None:
+        """Restore the same correction blocker, waiting item, and evidence atomically."""
+
+        with self._lock, self._connection:
+            self._reopen_metadata_correction_locked(review, item, evidence)
+
+    def _reopen_metadata_correction_locked(self, review, item, evidence) -> None:
+        if evidence is not None:
+            self._append_evidence_locked(evidence)
+        cursor = self._connection.execute(
+            """UPDATE metadata_corrections SET status=?, outcome=?, updated_at=?,
+            decided_at=NULL, actor=NULL
+            WHERE review_id=? AND status IN (?, ?)""",
+            (
+                review.status.value,
+                review.outcome,
+                review.updated_at.isoformat(),
+                review.review_id,
+                MetadataCorrectionStatus.PENDING.value,
+                MetadataCorrectionStatus.RESOLVED.value,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("metadata correction is not reopenable")
+        cursor = self._connection.execute(
+            """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+            WHERE item_id=? AND task_id=? AND status=?""",
+            (
+                item.status.value,
+                item.stage,
+                item.updated_at.isoformat(),
+                item.item_id,
+                item.task_id,
+                TaskItemStatus.PROCESSING.value,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("metadata correction TaskItem is not processing")
+
     def publish_task_item_problem(
         self,
         *,
