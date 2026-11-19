@@ -1,6 +1,6 @@
 # Task 56.1 — 同一候选版本切换 Web 与 API 入口
 
-Next Action: B REVIEWS THE TASK56.1 CORRECTED CANDIDATE
+Next Action: DEVELOPER CORRECTS THE REMAINING TASK56.1 BLOCKERS
 
 已提交的 [Slice 56 合同](SLICE.md) 定义范围。对应 RO-1／RO-2 全部公开入口、RO-3
 中链接与既有身份的交接，以及 RO-4 中随仓的路径消费者。[Development Workflow](docs/development-workflow.md)
@@ -9,7 +9,7 @@ Next Action: B REVIEWS THE TASK56.1 CORRECTED CANDIDATE
 Task ID: 56.1
 Task Type: SLICE
 Parent Slice: 56
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 6ff7213bf770e94d4e7f90a5e8c57d6fe21985b3
 Difficulty: High
 Test Level: T4
@@ -229,54 +229,73 @@ web: npm run test:e2e -- --config=playwright.python.config.ts \
 ## B Review Result
 
 ```text
-Reviewed: 6ff7213bf770e94d4e7f90a5e8c57d6fe21985b3..b641d1230f9bae1e736b9a2c6e29e7f920e80990
-Report-only Head: b2850e22e9a6d02e9e847b88e18926eb56474ea3
+Reviewed: 6ff7213bf770e94d4e7f90a5e8c57d6fe21985b3..bb6704c4429a995bf883affae1c9f5ef6ec66f3f
+Report-only Head: 28360763fe0b6ae169c44e72eba2020ef3c49191
 Decision: FIX REQUIRED
 Slice Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-### B56-01 · P1 · 切换后从任务中心核对原整理提交（RO-3 / AC-3）
+上轮决定见 `e5b49872:TASK.md`。候选 Web 用 Base 已受理的隔离库原地重开后，用户可在
+原任务点击「核对提交结果」。页面发送一次 GET，确认同一 Task 和原文件结果，期间没有写请求。
+Storage 首次设置与候选镜像空实例均完成草稿创建、恢复、验证和激活。
 
-在 Base 的资源库文件页选择 `DialogUnknown.2021.mkv`，完成分析、整批复核并点击「确认整理 1 项」。
-服务端返回 `202`，浏览器未收到响应，原卡片显示「执行结果未知」和「核对提交结果」。真实 Worker
-随后完成原任务。候选重开同一隔离库后，新任务中心可打开同一 Task 的只读摘要，显示原文件，
-但没有「核对提交结果」，也没有发起原提交核对读取。用原选择、摘要版本和效果选项调用现有
-正式核对接口，返回 `200 known` 和同一 Task ID。该任务只受理一次，新页面读取期间无写请求。
-补跑的候选同页丢响应测试通过，覆盖浏览器仍持有原提交时的已有动作。
+### B56-01 · P1 · 同一任务的第二次确认无法从任务中心核对（RO-3 / AC-3）
 
-开发时从 `OperationsLanding.tsx`／`OrganizeContinuationCard.tsx` 的既有 Task 详情和关联整理
-入口进入。复用 `ManualOrganizeDialog.tsx` 的核对行为和 `manual_organize_execution.py` 的受理记录。
-从原 Task 关联的持久受理记录读取当时的摘要、选中条目和效果权限，在详情或关联整理卡里把
-原提交的受理结果、原范围和逐项执行结果交给用户核对。当前摘要可能已因另一项的分析而更新，
-因此核对的依据是原受理记录。使用原读取权限和主体判定，继续动作仍由原 Task 的逐项恢复流程负责。
+用户在资源库选择两个文件，只确认第一项。Worker 完成第一项后，用户在同一任务里分析并确认
+剩下的一项。真实 API 和 Worker 复现了两次受理和两条结果，分别用原参数都能核对为已受理，
+指向同一 Task。任务详情只提供第一条受理记录。如果第二次确认的响应丢失，用户重连后点击
+「核对提交结果」只能查到第一项。候选的 `_operations_run_manual_organize_submission`
+用 `min` 选一条执行记录，页面也只渲染这一条。
 
-验收用同一份 Base 实际受理的隔离数据。模拟丢响应，切换并重连，用户在新任务中心核对原受理范围
-和逐项结果。已有结果和不确定效果的执行次数保持不变，读取期间无写请求。对同一 Task 内一项合法
-恢复，分别观察只读核对和明确确认所触发的请求及耐久状态。
+1. 从同一 Task 已持久受理的记录投影当前提交人可核对的确认，沿用既有读取权限和结果口径。
+   在「原整理提交」里按摘要、提交范围和提交时间区分记录。复用现有核对 GET，使用用户选中
+   的那条记录的原选择、版本和效果选项。
+2. 用 `test_ready_sources_remain_on_the_task_after_subset_execution` 的两次确认旅程验证查询，
+   再从现有 Task 详情补真实浏览器用例。丢弃第二次确认的响应，刷新重连后核对第二项，断言 GET
+   命中第二个摘要和原选择，两个逐项结果可分别查看，执行次数仍为两次。复跑另一读取主体的权限
+   断言和单次受理的 Base 重开用例。
 
-### B56-02 · P1 · 首次设置验收仍在匹配旧地址（RO-4 / AC-4）
+```sh
+.venv/bin/python -m unittest tests.test_manual_task_engine tests.test_manual_organize_execution
+npm --prefix web run build
+npm --prefix web run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts -g 'lost Execute|unknown original submission|second confirmation'
+```
 
-Docker 空实例验收中的既有浏览器步骤从 `/configuration` 创建草稿，页面提示已创建且 SQLite 中已有
-草稿，脚本却在创建步骤中止。Storage 验收从 `/storage` 点击「去完成设置」，创建草稿、返回 Storage、
-再进入设置恢复并验证时，页面显示验证通过，脚本仍报没有看到验证动作。两份脚本的三个正向匹配
-还在等 `/api/v1`，浏览器实际走的是 `/api/configuration/...`。
+### B56-02 · P1 · Docker 重启与基础检查沿用旧导航的 HTTP 断言（RO-4 / AC-4）
 
-开发时同步 `scripts/docker_empty_baseline_smoke_test.py` 的首草稿和 `validate|activate` 匹配，
-以及 `scripts/storage_settings_browser_proof.py` 的验证匹配。保留精确方法、请求次数、原 Draft 版本、
-checked 激活和零媒体写入检查。切换指引补上维护者可直接使用的旧书签、脚本地址替换和只读核对示例。
+管理员依照随仓脚本验收，两个脚本请求 `/ui` 时都中止，其中重启脚本已实际重启四服务。
+根路径改版后，服务器返回入口 HTML，浏览器仍在原地址呈现普通未找到。两个脚本都要求
+旧导航和旧静态资源返回相同的 HTTP 404。
 
-### 本轮验证和返工验证
+1. 同步 `scripts/docker_restart_fault_smoke_test.py` 和 `scripts/docker_smoke_test.py`，
+   沿用发布安全脚本对同一入口 HTML 和旧静态文件 404 的两种断言。旧导航的用户可见未找到
+   继续使用现有深链浏览器用例证明。保留重启、脱敏和读操作无业务变更的其余断言。
+2. 在实际候选镜像跑这两个脚本。切换说明里把 token 赋值写成可被 Bash 解析的示例。
 
-- B 已运行生产 Web 构建、Python `test_v2_ui.py`／`test_api_security.py`／`test_processing_checkpoint.py`
-  共 38 项、真实 Python 浏览器 `live-files.python.spec.ts` 6 项和 `manual-organize-dialog.python.spec.ts`
-  的同页丢响应 1 项，均通过。两项首次设置验收误报已独立复现，其中 Docker 只运行了原浏览器阶段。
-  日志在 `.git/validation-evidence/b641d123/task56-1-b/`。首次核对误用了多一段路径的 URL，
-  已从正式 Task 深链重新核对，结果见 `base-cutover-reopen.log`。
-- Developer 返工验证从根目录运行 `npm --prefix web run build`、
-  `.venv/bin/python scripts/storage_settings_browser_proof.py`，从 `web/` 运行
-  `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts -g 'unknown Execute response|unknown original submission'`。
-  复用现有整理挂载、Worker 和 SQLite fixture 增加针对 Base 受理后重开的浏览器回归，并运行相应新增用例及
-  `git diff --check`。交接时报告原请求核对、明确继续、首次设置和返回的实际结果。
-- RO-1 的两种库真实浏览及 RO-2 的关键分派、鉴权和审计测试已通过本轮抽验。RO-3、RO-4 有上述阻塞。
-  B 在修正候选完成四类恢复、T4 全量、wheel／源码外安装和候选镜像／Compose 验收，再重评全部 Slice 结果。
+```sh
+.venv/bin/python scripts/docker_restart_fault_smoke_test.py --image "$task56_restart_image"
+.venv/bin/python scripts/docker_smoke_test.py --image "$task56_smoke_image"
+```
+
+### B56-03 · P1 · wheel 专项恢复脚本无法运行现行用例（RO-4 / AC-4）
+
+维护者依照 Task 的命令构建并在源码外安装 wheel。通用 smoke 通过，随后专项恢复脚本安装成功，
+复制测试文件时因路径不存在而退出。该用例在 Slice 56 Base 前已删除。B 从同一已安装 wheel 的
+`site-packages` 独立跑通现行的两项同任务恢复用例，随仓命令仍会中止。
+
+1. 更新 `scripts/installed_recovery_smoke_test.py`，复用 `test_manual_task_engine.py`
+   的现行 Task 原生摘要确认和元数据恢复用例以及既有 fixture。在源码外运行这两个明确命名的
+   用例，并核对模块从所安装 wheel 导入。用例验证确认后由 Worker 在原 Task 上写入实际结果。
+2. 构建新 wheel，运行 Task 所列的通用和专项 wheel 命令，核对专项恢复用例实际执行并通过。
+
+### 独立验证
+
+- Python 质量、配置示例、生产 Web 构建通过。Python 全量 2313 项，其中 7 项既有可选跳过。
+  Web 单测 1640 项，默认浏览器 286 项，真实 Python 浏览器 10 项通过。后者覆盖两库实时读取、
+  丢响应核对及四类逐项恢复。RO-1、RO-2 本轮已跑项目均通过。
+- 通用 wheel、源码外两项现行恢复用例、候选 Docker 空实例及发布安全通过。Docker 初跑的挂载与
+  回调失败已通过共享临时目录解决。重启与基础验收仍在旧导航断言处失败。首次尝试把 Base 库复制
+  到另一位置，引发运行配置校验失败。用原隔离库路径重新复验，浏览器核对通过。
+- 证据见 `.git/validation-evidence/bb6704c4/task56-1-b/`。RO-3、RO-4 仍有上述阻塞。
+  三项修正后由 B 独立复验并重新评估 Slice 全部结果。
