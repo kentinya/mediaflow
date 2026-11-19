@@ -86,12 +86,15 @@ B 收到固定候选后复核完整 Task Base..Head。先按公开指南复验�
 
 ```text
 Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
-Implementation Candidate: 2eab5714（完整 SHA 见 git log）
+Implementation Candidate: 80334cca（完整 SHA 见 git log）
+Previous Correction Candidate: 2eab5714
 Branch: main
 ```
 
 候选为实施检查点；随后仅本文件记录交接。B 复核完整
-`3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4..候选`。
+`3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4..候选`。相较 `2eab5714`，本轮仅把
+`docs/configuration.md` 中的样例文件引用改为真实的相对 Markdown 链接，并使用与仓库其他
+指南链接一致的写法；样例内容与回归测试未变。
 
 **已实现**
 
@@ -116,17 +119,21 @@ Branch: main
   可恢复且结构有效。样例地址为不可解析的 `.invalid` 域名，导入成功同时证明导入阶段
   不联系 OpenList。
 
-**实际验证（cwd `/Users/songzhidong/mediaflow`，候选 `2eab5714`）**
+**实际验证（cwd `/Users/songzhidong/mediaflow`，候选 `80334cca`）**
 
 ```text
 .venv/bin/python -m unittest discover -s tests -p 'test_container_deployment.py'
-  → Ran 15 tests in 0.418s, OK（含新增回归）
+  → Ran 15 tests in 0.320s, OK（含 OpenList 示例回归）
+.venv/bin/python -m unittest \
+  tests.test_container_deployment.ContainerArtifactTests.test_openlist_example_imports_through_documented_first_setup -v
+  → Ran 1 test in 0.042s, OK
 .venv/bin/ruff check tests/test_container_deployment.py → All checks passed!
 .venv/bin/ruff format --check tests/test_container_deployment.py → 1 file already formatted
 .git diff --check → 无输出
+python3 scripts/check_governance.py → governance check: PASS
 ```
 
-改动仅上述三个文件；`python3 scripts/check_governance.py` 预检 PASS，工作区无预存脏文件。
+本轮改动仅 `docs/configuration.md`；工作区无预存脏文件。
 
 **剩余工作与风险**
 
