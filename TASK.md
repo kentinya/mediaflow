@@ -1,6 +1,8 @@
 # Task PATCH-20261119-2 — 删除各页顶栏搜索框
 
-用户于 2026-11-19 授权激活独立 Task，待 Developer 开始实施。
+Next Action: B REVIEWS THE PATCH-20261119-2 CANDIDATE
+
+用户于 2026-11-19 授权激活独立 Task，Developer 已完成实施并交付 B 审查。
 [独立修复工作流](docs/development-workflow.md#31-independent-minor-bugs) ·
 [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/ace169f4ee14feb4a101b7b2da2e917fe1c7c145/TASK.md#patch-20261119-1--b-验收-pass)
 
@@ -8,7 +10,7 @@
 Task ID: PATCH-20261119-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: ac28d9bd480a5047f03680d80c5a83c6df28cb06
 Difficulty: Medium
 Test Level: T2
@@ -70,3 +72,55 @@ Implementation Authorization: USER AUTHORIZED ON 2026-11-19
 - 在 `web/` 补跑 `npm run test:e2e -- tests/e2e/deep-link.spec.ts tests/e2e/files-interactions.spec.ts tests/e2e/automation-presentation.spec.ts` 和 `npm run test -- run src/features/explore/ExplorePage.test.tsx src/shared/api/storage-management-api.test.ts`，检查认证续转、两个库的浏览交互、页内搜索及独立 API 参数契约。
 - 审查完整 Task Base 到候选的差异及现行规范，记录命令结果和 `PASS` 或 `FIX REQUIRED`。
   T2 验收聚焦共享顶栏和三个直接消费搜索值的页面。
+
+## Developer Completion Report
+
+```text
+Task Base: ac28d9bd480a5047f03680d80c5a83c6df28cb06
+Implementation Candidate: 9012bfa104c57e518e024e0c773453dc1431ff2d
+Branch: main
+Status: READY FOR B REVIEW
+```
+
+**实施结果**
+
+- `AppShell` 删除顶栏搜索 DOM、文件／存储两个 Context 与 Hook、搜索状态／订阅／Provider、
+  专用路由分支和搜索图标引用；顶栏只渲染靠右账户控件。`styles.css` 删除
+  `.mf-shell-search` 的桌面、窄屏规则和搜索专用间距，保留定位文字、页面切换判断及账户布局。
+- 文件与媒体库的行 VM 直接来自当前有界目录结果，删除关键词匹配、清空词、选择订阅和
+  “无匹配搜索”文案；空目录继续显示“可以刷新或返回上一级目录”，刷新、目录与游标生命周期
+  仍由浏览页处理。
+- 存储管理的选择、Query key 与请求只含类型和分页参数；从后续页切换类型时由 render-phase
+  basis 同步清空游标，下一请求从该类型第一页读取。清单范围、类型筛选空结果和真实空清单
+  分别显示对应说明；独立 API `q` 契约未改。
+- 受旧顶栏搜索影响的单元／浏览器用例已改为通过类型卡片、显式分页和原目录浏览到达目标；
+  新增请求断言确认存储清单 URL 不含 `q`，并覆盖后续页切换类型不带旧游标。同步修订顶栏、
+  两种库视觉规格、存储管理文案、现行需求和架构说明。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，候选工作树）**
+
+```text
+python3 -B scripts/check_governance.py                              -> PASS
+git diff --check                                                   -> clean
+rg -n 'mf-shell-search|FilesSearchContext|StorageSearchContext|
+     useFilesSearch|useStorageSearch' web/src --glob '!**/*.test.*' -> exit 1 / no match
+web: npm run typecheck                                             -> OK
+web: npx eslint <AppShell + 4 affected feature files>              -> OK
+web: npx prettier --check <changed files>                          -> All matched
+web: npm run test -- run src/shared/ui/AppShell.test.tsx
+     src/features/library/StorageFilesPage.test.tsx
+     src/features/library/MediaLibraryFilesPage.test.tsx
+     src/features/storage/StorageManagementPage.test.tsx           -> 4 files, 155 passed (18.16s)
+web: npm run build                                                 -> built; Vite large-chunk warning only
+web: npm run test:e2e -- tests/e2e/page-transition.spec.ts
+     tests/e2e/rules-readiness.spec.ts tests/e2e/storage-management.spec.ts
+     tests/e2e/medialib-files.spec.ts                               -> 67 passed (1.3m)
+```
+
+**剩余与风险**
+
+- Developer 未运行 B 独立验收中的 `deep-link`、`files-interactions`、
+  `automation-presentation` 浏览器用例，也未运行 `ExplorePage`／存储 API 参数测试；这些按
+  Task 分工由 B 在候选构建上复跑。
+- 未运行全量 Web／Python／打包门禁；桌面／390px 实际视觉截图与键盘顺序仍需 B 独立查看。
+- 构建保留既有 Vite “chunk 超过 500 kB”警告，无新增失败；全量回归与最终风险判定由 B 负责。
