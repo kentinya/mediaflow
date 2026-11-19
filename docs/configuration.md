@@ -46,9 +46,16 @@ as an inactive Draft:
 ```bash
 python3 scripts/make_deployment_config.py \
   --output config/mediaflow.json \
+  --database-path "$PWD/.mediaflow/mediaflow.sqlite3" \
   --configuration-output config/mediaflow.activation.json
-mediaflow config draft-import --file config/mediaflow.activation.json
+mediaflow --config config/mediaflow.json config draft-import \
+  --file config/mediaflow.activation.json
 ```
+
+The bootstrap named by `--config` (or by an exported `MEDIAFLOW_CONFIG`) is the authority that
+receives the Draft; without one the command refuses to run. The block uses the host-local durable
+locator so this command and the service opened later share one database; in the container layout
+omit `--database-path` and keep the default `/data/mediaflow.sqlite3`.
 
 The generated input omits the database locator and API principal identity, so import binds the
 receiving deployment's own authority. Unrelated empty families are legal and create no
@@ -123,10 +130,13 @@ The general configuration CLI still exposes explicit lifecycle operations:
 
 ```bash
 mediaflow config status
-mediaflow config draft-import
+mediaflow config draft-import --file config/mediaflow.activation.json
 mediaflow config draft-validate REVISION_ID
 mediaflow config activate REVISION_ID --expected-version VERSION
 ```
+
+Each command selects the deployment bootstrap with `--config PATH` or `MEDIAFLOW_CONFIG`; the
+example above relies on the `export` in the preceding section.
 
 CLI `config activate` publishes only a revision that is already Validated with the exact
 `--expected-version`; it does not require the Settings `发布前检查` evidence. First setup and

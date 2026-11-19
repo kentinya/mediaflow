@@ -95,15 +95,41 @@ python3 scripts/make_deployment_config.py \
 
 The second document rewrites the example's Local Storage roots to
 `/media/incoming` and `/media/organized`, so it is only usable together with the
-optional media mount overlay below. Import it through
-`/ui-v2/configuration` (or `mediaflow config import`) and complete the normal
-validate/check/activate journey. It never carries deployment startup authority:
+optional media mount overlay below. It never carries deployment startup authority:
 the database locator and the API principal identity stay in
 `mediaflow.json` (so a `--token-env` bootstrap and its configuration input stay
 consistent), and the imported document binds them from the receiving
 bootstrap. `mediaflow.json` keeps `/data/mediaflow.sqlite3` and the
 configuration input adds `/data/history.jsonl`. `config/mediaflow.json` and the
 activation input are Git-ignored.
+
+After `docker compose up -d` has started the project (with the media overlay when
+the deployment uses Local Storage), import the generated input into that
+project's `/data` volume through the image entrypoint and the same Compose file
+set:
+
+```bash
+docker compose -f compose.yaml -f compose.media-mounts.yaml run --rm --no-deps -T api \
+  config draft-import --file /dev/stdin < config/mediaflow.activation.json
+```
+
+`-T` keeps stdin available, and the generated file is streamed into the
+container, so it never needs to be mounted. The image entrypoint dispatches the
+`mediaflow` command, so the arguments start at `config`. The command writes an
+inactive Draft through the same bootstrap database the four services use: it
+creates no Active configuration, Task, delivery or media mutation, and the
+running services need no restart. Without `--file`, `config draft-import` falls
+back to `--config` and imports the management-only bootstrap (zero Storage), so
+always name the generated input. Repeat `-p` or `COMPOSE_PROJECT_NAME` here when
+the deployment uses a non-default Compose project.
+
+Then select that Draft in `系统设置` → `高级配置` → `查看配置`, run `验证草稿`,
+complete the `发布前检查` listed for that exact version (the read-only Storage
+checks, the offline recognition strategy test and the destination precheck),
+and click `激活配置`. The
+[configuration guide](configuration.md) uses the same page names and describes
+failed-check recovery. Publication is adopted by the running services without a
+restart.
 
 - A deployment-owned environment file. Copy
   [deploy/mediaflow.env.example](../deploy/mediaflow.env.example) to

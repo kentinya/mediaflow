@@ -28,8 +28,12 @@ configuration *input*; edit its Local Storage roots and other values for your ma
 it as an inactive Draft:
 
 ```bash
-.venv/bin/mediaflow config draft-import --file config/mediaflow.activation.json
+.venv/bin/mediaflow --config config/mediaflow.json config draft-import \
+  --file config/mediaflow.activation.json
 ```
+
+Name the bootstrap with `--config` (or export the `MEDIAFLOW_CONFIG` above) so the Draft is
+written to the deployment's database; without either, the command refuses to run.
 
 Import never publishes. Publication is the checked journey in `系统设置`
 (`/ui-v2/configuration`): under `高级配置 → 查看配置` select the imported Draft, run
