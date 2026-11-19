@@ -8,11 +8,11 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice55](../SLICE.md) is **ACTIVE** after the user's 2026-11-15 complete V1/migration-residue
-retirement, Slice activation, A-for-B first-Task planning and Task55.1 implementation authorization. Base `2b2e7c1824fa5681864455714d0f97b26555c7dc`,
-Implementation Head NOT SET; no product implementation or acceptance is claimed.
-[TASK.md](../TASK.md) is the formal Task55.1, planned by A for B and activated under explicit
-user authorization. Next action: **DEVELOPER STARTS TASK55.1 IMPLEMENTATION**. This pointer adds no closure-ledger entry.
+[Slice55](../SLICE.md#a-final-review--fix-required) is **FIX REQUIRED** after independent A Final
+Review of Base `2b2e7c1824fa5681864455714d0f97b26555c7dc` through implementation
+`fb243ea688d31b8b2242b56bfe732771b9ea0965`. A55-01 covers the shipped OpenList example and
+the current Draft import. B continues [Task55.8](../TASK.md). The Closure Packet remains in Git
+at `573726541063115eeed6ce6d879004a40bf2624a:TASK.md`.
 
 Latest accepted Slice remains54, independently closed on 2026-11-11 at original Base
 `e43a40674eb14aa12615a440a348fe675cd50c4e` through implementation

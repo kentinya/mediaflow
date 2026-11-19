@@ -44,16 +44,13 @@ only in [the development workflow](development-workflow.md).
 
 ## Current boundary
 
-[Slice55](../SLICE.md) — **Complete V1 and Migration Residue Retirement** — **ACTIVE**.
-Immutable Base `2b2e7c1824fa5681864455714d0f97b26555c7dc`; Implementation Head NOT SET.
-Scope includes complete source/runtime/artifact retirement with no compatibility, redirect,
-conversion, hidden flag or fallback, plus current native V2 regression. The user activated the Slice and authorized A to plan
-the first Task for B; TARGET requirements/journey/architecture do not claim delivered behavior.
-
-[TASK.md](../TASK.md) is the formal Task55.1, planned by A for B and activated under explicit
-user authorization. Next action: **DEVELOPER STARTS TASK55.1 IMPLEMENTATION**. Slice54 remains PASS / CLOSED at its original Base/accepted Head;
-its fixed closure and all earlier acceptance, original failures, role exceptions, evidence limits
-and deferrals remain in Progress/Git. Product implementation follows Task55.1; push, release and deployment retain their existing authorization boundaries.
+[Slice55](../SLICE.md) — **Complete V1 and Migration Residue Retirement** — **FIX REQUIRED**.
+The roadmap row stays ACTIVE for the correction. Immutable Base
+`2b2e7c1824fa5681864455714d0f97b26555c7dc`, reviewed implementation
+`fb243ea688d31b8b2242b56bfe732771b9ea0965`. A55-01 records that the shipped OpenList example
+fails the documented Draft import. B continues [Task55.8](../TASK.md) and returns the corrected
+candidate for A Final Review. V2 retirement requirements, journey and architecture remain TARGET.
+The Progress ledger records Slice54 as the latest accepted Slice.
 
 ## Accepted boundary references
 

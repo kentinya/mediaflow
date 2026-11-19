@@ -1,22 +1,29 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task55.8 — A 终审退回，待 B 接续修正
 
-Task55.8 **PASS**。Slice55 **SLICE READY FOR A REVIEW**。A 负责最终验收。
+Slice55 **FIX REQUIRED**。随仓 OpenList 示例按自身说明导入时失败。
+复现、影响和退回条件见 [A Final Review](SLICE.md#a-final-review--fix-required)。
+B 接续原 Task55.8，更新修正计划后交 Developer。原计划及历轮交接见
+`5c1921b9b8ce2eb1472bfb5584579556bdf6f3b8:TASK.md`。
 
 ```text
 Task ID: 55.8
 Task Type: SLICE
 Parent Slice: 55
-Status: PASS
+Status: FIX REQUIRED
 Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
 Implementation Head: fb243ea688d31b8b2242b56bfe732771b9ea0965
 Reviewed Handoff: 5c1921b9b8ce2eb1472bfb5584579556bdf6f3b8
+B Closure Packet Checkpoint: 573726541063115eeed6ce6d879004a40bf2624a
 Difficulty: High
 Test Level: T4
 Reviewer: B
-Next Action: A FINAL REVIEW OF SLICE55
+Next Action: B CONTINUES TASK55.8 FOR A55-01
 ```
 
-## Task55.8 独立复核
+**Developer — 新增／修改与直接受影响测试**。
+**B — 独立验收与完整回归**。执行范围见[测试分工](docs/development-workflow.md#6-test-levels)。
+
+## Task55.8 独立复核（退回前的 B 记录）
 
 2026-11-19 从干净的 `main` 审查完整 Task Base..Implementation Head。交接提交只更新本文件。
 原目标、开发指导、各轮返工及 Developer 交接保留在 `5c1921b9:TASK.md`。
@@ -29,6 +36,8 @@ Next Action: A FINAL REVIEW OF SLICE55
 | AC-3 | 本地新终端显式指定 bootstrap，Docker 通过同项目的入口和卷导入。两边都从系统设置读到原草稿及两项样例 Storage。完成发布前检查后，同一草稿在页面成为 Active。B55.8-01 的失败和修正旅程已实测。B55.8-02 的两条导入路径均已复验。wheel 源码外安装和三项 Docker 门禁通过。 |
 
 ## Slice55 Closure Packet
+
+以下是退回前的 B 记录。
 
 ```text
 Slice: 55 — Complete V1 and Migration Residue Retirement

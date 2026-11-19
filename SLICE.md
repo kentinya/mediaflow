@@ -4,14 +4,14 @@
 Slice ID: 55
 Name: Complete V1 and Migration Residue Retirement
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: FIX REQUIRED
 Base SHA: 2b2e7c1824fa5681864455714d0f97b26555c7dc
-Implementation Head: NOT SET
+Implementation Head: fb243ea688d31b8b2242b56bfe732771b9ea0965
 Working Branch: main
-Development Authorization: TASK55.1 IMPLEMENTATION AUTHORIZED
+Development Authorization: A RETURNED TASK55.8 TO B FOR A55-01
 Risk: High
 Accepted Test Level: T4
-Next Action: DEVELOPER STARTS TASK55.1 IMPLEMENTATION
+Next Action: B CONTINUES TASK55.8 FOR A55-01
 ```
 
 ## Authority and baseline
@@ -65,7 +65,7 @@ Task 调度、结果／审计和同版本非重放继续完整。`/api/v1/*` 是
 TARGET 稳定范围见 [V2-RETIRE-001–010](docs/v2-requirements.md#target--complete-v1-and-migration-residue-retirement-slice55-active)，
 [目标旅程](docs/product-experience.md#target--complete-v1-and-migration-residue-retirement-slice55-active) 与
 [目标架构](docs/architecture.md#target--complete-v1-and-migration-residue-retirement-slice55-active)。
-当前合同尚未实现；下列修订只在本 Slice 验收后成为 CURRENT：
+下列修订将在本 Slice 验收后成为 CURRENT：
 
 | 被修订的当前边界 | 本 Slice 目标 | 保留的义务 |
 |---|---|---|
@@ -274,12 +274,49 @@ Python/API/SQLite/常驻 Worker+Scheduler+Notification 的上述旅程、
 用 fake／本地服务器与临时根，既有可选真实外部测试需披露，不拿用户媒体作证明。
 证据存稳定忽略目录或 CI；已删除的旧测试／脚本必须逐项对应退出义务或保留的当前断言。
 
-本次规划只检查文档一致性／链接、治理及受影响文档测试和 whitespace；不把这些结果
-当作产品 T4、已退役或 Slice PASS。实际规划命令／结果在本地检查点交接中报告。
-
 ## Closure Packet and A Final Review
 
-尚未实施，Implementation Head NOT SET。Required Outcomes／最终测试／Closure Packet／
-A Final Review 均未完成；Status 为 ACTIVE。Task55.1 已获实施授权，下一步由 Developer
-按正式 Task 实施。
-历史接受事实不被本规划替代；通过后再统一将 TARGET 协调为 CURRENT，不提前声明退役。
+### B Closure Packet
+
+B 在 `573726541063115eeed6ce6d879004a40bf2624a:TASK.md` 提交 Task55.1–55.8 的
+验收结果和 Slice55 Closure Packet，判定 **SLICE READY FOR A REVIEW**。本地原始记录见
+`.git/validation-evidence/fb243ea688d31b8b2242b56bfe732771b9ea0965/task55-8-b/`。
+
+### A Final Review — FIX REQUIRED
+
+2026-11-19 在干净的 `main` 审查 Slice 原 Base
+`2b2e7c1824fa5681864455714d0f97b26555c7dc` 到候选
+`fb243ea688d31b8b2242b56bfe732771b9ea0965`。候选至 B 交包检查点只变更 `TASK.md`。
+按 RO-1–RO-6 核对整段改动清单、入口注册、当前调用与持久化边界，以及 B 的原生、制品和复用证据。
+
+| 结果 | 终审核对 |
+|---|---|
+| RO-1 | 复跑真实 Python 浏览器的旧 Web 注册退出、当前 Automation 标签回落和资源库引用恢复三项，全部通过。 |
+| RO-2 | 核对旧调度、票据、grant、全局审核和非内核领取的注册 diff 与 B 记录。独立复跑当前审核及旧传输入口用例。 |
+| RO-3 | 核对唯一 Active 业务权威、正式容量键和取消权限。标准示例导入对照通过，OpenList 随仓示例触发下述交付阻塞。 |
+| RO-4 | 核对 Task55.6 真实 Slice Base 摘要、工作与两种库历史证据，及最终候选复开原 Task／pin 的日志。启动和坏库拒绝定向用例通过。 |
+| RO-5 | 核对 Task55.5 与 55.7 的原请求身份、浏览器重开／重新认证及非重放证据，并检查至候选的相关输入 diff。 |
+| RO-6 | 核对 wheel 与候选源码，查阅四服务空实例、发布安全、重启以及设置页的 390px 和矮窗口证据。A55-01 阻塞随仓示例与当前输入契约一致性。 |
+
+**A55-01（P1，RO-6／AC-12，涉及 AC-03、Task55.8 AC-3）** 随仓的
+[OpenList 示例](config/alist.example.json) 明确让管理员将 `storage` 对象复制进托管配置。
+按此说明把对象原样加入生成的标准业务示例，使用现有 `mediaflow config draft-import --file`
+导入隔离实例。真实 Base 创建 Draft，候选因 `storages[openlist-example].baseUrl is retired`
+退出 2，状态为 `SETUP_REQUIRED`，零 Draft、无 Active。候选在同一环境导入未改动的标准
+业务示例成功。全程使用公开的随仓示例和临时库，导入阶段无需连接 OpenList。
+
+`7962432a5aefbe8af9940b6d30eb9d7a6281e2d7` 引入的新写入约束要求 OpenList 连接字段进入
+`Storage.options`，符合当前契约。
+交付仍提供旧写法及复制指引，正常使用该示例会在进入发布前检查之前失败。B 接续原 Task55.8，
+使公开示例及其指引与唯一当前配置一致，并从同一现行导入入口验证交付结果与旧字段拒绝边界。
+最终候选的对应门禁由 B 按工作流补齐，再重新提交 Closure Packet。
+
+A 实际完成治理预检、Base..Head whitespace 检查、定向 Python 45 项、真实浏览器 3 项，
+独立比对 wheel 中 161 个 Python 模块与候选，SHA-256 为
+`c7a0834bca371ed0630d4a9058fb16ce621c65848724750cfe7884d1a5b4f3d6`。
+全量及 Docker 采用 B 的原始证据。7 项既有可选跳过、Automation 容量用例组合失败与隔离复跑、
+Python 全量的 Task 声明失败与文档复跑均见原记录。A 的本地可复跑脚本与日志位于
+`.git/validation-evidence/fb243ea688d31b8b2242b56bfe732771b9ea0965/slice55-a/`。
+
+**决定为 FIX REQUIRED。** 完整退役作为 TARGET 继续由本合同验收。B 在原 Task55.8
+规划针对 A55-01 的修正并完成独立复验。
