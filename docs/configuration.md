@@ -523,7 +523,7 @@ and completed/unknown effects are not replayed. Only V1 or obsolete migration sh
 conversion/takeover boundary; see [Deployment](deployment.md#boundary) and
 [Release](release.md#current-v2-validation-boundary).
 
-## Current limitations and post-V1 / V2 boundaries
+## Current limitations
 
 Provider switching/new Providers, built-in users/sessions/OIDC, general Secret Store/Docker Secrets,
 automatic uncertain replay and historical rollback remain outside the accepted baseline. No arbitrary

@@ -864,94 +864,16 @@ CURRENT；未明确列出的后续目标不得描述为已实现。
 
 这些事实不重写已发布 V1 基线或稳定 REQ/UX/V2 ID；范围、验证及延期索引见 `docs/progress.md`。
 
-### **V1 当前实现基线（已发布）**
+### **部署与存储边界**
 
-交付、部分完成和延期的历史明细保留于
-`865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/requirements.md`，不在需求定义内重复进度台账。
-现行发布事实见 [Release](release.md)，接受的 Base/Head 与范围见 [Progress](progress.md)，
-完整用户旅程见 [Product Experience](product-experience.md)。下方产品要求、格式、字段、边界与
-验收场景仍是完整定义；实现状态不能削弱需求，V2 仅按上方明确修订替换指定含义。
+Compose 使用一个镜像启动 API、Worker、Scheduler 和 Notification Worker。数据持久化到
+本地 `/data`，媒体目录独立显式挂载。生产 API 使用 Waitress；开发监听限于可信环回。
+健康检查区分进程存活、基础设施就绪与实际工作就绪。媒体操作保留原有快照、并发围栏与
+不确定效果保护。见 [部署指南](deployment.md)。
 
-#### **当前发布验收边界**
-
-截至 2026-08-23，可复现的有界发布 profile 为 PASS：
-
-```Plain Text
-Local / Samba / OpenList / MinIO
-→ 生产 Storage Adapter
-→ OrganizerExecutor
-→ 128 个确定性批次对象
-→ 128 MiB 流式对象与 SHA-256 校验
-→ 确定性源流中断
-→ MOVE 保源与目标状态检查
-→ 新的显式重试
-→ 白名单清理
-```
-
-该 PASS 只覆盖上述明确 profile。下列能力不得从中推断：
-
-- AWS S3 或 Cloudflare R2 服务专项兼容性。
-- 第三方 OpenList driver 行为。
-- SMB/OpenList 远端原子发布；验收中 SMB 中断会暴露可识别的部分目标。
-- 多小时 soak、服务进程终止、主机断电或分布式事务一致性。
-- 生产 Hash 内容校验、自动清理部分目标、自动重试或 Rollback。
-
-真实验收记录以 `docs/storage-acceptance.md` 为准；fake/mock 仅作为 UNIT PASS，不得替代
-隔离真实服务证据。
-
-#### **V1 Docker self-hosted 发布能力（CURRENT；Slice 29 PASS / CLOSED）**
-
-最终发布采用一个不可变 MediaFlow image，由 Docker Compose 运行独立的 `api`、`worker`、
-`scheduler` 和 `notification-worker` service；用户只需执行 `docker compose up -d`，内部仍
-保持进程故障隔离，不把四个长期进程耦合进一个 Python event loop 或 shell supervisor。
-
-`mediaflow api serve` 使用 `wsgiref.simple_server`，只属于 trusted loopback/development 边界；
-生产 Compose 使用 `mediaflow api serve-production` 和 Waitress WSGI server，并已验证 request limit、
-graceful shutdown、host binding 和 proxy-header trust 边界。
-TLS、证书、反向代理和 direct Internet exposure policy 属于显式 deployment boundary，MediaFlow
-不得静默兼任这些职责。
-
-容器持久数据统一放在本地 filesystem volume 的 `/data`：
-
-```Plain Text
-/data/mediaflow.sqlite3
-/data/history.jsonl
-/data/logs/
-/data/exports/
-/data/backups/
-```
-
-SQLite、FileIndex、Managed Configuration、Automation Definition/grant/Job、Task/TaskItem/Result、
-notification state、security/operation history 和 migration marker 均进入 `/data`。媒体目录是
-独立的显式 bind mount；Local `rootPath` 表示容器内可见的绝对路径，例如宿主机
-`/mnt/downloads` 映射为 `/media/downloads` 后，配置使用 `/media/downloads`。不支持直接把 SQLite
-放在 SMB、NFS、OpenList、S3/R2，也不支持挂载宿主机 `/`、Docker socket 或任意未映射路径。
-
-Liveness、readiness 和 business/runtime health 必须分开；healthcheck 不得扫描 Storage、调用
-Provider、创建 Job/Task、发通知或执行媒体 mutation。重启不得自动重放 uncertain mutation，旧
-Worker 不得覆盖后继 owner；升级必须经过 backup/preflight、schema migration 和 migration failure
-的 fail-closed/recovery 路径。
-
-#### **当前配置路径语义**
-
-```Plain Text
-Storage.rootPath
-    Adapter 拥有的根；Local 可为绝对路径，OpenList 为服务端 API 根路径
-ResourceLibrary.storagePath
-    相对 Storage 根的扫描路径；这是无路径扫描真正使用的字段
-ResourceLibrary.displayRootPath（可选）
-    显式传入主机路径时用于关联 ResourceLibrary；旧 rootPath 作为兼容别名
-MediaLibrary.rootPath
-    相对目标 Storage 根的目标路径
-```
-
-OrganizePlan 中源和目标都必须保存：
-
-```Plain Text
-StorageID + Storage-relative Path
-```
-
-不得把主机挂载路径嵌入远端 Storage 的逻辑路径。
+Storage 拥有适配器根，资源库和媒体库绑定各自的相对路径。整理计划以 Storage ID 和
+Storage 相对路径标识源与目标。显式主机路径关联和挂载配置见 [路径模型](configuration.md#path-model)。
+实际外部存储验证按服务和场景认定。见 [存储验收](storage-acceptance.md)。
 
 ### **项目概述**
 

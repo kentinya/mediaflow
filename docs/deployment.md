@@ -1,16 +1,15 @@
 # MediaFlow Docker deployment
 
 Operate one immutable Python image with four independent Compose services, local `/data`, explicit
-media mounts/secrets, separate liveness/readiness and fenced durable work. V1 release facts are in
-[Release](release.md); V2 ships static frontend assets in the same image. This guide owns runnable
+media mounts/secrets, separate liveness/readiness and fenced durable work. The same image serves the
+Web frontend. This guide owns runnable
 installation, health, restart, backup, restore and failure-recovery procedures.
 
 ## Boundary
 
-- This guide describes the current unreleased V2 `main` deployment, retaining the one-image/four-service
-  foundation accepted for V1.0.0. Current support covers fresh initialization, accepted stable V2
-  data and same-version recovery. Slice 56 verified the route cutover against data from its own
-  Base. See [Release](release.md#current-v2-validation-boundary).
+- The current `main` deployment supports fresh initialization, accepted stable V2 data and
+  same-version recovery. Slice 56 verified the route cutover against data from its Base.
+  See [Release](release.md#current-v2-validation-boundary).
 - One image runs the installed `mediaflow` package. The image runs as UID/GID
   `10001:10001` by default and never needs root.
 - `compose.yaml` defines exactly `api`, `worker`, `scheduler`, and
@@ -253,8 +252,10 @@ The production artifact flow is one image, two stages, one Python runtime:
   same entry document. The browser shows its ordinary not-found view or connection screen.
   Their old assets return 404. Retired API paths under `/api/v1` and `/api/v2` return JSON 404
   before authentication. The current `/api/*` routes enforce Bearer authentication and RBAC.
-- Follow the [canonical-route cutover checklist](../README.md#v2-development-status) to update Web
-  bookmarks and API scripts. Reopen the original Task from the Task Center to check its status and results.
+- Update bookmarks by removing the `/ui-v2` segment and keeping the page path and query. In API
+  scripts, use `/api/tasks` in place of `/api/v1/tasks` for the existing task list. Verify with
+  a read of `GET /health` and an authenticated `GET /api/tasks?limit=1`. Reopen the original
+  task in Task Center to check its status and results.
 - `MEDIAFLOW_UI_V2_ASSET_ROOT` is deployment-owned: a value in the mounted
   deployment environment file overrides the image default, but the documented
   layout needs no override and no host mount of `web/dist`. If the configured

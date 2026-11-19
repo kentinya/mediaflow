@@ -1,379 +1,96 @@
 # MediaFlow
 
-MediaFlow organizes media through configured Storage, filename/path/NFO parsing, recognition,
-metadata, naming, classification and exact plans. Local, SMB, OpenList and S3-compatible Storage
-(including AWS S3 and Cloudflare R2 adapters) share one pipeline. DryRun is the default;
-only explicitly authorized OrganizerExecutor work mutates media. No FFmpeg/FFprobe is used.
+**面向自托管媒体库的影视文件整理工具。**
 
-## Setup
+从资源库读取文件名、目录和 NFO，可用 TMDB 补全电影与剧集信息。按规则生成整理方案，确认后把媒体文件及相关附件整理到目标媒体库。
 
-```bash
-python -m venv .venv
-.venv/bin/pip install -e '.[dev,tmdb]'
-python3 scripts/make_deployment_config.py \
-  --output config/mediaflow.json \
-  --database-path "$PWD/.mediaflow/mediaflow.sqlite3" \
-  --configuration-output config/mediaflow.activation.json
-export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
-export MEDIAFLOW_API_TOKEN="<long-random-development-token>"
-# Optional until a configured TMDB policy/Explore is used:
-export TMDB_ACCESS_TOKEN="<token>"
+[快速开始](#-快速开始) · [配置说明](docs/configuration.md) · [部署指南](docs/deployment.md) · [文档索引](docs/README.md)
+
+## ✨ 功能
+
+- **管理两类媒体库**。资源库存放待整理文件，媒体库存放整理结果。支持本地、SMB、OpenList 和 S3 兼容存储。
+- **自定义整理规则**。配置识别、元数据匹配、命名和分类。按存储能力执行移动、复制、硬链接或软链接。
+- **先复核再执行**。在资源库选择文件或文件夹，查看目标、操作和冲突。确认后由 Worker 执行。
+- **定时整理**。从自动化页面配置来源、时间和范围，也可手动运行一次。
+- **逐项查看和恢复**。在任务中心查看各文件的结果，并处理识别、元数据、分类或冲突问题。
+
+```mermaid
+flowchart LR
+    Source["资源库"] --> Analyze["识别、匹配、命名与分类"]
+    Analyze --> Plan["整理方案"]
+    Plan --> Worker["按确认或已启用的计划执行"]
+    Worker --> Library["媒体库"]
+    Worker --> Task["任务中心"]
 ```
 
-The generated `config/mediaflow.json` is the **minimal management bootstrap**: one durable
-database locator and one environment-owned admin credential reference. It contains no Storage,
-library, rule or policy defaults, so it can start and expose Settings before any business object
-exists. `config/mediaflow.activation.json` is the canonical example rendered as a managed
-configuration *input*; edit its Local Storage roots and other values for your machine, then import
-it as an inactive Draft:
+## 🚀 快速开始
+
+### 使用 Docker Compose
+
+需要 Git、Python 3、Docker 和 Compose。默认部署启动 API、Worker、Scheduler 和 Notification Worker。
+
+1. 下载源码，生成启动配置。
+
+   ```bash
+   git clone https://github.com/kentinya/mediaflow.git
+   cd mediaflow
+   python3 scripts/make_deployment_config.py --output config/mediaflow.json
+   cp deploy/mediaflow.env.example .env.mediaflow
+   ```
+
+2. 编辑 `.env.mediaflow`，将 `MEDIAFLOW_API_TOKEN` 的占位值替换为自己生成并保存的高强度随机令牌。在 Linux 上按容器默认 UID/GID 设置文件权限。
+
+   ```bash
+   sudo chown 10001:10001 .env.mediaflow
+   sudo chmod 0440 .env.mediaflow
+   docker compose up -d --build
+   docker compose ps
+   ```
+
+3. 打开 <http://127.0.0.1:8080/>，输入配置的令牌。在「系统设置」创建首个草稿，验证并激活空配置，再按需添加存储、资源库、媒体库和整理规则。
+
+默认以管理模式启动。本地媒体目录通过 Compose 覆盖文件显式挂载。挂载、日志、备份和网络设置见[部署指南](docs/deployment.md)。
+
+### 使用 Python 源码
+
+本地开发需要 Python 3.11–3.13 和 Node.js 22.13+（22.x）。在仓库根目录执行。
 
 ```bash
-.venv/bin/mediaflow --config config/mediaflow.json config draft-import \
-  --file config/mediaflow.activation.json
-```
-
-Name the bootstrap with `--config` (or export the `MEDIAFLOW_CONFIG` above) so the Draft is
-written to the deployment's database; without either, the command refuses to run.
-
-Import never publishes. Publication is the checked journey in `系统设置`
-(`/configuration`): under `高级配置 → 查看配置` select the imported Draft, run
-`验证草稿`, complete the `发布前检查` listed for that exact version (read-only checks for every
-referenced enabled Storage, the offline recognition strategy test and the destination precheck),
-then click `激活配置`. Before the applicable checks pass there is no Active configuration; a
-refused activation keeps the Draft and any prior Active unchanged. One recoverable case: while
-the target directory does not exist yet the destination precheck fails — it reports `暂不可用`
-while the destination Storage root itself is not created or mounted, and `目标库根路径不存在`
-once that root is reachable but the MediaLibrary root is still missing. Create the directories
-named by the Draft or repair the corresponding mount, return to the same Draft, rerun the failed
-check, then activate. Afterwards the page reports the
-published edit version and `诊断` shows the resulting Active revision, version and digest.
-
-`config/strategy.example.json` is the canonical business example and the source for that generated
-input; it is not a service startup file because it carries the example's own deployment and
-principal identity rather than the receiving deployment's authority. The lifecycle CLI
-(`config status`/`draft-import`/`draft-validate`/`activate`) remains for advanced publication of
-an already Validated revision; `config activate` does not run the Settings publish checks, so
-first setup and ordinary publication follow the checked journey above. Credentials stay in
-environment variables; JSON
-stores references. Optional provider extras are `openlist`, `smb`, `s3`; their credential references
-are described in [Configuration](docs/configuration.md). `storage list` does not connect adapters;
-`storage check` is a bounded read-only check, not mutation authority.
-
-For production installation, use [Docker deployment](docs/deployment.md). A management-only bootstrap
-can start without media mounts or business objects; Web Settings creates and activates managed
-configuration. Local media access requires explicit container-visible mounts and permissions.
-
-## V1 self-hosted release status
-
-V1 `1.0.0` is released at `v1.0.0` on `release/v1`: one image, independent API/Worker/Scheduler/
-Notification Worker services, local `/data` persistence and Waitress production serving.
-[Release](docs/release.md) owns release validation and [Storage acceptance](docs/storage-acceptance.md)
-the bounded real-service evidence. Samba/OpenList-Local-driver/MinIO evidence does not certify
-AWS/R2, other OpenList drivers, remote atomic publication, power loss or multi-hour soak.
-
-## V2 development status
-
-`main` is the unreleased `2.0.0.dev0` Operator Web development trunk. Slice56 passed final review
-for Web at `/` and the Python API at `/api/*`. Valid Base work retains its original Task identity
-and can be reopened from the Task Center. Slice55 recorded the retirement of V1 and obsolete
-migration entrances on main.
-Historical V1 is retained on `release/v1`.
-
-**Canonical-route cutover checklist.** Remove the `/ui-v2` segment from Web bookmarks and keep
-the page path and query. For example, use `/operations?run=<Task>` in place of
-`/ui-v2/operations?run=<Task>`. For API scripts, update supported endpoints from `/api/v1/*` to
-`/api/*`. Both retired API prefixes return JSON 404. Run these read-only checks against a running
-service to verify the switch.
-
-```bash
-BASE=http://127.0.0.1:8787
-TOKEN="replace-with-configured-api-principal-token"
-curl -fsS "$BASE/health"
-curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/tasks?limit=1" >/dev/null
-curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/api/v1/tasks?limit=1"   # expect 404
-```
-
-[Documentation](docs/README.md) maps document
-responsibilities. [Roadmap](docs/roadmap.md) records priority/status,
-[Progress](docs/progress.md) accepted closures, and [SLICE.md](SLICE.md)/[TASK.md](TASK.md) current work.
-The accepted V2 baseline includes live library/Storage management, typed Rules, Files-first organizing,
-a Task-owned execution queue and same-Task four-type recovery. Ordinary file progress stays on its
-originating library page; Task Center handles organizing. Live Job, Pause/resume-from-pause and CLI
-`tasks retry-failed` are retired. Scan/Preview/FileIndex retirement remains intact. Three shared
-runtime settings live in System Settings. Five-state Task flow stays independent of file outcomes;
-completion neither proves file success nor grants replay.
-
-Files opens directly into the selected library's directory loading, listing or read error; its
-former organizing-history panel and fixed blue browse notice are removed. Both library pages provide
-hover/pressed/focus/selected feedback and share exact file/folder selection across list/grid views.
-Name/size sorting applies only to the loaded current page. Drag or use the keyboard to adjust column
-widths; sorting and widths survive directory changes, paging and refresh within the page session.
-The toolbar shows the current sort; `显示设置` restores order and column widths independently,
-with width recovery available in list view.
-A full page reload restores defaults. See the [browse controls](docs/product-experience.md#browse-feedback-selection-and-table-controls).
-Select files and click Organize to open a centered
-per-file dialog. Choose candidates and use `保存并重新分析` for each file that needs correction;
-review the ready subset and click `确认整理 N 项` once. Proven admission opens that exact Task's
-existing detail in Task Center. A lost response offers original-request reconciliation, retaining
-its original identity even after an unselected file is corrected/reanalyzed. After leaving,
-`继续整理` on the original Task opens the same still-continuable review above the preserved
-Task Center list/detail, including after reload/re-authentication. Its canonical address is
-`/operations?run=<Task>&dialog=organize`. Ended Task details show results and inline file
-evidence, without a preparation section or summary/restart buttons; the canonical address keeps
-their saved plan readable in the same shared dialog. The former `/operations/organize/new`
-page is removed and its addresses return ordinary not-found. The shared organizer keeps space
-between status text and its colored border.
-Task recovery uses the same `保存并重新分析` action for a saved decision whose analysis was refused;
-accepted analysis shows its waiting state. Results remain in the existing Task detail/file evidence.
-Task Center displays the exact associated Task. Confirmation within a Task refreshes that same detail.
-New organizing starts from ResourceLibrary Files. Failed files can start again without cancelling
-the ended Task; healthy siblings still waiting for confirmation keep their original summary. History read failures
-have an in-page reread action. Explicit confirmation precedes each new execution; original results
-remain factual. The [manual journey](docs/product-experience.md#manual-organize) explains these paths;
-[Release validation](docs/release.md#current-v2-validation-boundary) records their acceptance and limits.
-
-TMDB policies use query type alone; candidate/result movie or TV types still drive detail lookup,
-naming and classification. Each new organize identifies the source again. Within the current Task,
-a saved candidate continues through re-analysis to the exact summary without repeated confirmation
-or another Provider lookup at summary generation. The per-file organizer supports selecting and
-saving its existing candidates. Metadata correction searches use the current title, movie/TV type
-and year; clearing the year searches without a year restriction. An invalid year shows the range
-and lets the operator correct it and search again. [Configuration](docs/configuration.md#metadata-query-type-and-saved-identity)
-explains the current behavior; the [documentation guide](docs/README.md) links to earlier reviews.
-
-The development baseline is recorded in the [Slice closure ledger](docs/progress.md#closure-ledger).
-See [Release validation](docs/release.md#current-v2-validation-boundary) for the accepted artifact
-and evidence scope.
-
-[Explore](docs/product-experience.md#current--v2-explore-homepage-slice51-pass--closed) is the
-homepage: browse → filter/search → detail → return, with truthful empty states and local read
-recovery. The coordinated layout, scrollable detail and nine-page read transitions follow the
-[accepted experience](docs/product-experience.md#current--slice52-experience-refinement-slice52-pass--closed).
-Dashboard and old Automation Open/definition/editor Web entries remain retired; current cards,
-commands and durable history remain available.
-
-[OpenList metadata queries](docs/configuration.md#openlist-metadata-and-content-reads) use cached
-directory listings, while content reads obtain download links separately. Files supports native
-moves and renames with per-file verification. [Release validation](docs/release.md#current-v2-validation-boundary)
-keeps the exact-source test/packaging results, skips and recorded failures.
-
-Task details present flow status → processed range → file results. File evidence explains work
-identity, naming and classification before technical diagnostics. Available cancellation stays
-with Task actions; Automation uses local read recovery and command feedback to update its list.
-
-The current [Task Center](docs/task-center-page-spec.md) has no shared top search. All eight views
-offer only the local creation-date range and clear. Clearing restores the current view’s complete
-authorized population with normal paging. Manual refresh uses Chinese busy feedback; background
-polling updates quietly and normal same-query refresh preserves visible content and context.
-
-The [Rules workspace](docs/configuration.md#native-v2-organizing-rules-management) keeps its title,
-description and refresh in the content header. Overview has no inventory search; each of the seven
-families keeps one local search and state filter. Add/Copy/Edit opens a centered card over its
-inventory, with readable settings and object-local tests; only Overview offers the complete-flow
-check of published Active. Save publishes the exact checked successor and returns to the list;
-unknown publication keeps its original request for explicit verification without automatic replay.
-Settings retains configuration diagnostics/recovery.
-
-The [System Settings page](docs/configuration.md#system-settings-web) starts with compact state and
-the three runtime fields. Advanced settings use typed groups with separate Draft Save, validation,
-read-only publish checks and explicit checked activation. Exact Active JSON is the default view;
-rule counts and technical identities remain in diagnostics.
-
-The [Notifications workspace](docs/product-experience.md#notification-definitions-and-deliveries)
-uses readable Chinese state and centered definition/delivery cards. Draft Save, exact saved-version
-checks and explicit publication remain distinct; failed or unknown commands retain input and offer
-the appropriate read/reconciliation action without automatic replay.
-
-The [Automation workspace](docs/product-experience.md#current--complete-native-automation-workspace-accepted43-amended46)
-contains `任务列表 / 执行记录`; the three shared runtime settings live in System Settings.
-`新建自动化任务` and a row's `编辑` open the same Chinese card for source, schedule, limit and
-explicit enablement. Creation defaults disabled; choosing `启用定时计划` uses `创建并启用`.
-Editing can later enable/disable through the same compact switch and Save; cancellation or success
-preserves list context. The list and its create/edit backgrounds have no extra location-label row.
-Names are plain text; a row's actions are `编辑 / 复制 / 运行一次`, subject to backend permissions.
-Old definition/editor Web addresses are ordinary not-found pages. Copy stays in the
-list, creates a disabled definition with a new ID and offers `编辑副本`, including when filters/paging
-hide it. An unknown copy uses `核对复制结果` for that original command; it is never automatically
-reposted. Concurrent changes require rereading the displayed source and its matching authority before
-a new explicit click. Publishing runs no media work. Unknown creation/publication is reconciled
-before further commands. A row's
-`运行一次` directly submits the saved definition in place; use its `查看任务` link for progress/results.
-An unknown Run once uses `查看提交结果` to reconcile the original request without resubmitting.
-Execution-record rows offer only `查看详情 / 收起详情`;
-details show the current Task flow result, original actual times, independent file outcomes, a concise
-Chinese failure reason when the flow failed, and a short next step. Records and Task Center read the
-same durable flow state, with server filters/counts/paging applied before page limits. Failed files,
-unknown effects or absent Results do not relabel a completed flow as failed; file success cannot
-override failed flow. Legal continuation can change current flow state without adding another run
-or rewriting original times/attempts/file effects. Proven no-work and unavailable evidence stay distinct.
-The local-month success rate is completed/(completed+failed) for original scheduled due and definition
-Run once Tasks. Cancelled/unfinished Tasks, Files/CLI manual organizing and ordinary file operations
-are excluded from both numerator and denominator. No evaluated Tasks means no percentage; cancelled
-Tasks remain in records and all-ended counts. See the [current flow/rate journey](docs/product-experience.md#current--task-flow-status-and-automation-success-rate-slice48-pass--closed).
-Definition management and organizing recovery use their own workspace entries.
-
-## V2 frontend (web/)
-
-React/TypeScript/Vite, TanStack Router/Query and a central typed API boundary render `/`.
-Tokens stay in browser memory. Python serves built static assets; Node is build/development tooling.
-
-```bash
+python3 -m venv .venv
+.venv/bin/pip install -e '.[tmdb,openlist]'
 npm --prefix web ci
 npm --prefix web run build
-mediaflow api serve --host 127.0.0.1 --port 8787
+python3 scripts/make_deployment_config.py \
+  --output config/mediaflow.json \
+  --database-path "$PWD/.mediaflow/mediaflow.sqlite3"
+export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
+export MEDIAFLOW_API_TOKEN="<替换为已保存的随机令牌>"
+.venv/bin/mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
-Open `/` and connect a configured API-principal token. Reload requires reconnecting.
-Retired V1 `/ui` assets, `/review`, the old Library addresses and the former Task/Job/automation
-create and edit addresses are ordinary unknown routes; none redirects into the current product.
-The development listener is trusted-loopback only; production exposure/TLS/proxy rules belong to
-[Deployment](docs/deployment.md). Frontend test commands and B-owned full gates are centralized in
-[Development Workflow](docs/development-workflow.md#6-test-levels); Playwright requires Chromium.
+打开 <http://127.0.0.1:8787/>。需要执行任务时，在另一个终端用同一个 `MEDIAFLOW_CONFIG` 启动 `.venv/bin/mediaflow worker run`。定时整理另需启动 Scheduler。
 
-## CLI
+## ⚙️ 常用配置
 
-### Current live file lists
+| 配置 | 用途 |
+| --- | --- |
+| `config/mediaflow.json` | 指定 SQLite 路径及 API 身份使用的环境变量。 |
+| `.env.mediaflow` | Compose 使用的环境文件，存放 API 令牌和可选的服务凭据。 |
+| `TMDB_ACCESS_TOKEN` | 使用 TMDB 探索或元数据匹配时设置。 |
+| Web「系统设置」 | 创建、验证和激活配置草稿。运行服务读取已激活的配置。 |
+| Web「存储」「文件」「媒体库」「整理规则」 | 配置输入、目标和整理方式。首次整理时可先用少量文件复核方案。 |
 
-[The accepted live-list contract](docs/file-index-retirement-spec.md) defines library-scoped Storage
-lists shared by CLI, Files and MediaLibrary,
-with no catalog/observation/work recording or execution authority from listing:
+Web 从 `/` 进入。API 使用 `/api/*`，`GET /health` 查看进程状态。[换址说明](docs/deployment.md#v2-frontend-artifact-and-serving)
 
-```bash
-mediaflow files list --resource-library source --path "incoming" --limit 100
-mediaflow files list --media-library media --path "Movies" --limit 100
-```
+## 📚 文档与开发
 
-Choose exactly one library, omit `--path` for its root and use the returned `--cursor` for the next
-page. Global indexed filters/detail/statistics are removed. Complete FileIndex removal
-and the prelaunch/no-old-migration boundary are in [the retirement design](docs/file-index-retirement-spec.md).
-Task-scoped sources/results/audit remain durable. No existing data/media is automatically cleared.
+| 文档 | 内容 |
+| --- | --- |
+| [配置说明](docs/configuration.md) | 凭据、草稿发布、存储、库和规则。 |
+| [部署指南](docs/deployment.md) | Compose、媒体挂载、服务状态、备份和恢复。 |
+| [用户操作](docs/product-experience.md) · [任务中心](docs/task-center-page-spec.md) | 文件管理、整理确认、逐项结果和恢复。 |
+| [架构](docs/architecture.md) · [需求](docs/requirements.md) | 模块职责、数据边界和稳定需求。 |
+| [构建与发布](docs/release.md) · [验收记录](docs/progress.md) | 构建门禁、支持边界和大版本验收。 |
+| [开发约束](AGENTS.md) · [开发流程](docs/development-workflow.md) | 角色、测试和审查。 |
 
-Standalone Scan and scan-only/scan-and-plan modes have been removed from the current implementation;
-old inputs receive ordinary not-found/argument errors. Shared internal discovery, filters, genuine
-stability observations and zero-mutation planning remain. Independent Preview is also removed.
-
-### Current organizing analysis and confirmation
-
-[The Preview retirement contract](docs/preview-retirement-spec.md) uses the same first-deployment
-absence standard as Scan: independent Preview pages/API/CLI/Jobs/dispatch/continuation,
-exclusive persistence/composition and compatibility layers are removed. Old inputs use ordinary not-found or
-unsupported-argument/type errors; no retirement page/410, automatic conversion or old production
-migration/history/takeover framework. New manual organizing starts from ResourceLibrary Files;
-Task Center owns its progress and four-type recovery under accepted Slice46.
-
-Explicit Files organizing admits a durable task before business readiness, then keeps exact
-analysis/summary and separate selected confirmation in its per-file dialog. Automation checked
-Enabled supplies future scheduled intent; Run once directly executes its saved bounded scope with current permission,
-without an independent grant/pre-analysis or second initial confirmation. Four-type recovery still
-requires explicit safe continuation. `mediaflow organize` without `--execute` and Rules/configuration
-checks retain shared zero-media-mutation analysis. Separate analysis creates no organizing authority
-or backlog; exact plans/pins/results/audit stay durable and no existing data/media is cleared.
-
-### Baseline command reference
-
-Use `mediaflow --help` and `mediaflow <command> --help` for the complete current argument reference.
-Common current workflows:
-
-```bash
-mediaflow config validate
-mediaflow config status
-mediaflow storage list
-mediaflow storage check
-mediaflow analyze --offline "/path/to/movie.mkv"
-mediaflow organize --limit 20
-mediaflow organize --execute --limit 20
-mediaflow worker run
-mediaflow tasks list
-mediaflow tasks show TASK_ID
-mediaflow scheduler run
-mediaflow notification-worker run
-```
-
-No-path Organize uses enabled ResourceLibraries. Organize without `--execute`
-is zero-mutation. Overwrite requires enabling policy and fresh explicit consent; conflict/capability
-checks remain mandatory. Link operations never silently fall back. Shared rule analysis remains
-available through `mediaflow analyze` and the Rules workspace; the retired standalone inspector is
-not an installation entry point.
-
-| Operation | Safe behavior / next action |
-|---|---|
-| Recognition/Metadata/Classification review | Resolve only backend-offered type/candidate/rule choices; saving never executes. Continue through the Task's same-page analysis, summary and explicit confirmation. No arbitrary target or Provider DTO injection. |
-| Conflict decision | Persist an allowed decision, re-analyze and separately authorize execution. Successful/uncertain items are never replayed. Retired direct re-recognition/re-match/re-plan/review-retry surfaces stay absent. |
-| Pause/resume/retry | Organizing and ordinary-file Pause/resume are retired; cancellation stops unperformed work at a safe boundary, and four-type recovery continues the same Task through analysis, summary and explicit confirmation. A continuation cannot upgrade analysis-only work or regain consumed authority. |
-| Stalled Task | Inspect the Worker and Storage effects before explicit permitted recovery; staleness is no-update evidence, not proof of death or permission to replay an uncertain mutation. |
-| Notifications | Signed HTTPS Webhook Outbox; bounded transport/429/5xx retry, other 4xx dead-letter, stable delivery identity for at-least-once deduplication. Recovery is delivery-scoped and never changes media results. |
-| Policy options | Read-only retry is bounded/default-off and excludes mutations. Hash defaults NONE, FAST is prefix evidence, failed/unknown comparison never authorizes overwrite. Attachments and source cleanup are opt-in. Rollback compensates only verified effects of the same failed invocation, never changed targets/reappeared sources/older work. |
-
-Full operator journeys and failure/recovery semantics are in [Product Experience](docs/product-experience.md);
-policy fields and exact constraints are in [Requirements](docs/requirements.md) and the example config.
-
-## Development API and execution authority
-
-API requests use `Authorization: Bearer ...` with environment-owned principal references and
-viewer/operator/executor/auditor/admin roles. `/health` is public. Executor permission alone is not
-mutation authority. Keep local API tokens, Webhook secrets and Storage credentials independent.
-
-### Organizing execution entrances
-
-New organizing work is admitted through the current Task kernel only: the Files Web journey,
-the direct CLI `organize` command, an Automation due occurrence, or a definition Run once. The
-former remote execution ticket (`execution-authorizations`, `X-MediaFlow-Execution-Token` and
-`POST /api/tasks`) is retired; `api.remoteExecution` in an immutable historical document stays
-readable but grants no authority and cannot be published again. Ordinary users never issue or
-transfer execution tokens. Every entrance retains RBAC, pins, effect scope, audit, fencing and
-OrganizerExecutor-only mutation. See [Architecture](docs/architecture.md#interactive-execution-authorization).
-
-### Operator Web UI
-
-Use Web for normal management, file work and recovery. [Configuration](docs/configuration.md)
-explains managed Draft/Validated/Active lifecycle and page-local checked Save. The Task center
-shows actual per-item results and legal next actions; unknown submissions are read back before
-another attempt, and uncertain effects require investigation.
-
-Operational logs and security audit are bounded/redacted; reads expose no credentials, raw request
-bodies or Provider payloads. Log pruning touches neither media nor Tasks/Results/security audit.
-Backup and same-version restore are separate maintenance operations, with non-overwrite/verified backup,
-all-process stop, destination/sidecar absence and advisory-lease rules in
-[offline restore](docs/release.md#offline-restore-procedure). Old-task/Job migration or takeover,
-cross-version upgrade/rollback and mixed-version writers are outside current support.
-
-## Persistent runtime state
-
-SQLite persists managed configuration, Task/item/results, work evidence, locks, authority,
-notifications and audit. A Task is the only organizing-work identity: there is no independent Job
-table, Job queue or Job worker. JSONL operation history remains supported. The minimal bootstrap
-locates SQLite and defines API principals. Managed Active is the only business runtime authority.
-Admitted work keeps its original snapshot. Config validation creates no runtime database. Live
-listing uses managed Active and the internal cursor key without initializing or migrating the database.
-If initialization is missing, the command provides setup guidance.
-
-**Concurrent Local directory Delete:** pause other writers before confirming deletion. Some
-filesystems can reuse an inode between final metadata revalidation and deletion, making a same-name
-replacement indistinguishable. If the directory changed or can be recreated concurrently, stop,
-refresh and review again after writers are quiescent. No claim of atomic external-writer exclusion.
-
-## Configuration and architecture
-
-| Guide | Owns |
-|---|---|
-| [Configuration](docs/configuration.md) | Bootstrap, exact Active, library/policy forms, secret references and checked publication |
-| [Product Experience](docs/product-experience.md) | Current and target journeys, visible results, failure and recovery |
-| [Architecture](docs/architecture.md) | Pipeline, application authority, Storage, persistence and execution boundaries |
-| [Deployment](docs/deployment.md) | Start/health, mounts/secrets, restart, backup, same-version recovery and production artifacts |
-| [Requirements](docs/requirements.md) / [V2 requirements](docs/v2-requirements.md) | Stable product scope/IDs and explicit amendments |
-| [Release](docs/release.md) / [Storage acceptance](docs/storage-acceptance.md) | Release gates and bounded real-service evidence |
-
-Detailed past Task/audit/review packets live in Git; [Progress](docs/progress.md) retains accepted
-Base/Head/closure facts and historical lookup pointers. `docs/history/` is immutable legacy evidence.
-
-## Development workflow
-
-Read [AGENTS.md](AGENTS.md), [Development Workflow](docs/development-workflow.md), committed Slice
-and active Task. A owns scope/final review; Developer implements and runs new/changed/directly
-affected tests; B owns Task review/full acceptance. Use [Task template](Task/TEMPLATE.md).
-
-## Release validation
-
-CI runs offline Python quality/tests and isolated wheel smoke checks without production secrets or
-media and does not publish/deploy automatically. B's full gates, applicable packaging/real-browser/
-Docker checks, and concise evidence rules live in [Development Workflow](docs/development-workflow.md#6-test-levels).
+`main` 是当前开发分支，版本定义在 [pyproject.toml](pyproject.toml)。
