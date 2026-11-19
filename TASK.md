@@ -1,15 +1,15 @@
 # Task PATCH-20261120-1 — 修复后续季剧集匹配与逐文件元数据修正
 
-Next Action: DEVELOPER CORRECTS PATCH-20261120-1
+Next Action: B RE-REVIEWS THE PATCH-20261120-1 FIX CANDIDATE
 
-用户于 2026-11-20 授权激活独立 Task。B 审查首个候选后要求在同一 Task 内返工。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
+用户于 2026-11-20 授权激活独立 Task。B 审查首个候选后要求在同一 Task 内返工；Developer 已完成修正，交回 B 审查（修正报告见本页末尾）。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
 [独立缺陷流程](docs/development-workflow.md#31-independent-minor-bugs) · [现有逐项恢复流程](docs/product-experience.md#tasks-results-and-per-item-recovery) · [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/c8039f1f3d7bdfdb7fd927c75f99df0cb8a9e523/TASK.md#patch-20261119-2--b-验收-pass)
 
 ```text
 Task ID: PATCH-20261120-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
 Difficulty: High
 Test Level: T4
@@ -167,3 +167,69 @@ B 使用现有 Files 整理受理、Worker 和逐文件恢复 API，配合临时
    让调用方按既有规则预留实际需要的季集请求，S02+ 校验分支沿用自身预算。补充电影在两次请求内通过译名匹配的回归，并运行 `tests.test_metadata` 和 `tests.test_manual_task_engine`。
 
 完成后运行上述受影响的测试及 `git diff --check`，交付新候选。B 在新候选上复核两段操作并执行本 Task 的 T4 验收。
+
+## Developer Completion Report — B 反馈：候选审核重开与电影详情预算
+
+```text
+Task Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
+Reviewed Fix Target: 62c47df4f66ea688fb90ff7daef51ceaf7a5f25f
+Implementation Candidate: ec8dce1b92003218a61e3404b870f7ac0ea6a518
+Branch: main
+Status: READY FOR B REVIEW
+```
+
+**起点**
+
+本轮从 `main`／`62c47df4`（B 的 FIX REQUIRED 检查点）开始，工作区与暂存区干净，无既存
+未提交文件。修正提交为 `ec8dce1b`，本报告与 TASK.md 交接单独提交。
+
+**修正结果**
+
+1. **同文件候选审核重开。** `MetadataReviewService.create` 先读取该 TaskItem 已有的候选审核；
+   存在时复用同一 `review_id` 与 `created_at`，在当前候选审核写入路径上原子替换查询、结果、
+   候选清单、待选状态和等待项。`metadata_reviews` 的选择字段与决定时间被清空，已有
+   `metadata_review_decision_audit` 保留；不改 SQLite 结构。`reopen_metadata_review[_with_evidence]`
+   在同一事务中删除旧候选、写入新候选并推进 TaskItem，插入失败时整体回滚，旧审核和旧候选
+   保持原事实。ID 重开使过期的检查点版本不能用于选择新快照中的候选。
+2. **电影详情预算。** `_enrich_candidates` 不再一律预留一次请求；调用方按既有规则传入实际
+   需要：电影为 `0`（匹配直接复用已获取的详情身份），明确季集的 S01/未验证分支为 `1`，
+   S02+ 季集校验分支继续使用自身的 `2` 请求预算。电影搜索加一次详情请求即可通过译名进入
+   待确认摘要，不再提前进入元数据修正。
+3. 在两个现有入口补充回归：`tests.test_task_item_metadata_search` 覆盖
+   「候选确认 → 季集不符 → 只保存查询 → 再次候选确认 → 正确摘要」全链路，验证同一
+   `review_id`、候选替换、旧审计保留、旧候选检查点版本被拒绝、确认前零 Storage 变更；
+   `tests.test_manual_task_engine` 通过真实 Files 受理、Worker 和两请求电影策略验证
+   `Hamnet` 详情译名匹配；`tests.test_metadata` 验证两次请求内完成匹配。
+   `tests.test_metadata_review` 同时覆盖重开成功与候选写入失败时的原子回滚。
+   为复现任务中的真实请求预算，测试助手 `entrance_journey` 与 `_DiscoveryFixture.journey`
+   增加可选的最大 Provider 请求数参数，并由对应旅程显式传入 `2`。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，候选工作树）**
+
+```text
+python3 scripts/check_governance.py                                   -> PASS
+git diff --check                                                      -> clean
+.venv/bin/ruff format --check <10 changed files>                      -> 10 files already formatted
+.venv/bin/ruff check <10 changed files>                               -> All checks passed
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest <12 affected modules> -> 301 tests OK (10.25s)
+web: npm run test -- run TaskItemRecoveryPanel.test.tsx
+     ManualOrganizeDialog.test.tsx RunDetailTabs.test.tsx              -> 3 files, 71 tests OK (20.37s)
+web: npm run typecheck                                                 -> OK
+```
+
+12 个 Python 模块为 `test_media_parser`、`test_metadata`、`test_metadata_resolution`、
+`test_metadata_correction`、`test_metadata_review`、`test_task_item_metadata_search`、
+`test_manual_task_engine`、`test_automation_entrance_recovery`、`test_v2_manual_organize`、
+`test_configuration_objects`、`test_operations_task_center`、
+`test_processing_recovery_admission`。另运行了受测试助手变更影响的
+`tests.test_media_discovery` 与 `tests.test_operations_task_center`（31 tests OK）。
+新增链路中的 Provider 为本地模拟实现，Files/Worker、真实 API、SQLite 与 Local Storage
+均使用仓库既有入口，没有构造不存在的入口。
+
+**剩余与风险**
+
+- B 仍需在冻结候选上执行本 Task 的 T4 全量 Python/Web/E2E、构建与封装门禁；Developer 未运行
+  Playwright、全量套件或生产产物验证。
+- 本轮未连接真实 TMDB；同名剧、季集缺失、译名和预算场景均由本地模拟 Provider 覆盖，B 需在
+  独立验收中核对真实 Provider 返回形态与两个入口的一致投影。
+- 候选审核重开复用既有记录与审计，不迁移历史数据；历史 pending/resolved 行仍按原状态读取。
