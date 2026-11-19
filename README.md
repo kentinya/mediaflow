@@ -74,8 +74,9 @@ AWS/R2, other OpenList drivers, remote atomic publication, power loss or multi-h
 ## V2 development status
 
 `main` is the unreleased `2.0.0.dev0` Operator Web development trunk. Python `/api/v1/*` remains the
-business authority. `/ui-v2/` is the only current Web root; the retired V1 `/ui` product is not served
-on this line, and its old addresses are ordinary not-found routes. V1 remains released on `release/v1`.
+business authority. Slice55 accepts `/ui-v2/` as the only current Web root and retires V1 and obsolete
+migration entrances on main. Valid V2 data and work at the Slice55 Base retain their original identities.
+Historical V1 is retained on `release/v1`.
 [Documentation](docs/README.md) maps document
 responsibilities. [Roadmap](docs/roadmap.md) records priority/status,
 [Progress](docs/progress.md) accepted closures, and [SLICE.md](SLICE.md)/[TASK.md](TASK.md) current work.
@@ -108,8 +109,7 @@ page is removed and its addresses return ordinary not-found. The shared organize
 between status text and its colored border.
 Task recovery uses the same `保存并重新分析` action for a saved decision whose analysis was refused;
 accepted analysis shows its waiting state. Results remain in the existing Task detail/file evidence.
-The duplicate Organize execution page is removed; former links open the exact associated Task,
-and confirmation within a Task refreshes that same detail.
+Task Center displays the exact associated Task. Confirmation within a Task refreshes that same detail.
 New organizing starts from ResourceLibrary Files. Failed files can start again without cancelling
 the ended Task; healthy siblings still waiting for confirmation keep their original summary. History read failures
 have an in-page reread action. Explicit confirmation precedes each new execution; original results
@@ -308,7 +308,7 @@ former remote execution ticket (`execution-authorizations`, `X-MediaFlow-Executi
 `POST /api/v1/tasks`) is retired; `api.remoteExecution` in an immutable historical document stays
 readable but grants no authority and cannot be published again. Ordinary users never issue or
 transfer execution tokens. Every entrance retains RBAC, pins, effect scope, audit, fencing and
-OrganizerExecutor-only mutation. See [Architecture](docs/architecture.md#interactive-execution-authorization-current-v1-and-v2).
+OrganizerExecutor-only mutation. See [Architecture](docs/architecture.md#interactive-execution-authorization).
 
 ### Operator Web UI
 

@@ -11,11 +11,10 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Complete V1 and migration residue retirement (Slice55 ACTIVE)
+## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 
-[Slice55](../SLICE.md) 与 `V2-RETIRE-001–010` 于 2026-11-15 获用户授权激活，首个 Task
-由 A 代 B 规划；尚未实施或接受。下文 CURRENT 的 V1共存、兼容读取／schema补齐和旧路径支持只在最终验收
-后由本 TARGET 替代；此前接受身份、冻结 V1、Git 和 docs/history 不改写。
+[Slice55](../SLICE.md#a-final-review--pass--closed) 于 2026-11-19 经独立 A 终审关闭。
+`V2-RETIRE-001–010` 定义当前原生 V2 架构，取代先前的 V1 共存与废弃迁移承接约定。
 
 ```text
 minimal deployment bootstrap + api.principals
@@ -779,7 +778,7 @@ models and a central authenticated API/query boundary. Python domain/application
 A Node build stage runs `npm ci` from `web/package-lock.json` and `npm run build`. Only static
 output enters the Python runtime at `/opt/mediaflow/web/dist`, selected by deployment-owned
 `MEDIAFLOW_UI_V2_ASSET_ROOT`. No Node/npm/source/dev server/SSR/CDN or second production HTTP service.
-Python serves `/ui-v2/` alongside V1 `/ui` and API; build/asset failure never silently serves stale work.
+Python serves the V2 static assets at `/ui-v2/` and the API. Asset failure uses ordinary not-found behavior.
 See [Deployment](deployment.md#v2-frontend-artifact-and-serving) for serving/security details.
 
 The shared responsive AppShell owns route/auth continuation, bounded return context and permission/
@@ -791,42 +790,22 @@ drive and URI prefixes. Browsing, discovery, planning, recovery and logical Open
 preserve those names; relative-path, root-confinement and budget checks remain at their boundaries.
 
 API-principal Bearer/RBAC, exact immutable Active/pinned work, explicit effect authority, audit,
-claim/lease/fence and completed/uncertain non-replay remain unchanged. V1 does not add a password DB,
-cookie session, OIDC or implicit proxy identity. TMDB stays behind MetadataProvider; unavailable
-credentials fail closed with no implicit Provider fallback. Closed shell/page/engine milestones and
-frozen/closed Slice status is maintained in [Roadmap](roadmap.md).
+claim/lease/fence and completed/uncertain non-replay govern current work. TMDB stays behind
+MetadataProvider. Unavailable credentials fail closed. [Roadmap](roadmap.md) records the closed milestones.
 
-### Interactive execution authorization: CURRENT V1 and V2
+### Interactive execution authorization
 
-**CURRENT V1:** interactive remote execution may use a separately issued, short-lived, single-use
-execution authorization token. The operator or automation issues it through the local CLI, receives
-the raw value once and supplies it to an authenticated API request through the
-`X-MediaFlow-Execution-Token` header. The digest is persisted, admission and consumption are atomic,
-and the normal API-principal Bearer token alone is insufficient mutation authority. The current V1
-The V2 Web does not expose this remote-execution token journey as its ordinary organizing flow. This
-mechanism may continue to support API automation, local administration, debugging, compatibility
-and emergency/support workflows.
+Files manual execution and four-type recovery require an exact durable organizing plan and explicit
+confirmation of the selected items and permitted effects. The backend issues server-held, short-lived,
+single-use authority bound to the authenticated principal, plan, snapshot, selected items and effect scope.
+The browser handles the confirmation. The backend atomically admits work and consumes the authority.
+The resident Worker claims the durable Task under a fence, and OrganizerExecutor owns media mutations.
+Automation uses scoped intent from checked Enabled publication or explicit Run once, with permission and
+execution-time checks.
 
-**CURRENT V2:** the routine operator-facing Web journey does not require CLI issuance or raw-token
-transfer. Files manual execution and four-type recovery require an exact durable organizing plan
-and confirmation of the selected items and any permitted destructive effects. The backend creates
-server-held, short-lived, single-use
-authority bound to the authenticated principal, plan/configuration/item set and effect scope.
-Admission and authority consumption are atomic; the resident Worker later claims the durable
-execution under a fence before OrganizerExecutor may perform Storage mutation. The browser neither
-receives nor submits the raw authority or its digest. Automation instead obtains scoped scheduled
-intent from checked Enabled publication, or one-run intent from the explicit Run once command,
-under V2-AUTO-010/011 below. These entry points still require exact backend plans/checks before effects.
-
-Both V1 and V2 preserve backend RBAC and permission enforcement, bounded execution
-authority, limits, audit, immutable configuration binding, stale/concurrent fencing, explicit
-mutation intent and OrganizerExecutor-only Storage mutation. Uncertain mutation is not
-automatically replayed. The V1 token mechanism may continue for API automation, local
-administration, debugging, compatibility and emergency/support workflows.
-
-V1 uses the `MetadataProvider` abstraction with TMDB as the production provider. Provider switching,
-additional production providers and arbitrary provider plugins are V1.x/V2 work. A missing or
-invalid TMDB credential fails closed; it does not trigger an implicit provider fallback.
+The V1 execution ticket CLI, header and direct Task submission are retired on main. Supported current
+entrances retain exact scopes, pins, limits, audits and fences. Completed and uncertain effects are
+preserved without replay.
 
 ## Processing pipeline
 
@@ -919,12 +898,9 @@ Storage root.
 
 ## Configuration authority and runtime binding
 
-On the compatibility path before managed activation, the JSON document is the runtime authority and
-is labelled `JSON_BOOTSTRAP`. A fresh instance may instead start from the minimal management-only
-bootstrap, which loads only the SQLite locator and environment-owned API-principal definitions;
-that state has no workflow runtime authority until an operator creates, validates and activates a
-managed revision. Both bootstrap paths keep configuration status and replacement recovery available
-without treating incomplete workflow content as Active.
+The minimal management bootstrap locates SQLite and supplies deployment-owned API principals through
+environment references. It keeps setup and recovery available before the first managed Active.
+Only a validated and activated managed revision provides runtime business authority.
 
 Managed Configuration persists whole-document Draft, Validated, Active and Superseded revisions.
 Object edits, references, evidence and audits are revision-bound. Activation is an atomic pointer
@@ -1133,9 +1109,10 @@ persists managed revisions, object/reference state, activation/test evidence and
 Compatibility versions are declared by the runtime/configuration repositories and managed-document
 loader; inspect those constants rather than treating a copied schema number as a feature status.
 
-Runtime database initialization is additive and refuses a newer unsupported schema. Backup, restore,
-migration rehearsal and upgrade preflight are read-only or explicitly isolated boundaries; they do
-not construct Storage/Provider workflows or grant media execution authority.
+Fresh initialization creates the complete current structure. Existing supported V2 data retains its IDs,
+relationships and snapshot identities. Any required structural adjustment is transactional. Incompatible or
+malformed databases are refused before durable modification. Backup and same-version restore preserve
+applicable data and confer no media execution authority.
 
 ## Libraries and work-scoped source evidence
 
@@ -1877,18 +1854,16 @@ authenticated configuration, files, tasks, reviews, manual organize, recovery, a
 notifications, logs, Explore, security audit and system status routes. RBAC is applied
 at the shared service boundary; 401/403 behavior and Web/API projections are tested together.
 
-The embedded V1 Operator Web and the React/TypeScript V2 SPA are static UIs served by the same
-Python application. The [accepted Explore contract](#current--v2-explore-homepage-slice51-pass--closed) defines the homepage and
-Dashboard retirement. V2 exposes Explore, ResourceLibrary Files, MediaLibrary, Storage,
+The React/TypeScript SPA at `/ui-v2/` is the only Web interface served by Python. The
+[accepted Explore contract](#current--v2-explore-homepage-slice51-pass--closed) defines the homepage
+and Dashboard retirement. V2 exposes Explore, ResourceLibrary Files, MediaLibrary, Storage,
 Settings, Rules and the Operations route family for Tasks and Organize,
 Automation and Notifications. The unified Operations task center provides native task-linked
 decision/recovery, cross-Task problem-type lists and same-Task four-type analysis/summary/confirmation. Cross-Task
-bulk mutation and arbitrary historical Reprocess remain deferred; Advanced JSON and the general configuration
-lifecycle retain their support/compatibility surfaces alongside native V2 Settings. Both UIs use the
-shared `/api/v1/*` application
-authority. The browser holds the API token only in memory and does not provide built-in account
-login. V2 recovery hints that must survive a page reload are scoped only after a read-only API
-response confirms the current principal; those hints do not grant authority or persist credentials.
+bulk mutation and arbitrary historical Reprocess remain deferred. Advanced JSON and managed lifecycle
+operations remain available in Settings. The SPA uses the shared `/api/v1/*` application authority.
+The browser holds the API token in memory. A read-only API response confirms the current principal before
+the browser uses recovery hints that survive a page reload. The hints carry context only.
 
 The `api serve` HTTP listener uses `wsgiref.simple_server` and remains a development/trusted-loopback
 boundary. Production Compose uses the explicitly selected `api serve-production` command with the

@@ -8,9 +8,8 @@ operator guide, not a Phase or Task log. Large-Slice status is maintained in
 
 | Path | Authority |
 |---|---|
-| JSON bootstrap (`MEDIAFLOW_CONFIG`) | Deployment-owned database locator and API-principal environment references. It is not managed business authority and cannot substitute for an activated revision. |
 | Managed Configuration | Explicitly activated immutable SQLite revision/digest; sole runtime authority after activation, with no JSON/Draft/stale-cache fallback. |
-| Minimal management bootstrap | Deployment-owned database locator and API-principal environment references keep status/setup/recovery available without business Active or workflow defaults. |
+| Minimal management bootstrap (`MEDIAFLOW_CONFIG`) | Deployment-owned database locator and API-principal environment references keep status/setup/recovery available without business Active or workflow defaults. |
 
 A fresh operator creates/resumes the first Draft in Web Settings and may activate a valid empty
 business baseline. Populated objects/references still validate; missing capability and corrupt
@@ -107,7 +106,7 @@ Draft → Validate → Validated → explicit Activate → Active runtime snapsh
 Editing a Draft increments its optimistic version, recalculates its digest and invalidates prior
 validation/test evidence. Active and Superseded revisions remain immutable. Editing the current
 Active explicitly creates a successor Draft seeded from that exact snapshot; Advanced JSON or package
-import can also create an inactive Draft for compatibility, exchange or recovery. Activation is
+import can also create an inactive Draft for exchange or recovery. Activation is
 atomic. A failed activation leaves the previous Active revision and the candidate Draft intact. A
 missing or invalid Active revision fails media work closed while status and replacement Draft
 recovery remain available through the bootstrap database locator.
@@ -516,7 +515,7 @@ explicit [deployment maintenance procedure](deployment.md#backup-and-same-versio
 Old-task/Job conversion and cross-version upgrade/rollback are outside current support.
 Do not infer a feature or permission to rebuild user data from an old schema number.
 
-This Slice's supported continuity is the accepted V2 data already present at its Base: existing
+Slice55 preserves the accepted V2 data already present at its Base: existing
 managed Draft/Active revisions, Storage and two library kinds, rules, runtime settings, Automation
 and notification definitions, legal Task/request/result/audit rows and original pins retain their
 IDs, relationships, digests and target semantics. They do not need reinitialization or resubmission,
@@ -529,7 +528,7 @@ conversion/takeover boundary; see [Deployment](deployment.md#boundary) and
 Provider switching/new Providers, built-in users/sessions/OIDC, general Secret Store/Docker Secrets,
 automatic uncertain replay and historical rollback remain outside the accepted baseline. No arbitrary
 host paths or mutation-based capability probes. Native Settings, Rules and Slice43's Automation
-workspace are delivered; V1 cutover remains unselected. Current Task Center is organizing-only with
+workspace are delivered on the sole current V2 Web surface. Task Center is organizing-only with
 eight views and four business recovery types; ordinary file work stays on its originating library page.
 Checked Enabled publication supplies scoped scheduled intent. [Automation creation/editing](product-experience.md#current--automation-forms-and-direct-run-once-slice49-pass--closed)
 uses the same list-background card: default-disabled creation can explicitly enable, and later editing

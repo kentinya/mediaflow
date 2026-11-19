@@ -3,14 +3,14 @@
 Operate one immutable Python image with four independent Compose services, local `/data`, explicit
 media mounts/secrets, separate liveness/readiness and fenced durable work. V1 release facts are in
 [Release](release.md); V2 ships static frontend assets in the same image. This guide owns runnable
-installation, health, restart, backup/upgrade/restore and failure-recovery procedures, not Task history.
+installation, health, restart, backup, restore and failure-recovery procedures.
 
 ## Boundary
 
 - This guide describes the current unreleased V2 `main` deployment, retaining the one-image/four-service
   foundation accepted for V1.0.0. Historical release facts belong to [Release](release.md); current
-  support is fresh initialization and same-version recovery, not old-task migration or cross-version
-  upgrade/rollback. A Slice closure or Git push does not publish an image or deploy a service.
+  support covers fresh initialization, the stable V2 data of the accepted Slice55 Base and same-version
+  recovery. Generic old-format takeover and cross-version upgrade/rollback remain deferred.
 - One image runs the installed `mediaflow` package. The image runs as UID/GID
   `10001:10001` by default and never needs root.
 - `compose.yaml` defines exactly `api`, `worker`, `scheduler`, and
@@ -38,8 +38,8 @@ installation, health, restart, backup/upgrade/restore and failure-recovery proce
 - Deployment secrets are values in a host-owned environment file mounted at
   `/run/mediaflow/deployment.env`. Compose source and rendered Compose output
   contain only the file path and variable references, never secret values.
-- The current product is fresh V2 plus same-version continuity. Accepted V2 data already present
-  at this Slice's Base — managed Draft/Active revisions, Storage and both library kinds, rules,
+- Accepted V2 data already present at the
+  [Slice55 Base](../SLICE.md#a-final-review--pass--closed) — managed Draft/Active revisions, Storage and both library kinds, rules,
   runtime settings, Automation/notification definitions, legal Task/request/result/audit rows and
   original pins — keeps its IDs, relationships, digests and target semantics. It needs no
   reinitialization or resubmission, and completed/unknown effects are never replayed. V1 and

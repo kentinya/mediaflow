@@ -1,6 +1,6 @@
 # MediaFlow V2 Stable Requirements
 
-This document is the stable V2 requirements layer for the active Operator Web migration. It
+This document is the stable requirements layer for the V2 Operator Web. It
 extends the frozen V1 requirements baseline without renumbering its `REQ-*` or `UX-*` entries.
 Explicit user-approved V2 product amendments identify the baseline behavior they supersede for V2;
 they preserve historical V1 meaning and all safety invariants. See `V2-AUTO-009` and the amendment
@@ -8,12 +8,11 @@ in [`requirements.md`](requirements.md). Slice-specific architecture and proof d
 remain in [`SLICE.md`](../SLICE.md) and the architecture document; this file records only durable
 product and authority boundaries.
 
-## TARGET — Complete V1 and migration residue retirement (Slice55 ACTIVE)
+## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 
-用户于 2026-11-15 明确要求 V1 完全退役、不做兼容也不隐藏，并在调查迁移残留后授权
-规划并激活 [Slice55](../SLICE.md)，同时授权 A 代 B 规划首个 Task。下列要求是
-**TARGET / ACTIVE**，尚未实施或接受；已有 CURRENT／历史验收保持原事实身份。它们取代被明确列出的共存、兼容读取和旧迁移义务，
-保留当前 V2 用户结果与安全；不改写冻结 V1 定义、release/v1 或历史记录。
+[Slice55](../SLICE.md#a-final-review--pass--closed) 于 2026-11-19 经独立 A 终审关闭。
+下列 CURRENT 要求取代 V1 共存、旧客户端兼容和纯迁移承接义务。既有稳定 V2 数据、正式契约、
+历史验收和冻结 V1 定义保留原有意义。
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
@@ -33,9 +32,9 @@ V1／废弃迁移用途；当前正式配置键、权限／接口契约、V2-RUL
 有效配置和合法原 pins 的语义、V2-TASK-004–006 的稳定 V2 数据继续使用与历史完整义务
 保持。必要当前读取和最小结构调整属于保留职责，不新增通用旧版本接管。
 REQ-CONFIG/SCHED/WEB、REQ-SAFE-008 的被替代实现和旧语义见
-[Requirements 的 TARGET 修订](requirements.md#v2-requirements-boundary)。
+[Requirements 的现行修订](requirements.md#v2-requirements-boundary)。
 共享业务服务／Storage／Provider、当前元数据身份、逐项效果、审核／取消安全不被退出。
-完整旧输入下限、Required Outcomes、支持范围和验收在 Slice55；CURRENT 只在最终接受后协调。
+完整退役清单、支持范围和最终验收见 Slice55。
 
 ## Current program boundary
 
@@ -362,8 +361,8 @@ a second execution engine, broad file authority, destructive defaults or histori
 | V2-AUTH-001 | During the current V2 program, the existing API-principal Bearer-token model and RBAC remain the identity/authentication and role/permission authorization boundary. | A scoped execution grant, execution unlock, step-up authorization or equivalent mutation-admission authority may be layered on top when required by an approved V2 journey, but it does not replace principal identity, authentication or RBAC. V2 does not silently introduce a new username/password identity system, OIDC integration, session or cookie authority. |
 | V2-AUTH-002 | The API principal token remains memory-only in the browser during the current identity architecture. | The token is not persisted in `localStorage`, `sessionStorage`, IndexedDB, URLs/query strings or frontend-managed authentication cookies. |
 | V2-AUTH-003 | Python remains the authoritative backend for domain behavior, execution authority and storage mutation. | Frontend code does not duplicate or move domain decisions, execution permission or Storage mutation out of the Python application; `OrganizerExecutor` remains the sole Storage mutator. |
-| V2-MIG-001 | Existing `/api/v1/*` and shared application behavior remain authoritative during migration. | V2 UI and V1 UI use the same API semantics, validation, permissions, state transitions and safety gates. |
-| V2-MIG-002 | V1 `/ui` and the V2 migration surface may coexist until parity and cutover acceptance. | The V1 UI remains available during migration, and a separate V2 entry is used until the approved cutover. |
+| V2-MIG-001 | The existing `/api/v1/*` contract and shared Python behavior remain authoritative for V2. | V2-RETIRE-001/002/006 define the current Web and API boundaries. Shared validation, permissions, state transitions and safety gates remain. |
+| V2-MIG-002 | Historical coexistence requirement, superseded by V2-RETIRE-001. | Slice55 accepts `/ui-v2/` as the sole current Web root. Former routes use ordinary unknown-route or authentication behavior. |
 | V2-SAFE-001 | Read-only V2 UI actions remain zero-side-effect. | A read, refresh or status view does not create Tasks, invoke a Provider or mutate Storage unless a later explicitly approved journey says otherwise. |
 | V2-SHELL-001 | V2 uses one shared light operator shell across all V2 routes. | The shared light left rail/top bar follows the current written Files/Shell composition; Files does not create a parallel navigation model, existing route/auth/deep-link semantics remain shared, and non-Files business journeys remain functional inside the same chrome. |
 | V2-FILES-001 | Files is a live-Storage ResourceLibrary browser and a complete common file-management surface. | An authorized operator can Create Folder/Text File, Rename, Copy, Move, Delete, Edit an allowlisted bounded text file, Upload and Download eligible files/directories, with bounded multi-selection where meaningful, without entering the media-organize policy pipeline. |
@@ -372,7 +371,7 @@ a second execution engine, broad file authority, destructive defaults or histori
 | V2-FILES-004 | ResourceLibrary configuration can be edited from its selected Files card without exposing managed-lifecycle mechanics. | ID stays immutable; name, enabled state, Storage and source root are prefilled and saved through exact-Active optimistic concurrency, field-preserving merge, complete validation and checked atomic activation. Storage contents are never migrated by the edit, and failures retain the prior Active and correctable input. |
 | V2-DEPLOY-001 | Production remains operable without a Node runtime server. | Node may build the frontend, while the existing Python/MediaFlow application serves the built static assets and API. |
 | V2-DEPLOY-002 | Fresh Compose requires only management bootstrap, durable data and deployment-owned administrator credentials, with distinct process, infrastructure and work readiness. | No mandatory media mount; configured Local Storage still requires explicit mounts/permissions. Waiting for first configuration is normal resident state, not false Scheduler/notification readiness. DB/schema/heartbeat and Active/pin/secret failures are distinct, fail closed and retain safe recovery; health checks have no media/provider/delivery side effects. |
-| V2-MIG-003 | Final V1 UI retirement requires explicit parity and cutover acceptance. | `/ui` is not removed merely because a V2 route or partial migration exists; parity, accessibility and migration evidence are required first. |
+| V2-MIG-003 | Historical retirement acceptance requirement. | Slice55 completes the authorized retirement against V2-RETIRE-001/009/010, including current journeys and accessibility evidence. |
 
 ## MediaLibrary requirements — delivered baseline and editing
 
@@ -504,8 +503,7 @@ must not silently expand this V2 layer.
 
 React, TypeScript, Vite, TanStack Router, TanStack Query, testing tools and the feature-first source
 tree are adopted Slice 30 architecture decisions. They are intentionally not encoded as permanent
-product requirements here; the Python runtime, authority, authentication, coexistence and cutover
-boundaries are.
+product requirements here. Python authority, authentication and the current V2 serving boundary are.
 
 ## UI-V2 Files Contract — 2026-09-14
 

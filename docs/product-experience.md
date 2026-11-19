@@ -11,13 +11,10 @@ points to the current implementation state and immutable review packet.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
-## TARGET — Complete V1 and migration residue retirement (Slice55 ACTIVE)
+## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 
-用户于 2026-11-15 授权规划并激活 [Slice55](../SLICE.md)，由 A 代 B 规划首个 Task，
-目标为 V1 与迁移兼容完整退出，
-不隐藏、不做别名／跳转／转换。`V2-RETIRE-001–010` 尚未实现或接受；以下是目标旅程，
-明确替代下文当前旅程中的 V1 共存、旧链接、旧配置／状态／会话读取与旧迁移承诺。
-此前 CURRENT 及历史验收在本 Slice 接受前保持事实身份。
+[Slice55](../SLICE.md#a-final-review--pass--closed) 于 2026-11-19 经独立 A 终审关闭。
+下列旅程落实 `V2-RETIRE-001–010`，取代先前的 V1 共存、旧链接承接和废弃迁移格式义务。
 
 - **目标／入口：** 新实例四服务从最小管理 bootstrap 启动，无业务 JSON runtime 或媒体
   挂载前置。用户连接当前 api.principals 身份，进入现有 V2 系统设置，显式创建／恢复
@@ -623,8 +620,8 @@ are reconciled from durable identity before another explicit attempt; reads neve
 - **Goal/entry:** change runtime behavior through Settings/Configuration or focused business forms.
   `系统设置` starts with compact state and the three runtime fields; wider typed settings are grouped
   in `高级配置`, with rule counts, command readiness and technical identities in secondary diagnostics.
-- **State:** JSON_BOOTSTRAP versus MANAGED authority; Draft/Validated/Active/Superseded, exact version/
-  digest, references, validation/current evidence and capability readiness. Unsaved input is not Active.
+- **State:** management bootstrap provides setup and recovery. Managed Draft/Validated/Active/Superseded states
+  show exact versions, digests, references, current evidence and capability readiness. Only Active governs runtime.
 - **Action:** explicitly create/resume a Draft or successor, edit typed objects, inspect impact,
   validate/test and checked-activate. Advanced whole-document JSON/import/export is a labelled support
   path; imports create inactive Drafts. Business-page Save bundles shared validation and activation.
@@ -1413,7 +1410,7 @@ Adding mounts may recreate containers; publication alone does not. Schema/mount/
 schema-readiness failures preserve durable work/backup and never replay uncertain media.
 Old-task/Job conversion and cross-version upgrade/rollback remain outside current support.
 
-## V2 Operator Web migration
+## V2 Operator Web
 
 The shared responsive light shell provides persistent navigation, identity/connection controls,
 safe deep links and bounded return context. After connection, root opens Explore. Memory-only token auth
@@ -1421,8 +1418,8 @@ continues supported routes; reconnect never replays work. A 401 clears rejected 
 a 403 retains identity and offers legal navigation. Disconnect clears token/cache/intended route.
 Show loading/empty/success/transport/malformed/unauthorized/forbidden/unavailable/not-found distinctly.
 Refresh/list/navigation create no work or media mutation. Explicit Explore reads may contact the
-Provider for bounded metadata/artwork; other status/list/navigation reads remain Provider-free. No independent Node
-production service, replacement identity model or implicit V1 cutover is introduced.
+Provider for bounded metadata/artwork. Other status/list/navigation reads remain Provider-free.
+Python serves the only current Web entry at `/ui-v2/` and retains API-principal identity.
 
 ### Task Center integration
 
@@ -1481,10 +1478,10 @@ Rules、配置检查和整理执行前的内部校验复用共享分析/精确�
 不由退役要求另行产生权限或功能范围。
 这是整 Slice 验收后的 CURRENT；没有把 Task45.4 Scan PASS 代替 Preview 退役验收。
 
-## V1 and post-V1 boundary
+## Current product boundary
 
-V1 `/ui` and shared API authority remain until explicit cutover/parity acceptance. Current delivered
-workspaces do not include cross-Task bulk mutation, arbitrary historical Reprocess, universal rollback,
+The V2 workspace uses the shared Python API. The historical V1 release is recorded in [Release](release.md).
+Current workspace deferrals include cross-Task bulk mutation, arbitrary historical Reprocess, universal rollback,
 automatic uncertain replay, Provider switching/new production Providers, built-in users/session/OIDC,
 general Secret Store or specialized email/chat/media-server channels. Selected45 cross-Task problem
 lists supersede earlier deferral of those lists only. Active/frozen scope and earlier accepted

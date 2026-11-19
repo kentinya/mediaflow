@@ -4,14 +4,14 @@
 Slice ID: 55
 Name: Complete V1 and Migration Residue Retirement
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: 2b2e7c1824fa5681864455714d0f97b26555c7dc
 Implementation Head: 80334ccaa30d54019934b50855f7dee00525abcc
 Working Branch: main
-Development Authorization: A RETURNED TASK55.8 TO B FOR A55-01
+Development Authorization: COMPLETE
 Risk: High
 Accepted Test Level: T4
-Next Action: A FINAL REVIEW OF ENTIRE SLICE BASE..IMPLEMENTATION HEAD
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## Authority and baseline
@@ -62,10 +62,9 @@ Task 调度、结果／审计和同版本非重放继续完整。`/api/v1/*` 是
 
 ## Requirement and journey mapping
 
-TARGET 稳定范围见 [V2-RETIRE-001–010](docs/v2-requirements.md#target--complete-v1-and-migration-residue-retirement-slice55-active)，
-[目标旅程](docs/product-experience.md#target--complete-v1-and-migration-residue-retirement-slice55-active) 与
-[目标架构](docs/architecture.md#target--complete-v1-and-migration-residue-retirement-slice55-active)。
-下列修订将在本 Slice 验收后成为 CURRENT：
+现行要求、旅程和架构见 [V2-RETIRE-001–010](docs/v2-requirements.md#current--complete-v1-and-migration-residue-retirement-slice55-pass--closed)、
+[Product Experience](docs/product-experience.md#current--complete-v1-and-migration-residue-retirement-slice55-pass--closed)
+和 [Architecture](docs/architecture.md#current--complete-v1-and-migration-residue-retirement-slice55-pass--closed)。
 
 | 被修订的当前边界 | 本 Slice 目标 | 保留的义务 |
 |---|---|---|
@@ -222,45 +221,45 @@ REQ/UX/V2 ID、历史关闭事实及 docs/history 保留。不能把残留移到
 
 ## Acceptance Criteria
 
-- [ ] AC-01 / RO-1：所有指定旧 Web 入口注销；带查询、直达／刷新／重连均使用普通 not-found／
+- [x] AC-01 / RO-1：所有指定旧 Web 入口注销；带查询、直达／刷新／重连均使用普通 not-found／
       auth，无遮蔽开关、V1 资源、跳转、说明壳或旧地址到当前意图的自动转换。
-- [ ] AC-02 / RO-2：正常当前配置／合法权限下，旧 API 为通用 unknown route；旧 CLI 从 help／
+- [x] AC-02 / RO-2：正常当前配置／合法权限下，旧 API 为通用 unknown route；旧 CLI 从 help／
       parser 注销。不能用401/403、无配置503或非零退出冒充删除；无额外工作／Provider／
       Storage 效果，正常解析／认证／脱敏审计允许。无旧票据、调度、grant 专用读写／接线。
-- [ ] AC-03 / RO-3：当前正式 bootstrap／配置／接口／权限契约保持；maximumActiveJobs 和
+- [x] AC-03 / RO-3：当前正式 bootstrap／配置／接口／权限契约保持；maximumActiveJobs 和
       CANCEL_JOB/cancel_job 无改名／替代键。纯 V1／迁移输入单独、混合、旧包导入和任意
       JSON 路径拒绝，零发布／Task／媒体效果；现有正常 V2 配置和合法 pins 仍有效。
-- [ ] AC-04 / RO-2/4：新手工／due／Run once 和四类恢复只走同 Task 内核，保留人等／稳定等、
+- [x] AC-04 / RO-2/4：新手工／due／Run once 和四类恢复只走同 Task 内核，保留人等／稳定等、
       原子额度、源归属和并发fence；无非内核整理领取、旧子 Task 链、Pause／resume 实现。
-- [ ] AC-05 / RO-4：新库完整结构；用 Base 真实代码在隔离环境建立正常 V2 配置／任务／结果
+- [x] AC-05 / RO-4：新库完整结构；用 Base 真实代码在隔离环境建立正常 V2 配置／任务／结果
       后，由候选继续打开使用，保留 IDs／关系、Draft／Active／digest／pins、状态／独立效果、
       审计和未知请求核对，不要求重建配置或重发任务。同版本 reopen／restart／备份及明确
       非覆盖 restore 通过；必要结构调整失败原子、有效业务记录不丢。原本不支持／畸形库
       拒绝前后文件／schema／行不变，无自动清库／重建／claim 或媒体效果。
-- [ ] AC-06 / RO-4/5：Task 五态、文件 partial／unknown／缺 Result、取消与真实未完成各自准确；
+- [x] AC-06 / RO-4/5：Task 五态、文件 partial／unknown／缺 Result、取消与真实未完成各自准确；
       纯废弃 flow／命令／事件／session／响应形状无兼容转换或执行资格；现有稳定 V2 的
       有效数据／请求／正式响应保持原业务语义和安全恢复。
-- [ ] AC-07 / RO-5：新格式输入与同版本 unknown 写入跨关闭／刷新／重新认证／双管理员并发
+- [x] AC-07 / RO-5：新格式输入与同版本 unknown 写入跨关闭／刷新／重新认证／双管理员并发
       保留准确请求与核对；迟到读取／写响应不串身份／版本／兄弟项，不自动重提或假失败。
-- [ ] AC-08 / RO-1/3/6：从无媒体挂载的四服务空实例，经 V2 首次 Draft／空 Active、typed
+- [x] AC-08 / RO-1/3/6：从无媒体挂载的四服务空实例，经 V2 首次 Draft／空 Active、typed
       Storage／两种库／七类规则、设置高级草稿检查与激活、自动化及通知配置完成；无 V1／
       手写整份业务 JSON／旧 runner 回退，C 使用 A 命名分类仍为 C。
-- [ ] AC-09 / RO-2/4/5：真实 Files 单项／批量／有界文件夹 → per-file 决策 → 精确选中摘要
+- [x] AC-09 / RO-2/4/5：真实 Files 单项／批量／有界文件夹 → per-file 决策 → 精确选中摘要
       → 显式确认 → 同 Task，及 due／禁用定义 Run once → 四类问题 → 同 Task 续作通过。
       各项／附件独立，成功和不确定效果不重放，当前来源失败历史门禁／自动化统计保持。
-- [ ] AC-10 / RO-2/6：两种库普通维护／异步 Copy/Move/Delete、当前页耐久结果／恢复、通知
+- [x] AC-10 / RO-2/6：两种库普通维护／异步 Copy/Move/Delete、当前页耐久结果／恢复、通知
       投递／死信恢复、权限变化、满额、坏 Active／pin、丢响应均保持实际安全边界和下一步。
-- [ ] AC-11 / RO-6：新构建浏览器、wheel／源码外安装和候选 Docker 四服务镜像证明无旧
+- [x] AC-11 / RO-6：新构建浏览器、wheel／源码外安装和候选 Docker 四服务镜像证明无旧
       产物／入口；当前安全头、健康、无 Active 常驻、设置采用和重启恢复保持。桌面／390px／
       矮窗口检查移除迁移内容后的可读／键盘／返回，不要求全站重设计。
-- [ ] AC-12 / RO-6：源／注册／schema／消费者反向清单、CI／示例／脚本／当前说明完整；
+- [x] AC-12 / RO-6：源／注册／schema／消费者反向清单、CI／示例／脚本／当前说明完整；
       无把旧断言直接删弱的通过。全部 Required Outcomes 和安全／原生／包门禁有精确候选
       实证，未执行项不记为 PASS；无旧版兼容例外待补而声称“完全退役”。
 
 ## Validation ownership and final validation
 
-风险 High，产品实施与最终验收 T4。首个 Task55.1 已由 A 按用户授权代 B 规划，见
-[TASK.md](TASK.md)。后续 B 按完整行为规划连贯 Task、实际 Base、Difficulty／Test Level
+风险 High，产品实施与最终验收 T4。首个 Task55.1 已由 A 按用户授权代 B 规划，记录在
+`a0841c21:TASK.md`。后续 B 按完整行为规划连贯 Task、实际 Base、Difficulty／Test Level
 与精确 affected／acceptance 命令；本文件不预建后续 Task 或执行步骤配额。
 Developer 仅跑新增／修改／直接受影响测试及必要当前原生链路，按工作流交不可变检查点；
 B 独立完成每 Task 必需验收、[shared full gates](docs/development-workflow.md#shared-full-regression-commands)
@@ -321,9 +320,32 @@ Python 全量的 Task 声明失败与文档复跑均见原记录。A 的本地�
 **决定为 FIX REQUIRED。** 完整退役作为 TARGET 继续由本合同验收。B 在原 Task55.8
 规划针对 A55-01 的修正并完成独立复验。
 
-### B 修订交包 — READY FOR A REVIEW
+### B 修订交包
 
-B 已独立复核原 Task55.8 的完整范围，修正后 Task55.8 **PASS**。管理员用修正后的随仓
-OpenList 示例走现行 Draft 导入，到系统设置检查并激活后，能在存储管理查看该条目。旧示例
-仍在建立草稿前被拒绝。六项 Slice 结果和制品证据见 [B 修订 Closure Packet](TASK.md#b-修订复核与-slice55-closure-packet)。
-A 终审候选为 `80334ccaa30d54019934b50855f7dee00525abcc`。
+B 独立复核原 Task55.8 后判定 **PASS**，六项 Slice 结果与制品证据保存在
+`db079872dd348569d6f5f2e86682aaebf7e28325:TASK.md`。终审候选为
+`80334ccaa30d54019934b50855f7dee00525abcc`。候选与 B 交包之间只变更 `SLICE.md` 和 `TASK.md`。
+
+### A Final Review — PASS / CLOSED
+
+2026-11-19 在干净的 `main` 完成原 Base `2b2e7c1824fa5681864455714d0f97b26555c7dc`
+至候选 `80334ccaa30d54019934b50855f7dee00525abcc` 的独立审查。复查此前 RO-1–RO-6
+的完整范围和证据，并核对本轮示例、配置指引和回归差异。应用、Web、部署生成器、Compose、
+Docker 构建输入均与首轮候选一致，五个已验收 Web 资产通过 SHA-256 比对。
+
+A55-01 已修正。沿现有 `config draft-import --file` 在同一隔离实例测试，旧示例退出 2，
+读回零草稿且无 Active。修正后的示例创建草稿，系统设置验证并完成适用检查。目标库目录缺失时
+保留草稿，补齐临时目录并重新检查后显式激活原修订版本 1。存储管理读回 OpenList `/Media`、
+只读及凭据引用状态。该条目未绑定库，本轮发布检查适用的是两个 Local Storage，验证范围为隔离环境。
+独立复跑部署测试 15 项通过。现行修正后浏览器复验及本地日志见
+`.git/validation-evidence/80334ccaa30d54019934b50855f7dee00525abcc/slice55-a/`。
+
+B 在新候选运行 Python 全量 2308 项（2301 通过，7 项既有可选外部服务／耐久测试跳过），
+并按输入和制品身份复用 Web 1631 项单测、285 项默认浏览器、真实 Python 原生、源码外 wheel
+及四服务 Docker 空实例、发布安全和重启结果。原组合容量用例失败与隔离复跑、Docker 挂载修正、
+首轮 Task 说明失败及其复跑保留在两轮交包证据。此前真实 Base 的 V2 配置、任务、原 pin、
+请求与历史继续使用证据适用于本候选。B 的新证据位于
+`.git/validation-evidence/80334ccaa30d54019934b50855f7dee00525abcc/task55-8-b/`。
+
+六项 Required Outcomes 和 AC-01–12 均满足，Slice55 **PASS / CLOSED**。现行文档和关闭台账
+随本地终审检查点协调。首个 Task 的规划角色例外、既有证据限制及合同延期沿用原记录。

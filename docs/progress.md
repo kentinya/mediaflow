@@ -8,18 +8,18 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice55](../SLICE.md#a-final-review--fix-required) is **FIX REQUIRED** after independent A Final
-Review of Base `2b2e7c1824fa5681864455714d0f97b26555c7dc` through implementation
-`fb243ea688d31b8b2242b56bfe732771b9ea0965`. A55-01 covers the shipped OpenList example and
-the current Draft import. B continues [Task55.8](../TASK.md). The Closure Packet remains in Git
-at `573726541063115eeed6ce6d879004a40bf2624a:TASK.md`.
+[Slice55](../SLICE.md#a-final-review--pass--closed) is **PASS / CLOSED** after independent A Final Review on 2026-11-19.
+[TASK.md](../TASK.md) records no active implementation Task. **A SELECTS THE NEXT LARGE SLICE**.
 
-Latest accepted Slice remains54, independently closed on 2026-11-11 at original Base
-`e43a40674eb14aa12615a440a348fe675cd50c4e` through implementation
-`aef044e51dc91655372bf5fe39c6116da976c3b4`; its report successor through `9220f344` changes
-only SLICE/TASK handoff text. Fixed acceptance and all prior facts/limits remain below.
+## Latest accepted closure — Slice55
 
-## Latest accepted closure — Slice54
+V2 is the sole current Web product. The retirement covers V1 UI and migration handoffs, old schedules,
+tickets, independent grants, transports and obsolete formats. The current Task kernel, supported V2 data,
+original pins and unknown-request reconciliation remain available. The OpenList example follows checked
+Draft publication. Exact results and limits are in the [A Final Review](../SLICE.md#a-final-review--pass--closed) and
+the B Closure Packet at `db079872dd348569d6f5f2e86682aaebf7e28325:TASK.md`.
+
+## Prior accepted closure — Slice54
 
 Seven Rules families use centered Add/Copy/Edit cards over their exact inventory, readable
 settings/object-local tests, and Overview as the sole complete-flow Web entry. Accurate edit links,
@@ -45,6 +45,7 @@ rewrite older acceptance. Detailed prior closure/validation pointers remain at
 
 | Slice | Immutable Contract / A review | B Closure Packet |
 |---|---|---|
+| 55 | [A PASS / CLOSED](../SLICE.md#a-final-review--pass--closed) | `db079872dd348569d6f5f2e86682aaebf7e28325:TASK.md` |
 | 54 | [A PASS / CLOSED](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) | [B final acceptance](https://github.com/kentinya/mediaflow/blob/9220f34420bc4807d4c0bbbe98cf7dece5f100dd/TASK.md#b-final-task-review) |
 | 53 | [A PASS / CLOSED](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#a-final-review--pass--closed); [prior A53-01 / FIX REQUIRED](https://github.com/kentinya/mediaflow/blob/fded2cff4e3f9c131dce3416c916117bd72babd1/SLICE.md#a-final-review--fix-required) | [B final acceptance](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#b-closure-packet--task531-pass) |
 | 52 | `19a458eb6c1a6afb8693d2757755487a58213a4f:SLICE.md` | `5615f932203d7a56467e5563efc3b3a1b1ed4334:TASK.md` |
@@ -71,6 +72,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 55 — Complete V1 and Migration Residue Retirement | PASS / CLOSED | `2b2e7c1824fa5681864455714d0f97b26555c7dc` | `80334ccaa30d54019934b50855f7dee00525abcc` | Independent A Final Review PASS / CLOSED — 2026-11-19 | Native V2 only, legacy transports and runtime removed, supported V2 data and pins preserved, current Task and configuration journeys verified | V1/obsolete import or takeover, generic upgrade/rollback, new providers/permissions/engine, production release and deployment. Original validation limits apply. |
 | 54 — Organizing Rules Dialogs and Readability | PASS / CLOSED | `e43a40674eb14aa12615a440a348fe675cd50c4e` | `aef044e51dc91655372bf5fe39c6116da976c3b4` | Independent A Final Review PASS / CLOSED — 2026-11-11 | Seven families’ Add/Copy/Edit cards and exact list return; readable settings/local tests; Overview-only complete-flow check; coherent draft/read/verification context and unknown-save non-replay | New rule domains/algorithms, Providers/Storage/schema/permissions/publication protocol, execution/recovery engine, bulk/import/export/diff/rollback, V1, complete-test backend/API retirement, broad inventory/Overview/other-page redesign, production validation/release/deployment; original evidence limits retained |
 | 53 — Manual Organize Dialog and Task Center Handoff | PASS / CLOSED | `95c24cd0a3cc51acd6143e37e72371445cb15a72` | `8c1b2b1e262d483b594e99a06ad67e747b13bfa4` | A Final Review PASS / CLOSED — 2026-11-10; user-authorized B-to-A role exception | Per-file Files dialog and current-file legal correction/reanalysis; one exact subset confirmation; original-request reconciliation across sibling reanalysis and exact Task Center handoff; task-detail UI preserved | Task Center/list/recovery redesign, new engine/schema/permissions/Providers/Storage, broad configuration changes, MediaLibrary organizing, cross-Task recovery, arbitrary history replay, production validation/release/deployment; original evidence limits retained |
 | 52 — Explore, Navigation and Automation Entry Experience | PASS / CLOSED | `9aa6054e0a2f624b9fb5c0e0fa8d70b232a6cfa8` | `f5409da41191c6e4bbf238bb7def601229fc59dc` | A Final Review PASS / CLOSED — 2026-11-08 | Coordinated Explore layout/scrollable details; bounded ordinary paging and exact return; nine-page transitions/read handoff and two-library refresh stability; old Automation Open Web journey and exclusive dependencies retired, current cards/commands/history preserved | New sources/download/play, persistent detail sessions, whole-site business redesign, full backend retirement, new commands/schema/permissions/queue/recovery engine, historical conversion, production/full release matrix; original validation limits retained |

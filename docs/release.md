@@ -18,8 +18,20 @@ version, code and artifacts retain their existing meaning.
 
 ## Current V2 validation boundary
 
-[Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) is the latest accepted development Slice,
-**PASS / CLOSED** on 2026-11-11. Original Base
+[Slice55](../SLICE.md#a-final-review--pass--closed) passed independent A Final Review on 2026-11-19.
+Reviewed implementation `80334ccaa30d54019934b50855f7dee00525abcc` retired V1 and its migration paths
+on main. V2 first setup uses the managed Draft and checked activation. Accepted stable V2 data at
+Base `2b2e7c1824fa5681864455714d0f97b26555c7dc` remains usable with its original task and snapshot identities.
+
+The B Closure Packet at `db079872dd348569d6f5f2e86682aaebf7e28325:TASK.md` records 2308 Python tests
+(2301 passed, 7 optional skips), matching Web and wheel evidence, and the isolated Docker empty setup,
+release-security and four-service restart checks. A independently reran the corrected OpenList import,
+checked publication and storage readback using an isolated instance. Artifacts and raw records are
+local validation evidence. Release publication remains a separate maintainer action.
+
+### Earlier V2 validation
+
+[Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) was accepted on 2026-11-11. Original Base
 `e43a40674eb14aa12615a440a348fe675cd50c4e` through accepted implementation
 `aef044e51dc91655372bf5fe39c6116da976c3b4` delivers the seven Rules families' Add/Copy/Edit
 cards, readable settings/object-local tests and Overview-only complete-flow checking. The A-for-B
@@ -271,9 +283,8 @@ production release. Packaging evidence applies only to its recorded source; the 
 corrections below state which package gates were run. An actual release still requires its own
 exact-source container, external-service and release validation.
 
-This is development acceptance, not a V2 release. Current support is fresh initialization
-→ submit new work → same-version reopen/restart and permitted safe continuation. Within one
-artifact version, accepted V2 data at the Slice Base remains usable without reinitialization:
+Current support covers fresh initialization, new work, same-version reopen/restart and permitted
+safe continuation. Accepted stable V2 data from the Slice55 Base also remains usable:
 managed Draft/Active revisions, Storage and both library kinds, rules, runtime settings,
 Automation/notification definitions, legal Task/request/result/audit records and original pins keep
 their IDs, relationships, digests and target semantics; completed or unknown effects are never
@@ -460,9 +471,8 @@ backup/verify/restore remains the supported recovery path.
 - Validate production configuration with the target version before deployment.
 - Create and verify a database backup before maintenance; use the same artifact version for
   supported restore/restart and retain the existing database and artifact until verification ends.
-- Review the target's schema/readiness and the supported persistence boundary. An unavailable or
-  incompatible database does not authorize work or data clearing. Cross-version deployment is
-  outside current support; historical upgrade commands are not the recovery path for `main`.
+- Review the target's schema/readiness and the supported persistence boundary. For an unavailable
+  or incompatible database, verify the configured path or restore a verified supported backup.
 - Publish/tag only through a separate explicit maintainer action. This repository has no automatic
   upload, deployment, restore, migration rollback, signing, or container publication workflow.
 
