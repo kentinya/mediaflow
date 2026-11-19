@@ -677,9 +677,12 @@ V1's complete-configuration setup remains a compatibility path, not the native e
 - **Goal/entry:** inspect or maintain configured locations through `存储管理` (`/storage`).
 - **State/action:** real provider/identity/root, enabled/read-only/readiness and library references;
   typed add/edit/copy/enable/disable/reference-safe removal, or explicit Connection/Read check.
-  清单按提供商类型卡片和有界分页查找；真实空清单、类型筛选无结果和读取失败分别给出
-  适用的添加、切换类型或重试下一步。
   No secrets/private host paths or mutation-based capability probes.
+- **Browse:** use the provider type cards and paging. Selecting a type starts at its first page.
+  When a type or page change keeps earlier rows visible during loading, the banner identifies
+  them as the previous result.
+  The new response supplies the matching rows, paging controls or an empty state. Select `全部类型`
+  to clear the filter, add a Storage when Active has none, or retry after a read failure.
 - **Success:** checked successor publication or bounded read evidence; supported transfers keep their
   own library-kind/pin. No media work from configuration management.
 - **Failure/recovery:** name unavailable root/provider, stale Active, blocked reference, missing setup,
@@ -1423,8 +1426,9 @@ Old-task/Job conversion and cross-version upgrade/rollback remain outside curren
 ## V2 Operator Web
 
 The shared responsive light shell provides persistent navigation, identity/connection controls,
-safe deep links and bounded return context. The top bar provides only the account control. Open 通知
-from the sidebar to manage Webhooks and view delivery records.
+safe deep links and bounded return context. The top bar provides only the account control.
+Use the page-level search in Explore, Rules inventories and Automation. Open `通知` from the sidebar
+to manage Webhooks and view delivery records.
 After connection, root opens Explore. Memory-only token auth continues supported routes; reconnect
 never replays work. A 401 clears rejected authority and query state. A 403 retains identity and offers
 legal navigation. Disconnect clears token/cache/intended route.

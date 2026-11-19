@@ -129,8 +129,8 @@ do not impose pixel-identical CSS geometry:
 | Region | Reference placement |
 |---|---|
 | Left navigation | Fixed full-height rail, approximately `208 px` wide |
-| Top bar | Begins after the left rail, approximately `58 px` high |
-| Main page content | Starts inside the top bar and uses a wide constrained content area |
+| Top bar | Begins after the left rail, approximately `58 px` high, with the account control on the right |
+| Main page content | Starts below the top bar within the shared content area |
 | Page title block | Upper-left of the main content: `文件` followed by the subtitle |
 | Header actions | Upper-right: `当前页面操作状态` immediately left of `+ 添加资源库`, with the same style |
 | Library selector/context | Shared card strip showing `source` by name; selected context below shows `已启用` and `路径: /media/incoming` |

@@ -2,6 +2,8 @@
 
 Web 从 `/` 进入，API 使用 `/api/*`。换址后可在任务中心查看原有任务和结果。[换址说明](deployment.md#v2-frontend-artifact-and-serving)
 
+共享顶栏只提供账户入口。通过侧栏「通知」管理 Webhook 和查看投递记录，通过「存储管理」的类型卡片和分页查找存储。[使用说明](product-experience.md#v2-operator-web) · [存储管理](product-experience.md#storage-management-and-root-recovery)
+
 ## 使用和部署
 
 | 文档 | 内容 |
@@ -22,6 +24,6 @@ Web 从 `/` 进入，API 使用 `/api/*`。换址后可在任务中心查看原�
 | [路线图](roadmap.md) · [验收账本](progress.md) | 大版本优先级、已接受范围及固定验收记录。 |
 | [当前 Slice](../SLICE.md) · [当前 Task](../TASK.md) · [Task 模板](../Task/TEMPLATE.md) | 开发范围和当前状态。 |
 
-顶栏占位铃铛已删除。从侧栏「通知」进入 Webhook 管理和投递记录。[使用说明](product-experience.md#v2-operator-web) · [独立修复验收](https://github.com/kentinya/mediaflow/blob/ace169f4ee14feb4a101b7b2da2e917fe1c7c145/TASK.md#patch-20261119-1--b-验收-pass)
+近期独立修复的验收记录可通过固定提交查阅。[删除顶栏搜索框](https://github.com/kentinya/mediaflow/blob/c8039f1f3d7bdfdb7fd927c75f99df0cb8a9e523/TASK.md#patch-20261119-2--b-验收-pass) · [删除顶栏占位铃铛](https://github.com/kentinya/mediaflow/blob/ace169f4ee14feb4a101b7b2da2e917fe1c7c145/TASK.md#patch-20261119-1--b-验收-pass)
 
 旧设计图、既往独立修正和只读归档可在对应检查点查阅。[原设计图](https://github.com/kentinya/mediaflow/tree/31f31031ac9e65a16f5d7e5b50ae85f1c21ad761/docs/pics) · [历次修正](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/docs/README.md#文档导航与职责) · [历史文档](history/)
