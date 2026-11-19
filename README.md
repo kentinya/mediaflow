@@ -25,19 +25,32 @@ database locator and one environment-owned admin credential reference. It contai
 library, rule or policy defaults, so it can start and expose Settings before any business object
 exists. `config/mediaflow.activation.json` is the canonical example rendered as a managed
 configuration *input*; edit its Local Storage roots and other values for your machine, then import
-it as an inactive Draft and publish it through the normal validation/check/activation lifecycle:
+it as an inactive Draft:
 
 ```bash
 .venv/bin/mediaflow config draft-import --file config/mediaflow.activation.json
-.venv/bin/mediaflow config draft-validate REVISION_ID
-.venv/bin/mediaflow config activate REVISION_ID --expected-version VERSION
 ```
 
-Use `系统设置` (`/ui-v2/configuration`) for the same first-Draft, validate, read-only publish-check
-and explicit checked-activation journey. `config/strategy.example.json` is the canonical business
-example and the source for that generated input; it is not a service startup file because it
-carries the example's own deployment and principal identity rather than the receiving deployment's
-authority. Credentials stay in environment variables; JSON
+Import never publishes. Publication is the checked journey in `系统设置`
+(`/ui-v2/configuration`): under `高级配置 → 查看配置` select the imported Draft, run
+`验证草稿`, complete the `发布前检查` listed for that exact version (read-only checks for every
+referenced enabled Storage, the offline recognition strategy test and the destination precheck),
+then click `激活配置`. Before the applicable checks pass there is no Active configuration; a
+refused activation keeps the Draft and any prior Active unchanged. One recoverable case: while
+the target directory does not exist yet the destination precheck fails — it reports `暂不可用`
+while the destination Storage root itself is not created or mounted, and `目标库根路径不存在`
+once that root is reachable but the MediaLibrary root is still missing. Create the directories
+named by the Draft or repair the corresponding mount, return to the same Draft, rerun the failed
+check, then activate. Afterwards the page reports the
+published edit version and `诊断` shows the resulting Active revision, version and digest.
+
+`config/strategy.example.json` is the canonical business example and the source for that generated
+input; it is not a service startup file because it carries the example's own deployment and
+principal identity rather than the receiving deployment's authority. The lifecycle CLI
+(`config status`/`draft-import`/`draft-validate`/`activate`) remains for advanced publication of
+an already Validated revision; `config activate` does not run the Settings publish checks, so
+first setup and ordinary publication follow the checked journey above. Credentials stay in
+environment variables; JSON
 stores references. Optional provider extras are `openlist`, `smb`, `s3`; their credential references
 are described in [Configuration](docs/configuration.md). `storage list` does not connect adapters;
 `storage check` is a bounded read-only check, not mutation authority.

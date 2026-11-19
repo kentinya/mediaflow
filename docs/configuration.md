@@ -40,21 +40,33 @@ business object exists. Generate the same shape with
 
 `config/strategy.example.json` is the complete canonical business example. It is **not** a startup
 bootstrap: its example paths and deployment identity are not portable. Render its portable managed
-input and import that as an inactive Draft:
+input, edit its Local Storage roots and library paths for the target deployment, and import that
+as an inactive Draft:
 
 ```bash
 python3 scripts/make_deployment_config.py \
   --output config/mediaflow.json \
   --configuration-output config/mediaflow.activation.json
 mediaflow config draft-import --file config/mediaflow.activation.json
-mediaflow config draft-validate REVISION_ID
-mediaflow config activate REVISION_ID --expected-version VERSION
 ```
 
 The generated input omits the database locator and API principal identity, so import binds the
-receiving deployment's own authority. Edit its Local Storage roots and library paths for the target
-deployment before validation. Unrelated empty families are legal and create no capability/defaults;
-populated references that point at missing objects fail validation.
+receiving deployment's own authority. Unrelated empty families are legal and create no
+capability/defaults; populated references that point at missing objects fail validation.
+
+Import never publishes. Open `系统设置` (`/ui-v2/configuration`), select the same Draft under
+`高级配置 → 查看配置`, run `验证草稿`, and complete the `发布前检查` the page lists for that
+exact version: read-only checks for every referenced enabled Storage, the offline recognition
+strategy test, and the destination precheck. A failed check keeps the Draft and any prior Active
+intact and names the correction. A typical recoverable first-setup case: while the target
+directory does not exist yet, the destination precheck fails — with `暂不可用` while the
+destination Storage root itself is not created or mounted, and with `目标库根路径不存在` once
+that root is reachable but the MediaLibrary root is still missing. Create the directories the
+Draft names or repair the corresponding mount, return to the same Draft, and rerun the failed
+check. First setup has no
+Active configuration until the applicable checks pass and `激活配置` is clicked; afterwards the
+page reports the published edit version and `诊断` shows that Draft's Active revision, version
+and digest.
 
 Validate without scanning, contacting a Metadata Provider or mutating Storage:
 
@@ -115,6 +127,11 @@ mediaflow config draft-import
 mediaflow config draft-validate REVISION_ID
 mediaflow config activate REVISION_ID --expected-version VERSION
 ```
+
+CLI `config activate` publishes only a revision that is already Validated with the exact
+`--expected-version`; it does not require the Settings `发布前检查` evidence. First setup and
+ordinary publication therefore follow the checked Web journey above; use the CLI command only for
+deliberate advanced publication of a validated revision.
 
 Web's general forms-first successor flow and Advanced JSON/import/export share these services.
 Imported packages/JSON are inactive Drafts, never implicit Active replacements.
