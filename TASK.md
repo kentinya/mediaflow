@@ -1,8 +1,9 @@
 # Task PATCH-20261119-2 — 删除各页顶栏搜索框
 
-Next Action: DEVELOPER FIXES PATCH-20261119-2
+Next Action: B RE-REVIEWS THE PATCH-20261119-2 FIX CANDIDATE
 
-用户于 2026-11-19 授权激活独立 Task。B 已审查首个候选，修正要求见本页末尾。
+用户于 2026-11-19 授权激活独立 Task。B 已审查首个候选并退回，Developer 已按 B 的修正
+指导完成修复，交回 B 审查（修正报告见本页末尾）。
 [独立修复工作流](docs/development-workflow.md#31-independent-minor-bugs) ·
 [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/ace169f4ee14feb4a101b7b2da2e917fe1c7c145/TASK.md#patch-20261119-1--b-验收-pass)
 
@@ -10,7 +11,7 @@ Next Action: DEVELOPER FIXES PATCH-20261119-2
 Task ID: PATCH-20261119-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: ac28d9bd480a5047f03680d80c5a83c6df28cb06
 Difficulty: Medium
 Test Level: T2
@@ -159,3 +160,74 @@ Next: SAME TASK FIX LOOP
 反馈错误。证据位于 `.git/validation-evidence/9012bfa1/patch-20261119-2-b/` 的
 `storage-filter.log`、`storage-smb-response-pending.png`、`build.log` 和 `focused.log`。
 修正候选交回后，B 继续执行本 Task 的 T2 验收。
+
+## Developer Completion Report — B 反馈：类型筛选等待中的清单提示
+
+```text
+Task Base: ac28d9bd480a5047f03680d80c5a83c6df28cb06
+Reviewed Fix Target: 08929c1238009a41b37e90e3564402ec573ec5da
+Implementation Candidate: 69156b5908cfdc108ae2a6f2134605b1b51246b5
+Branch: main
+Status: READY FOR B REVIEW
+```
+
+**起点**
+
+本轮从 `main`／`9967f7992d7761c74194a6acde6217f994a34f2e`（B 的 FIX REQUIRED 检查点）
+开始，工作区与暂存区干净，无既存未提交文件；修正提交为 `69156b59`，本报告随后的
+TASK.md 交接提交单独保存。
+
+**修正结果**
+
+1. 清单提示改由查询自身的 `isPlaceholderData` 判定：新类型或新页读取未返回时显示
+   「正在读取所选的存储清单」并声明「已选择「SMB」（或当前选择）；新的清单读取尚未返回，
+   页面保留上一次读取的结果」，旧表继续可见但不再被当作所选类型的结果。此时不显示
+   `InventoryScopeNote`（“已应用类型筛选”、继续显示更多、返回第一页）也不再判定空态，
+   避免用上一次读取的数据声明当前类型的分页或空结果。新结果到达后按当前类型显示条目、
+   分页提示或空态。读取失败仍由 `AuthorizedReadBoundary` 呈现原安全重试。
+2. `ProviderCards.onSelect` 在同一次事件中完成类型更新与游标清空，查询直接使用
+   `{family, after}` 这两个值；删除顶栏搜索退出后遗留的 `pageBasis` 与 `effectiveAfter`。
+3. 扩充 `tests/e2e/storage-management.spec.ts` 大清单用例：通过「SMB」卡片真实发起读取，
+   在响应等待期间核对旧行（本地存储 000）、读取提示、无“已应用类型筛选”与无继续按钮，
+   放行响应后核对 NAS 行、提示消失、旧行消失。该用例从后续页改类型的请求断言收紧为
+   `searchParams.keys() === ["family"]` 且值为 `smb`，`after` 与 `q` 均缺席。
+   另在 `StorageManagementPage.test.tsx` 新增同一等待窗口的单测（受控 Promise 延迟 SMB
+   读取）：等待中显示提示与旧行、不显示所选类型行或筛选空态；到达后只显示所选类型行。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，候选工作树）**
+
+```text
+python3 -B scripts/check_governance.py                              -> PASS
+git diff --check                                                   -> clean
+rg -n 'mf-shell-search|FilesSearchContext|StorageSearchContext|
+     useFilesSearch|useStorageSearch' web/src --glob '!**/*.test.*' -> exit 1 / no match
+web: npm run typecheck                                             -> OK
+web: npx eslint src/shared/ui/AppShell.tsx
+     src/features/library/StorageFilesPage.tsx
+     src/features/library/MediaLibraryFilesPage.tsx
+     src/features/storage/StorageManagementPage.tsx
+     src/features/storage/storage-management-query.ts
+     tests/e2e/storage-management.spec.ts                          -> OK
+web: npx prettier --check <3 changed files>                        -> All matched
+web: npm run test -- run src/features/storage/StorageManagementPage.test.tsx
+                                                                   -> 51 passed (7.4s)
+web: npm run test -- run src/shared/ui/AppShell.test.tsx
+     src/features/library/StorageFilesPage.test.tsx
+     src/features/library/MediaLibraryFilesPage.test.tsx
+     src/features/storage/StorageManagementPage.test.tsx           -> 4 files, 156 passed (17.8s)
+web: npm run build                                                 -> built; Vite large-chunk warning only
+web: npm run test:e2e -- tests/e2e/storage-management.spec.ts
+     -g 'legal over-limit inventory|shared topbar is account-only' -> 2 passed (2.0s)
+web: npm run test:e2e -- tests/e2e/page-transition.spec.ts
+     tests/e2e/rules-readiness.spec.ts tests/e2e/storage-management.spec.ts
+     tests/e2e/medialib-files.spec.ts                              -> 67 passed (1.2m)
+```
+
+**剩余与风险**
+
+- 等待读取期间清单范围说明与其“继续显示更多／返回第一页”按钮暂时隐藏，新结果到达后
+  恢复；这是为避免用上一次读取的 `nextAfter` 继续翻页所选的取舍，不是读取失败。
+- `deep-link`、`files-interactions`、`automation-presentation` 浏览器用例和
+  `ExplorePage`／存储 API 参数单测仍属 B 的独立验收范围，本轮未运行；1536px／390px 的
+  实际截图与键盘顺序复核、全量回归和最终风险判定仍由 B 负责。
+- 构建保留既有 Vite “chunk 超过 500 kB”警告，无新增失败。
