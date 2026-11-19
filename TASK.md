@@ -15,13 +15,13 @@ V2-RETIRE-002、009、010。测试和交接按开发流程执行。
 Task ID: 55.8
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.8 IMPLEMENTATION AUTHORIZED
-Next Action: B INDEPENDENT REVIEW
+Next Action: DEVELOPER FIXES B55.8-01
 ```
 
 规划从 `/Users/songzhidong/mediaflow` 的 `main` 开始。上述 HEAD 的工作区和暂存区干净，
@@ -228,3 +228,45 @@ Python 文件通过）、`compileall`、`git diff --check`，并实际执行 REA
 
 Developer 已完成本 Task 的实现检查点和实际受影响验证，状态为 READY FOR B REVIEW。
 B 独立审查完整 Task Base..Head，给出 PASS 或 FIX REQUIRED；本报告不构成独立验收。
+
+### B 独立复核 — 2026-11-19（北京时间）
+
+**FIX REQUIRED**。从干净的 `main` 完整审查
+`3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4..ba9e026a9dbe85243749c9176a2b85f7a3ec715a`。
+交接提交 `99f490fa7b84325e0b72b03a7acb98963b2cb31f` 仅更新本文件。
+
+**B55.8-01（P1，Task AC-3，Slice RO-6 / AC-08、AC-12）**
+首次设置指南的命令跳过了发布前检查。管理员生成配置，填入本地媒体路径，导入并验证业务草稿。
+在新实例上，系统设置使用的激活请求返回 `409`，提示先做存储只读检查，并保留原草稿。
+接着执行 README 和配置指南列出的 `config activate`，命令返回成功，同一草稿成为生效配置，目标目录仍不存在。
+
+#### 开发指导
+
+1. README 和配置指南保留生成 bootstrap、调整本地路径及导入草稿的命令。导入后写清楚如何在
+   「系统设置 → 高级配置 → 查看配置」选回同一份草稿，执行「验证草稿」，完成该版本列出的存储、
+   离线识别策略和目标预检，再点击「激活配置」。用现有页面和命令交付这条路径。
+2. 写清一次实际可恢复的情形。目标目录尚未创建时，检查会提示不可用。创建草稿指定的目录或修好
+   对应挂载，回到该草稿重新检查。首次设置在检查通过前仍无生效配置。显式激活后，
+   「诊断」显示该草稿对应的生效版本。
+3. Developer 使用新的临时部署和生成的示例，从命令行导入一直走到浏览器激活。
+   先核对路径错误时的检查结果与草稿状态，再修好路径并核对同一草稿成功发布。
+   执行 `git diff --check`，报告实际操作、结果和候选 SHA。B 在修订候选上复验这条旅程及原 T4 验收。
+
+#### 实际验证与 Slice55 重评
+
+治理预检和完整范围 whitespace 检查通过。使用现有生成器、CLI、真实本地 API 和临时 SQLite
+复现 B55.8-01。审核、Ignore、Task 引擎、容器配置及发布检查相关的 Python 用例共 109 项通过。
+复现和 Python 测试分别约 1 秒、6 秒，含检查在内的测试时间少于本轮总用时的 50%。
+日志位于 `.git/validation-evidence/ba9e026a9dbe85243749c9176a2b85f7a3ec715a/task55-8-b/`
+的 `documented-first-publication.log` 与 `focused-python.log`。完整 T4、候选四服务旅程及最终制品门禁待 B 复验。
+
+| Slice 结果 | 本轮核对 |
+|---|---|
+| RO-1 | 候选无 Web 路由或静态入口改动。旧路径退出与九页旅程沿用已有检查点，最终候选验收待完成。 |
+| RO-2 | 三条旧全局批量写路径及直写 Ignore 已从源码删除。定向测试通过，覆盖旧命令解析失败及现行 Ignore 持久受理。现行同 Task 原生旅程待验收。 |
+| RO-3 | 当前 bootstrap 可导入和验证规范样例。按现行系统设置请求发布仍检查该修订的证据。首次设置指南的发布步骤须按 B55.8-01 修正。 |
+| RO-4 | 本候选移除批量写方法。五态、Slice Base 数据和原 pins 见既有证据，最终候选连续性待复验。 |
+| RO-5 | 候选无会话或未知请求协议改动。原请求核对有 Task55.7 固定证据，当前候选原生门禁待完成。 |
+| RO-6 | B55.8-01 阻止验收。四服务空实例、同实例 typed 配置和最终制品门禁仍待 B 执行。 |
+
+修正仍在 Task55.8 内。Slice55 保持 ACTIVE。
