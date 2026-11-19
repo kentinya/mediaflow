@@ -82,6 +82,59 @@ B 收到固定候选后复核完整 Task Base..Head。先按公开指南复验�
 重新运行受影响门禁。记录测试实际用时，测试和构建并行时按实际占用区间计时，低于本轮总用时
 的一半。[完整回归命令及证据复用规则](docs/development-workflow.md#shared-full-regression-commands)
 
+### Developer 交接 — A55-01 修正（2026-11-19，北京时间）
+
+```text
+Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
+Implementation Candidate: 2eab5714（完整 SHA 见 git log）
+Branch: main
+```
+
+候选为实施检查点；随后仅本文件记录交接。B 复核完整
+`3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4..候选`。
+
+**已实现**
+
+- `config/alist.example.json`：将 `baseUrl`、`tokenEnv`、`connectTimeout`、`requestTimeout`、
+  `maxConcurrency`、`maxRetries`、`pageSize` 原值移入 `storage.options`；外层保留 `id`、
+  `name`、`type`、`rootPath`、`readOnly`，数值与 `tokenEnv` 引用不变，`_comment` 改为
+  描述追加到部署配置、替换 `options.baseUrl`、部署环境提供 `OPENLIST_TOKEN`。
+- `docs/configuration.md`：OpenList 小节（“OpenList service root and Web recovery”末尾）
+  链接该样例，说明将 `storage` 追加到生成的 `mediaflow.activation.json` 的 `storages`、
+  替换 `options.baseUrl`、在实际检查或使用该存储的部署环境提供 `OPENLIST_TOKEN`；沿用
+  指南已有 `draft-import --file` 命令与系统设置发布步骤，库引用该 Storage 时发布前检查
+  运行对应只读检查。
+- `tests/test_container_deployment.py` 新增
+  `ContainerArtifactTests.test_openlist_example_imports_through_documented_first_setup`：
+  用真实部署生成器产生 bootstrap 与标准业务配置（bootstrap 指向隔离临时库），先把退回
+  版本示例形状（顶层连接字段）按现行 `draft-import --file` 命令导入，断言退出 2、错误
+  指出 `storages[openlist-example].baseUrl is retired` 与 `Storage.options`，且
+  `config status` 仍为 `setupRequired`、零 revisions、无 Active；随后在同一隔离实例用
+  随仓修正后示例原样追加再导入，断言返回一个 `draft` 修订且 `config status` 只含该
+  Draft；从隔离库持久化 payload 核对保留两个标准 Storage 与 OpenList 对象的原根路径、
+  只读设置及 `OPENLIST_TOKEN` 环境引用；再经现行 `draft-validate` 命令确认该 Draft
+  可恢复且结构有效。样例地址为不可解析的 `.invalid` 域名，导入成功同时证明导入阶段
+  不联系 OpenList。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，候选 `2eab5714`）**
+
+```text
+.venv/bin/python -m unittest discover -s tests -p 'test_container_deployment.py'
+  → Ran 15 tests in 0.418s, OK（含新增回归）
+.venv/bin/ruff check tests/test_container_deployment.py → All checks passed!
+.venv/bin/ruff format --check tests/test_container_deployment.py → 1 file already formatted
+.git diff --check → 无输出
+```
+
+改动仅上述三个文件；`python3 scripts/check_governance.py` 预检 PASS，工作区无预存脏文件。
+
+**剩余工作与风险**
+
+- 验收第 2 条（同一实例系统设置读取、验证、发布前检查与显式激活，存储管理可见）属
+  B 的真实 Web 旅程验收，本轮 Developer 测试计划未包含；
+  `draft-validate` 仅证明 Draft 可恢复，未运行发布前检查。
+- OpenList 值本身（`https://openlist.example.invalid`）与上轮交付一致，未做业务值变更。
+
 ### Slice 结果重评
 
 这轮以退回候选及原始验证记录为依据。RO-1 的当前与旧入口、RO-2 的受理与执行、RO-4 的
