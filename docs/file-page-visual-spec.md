@@ -156,7 +156,7 @@ The Files screenshot must show the replacement shared V2 shell in the following 
    `首页`, `文件`, `媒体库`, `存储管理`, `整理规则`, `自动化`, `任务中心`, `通知`, `系统设置`.
 3. `文件` is the only active navigation item.
 4. No fabricated system-capacity or usage block is rendered at the bottom of the left rail.
-5. The top bar contains the search field, notification icon and `admin` account control.
+5. The top bar contains the search field and `admin` account control.
 
 The shell must not acquire a second Files-only navigation model. The same shell and ordered
 navigation frame every V2 route; Files supplies its search behavior through the shared top-bar slot.

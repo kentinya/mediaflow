@@ -79,7 +79,7 @@ progress and four business recovery types; Automation owns saved-definition sche
 
 - 目标／入口：进入探索浏览电影／剧集或提交作品名搜索。主内容不显示单独的“探索”标题，
   探索区域以可访问名称标识；可用作品搜索、类型选择和筛选组成协调工具区，与紧凑页面
-  共用内容边界。不显示只读文件搜索占位，通知／身份操作保留。
+  共用内容边界。不显示只读文件搜索占位，账户操作保留。
   海报、片名／年份／真实评分和来源可读，桌面及390px布局对齐、合理换行。完整页面的
   层级、密度、比例、留白及字体／色彩协调，以相同视口改前／改后和实际浏览验收整体美观，
   只修错位或证明不溢出不足以通过。
@@ -698,8 +698,8 @@ never automatically Add again, reset the database or move media. Existing saved 
   open full-width without a selected form. Add/Copy/Edit opens a centered card over its inventory;
   the existing Edit address retains exact object identity and refresh/authentication recovery.
 - **Presentation:** the workspace content header contains one `整理规则` title, a short description
-  and `刷新`, following the Task Center header hierarchy. The shared topbar keeps account/notification
-  controls. The eight category cards and seven inventory layouts retain their design. Overview
+  and `刷新`, following the Task Center header hierarchy. The shared topbar keeps the account
+  control. The eight category cards and seven inventory layouts retain their design. Overview
   shows Chinese relationship labels, real total/enabled counts, conditional gaps/dependency guidance
   and the separate complete-flow check at the bottom; it has no inventory search. Each family keeps
   one local search and its existing state filter.

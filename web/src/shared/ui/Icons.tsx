@@ -11,7 +11,6 @@ export type IconName =
   | "notification"
   | "settings"
   | "search"
-  | "bell"
   | "chevron-down"
   | "chevron-right"
   | "info"
@@ -121,13 +120,6 @@ export function Icon({ name, ...props }: IconProps) {
         <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
           <circle cx="10.8" cy="10.8" r="5.8" />
           <path d="m15.2 15.2 5 5" />
-        </svg>
-      );
-    case "bell":
-      return (
-        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
-          <path d="M6.2 17.4h11.6l-1.3-2.1v-3.9a4.5 4.5 0 0 0-9 0v3.9z" />
-          <path d="M10 19.5h4M12 3.2v1" />
         </svg>
       );
     case "chevron-down":

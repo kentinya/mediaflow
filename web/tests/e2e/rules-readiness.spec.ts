@@ -418,7 +418,14 @@ test.describe("Rules reference-aligned workspace presentation", () => {
     await expect(
       page.locator(".mf-shell-topbar h1, .mf-shell-topbar input"),
     ).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "通知" })).toBeVisible();
+    await expect(
+      page.locator('.mf-shell-topbar button[aria-label="通知"]'),
+    ).toHaveCount(0);
+    await expect(
+      page
+        .locator(".mf-shell-topbar")
+        .getByRole("button", { name: "Disconnect" }),
+    ).toBeVisible();
     await expect(
       page.getByText("管理识别类型、规则和整理策略。"),
     ).toBeVisible();
@@ -478,6 +485,112 @@ test.describe("Rules reference-aligned workspace presentation", () => {
 
     // The whole presentation journey issued reads only.
     expect(traffic.filter((entry) => !entry.startsWith("GET "))).toEqual([]);
+  });
+
+  test("the shared topbar has no notification control and keeps its account entry at both widths", async ({
+    page,
+  }) => {
+    await resetRules(page);
+    await page.goto("/rules?section=recognitionTypes");
+
+    // Before connection the entry is the only topbar action; the removed bell
+    // leaves no hidden focus target behind.
+    const topbar = page.locator(".mf-shell-topbar");
+    await expect(topbar.locator('button[aria-label="通知"]')).toHaveCount(0);
+    await expect(
+      topbar.getByRole("link", { name: "Connect API token" }),
+    ).toBeVisible();
+
+    await connectAs(page);
+    await expect(
+      page.getByRole("heading", { name: "整理规则", exact: true }),
+    ).toBeVisible();
+
+    for (const width of [1536, 390]) {
+      await page.setViewportSize({
+        width,
+        height: width === 390 ? 844 : 1024,
+      });
+      await expect(topbar.locator('button[aria-label="通知"]')).toHaveCount(0);
+      // Rules keeps its local search and only the account control in the
+      // topbar, so nothing hidden precedes the actual focus target.
+      await expect(topbar.locator("button, a, input, [tabindex]")).toHaveCount(
+        1,
+      );
+      await expect(
+        page.getByRole("searchbox", { name: "搜索类型名称或描述" }),
+      ).toBeVisible();
+      const account = topbar.getByRole("button", { name: "Disconnect" });
+      await expect(account).toBeVisible();
+      const accountBox = await account.boundingBox();
+      const topbarBox = await topbar.boundingBox();
+      expect(accountBox).not.toBeNull();
+      expect(topbarBox).not.toBeNull();
+      expect(accountBox!.x + accountBox!.width).toBeLessThanOrEqual(width);
+      expect(
+        topbarBox!.x + topbarBox!.width - (accountBox!.x + accountBox!.width),
+      ).toBeLessThanOrEqual(24);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+    }
+
+    // A real refresh loses the memory token; reconnecting restores the same
+    // section and the topbar still has no bell.
+    await page.reload();
+    await connectAs(page);
+    await expect(
+      page.getByRole("heading", { name: "识别类型", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.locator('.mf-shell-topbar button[aria-label="通知"]'),
+    ).toHaveCount(0);
+
+    // Files keeps its editable topbar search and right-aligned account at both
+    // reference widths without horizontal overflow.
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    await page.getByRole("link", { name: "Files" }).click();
+    await expect(page.getByRole("heading", { name: "文件" })).toBeVisible();
+    for (const width of [1536, 390]) {
+      await page.setViewportSize({
+        width,
+        height: width === 390 ? 844 : 1024,
+      });
+      await expect(topbar.locator('button[aria-label="通知"]')).toHaveCount(0);
+      const search = topbar.getByRole("searchbox", {
+        name: "搜索文件、文件夹或媒体库",
+      });
+      await expect(search).toBeEnabled();
+      await search.fill("sample");
+      await expect(search).toHaveValue("sample");
+      const account = topbar.getByRole("button", { name: "Disconnect" });
+      await expect(account).toBeVisible();
+      const accountBox = await account.boundingBox();
+      const topbarBox = await topbar.boundingBox();
+      expect(accountBox).not.toBeNull();
+      expect(topbarBox).not.toBeNull();
+      expect(accountBox!.x + accountBox!.width).toBeLessThanOrEqual(width);
+      expect(
+        topbarBox!.x + topbarBox!.width - (accountBox!.x + accountBox!.width),
+      ).toBeLessThanOrEqual(24);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+    }
+
+    // Disconnecting returns to the entry boundary; the topbar still has no
+    // notification node and offers the actual account entry.
+    await topbar.getByRole("button", { name: "Disconnect" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+    await expect(topbar.locator('button[aria-label="通知"]')).toHaveCount(0);
+    await expect(
+      topbar.getByRole("link", { name: "Connect API token" }),
+    ).toBeVisible();
   });
 
   test("every family keeps its purpose-built Add form, applicable enable switch and pinned card actions", async ({

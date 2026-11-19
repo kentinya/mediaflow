@@ -38,6 +38,15 @@ function stubShellReads(): void {
   );
 }
 
+/** The shared topbar owns no notification control; only its account entry remains. */
+function expectNoTopbarNotificationControl(): HTMLElement {
+  const topbar = document.querySelector<HTMLElement>(".mf-shell-topbar");
+  expect(topbar).not.toBeNull();
+  const bar = topbar as HTMLElement;
+  expect(bar.querySelectorAll('button[aria-label="通知"]')).toHaveLength(0);
+  return bar;
+}
+
 afterEach(() => {
   cleanup();
   authStore.clearToken();
@@ -222,6 +231,10 @@ describe("AppShell", () => {
   it("exposes a keyboard-operable narrow navigation control", async () => {
     renderApp("/");
     const toggle = await screen.findByRole("button", { name: "Open menu" });
+    const topbar = expectNoTopbarNotificationControl();
+    expect(
+      within(topbar).getByRole("link", { name: "Connect API token" }),
+    ).toBeVisible();
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     await userEvent.setup().click(toggle);
     expect(screen.getByRole("button", { name: "Close menu" })).toHaveAttribute(
@@ -273,7 +286,10 @@ describe("AppShell", () => {
     expect(
       screen.getByRole("searchbox", { name: "搜索类型名称或描述" }),
     ).toBeEnabled();
-    expect(screen.getByRole("button", { name: "通知" })).toBeVisible();
+    const topbar = expectNoTopbarNotificationControl();
+    expect(
+      within(topbar).getByRole("button", { name: "Disconnect" }),
+    ).toBeVisible();
     // Exactly one shell header: no duplicate top bar above the workspace.
     expect(document.querySelectorAll(".mf-shell-topbar")).toHaveLength(1);
     expect(document.querySelectorAll(".mf-shell-topbar h1")).toHaveLength(0);
@@ -355,7 +371,10 @@ describe("AppShell", () => {
     // The task center's shared shell no longer offers a generic keyword
     // input; the All view owns only its creation-time range.
     expect(screen.queryByRole("searchbox")).toBeNull();
-    expect(screen.getByRole("button", { name: "通知" })).toBeVisible();
+    const topbar = expectNoTopbarNotificationControl();
+    expect(
+      within(topbar).getByRole("button", { name: "Disconnect" }),
+    ).toBeVisible();
     // The sidebar entry and browser title remain.
     expect(screen.getByRole("link", { name: "任务中心" })).toBeVisible();
     expect(document.title).toBe("任务中心 | MediaFlow");
@@ -420,9 +439,12 @@ describe("AppShell", () => {
     expect(main.querySelector(".mf-page-context")).toBeNull();
     expect(document.querySelector(".mf-shell-search")).toBeNull();
     expect(screen.queryByRole("searchbox")).toBeNull();
-    // The page's own works search plus notification/identity stay usable.
+    // The page's own works search and identity stay usable.
     expect(screen.getByLabelText("作品名搜索")).toBeVisible();
-    expect(screen.getByRole("button", { name: "通知" })).toBeVisible();
+    const topbar = expectNoTopbarNotificationControl();
+    expect(
+      within(topbar).getByRole("button", { name: "Disconnect" }),
+    ).toBeVisible();
     expect(screen.getByRole("link", { name: "Explore" })).toHaveAttribute(
       "aria-current",
       "page",

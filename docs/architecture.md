@@ -1071,7 +1071,7 @@ API behavior/evidence, immutable snapshots and admitted Task/Automation pins ret
 original scope. No alternate domain evaluator, runtime authority or Storage mutator is introduced.
 
 The Rules workspace owns its content title/description and read-only refresh; its shared topbar
-contains account/notification controls. Overview has no inventory search; each of the seven
+contains the account control. Overview has no inventory search; each of the seven
 inventories keeps one local search and its existing state filter. Normal refresh retains the
 current section, filters and unsaved form input. The shared authorized-read boundary still owns
 authentication and read failures; it does not present cached data as a successful refresh.

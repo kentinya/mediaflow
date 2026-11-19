@@ -192,7 +192,7 @@ export function AppShell({ children }: AppShellProps) {
   const searchIsStorage = pathname === "/storage";
   // The task center's eight views have no shared keyword search: its All view
   // owns only the creation-time range, and the other views own their own
-  // explicit filters. Account/notification controls stay in the top bar.
+  // explicit filters. The account control stays in the top bar.
   const searchIsOperations = pathname === "/operations";
   // The Rules inventory and its pre-existing Edit address render the same
   // list background (the Edit route mounts that inventory and only adds its
@@ -250,14 +250,6 @@ export function AppShell({ children }: AppShellProps) {
   );
   const shellActions = (
     <div className="mf-shell-actions">
-      <button
-        type="button"
-        className="mf-notification-button"
-        aria-label="通知"
-        title="通知"
-      >
-        <Icon name="bell" />
-      </button>
       <AuthControls />
     </div>
   );

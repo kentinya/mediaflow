@@ -7,7 +7,7 @@ artifact served by the real ``mediaflow.interfaces.v2_ui`` boundary — and driv
 a real Chromium browser through the existing Rules journey:
 
 * the content header composes the Rules title/description and refresh; the
-  shared topbar retains account/notification controls;
+  shared topbar retains the account control;
 * the eight reference navigation cards keep their order, business names and
   descriptions, and only the current family is marked current;
 * the inventory keeps a separate title/description row, a left blue Add and a
@@ -206,7 +206,10 @@ try {
   await expect(title).toBeVisible();
   await expect(page.getByText('管理识别类型、规则和整理策略。')).toBeVisible();
   await expect(page.locator('.mf-shell-topbar h1, .mf-shell-topbar input')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '通知' })).toBeVisible();
+  await expect(page.locator('.mf-shell-topbar button[aria-label="通知"]')).toHaveCount(0);
+  await expect(
+    page.locator('.mf-shell-topbar').getByRole('button', { name: 'Disconnect' })
+  ).toBeVisible();
   await expect(page.getByRole('heading', { name: '整理规则', exact: true })).toHaveCount(1);
   await expect(page.getByRole('link', { name: '前往系统设置', exact: true })).toHaveCount(0);
   const titleBox = await bounds(title);
