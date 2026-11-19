@@ -414,6 +414,18 @@ class MetadataIdentificationService:
                     force_refresh,
                     consume_request,
                     lambda: remaining_requests,
+                    # A movie match reuses the enriched detail identity, so the
+                    # enrichment itself is the exact request the match needs.
+                    # A TV match still needs its season verification/identity
+                    # lookup after enrichment; S02+ validation reserves its own
+                    # explicit season-plus-identity budget in its own branch.
+                    reserve_requests=(
+                        1
+                        if media_type is MediaType.TV
+                        and parsed.season is not None
+                        and parsed.episodes
+                        else 0
+                    ),
                 )
                 match = self._matcher.match(scoring_parsed, candidates, effective_policy)
             if match.status is not CandidateMatchStatus.MATCHED or match.best_candidate is None:
@@ -667,7 +679,7 @@ class MetadataIdentificationService:
         remaining_requests,
         *,
         year_evidence_only: bool = False,
-        reserve_requests: int = 1,
+        reserve_requests: int = 0,
     ):
         """Enrich only plausible candidates; year is a fetch filter, never match evidence alone."""
         preliminary = CandidateMatcher()

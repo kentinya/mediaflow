@@ -46,9 +46,11 @@ class MetadataReviewService:
         if identification.match is None or not identification.match.candidate_scores:
             raise ValueError("metadata review requires scored candidates")
         now = datetime.now(UTC)
-        review_id = str(uuid5(NAMESPACE_URL, f"metadata-review:{item.item_id}"))
+        existing = self._repository.get_metadata_review_for_item(item.item_id)
         review = MetadataReview(
-            review_id,
+            existing.review_id
+            if existing is not None
+            else str(uuid5(NAMESPACE_URL, f"metadata-review:{item.item_id}")),
             item.task_id,
             item.item_id,
             item.storage_id,
@@ -58,11 +60,11 @@ class MetadataReviewService:
             identification.query[: self.MAX_TEXT],
             identification.status.value,
             MetadataReviewStatus.PENDING,
-            now,
+            existing.created_at if existing is not None else now,
             now,
         )
         candidates = tuple(
-            self._candidate(review_id, rank, score)
+            self._candidate(review.review_id, rank, score)
             for rank, score in enumerate(
                 identification.match.candidate_scores[: self.MAX_CANDIDATES], 1
             )
@@ -74,6 +76,9 @@ class MetadataReviewService:
             updated_at=now,
             error=None,
         )
+        if existing is not None:
+            self._reopen(review, candidates, waiting, evidence)
+            return review
         create_atomic = getattr(self._repository, "create_metadata_review_with_evidence", None)
         if evidence is not None and callable(create_atomic):
             create_atomic(review, candidates, waiting, evidence)
@@ -84,6 +89,25 @@ class MetadataReviewService:
                     append(evidence)
             self._repository.create_metadata_review(review, candidates, waiting)
         return review
+
+    def _reopen(
+        self,
+        review: MetadataReview,
+        candidates: tuple[MetadataReviewCandidate, ...],
+        waiting: PersistentTaskItem,
+        evidence: PipelineEvidence | None,
+    ) -> None:
+        """Replace one item's candidate snapshot while preserving its audit."""
+
+        reopen_atomic = getattr(self._repository, "reopen_metadata_review_with_evidence", None)
+        if evidence is not None and callable(reopen_atomic):
+            reopen_atomic(review, candidates, waiting, evidence)
+            return
+        if evidence is not None:
+            append = getattr(self._repository, "append_evidence", None)
+            if callable(append):
+                append(evidence)
+        self._repository.reopen_metadata_review(review, candidates, waiting)
 
     def resolve(
         self,

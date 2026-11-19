@@ -912,6 +912,169 @@ class MetadataSearchYearTests(unittest.TestCase):
             self.assertTrue((value.source_root / TV_MEDIA).exists())
             self.assertFalse(any(path.is_file() for path in value.target_root.rglob("*")))
 
+    def test_reopened_candidate_review_replaces_candidates_and_keeps_decision_audit(self):
+        provider = CandidateMismatchProvider()
+        with entrance_journey(
+            self,
+            recognition_rules=[TV_RULE],
+            provider_registry=MetadataProviderRegistry((provider,)),
+            viewer_token=VIEWER_TOKEN,
+            max_provider_requests=2,
+        ) as value:
+            self._write_media(value, TV_MEDIA)
+            self._run_cli(value, "organize", "--execute", "--limit", "5")
+            (task,) = value.repository.list_tasks()
+            (item,) = value.repository.list_items(task.task_id)
+            for _ in range(8):
+                if item.status.value == "waiting_metadata":
+                    break
+                self._resident_pass(value, prefix="candidate-reopen")
+                item = value.repository.get_item(item.item_id)
+            self.assertEqual("waiting_metadata", item.status.value, item)
+            first_review = value.repository.get_metadata_review_for_item(item.item_id)
+            self.assertIsNotNone(first_review)
+
+            status, detail = self.request(
+                value,
+                "GET",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery",
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual("metadata", detail["decision"]["kind"])
+            first_candidate_version = detail["checkpoint"]["checkpoint_version"]
+            wrong = next(
+                choice
+                for choice in detail["decision"]["candidates"]
+                if choice["provider_id"] == "wrong"
+            )
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "metadata",
+                    "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                    "candidateRank": wrong["rank"],
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/continue",
+                {
+                    "expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"],
+                },
+            )
+            self.assertEqual(202, status, continued)
+            self.assertIsNotNone(self._resident_pass(value, prefix="candidate-wrong"))
+            item = value.repository.get_item(item.item_id)
+            self.assertEqual("waiting_metadata_correction", item.status.value, item)
+
+            status, correction = self.request(
+                value,
+                "GET",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery",
+            )
+            self.assertEqual(200, status, correction)
+            self.assertEqual("metadata_correction", correction["decision"]["kind"])
+            # Save only a corrected query; the Provider still returns the same
+            # two comparable works, so the item must return to candidate review.
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "metadata_correction",
+                    "expectedCheckpointVersion": correction["checkpoint"]["checkpoint_version"],
+                    "query": "Probe",
+                    "year": 2025,
+                    "mediaType": "tv",
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/continue",
+                {
+                    "expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"],
+                },
+            )
+            self.assertEqual(202, status, continued)
+            self.assertIsNotNone(self._resident_pass(value, prefix="candidate-reopen-again"))
+            item = value.repository.get_item(item.item_id)
+            self.assertEqual("waiting_metadata", item.status.value, item)
+
+            reopened = value.repository.get_metadata_review_for_item(item.item_id)
+            self.assertEqual(first_review.review_id, reopened.review_id)
+            self.assertEqual("pending", reopened.status.value)
+            self.assertEqual(
+                1, len(value.repository.list_metadata_review_audit(reopened.review_id))
+            )
+            status, reopened_detail = self.request(
+                value,
+                "GET",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery",
+            )
+            self.assertEqual(200, status, reopened_detail)
+            self.assertEqual("metadata", reopened_detail["decision"]["kind"])
+            self.assertEqual(first_review.review_id, reopened_detail["decision"]["review_id"])
+            self.assertEqual(2, len(reopened_detail["decision"]["candidates"]))
+
+            # The pre-reopen candidate checkpoint fence cannot select a
+            # candidate in the reopened snapshot.
+            status, stale = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "metadata",
+                    "expectedCheckpointVersion": first_candidate_version,
+                    "candidateRank": wrong["rank"],
+                },
+            )
+            self.assertEqual(409, status, stale)
+            self.assertEqual("stale_checkpoint", stale["error"]["code"], stale)
+
+            correct = next(
+                choice
+                for choice in reopened_detail["decision"]["candidates"]
+                if choice["provider_id"] == "2019"
+            )
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "metadata",
+                    "expectedCheckpointVersion": reopened_detail["checkpoint"][
+                        "checkpoint_version"
+                    ],
+                    "candidateRank": correct["rank"],
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/continue",
+                {
+                    "expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"],
+                },
+            )
+            self.assertEqual(202, status, continued)
+            self.assertIsNotNone(self._resident_pass(value, prefix="candidate-correct"))
+            item = value.repository.get_item(item.item_id)
+            self.assertEqual("waiting_confirm", item.status.value, item)
+            resolved = value.repository.get_metadata_review(reopened.review_id)
+            self.assertEqual("resolved", resolved.status.value)
+            self.assertEqual(
+                2, len(value.repository.list_metadata_review_audit(reopened.review_id))
+            )
+            self.assertTrue((value.source_root / TV_MEDIA).exists())
+            self.assertFalse(any(path.is_file() for path in value.target_root.rglob("*")))
+
     def _ids(self, value):
         (task,) = value.repository.list_tasks()
         (item,) = value.repository.list_items(task.task_id)

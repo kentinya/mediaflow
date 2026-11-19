@@ -864,6 +864,31 @@ class MetadataServiceAndCacheTests(unittest.TestCase):
         self.assertEqual(provider.calls[0], "search_movie")
         self.assertEqual(len([call for call in provider.calls if call.startswith("get_movie:")]), 2)
 
+    def test_movie_translated_detail_matches_within_two_requests(self) -> None:
+        provider = LocalizedProvider(
+            (MediaCandidate("tmdb", "858024", MediaType.MOVIE, "Hamnet", year=2025),),
+            {
+                "858024": MediaIdentity(
+                    "tmdb",
+                    "858024",
+                    MediaType.MOVIE,
+                    "Hamnet",
+                    year=2025,
+                    translated_titles=("哈姆奈特",),
+                )
+            },
+        )
+        result = MetadataIdentificationService(MetadataProviderRegistry((provider,))).identify(
+            RecognitionResult(RecognitionType("A", "A"), "rule-a"),
+            ParseResult("哈姆奈特", year=2025),
+            policy(max_provider_requests=2),
+        )
+
+        self.assertEqual(result.status, MetadataIdentificationStatus.MATCHED)
+        self.assertEqual(result.identity.provider_id, "858024")
+        self.assertEqual(result.identity.matched_by, "candidate_matcher")
+        self.assertEqual(provider.calls, ["search_movie", "get_movie:858024"])
+
     def test_enrichment_does_not_accept_same_year_without_localized_title(self) -> None:
         candidate = MediaCandidate("tmdb", "1", MediaType.MOVIE, "Unrelated", year=2025)
         provider = LocalizedProvider(

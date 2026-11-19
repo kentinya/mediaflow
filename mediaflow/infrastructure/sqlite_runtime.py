@@ -3634,39 +3634,7 @@ class SQLiteTaskRepository:
                     review.updated_at.isoformat(),
                 ),
             )
-            self._connection.executemany(
-                """INSERT INTO metadata_review_candidates VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    (
-                        value.review_id,
-                        value.rank,
-                        value.provider,
-                        value.provider_id,
-                        value.media_type,
-                        value.title,
-                        value.original_title,
-                        value.canonical_year,
-                        value.regional_year,
-                        value.total_score,
-                        value.matched_provider_title,
-                        value.matched_title_source,
-                        json.dumps(
-                            [
-                                {
-                                    "name": component.name,
-                                    "score": component.score,
-                                    "reason": component.reason,
-                                }
-                                for component in value.score_components
-                            ],
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        ),
-                    )
-                    for value in candidates
-                ),
-            )
+            self._insert_metadata_review_candidates_locked(candidates)
             cursor = self._connection.execute(
                 """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
                 WHERE item_id=? AND status=?""",
@@ -3713,39 +3681,7 @@ class SQLiteTaskRepository:
                     review.updated_at.isoformat(),
                 ),
             )
-            self._connection.executemany(
-                """INSERT INTO metadata_review_candidates VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    (
-                        value.review_id,
-                        value.rank,
-                        value.provider,
-                        value.provider_id,
-                        value.media_type,
-                        value.title,
-                        value.original_title,
-                        value.canonical_year,
-                        value.regional_year,
-                        value.total_score,
-                        value.matched_provider_title,
-                        value.matched_title_source,
-                        json.dumps(
-                            [
-                                {
-                                    "name": component.name,
-                                    "score": component.score,
-                                    "reason": component.reason,
-                                }
-                                for component in value.score_components
-                            ],
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        ),
-                    )
-                    for value in candidates
-                ),
-            )
+            self._insert_metadata_review_candidates_locked(candidates)
             cursor = self._connection.execute(
                 """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
                 WHERE item_id=? AND task_id=? AND status=?""",
@@ -3760,6 +3696,106 @@ class SQLiteTaskRepository:
             )
             if cursor.rowcount != 1:
                 raise ValueError("metadata review TaskItem is not processing")
+
+    def _insert_metadata_review_candidates_locked(self, candidates) -> None:
+        self._connection.executemany(
+            """INSERT INTO metadata_review_candidates VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                (
+                    value.review_id,
+                    value.rank,
+                    value.provider,
+                    value.provider_id,
+                    value.media_type,
+                    value.title,
+                    value.original_title,
+                    value.canonical_year,
+                    value.regional_year,
+                    value.total_score,
+                    value.matched_provider_title,
+                    value.matched_title_source,
+                    json.dumps(
+                        [
+                            {
+                                "name": component.name,
+                                "score": component.score,
+                                "reason": component.reason,
+                            }
+                            for component in value.score_components
+                        ],
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                )
+                for value in candidates
+            ),
+        )
+
+    def reopen_metadata_review(
+        self,
+        review: MetadataReview,
+        candidates: tuple[MetadataReviewCandidate, ...],
+        item: PersistentTaskItem,
+    ) -> None:
+        with self._lock, self._connection:
+            self._reopen_metadata_review_locked(review, candidates, item, None)
+
+    def reopen_metadata_review_with_evidence(
+        self,
+        review: MetadataReview,
+        candidates: tuple[MetadataReviewCandidate, ...],
+        item: PersistentTaskItem,
+        evidence: PipelineEvidence | None,
+    ) -> None:
+        """Replace this item's candidates and waiting state atomically.
+
+        The previous resolution audit is deliberately retained; only the live
+        candidate snapshot and pending selection state are replaced.  The
+        reused review identity keeps one current record per TaskItem.
+        """
+
+        with self._lock, self._connection:
+            self._reopen_metadata_review_locked(review, candidates, item, evidence)
+
+    def _reopen_metadata_review_locked(self, review, candidates, item, evidence) -> None:
+        if evidence is not None:
+            self._append_evidence_locked(evidence)
+        cursor = self._connection.execute(
+            """UPDATE metadata_reviews SET query=?, outcome=?, status=?, updated_at=?,
+            selected_rank=NULL, selected_provider=NULL, selected_provider_id=NULL,
+            selected_media_type=NULL, decided_at=NULL, actor=NULL
+            WHERE review_id=? AND item_id=?""",
+            (
+                review.query,
+                review.outcome,
+                review.status.value,
+                review.updated_at.isoformat(),
+                review.review_id,
+                review.item_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("metadata review is not reopenable")
+        self._connection.execute(
+            "DELETE FROM metadata_review_candidates WHERE review_id=?",
+            (review.review_id,),
+        )
+        self._insert_metadata_review_candidates_locked(candidates)
+        cursor = self._connection.execute(
+            """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
+            WHERE item_id=? AND task_id=? AND status=?""",
+            (
+                item.status.value,
+                item.stage,
+                item.updated_at.isoformat(),
+                item.item_id,
+                item.task_id,
+                TaskItemStatus.PROCESSING.value,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("metadata review TaskItem is not processing")
 
     def get_metadata_review(self, review_id: str) -> MetadataReview | None:
         with self._lock:

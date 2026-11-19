@@ -385,6 +385,7 @@ class _DiscoveryFixture(unittest.TestCase):
         second_library: bool = False,
         attachments: bool = False,
         metadata_query_type: str | None = None,
+        max_provider_requests: int | None = None,
         source_storage=None,
         provider=None,
         second_operator: bool = False,
@@ -403,6 +404,9 @@ class _DiscoveryFixture(unittest.TestCase):
         if metadata_query_type is not None:
             for policy in document.get("metadataPolicies", []):
                 policy["mediaQueryType"] = metadata_query_type
+        if max_provider_requests is not None:
+            for policy in document.get("metadataPolicies", []):
+                policy["maxProviderRequests"] = max_provider_requests
         source = _RecordingStorage(
             source_storage
             if source_storage is not None

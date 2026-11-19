@@ -84,6 +84,7 @@ def entrance_journey(
     recognition_rules: list[dict] | None = None,
     provider_registry: MetadataProviderRegistry | None = None,
     viewer_token: str | None = None,
+    max_provider_requests: int | None = None,
 ):
     """One production-shaped managed layout for one entrance recovery journey.
 
@@ -178,6 +179,9 @@ def entrance_journey(
         ]
     if capacity is not None:
         document["automation"]["maximumActiveJobs"] = capacity
+    if max_provider_requests is not None:
+        for policy in document.get("metadataPolicies", ()):
+            policy["maxProviderRequests"] = max_provider_requests
     document["automationTaskDefinitions"] = []
     document["api"]["principals"] = [
         {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": True}

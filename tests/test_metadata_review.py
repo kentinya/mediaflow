@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -177,10 +178,22 @@ class MetadataReviewTests(unittest.TestCase):
                     with self.subTest(status=status), self.assertRaises(ValueError):
                         MetadataReviewService(repository).create(item, identification(status), "A")
                 self.assertEqual(repository.list_metadata_reviews(), ())
-                MetadataReviewService(repository).create(item, identification(), "A")
-                with self.assertRaises((sqlite3.IntegrityError, ValueError)):
-                    MetadataReviewService(repository).create(item, identification(), "A")
+                first = MetadataReviewService(repository).create(item, identification(), "A")
+                MetadataReviewService(repository).resolve(first.review_id, 1, actor="operator")
+                waiting = repository.get_item(item.item_id)
+                repository.upsert_item(
+                    replace(waiting, status=TaskItemStatus.PROCESSING, stage="analysis")
+                )
+                reopened = MetadataReviewService(repository).create(
+                    repository.get_item(item.item_id), identification(count=1), "A"
+                )
+                self.assertEqual(reopened.review_id, first.review_id)
+                self.assertEqual(reopened.status.value, "pending")
                 self.assertEqual(len(repository.list_metadata_reviews()), 1)
+                self.assertEqual(
+                    len(repository.list_metadata_review_candidates(first.review_id)), 1
+                )
+                self.assertEqual(len(repository.list_metadata_review_audit(first.review_id)), 1)
 
     def test_atomic_failure_rolls_back_review_candidates_and_item(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -198,6 +211,39 @@ class MetadataReviewTests(unittest.TestCase):
                 with self.assertRaises(sqlite3.IntegrityError):
                     MetadataReviewService(repository).create(item, identification(), "A")
                 self.assertEqual(repository.list_metadata_reviews(), ())
+                self.assertEqual(
+                    repository.get_item(item.item_id).status, TaskItemStatus.PROCESSING
+                )
+
+    def test_reopen_replaces_candidates_atomically_and_preserves_resolved_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                _, _, item = create_processing_item(repository)
+                service = MetadataReviewService(repository)
+                first = service.create(item, identification(), "A")
+                service.resolve(first.review_id, 1, actor="operator")
+                waiting = repository.get_item(item.item_id)
+                repository.upsert_item(
+                    replace(waiting, status=TaskItemStatus.PROCESSING, stage="analysis")
+                )
+            connection = sqlite3.connect(database)
+            connection.execute(
+                """CREATE TRIGGER reject_reopened_candidate BEFORE INSERT
+                ON metadata_review_candidates BEGIN SELECT RAISE(ABORT, 'injected'); END"""
+            )
+            connection.commit()
+            connection.close()
+            with SQLiteTaskRepository(database) as repository:
+                with self.assertRaises(sqlite3.IntegrityError):
+                    MetadataReviewService(repository).create(
+                        repository.get_item(item.item_id), identification(count=1), "A"
+                    )
+                stored = repository.get_metadata_review(first.review_id)
+                self.assertEqual("resolved", stored.status.value)
+                self.assertEqual(
+                    len(repository.list_metadata_review_candidates(first.review_id)), 2
+                )
                 self.assertEqual(
                     repository.get_item(item.item_id).status, TaskItemStatus.PROCESSING
                 )

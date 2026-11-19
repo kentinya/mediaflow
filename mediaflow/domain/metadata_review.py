@@ -83,6 +83,12 @@ class MetadataSelection:
 
 
 class MetadataReviewRepository(Protocol):
+    def reopen_metadata_review(
+        self,
+        review: MetadataReview,
+        candidates: tuple[MetadataReviewCandidate, ...],
+        item: PersistentTaskItem,
+    ) -> None: ...
     def create_metadata_review(
         self,
         review: MetadataReview,

@@ -21,7 +21,7 @@ from mediaflow.domain.manual_execution import (
     ManualExecutionStatus,
 )
 from mediaflow.domain.media_discovery import DiscoveryStatus
-from mediaflow.domain.metadata import MediaCandidate, MediaType
+from mediaflow.domain.metadata import MediaCandidate, MediaIdentity, MediaType
 from mediaflow.domain.organizer import ExecutionEffectCertainty, ExecutionStatus
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
@@ -2598,6 +2598,68 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             )
             with SQLiteTaskRepository(self.database) as reopened:
                 self.assertIs(reopened.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
+
+    def test_files_movie_localized_detail_reaches_summary_within_two_requests(self) -> None:
+        """A Files movie gets its localized title from the one detail request.
+
+        The published movie policy allows two Provider requests total.  The
+        search result only knows ``Hamnet``; the exact detail identity supplies
+        the localized title ``哈姆奈特`` used by the matcher.  The summary must be
+        reachable without a Metadata correction and without any Storage change.
+        """
+
+        self.media("Movies/哈姆奈特.2025.mkv")
+
+        class LocalizedHamnetProvider(SyntheticMetadataProvider):
+            def __init__(self) -> None:
+                super().__init__(
+                    (
+                        MediaCandidate(
+                            "tmdb",
+                            "858024",
+                            MediaType.MOVIE,
+                            "Hamnet",
+                            year=2025,
+                            genres=("Animation",),
+                        ),
+                    )
+                )
+                self.calls = []
+
+            def search_movie(self, query, policy=None, **kwargs):
+                self.calls.append("search_movie")
+                return self._candidates
+
+            def get_movie(self, provider_id, policy=None, **kwargs):
+                self.calls.append(f"get_movie:{provider_id}")
+                return MediaIdentity(
+                    "tmdb",
+                    provider_id,
+                    MediaType.MOVIE,
+                    "Hamnet",
+                    year=2025,
+                    translated_titles=("哈姆奈特",),
+                    genres=("Animation",),
+                )
+
+        provider = LocalizedHamnetProvider()
+        with self.journey(
+            provider=provider,
+            task_scheduling=True,
+            attachments=True,
+            max_provider_requests=2,
+        ) as value:
+            status, admitted = self._admit(value, ["Movies/哈姆奈特.2025.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            self.assertIs(item.status, TaskItemStatus.WAITING_CONFIRM, item.error)
+            self.assertEqual(provider.calls, ["search_movie", "get_movie:858024"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertTrue((self.source_root / "Movies/哈姆奈特.2025.mkv").exists())
+            self.assertFalse(any(path.is_file() for path in self.target_root.rglob("*")))
 
     def test_native_metadata_candidate_confirms_on_the_same_task(self) -> None:
         """A Metadata-candidate decision also reaches a confirmable native summary.
