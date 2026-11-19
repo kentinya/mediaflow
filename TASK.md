@@ -15,13 +15,13 @@ V2-RETIRE-002、009、010。测试和交接按开发流程执行。
 Task ID: 55.8
 Task Type: SLICE
 Parent Slice: 55
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Development Authorization: TASK55.8 IMPLEMENTATION AUTHORIZED
-Next Action: B INDEPENDENT REVIEW
+Next Action: DEVELOPER FIXES B55.8-02
 ```
 
 规划从 `/Users/songzhidong/mediaflow` 的 `main` 开始。上述 HEAD 的工作区和暂存区干净，
@@ -343,3 +343,50 @@ Branch: main
 Developer 已完成 B55.8-01 修复、实际旅程验证和检查点 `18d848dee56d9675e62be7d0b201c9f0ce45133a`，
 状态为 READY FOR B REVIEW。B 独立复验该旅程并重评原 T4 验收，给出 PASS 或 FIX REQUIRED；
 本报告不构成独立验收。
+
+### B 修订复核 — 2026-11-19（北京时间）
+
+**FIX REQUIRED**。审查完整 `3e3e3ccdbf8bd2b57c1b15515de3ece7302aaaf4..18d848dee56d9675e62be7d0b201c9f0ce45133a`。
+本轮从干净 `main` 开始，交接提交 `95908e9c9b687cf14bf71f94a1951eb5b3065b1a` 只更新本文件。
+对照上次复核的 `ba9e026a`，本候选的实现差异只涉及 README 和配置指南。
+
+**B55.8-01 已修复。** B 在隔离新实例命令行导入规范样例，从「高级配置 → 查看配置」选中同一草稿。
+根目录不存在时，发布前检查显示失败，激活返回 `409`，原草稿和无 Active 状态保留。补齐存储根和媒体库根，
+重跑检查并显式激活后，页面诊断与运行库确认原修订 ID 和摘要成为 Active。
+
+**B55.8-02（P1，Task AC-3，Slice RO-6 / AC-08、AC-12）。** 两份指南导入规范样例时，管理员无法
+按现有步骤到达包含该样例的草稿。在新终端依照配置指南生成文件并运行导入，CLI 以 `--config or
+MEDIAFLOW_CONFIG is required` 退出 2。按 Docker 指南运行 `mediaflow config import`，在 Compose
+已绑定 bootstrap 的条件下得到的是 0 项 Storage 的草稿。显式指定生成的输入文件后，草稿中才有样例的
+2 项 Storage。Docker 指南所指的系统设置页面提供草稿选择和发布检查，未提供上传该文件的控件。
+
+#### 开发指导
+
+1. 配置指南的同一命令段明确指定本次生成的 bootstrap 和样例输入，例如
+   `mediaflow --config config/mediaflow.json config draft-import --file config/mediaflow.activation.json`。
+   使用本地部署时，生成器的数据库路径应与随后启动的服务一致。
+2. Docker 指南给出可直接运行的导入命令，使用同一 Compose 项目及其 `/data` 卷和正式入口，明确传入生成的
+   样例文件。B 已在隔离 Compose 项目验证
+   `docker compose run --rm --no-deps -T api config draft-import --file /dev/stdin < config/mediaflow.activation.json`。
+   写清执行时机和已有媒体挂载项目所用的 Compose 文件。导入完成后，在「系统设置 → 高级配置 → 查看配置」
+   选回该草稿，执行适用检查并显式激活。配置指南的导入段和 Docker 指南使用同一套页面名称。
+3. Developer 在隔离路径下从未设置 `MEDIAFLOW_CONFIG` 的新终端复跑配置指南，再按 Docker 指南将样例导入
+   测试项目。从系统设置读回对应草稿及样例里的两项 Storage，确认导入阶段不产生 Active，随后按已修订的
+   检查与激活步骤继续。执行 `git diff --check`，记录实际结果和候选 SHA。
+
+#### 实际验证与 Slice55 重评
+
+治理与完整范围 whitespace 检查通过。B 的真实浏览器旅程约 4 秒，另复核新终端命令、CLI 导入的草稿内容，
+以及正式 Compose 入口在同一 `/data` 卷写入并重读样例草稿。测试时间少于本轮总用时的 50%。
+原始结果位于 `.git/validation-evidence/18d848dee56d9675e62be7d0b201c9f0ce45133a/task55-8-b/`。
+
+| Slice 结果 | 本轮核对 |
+|---|---|
+| RO-1 | Web 源码和路由输入与上一轮相同，已记录的退出和现行入口证据继续适用。 |
+| RO-2 | 审核退休和 Ignore 持久受理的 109 项定向证据对应同一代码，最终候选原生验收待完成。 |
+| RO-3 | 已复验规范样例的精确 checked 激活和失败后的草稿恢复，导入指引由 B55.8-02 修正。 |
+| RO-4 | 持久化代码与上一轮相同，Slice Base 数据和原 pins 的最终候选连续性待复验。 |
+| RO-5 | 会话与未知请求协议沿用 Task55.7 的固定证据，最终候选原生门禁待完成。 |
+| RO-6 | B55.8-02 阻止首次部署指南验收。完整 T4、同一四服务实例的 typed 配置旅程及 Slice 最终制品门禁待 B 执行。 |
+
+修正留在 Task55.8 内。Slice55 状态为 ACTIVE。
