@@ -1,6 +1,6 @@
 # Task 56.1 — 同一候选版本切换 Web 与 API 入口
 
-Next Action: DEVELOPER STARTS TASK56.1 IMPLEMENTATION
+Next Action: B REVIEWS THE TASK56.1 CANDIDATE
 
 已提交的 [Slice 56 合同](SLICE.md) 定义范围。对应 RO-1／RO-2 全部公开入口、RO-3
 中链接与既有身份的交接，以及 RO-4 中随仓的路径消费者。[Development Workflow](docs/development-workflow.md)
@@ -9,7 +9,7 @@ Next Action: DEVELOPER STARTS TASK56.1 IMPLEMENTATION
 Task ID: 56.1
 Task Type: SLICE
 Parent Slice: 56
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 6ff7213bf770e94d4e7f90a5e8c57d6fe21985b3
 Difficulty: High
 Test Level: T4
@@ -145,7 +145,86 @@ Slice 最终按合同核对完整的 Base → 候选跨切换丢响应场景、�
 
 ## Developer Completion Report
 
-待 Developer 实施，提交候选检查点并报告实际受影响测试结果。
+```text
+Task Base: 6ff7213bf770e94d4e7f90a5e8c57d6fe21985b3
+Implementation Candidate: b641d1230f9bae1e736b9a2c6e29e7f920e80990
+Branch: main
+Status: READY FOR B REVIEW
+```
+
+**已实现**
+
+1. **HTTP 边界。** `mediaflow/interfaces/v2_ui.py` 把入口文档挂在 `/`，构建资源按 Vite
+   实际写出的 `/assets/*`、`/favicon.svg` 提供，SPA 回退只服务 Web 导航；Rules Edit
+   的合法带点 ID 例外改为 `/rules/edit/<family>/<id>`，其余带点路径仍按未知资源失败。
+   `service_api.py` 先分派 `/health`、再按 `/api` 或 `/api/` 判 API、其余为 Web/静态；
+   Web/静态只接受 GET。`/api/v1`、`/api/v2` 在鉴权前终止为 JSON 404，不解析 Active、
+   不进入业务服务、不落审计。分发、Active/权限判定、只读审计例外与 `_audit_route`
+   全部改为按正式段匹配（含按长度/下标判定的分支），新审计模板使用 `/api/*`。
+2. **同一候选切换 Web。** `vite.config.ts` 基址为 `/`，浏览器 router 去掉 basepath，
+   `api-client` 与全部调用端点使用 `/api/*`，Storage 设置链接校验接受
+   `/configuration`，`index.html` favicon 改为绝对路径（深链刷新不再解析到子路径）。
+   Node 假服务、全部 e2e/单元用例与真实 Python harness 使用同一套路径；新增
+   `/ui-v2` 通用未找到与旧资源 404 的浏览器断言。
+3. **按原身份投影新链接。** 公开的逐项恢复、取消、预览/执行、包交换、自动化与通知
+   链接改为正式地址；`_checkpoint_hash_blocker_resolution_path` 的固定历史哈希输入
+   （`/api/v1/recognition-reviews/` 等）与会话摘要键保持原字节，新增注释说明其只作
+   版本计算。历史审计按记录值读取。
+4. **随仓消费者与指引。** 100 个 Python 测试/脚本、117 个 Web 文件、部署 smoke/证明
+   脚本与当前文档同步；旧前缀只保留负向断言、历史哈希输入与历史行说明。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，候选 `b641d123`）**
+
+```text
+.venv/bin/python scripts/check_governance.py                 -> PASS
+git diff --check                                             -> clean
+.venv/bin/ruff format --check <changed .py>                  -> 118 files already formatted
+.venv/bin/ruff check <changed .py>                            -> All checks passed
+for case in test_v2_ui test_api_security test_container_deployment   test_processing_checkpoint test_configuration_package_exchange   test_v2_manual_organize test_automation_entrance_recovery; do ...; done
+  -> 15/13/15/10/12/50/12 tests, all OK (0.03/0.08/0.41/0.05/0.21/2.24/0.43s)
+```
+
+实施中另跑过一次完整 Python 回归 `.venv/bin/python -m unittest discover -s tests`
+（2310 tests, OK, skipped=7, 222s）；之后仅格式化和新增 2 个 API 路由用例，未再改动
+业务代码。
+
+```text
+web: npm run typecheck                                      -> OK
+web: npm run lint                                           -> OK
+web: npm run format:check                                   -> All matched files use Prettier
+web: npm run test -- run                                    -> 102 files / 1631 tests passed
+web: npm run build                                          -> dist/index.html + hashed JS/CSS
+web: npm run test:e2e                                       -> 286 passed (3.4m, Node fake)
+web: npm run test:e2e -- deep-link.spec.ts operations.spec.ts -> 43 passed
+web: npm run test:e2e -- --config=playwright.python.config.ts   tests/e2e/live-files.python.spec.ts                        -> 6 passed
+```
+
+真实 Python harness（`scripts/operations_inventory_harness.py --port 4321`，本机构建产物）
+实测：`GET /`、`/explore`、`/resourcelib/files?...`、`/ui-v2/explore` → 200 HTML；
+`GET /missing.js` → 404；`GET /health` → 200 JSON；`GET /api/tasks` 无 token → 401；
+带 viewer token → 200；`GET /api/operations/tasks|runs` → 200；`GET|POST /api/v1/...`
+→ 404 `not_found`。
+
+**跨版本身份核对（AC-3 的直接证据）**
+
+用 `git archive 6ff7213b | tar -x -C /tmp/mf-base` 取出 Task Base 真实源码（不改工作树），
+以临时 SQLite 建立含 `recognition_reviews` 阻塞项的 Task/Item，读得
+`checkpointVersion=8983e2b2…d23e8e9c`、公开恢复路径落在 `/api/v1/...`；候选代码重开同一
+数据库副本后版本仍为 `8983e2b2…d23e8e9c`，公开 `resolution_path` 变为
+`/api/tasks/<task>/items/item-1/recovery`，`GET /api/tasks/<task>/items/item-1/recovery`
+返回 200 且 `checkpoint.checkpoint_version` 与 Base 完全一致；同一路径的 `/api/v1/...`
+为 404。把条目 `attempts` 加一后版本变为 `387d5ff8…`，与 Base 版本不同，现行过期冲突
+仍会触发。
+
+**剩余与风险**
+
+- B 的门禁未执行：wheel/源码外安装、Docker 空实例/发布安全/重启、除 live-files 外的
+  Python harness 浏览器用例、Compose 实机。这些是 T4 验收工作，不是已通过项。
+- `web/dist` 不在 Git 中，B 需从候选重新 `npm run build`；`MEDIAFLOW_UI_V2_ASSET_ROOT`
+  变量名按部署契约保持不变。
+- 旧 `/ui-v2` 导航地址按设计返回入口文档并渲染客户端未找到；其旧资源地址为 404。
+  仓库外 API 接入方必须自行改用 `/api/*`（部署授权范围外）。
+- 历史审计仍显示当时记录的 `/api/v1/...` 路由，属预期；当前操作链接为正式地址。
 
 ## B Review Result
 
