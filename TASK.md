@@ -1,6 +1,6 @@
 # Task 56.1 — 同一候选版本切换 Web 与 API 入口
 
-Next Action: DEVELOPER CORRECTS THE REMAINING TASK56.1 BLOCKERS
+Next Action: B REVIEWS THE B56-01–B56-03 CORRECTED CANDIDATE
 
 已提交的 [Slice 56 合同](SLICE.md) 定义范围。对应 RO-1／RO-2 全部公开入口、RO-3
 中链接与既有身份的交接，以及 RO-4 中随仓的路径消费者。[Development Workflow](docs/development-workflow.md)
@@ -9,7 +9,7 @@ Next Action: DEVELOPER CORRECTS THE REMAINING TASK56.1 BLOCKERS
 Task ID: 56.1
 Task Type: SLICE
 Parent Slice: 56
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 6ff7213bf770e94d4e7f90a5e8c57d6fe21985b3
 Difficulty: High
 Test Level: T4
@@ -299,3 +299,95 @@ npm --prefix web run test:e2e -- --config=playwright.python.config.ts tests/e2e/
   到另一位置，引发运行配置校验失败。用原隔离库路径重新复验，浏览器核对通过。
 - 证据见 `.git/validation-evidence/bb6704c4/task56-1-b/`。RO-3、RO-4 仍有上述阻塞。
   三项修正后由 B 独立复验并重新评估 Slice 全部结果。
+
+## Developer Completion Report — B56-01–B56-03 修复
+
+```text
+Task Base: 6ff7213bf770e94d4e7f90a5e8c57d6fe21985b3
+Implementation Candidate: 472759665a42a73d24910464e903382adeb37e56
+Branch: main
+Status: READY FOR B REVIEW
+```
+
+**B56-01 修复**
+
+1. `/api/operations/runs/{run}` 把 `manualOrganizeSubmission` 改为按提交时间排列的
+   `manualOrganizeSubmissions`：只投影该 Task 中由当前读取主体提交的每一条持久
+   `manual_executions`，每条保留自己的原 `previewId`、`intentVersion`、选中条目、
+   覆盖/来源清理权限、当前执行状态及逐项来源和结果。记录不含 token、摘要授权或重放能力；
+   另一读取主体得到空列表。固定的首个 `min` 选择已移除。
+2. Task 详情「原整理提交」按记录分别显示提交时间、原方案摘要、摘要版本、提交范围和逐项结果；
+   每条使用自己的原参数调用现有正式 admission GET。卡片不自动读取、不重新 Execute、
+   不提供继续动作；继续仍由原 Task 的逐项恢复入口负责。前端解码按新数组字段校验，重复执行
+   身份或逐项范围不一致按 malformed 失败。
+3. 在 `test_ready_sources_remain_on_the_task_after_subset_execution` 的两次确认旅程中新增
+   真实 API 断言：两条记录各自的 Preview、摘要版本和选中条目正确，提交主体可见两条，
+   viewer 读取为 `[]`。新增 `DialogSubsetFirst.2030.mkv`／`DialogSubsetSecond.2031.mkv`
+   浏览器回归：第一项经真实 Files→整批复核确认并完成；从 Task Center「继续整理」回到同一
+   preparation，对剩余项保存修正并零变更重分析，再丢弃第二次 Execute 响应；真实 Worker
+   完成后整页重载、重连同一 Task 深链，页面显示两条提交和两条成功结果，点击第二条只发一次
+   admission GET 且命中第二个 Preview/原选择，全程 Execute 仍为两次。
+
+**B56-02 修复**
+
+README 切换清单中的 `TOKEN` 示例改为可被 Bash 直接解析的带引号占位值。
+`scripts/docker_smoke_test.py` 和 `scripts/docker_restart_fault_smoke_test.py` 的旧导航断言
+改为发布安全脚本同口径：`/ui`、`/ui-v2` 及其页面地址返回同一入口 HTML（普通未找到视图），
+`/ui/app.js`、`/ui/style.css`、`/ui-v2/app.js` 返回 404。重启、脱敏、读操作无业务变更等
+其余断言未改。两项脚本已在实际候选镜像上通过。
+
+**B56-03 修复**
+
+`scripts/installed_recovery_smoke_test.py` 不再复制已删除的
+`tests/test_task_center_recovery_lineage.py`；改为复制现行 `tests` fixture
+（`test_media_discovery.py`、`task_engine_test_helpers.py`、`test_manual_task_engine.py`
+及包标记）和示例配置，在源码外按名称运行
+`test_native_summary_is_confirmable_on_the_same_task_from_the_center` 与
+`test_native_metadata_candidate_confirms_on_the_same_task`，并断言 `mediaflow` 从
+`site-packages` 导入。两项用例由真实 Worker 在原 Task 上写入结果。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，最终工作树）**
+
+```text
+.venv/bin/python scripts/check_governance.py                         -> PASS
+git diff --check                                                     -> clean
+.venv/bin/ruff format --check <7 changed .py>                        -> 7 files already formatted
+.venv/bin/ruff check <7 changed .py>                                 -> All checks passed
+
+.venv/bin/python -m unittest tests.test_manual_task_engine   tests.test_manual_organize_execution   tests.test_operations_run_detail_plan_evidence                     -> 84 tests, OK
+for case in test_v2_ui test_api_security test_container_deployment   test_processing_checkpoint test_configuration_package_exchange   test_v2_manual_organize test_automation_entrance_recovery; do ...; done
+                                                                       -> 15/13/15/10/12/50/12 tests, all OK
+```
+
+```text
+web: npm run typecheck                                               -> OK
+web: npm run lint                                                    -> OK
+web: npm run format:check                                            -> All matched files use Prettier
+web: npm run test -- run run.test.ts OrganizeSubmissionVerification.test.tsx   OperationsInventory.test.tsx                                       -> 3 files / 105 tests passed
+web: npm run build                                                   -> dist/index.html + hashed JS/CSS
+web: npm run test:e2e -- --config=playwright.python.config.ts   tests/e2e/manual-organize-dialog.python.spec.ts   -g 'lost Execute|unknown original submission|second confirmation'  -> 3 passed (17.5s)
+```
+
+```text
+wheel: /tmp/task56wheels/mediaflow-2.0.0.dev0-py3-none-any.whl
+sha256: e70414fc96369441ab17120004ac130bfd148ccdde478eb88e6c5936fb87a360
+scripts/wheel_smoke_test.py <wheel>                                  -> exit 0
+scripts/installed_recovery_smoke_test.py <wheel>                     -> 2 named tests OK,
+  installedPackage=.../site-packages/mediaflow, successfulInstalledRecovery=true
+
+docker build -t mediaflow:task56-1-b56-02 .                          -> exit 0
+scripts/docker_smoke_test.py --image mediaflow:task56-1-b56-02       -> passed
+  (TMPDIR at repo .git/tmp-task56 so the daemon sees the temp mounts)
+scripts/docker_restart_fault_smoke_test.py --image mediaflow:task56-1-b56-02
+                                                                       -> passed
+  (MEDIAFLOW_SMOKE_TEMP_DIR at repo .git/tmp-task56)
+```
+
+**剩余与风险**
+
+- Developer 未执行 T4 全量 Python/Web/默认浏览器、Base 已受理数据跨候选重开、Base→候选
+  四类恢复、空实例/发布安全/Compose 等门禁；以上仍归 B 验收。B 应从本候选提交重新构建
+  镜像和前端产物。
+- 新增浏览器回归依赖新增的两个 Dialog fixture；fixture 只用于该两条确认旅程，未复用其他
+  已消费来源。
+- 历史 Task 记录和哈希身份未改；仍按原值读取。
