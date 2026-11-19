@@ -4,21 +4,23 @@
 Slice ID: 56
 Name: Canonical Web and API Routes
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PLANNED
+Status: ACTIVE
 Base SHA: 33c70735e0a8f45426dde614587ea3d43af94e9b
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: PLANNING ONLY
+Development Authorization: SLICE ACTIVE / FIRST TASK PLANNING
 Risk: High
 Target Test Level: T4
-Next Action: USER ACTIVATES SLICE / B THEN PLANS THE FIRST TASK
+Next Action: SEE TASK.md
 ```
 
 ## 授权与基线
 
 用户以文件页 `/resourcelib/files` 和 `/api/v1/tasks → /api/tasks` 为例，先授权调查，
-随后要求规划 Slice。本合同将两个示例应用到全部当前 Web 和 API 路由。本轮交付规划文档
-及本地检查点。激活、Task 规划、实施及发布依照仓库工作流。[Development Workflow](docs/development-workflow.md)
+随后要求规划 Slice。本合同将两个示例应用到全部当前 Web 和 API 路由。用户现授权激活
+Slice 56，并由 A 代 B 规划首个 Task。角色例外仅适用于首个 Task 的规划，后续由 Developer
+实施、B 独立验收、A 终审。当前授权的交付物为激活合同及首个 Task 规划的本地检查点。
+[Development Workflow](docs/development-workflow.md)
 
 规划前治理检查通过。仓库位于 main，HEAD 为上述 Base，暂存区及工作区干净，文档和 Git 可写。
 Base 是产品实施前的基线，规划／激活检查点沿用该 Base。介入的产品变更由 A 审核范围和集成。
@@ -40,10 +42,10 @@ Slice 55 仍为 PASS / CLOSED，原 Base、实施 Head、最终审查及验证�
 候选产物须依下方标准验收。
 
 Slice 55 的 `V2-RETIRE-001/006/008/009/010` 和 `V2-MIG-001/002` 定义当前基线。
-本 Slice 通过 [V2-ROUTE-001–004](docs/v2-requirements.md#target--canonical-web-and-api-routes-slice56-planned)
+本 Slice 通过 [V2-ROUTE-001–004](docs/v2-requirements.md#target--canonical-web-and-api-routes-slice56-active)
 调整 V2 的公开路径，涵盖 `REQ-WEB-001/003/004/005`、`REQ-API-001–003` 的传输入口。
-旅程与服务分界见 [Product Experience](docs/product-experience.md#target--canonical-entry-journey-slice56-planned)
-和 [Architecture](docs/architecture.md#target--root-web-and-unversioned-api-slice56-planned)。
+旅程与服务分界见 [Product Experience](docs/product-experience.md#target--canonical-entry-journey-slice56-active)
+和 [Architecture](docs/architecture.md#target--root-web-and-unversioned-api-slice56-active)。
 
 ## 正式入口切换决策
 

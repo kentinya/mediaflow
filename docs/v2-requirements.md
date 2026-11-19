@@ -8,7 +8,7 @@ in [`requirements.md`](requirements.md). Slice-specific architecture and proof d
 remain in [`SLICE.md`](../SLICE.md) and the architecture document; this file records only durable
 product and authority boundaries.
 
-## TARGET — Canonical Web and API routes (Slice56 PLANNED)
+## TARGET — Canonical Web and API routes (Slice56 ACTIVE)
 
 [Slice56](../SLICE.md) plans a V2 path amendment to `V2-RETIRE-001/006` and `V2-MIG-001/002`.
 The CURRENT contract below governs before acceptance.

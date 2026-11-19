@@ -27,7 +27,7 @@ V2 amendments supersede only the listed meanings; all other scope and safety rem
 Detailed stable acceptance lives once in [V2 Requirements](v2-requirements.md); current Slice/Task
 scope and delivery state remain in root contracts, [Roadmap](roadmap.md) and [Progress](progress.md).
 
-[Slice56 TARGET](v2-requirements.md#target--canonical-web-and-api-routes-slice56-planned)
+[Slice56 TARGET](v2-requirements.md#target--canonical-web-and-api-routes-slice56-active)
 plans a V2 public-path amendment under `REQ-WEB-001/003/004/005` and `REQ-API-001–003`.
 
 | Authorized amendment | Superseded V1 meaning / retained boundary |

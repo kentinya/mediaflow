@@ -1,6 +1,6 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Slice56 **PLANNED**. Next Action: USER ACTIVATES SLICE / B THEN PLANS THE FIRST TASK.
+Slice56 **ACTIVE**. Next Action: A PLANS THE FIRST TASK UNDER THE USER'S AUTHORIZATION.
 Scope and acceptance criteria are in [SLICE.md](SLICE.md).
 
 Task55.8 **PASS**. Slice55 **PASS / CLOSED** after independent A Final Review.

@@ -11,7 +11,7 @@ points to the current implementation state and immutable review packet.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
-## TARGET — Canonical entry journey (Slice56 PLANNED)
+## TARGET — Canonical entry journey (Slice56 ACTIVE)
 
 用户从 `/` 连接后进入探索，也可以用 `/resourcelib/files` 的带参链接直达目录。
 刷新、重连或从设置返回时，恢复当前权限允许的原位置。切换后从任务中心打开原任务，

@@ -8,9 +8,8 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice56](../SLICE.md) is **PLANNED** at Base `33c70735e0a8f45426dde614587ea3d43af94e9b`.
-[TASK.md](../TASK.md) records no active implementation Task.
-**USER ACTIVATES SLICE / B THEN PLANS THE FIRST TASK**.
+[Slice56](../SLICE.md) is **ACTIVE** at Base `33c70735e0a8f45426dde614587ea3d43af94e9b`.
+[TASK.md](../TASK.md) records the current Task state and next action.
 
 ## Latest accepted closure — Slice55
 

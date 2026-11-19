@@ -11,7 +11,7 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Root Web and unversioned API (Slice56 PLANNED)
+## TARGET — Root Web and unversioned API (Slice56 ACTIVE)
 
 The Python WSGI service owns the distinct `/health`, `/api/*` and root Web/static boundaries.
 API dispatch, permission checks, error handling and audit classification interpret the same
