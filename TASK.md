@@ -1,10 +1,6 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 56.1 — 同一候选版本切换 Web 与 API 入口
 
-Slice56 **ACTIVE**. Next Action: USER AUTHORIZES TASK56.1 IMPLEMENTATION.
-A 依用户授权代 B 完成首个 Task 的规划。以下为规划草案，实施须按工作流获得授权。
-最近验收仍为 Slice55，固定审查记录见 [Progress](docs/progress.md#latest-accepted-closure--slice55)。
-
-## Task 56.1 — 同一候选版本切换 Web 与 API 入口（规划草案）
+Next Action: DEVELOPER STARTS TASK56.1 IMPLEMENTATION
 
 已提交的 [Slice 56 合同](SLICE.md) 定义范围。对应 RO-1／RO-2 全部公开入口、RO-3
 中链接与既有身份的交接，以及 RO-4 中随仓的路径消费者。[Development Workflow](docs/development-workflow.md)
@@ -19,11 +15,14 @@ Difficulty: High
 Test Level: T4
 Planner: A acting for B — explicit first-Task planning delegation
 Reviewer: B — independent implementation review
-Implementation Authorization: AWAITING USER AUTHORIZATION
+Implementation Authorization: AUTHORIZED BY USER FOR TASK56.1
 ```
 
 规划前治理检查通过。工作仓库为 `/Users/songzhidong/mediaflow`，分支为 `main`，Task Base
 为 Slice 激活检查点，索引和工作区干净、文档及 Git 可写。Slice Base 仍记录在 [SLICE.md](SLICE.md)。
+
+用户已授权激活本 Task。激活前 HEAD 为 `7ee6910b957b5f34b296fcbe085378859dd5fd77`，
+工作区干净，治理检查通过。正式 Task 为 `PLANNED`，Developer 开始实施时转为 `IN PROGRESS`。
 
 ## Goal
 
@@ -146,7 +145,7 @@ Slice 最终按合同核对完整的 Base → 候选跨切换丢响应场景、�
 
 ## Developer Completion Report
 
-待实施授权与候选检查点。
+待 Developer 实施，提交候选检查点并报告实际受影响测试结果。
 
 ## B Review Result
 

@@ -8,7 +8,7 @@ Status: ACTIVE
 Base SHA: 33c70735e0a8f45426dde614587ea3d43af94e9b
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: SLICE ACTIVE / FIRST TASK PLANNING
+Development Authorization: TASK56.1 IMPLEMENTATION AUTHORIZED
 Risk: High
 Target Test Level: T4
 Next Action: SEE TASK.md
@@ -17,9 +17,9 @@ Next Action: SEE TASK.md
 ## 授权与基线
 
 用户以文件页 `/resourcelib/files` 和 `/api/v1/tasks → /api/tasks` 为例，先授权调查，
-随后要求规划 Slice。本合同将两个示例应用到全部当前 Web 和 API 路由。用户现授权激活
-Slice 56，并由 A 代 B 规划首个 Task。角色例外仅适用于首个 Task 的规划，后续由 Developer
-实施、B 独立验收、A 终审。当前授权的交付物为激活合同及首个 Task 规划的本地检查点。
+随后要求规划 Slice。本合同将两个示例应用到全部当前 Web 和 API 路由。用户授权激活
+Slice 56，并由 A 代 B 规划首个 Task。用户现要求激活已规划的 Task 56.1，授权 Developer
+按该 Task 的既定范围实施。A 代 B 的角色例外仅适用于规划，验收由 B 独立执行，A 负责终审。
 [Development Workflow](docs/development-workflow.md)
 
 规划前治理检查通过。仓库位于 main，HEAD 为上述 Base，暂存区及工作区干净，文档和 Git 可写。
