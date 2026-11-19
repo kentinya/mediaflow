@@ -1897,10 +1897,10 @@ function RunDetailFacts({
           </div>
         </section>
       )}
-      {run.manualOrganizeSubmission !== null && run.taskId !== null && (
+      {run.manualOrganizeSubmissions.length > 0 && run.taskId !== null && (
         <OrganizeSubmissionVerification
           taskId={run.taskId}
-          submission={run.manualOrganizeSubmission}
+          submissions={run.manualOrganizeSubmissions}
         />
       )}
       {hasDiagnostics && (

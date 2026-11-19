@@ -1008,7 +1008,9 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
 
                 status, document = request(api, f"/api/operations/runs/{run.task_id}")
                 self.assertEqual(200, status, document)
-                submission = document["manualOrganizeSubmission"]
+                submissions = document["manualOrganizeSubmissions"]
+                self.assertEqual(1, len(submissions))
+                submission = submissions[0]
                 self.assertEqual(run.execution_id, submission["executionId"])
                 self.assertEqual(preview.preview_id, submission["previewId"])
                 self.assertEqual(preview.intent_version, submission["intentVersion"])
@@ -1034,7 +1036,7 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                     token="viewer-token",
                 )
                 self.assertEqual(200, status, viewer_document)
-                self.assertIsNone(viewer_document["manualOrganizeSubmission"])
+                self.assertEqual([], viewer_document["manualOrganizeSubmissions"])
 
                 # The existing formal reconciliation read proves the exact
                 # original submission from the same durable record.

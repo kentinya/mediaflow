@@ -570,6 +570,223 @@ test("a Task reopened after a lost Execute reconciles its original accepted subm
   ).toEqual([]);
 });
 
+test("a second confirmation on the same Task is reconciled from its own durable record", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  const firstFile = "DialogSubsetFirst.2030.mkv";
+  const secondFile = "DialogSubsetSecond.2031.mkv";
+  const fileState = async (name: string) => {
+    const response = await request.get(
+      `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(
+        `Dialog/${name}`,
+      )}`,
+    );
+    expect(response.ok()).toBe(true);
+    return (await response.json()) as {
+      readonly sourceExists: boolean;
+      readonly destinationTargets: readonly string[];
+    };
+  };
+
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+
+  // The real Files journey starts with two ready sources and confirms only
+  // the first subset.
+  await openDialogDirectory(page, firstFile);
+  await selectFiles(page, [firstFile, secondFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await driveDiscovery(request, true);
+  await expect(card.getByRole("heading", { name: /第 1 \/ 2 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await card.getByRole("button", { name: "下一项" }).click();
+  await expect(
+    card.getByRole("heading", { name: /第 2 \/ 2 个/ }),
+  ).toBeVisible();
+  await card.getByRole("checkbox", { name: `纳入 ${secondFile}` }).uncheck();
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  const executePosts = () =>
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    );
+  const firstExecute = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/operations\/organize\/previews\/[^/]+\/execute$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  expect((await firstExecute).status()).toBe(202);
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  const taskId = new URL(page.url()).searchParams.get("run");
+  expect(taskId).toBeTruthy();
+  expect(executePosts()).toHaveLength(1);
+
+  const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(worker.ok()).toBe(true);
+  expect(await worker.json()).toMatchObject({
+    completed: true,
+    taskId,
+    status: "completed",
+    itemCount: 1,
+  });
+  expect((await fileState(firstFile)).sourceExists).toBe(false);
+  expect(await fileState(secondFile)).toEqual({
+    sourceExists: true,
+    destinationTargets: [],
+  });
+
+  // The Task Center's own continuation entry reopens the same preparation on
+  // the same Task after the first subset completed.
+  await page.goto(`${BASE}/operations?run=${taskId}`);
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible({ timeout: 30_000 });
+  await detail.getByRole("link", { name: "继续整理" }).click();
+  const reopened = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(reopened).toBeVisible({ timeout: 30_000 });
+  const reopenedHeading = reopened.getByRole("heading", {
+    name: /第 [12] \/ 2 个/,
+  });
+  await expect(reopenedHeading).toBeVisible();
+  if ((await reopenedHeading.textContent())?.includes("第 1 /")) {
+    await reopened.getByRole("button", { name: "下一项" }).click();
+  }
+  await expect(reopened.getByText(secondFile).first()).toBeVisible();
+
+  // The remaining sibling gets its own explicit correction and zero-mutation
+  // re-analysis, exactly the existing same-card decision path.
+  await reopened.getByText("修正识别或作品", { exact: true }).click();
+  await reopened.getByLabel(`识别类型 ${secondFile}`).selectOption("C");
+  await reopened.getByRole("button", { name: "保存并重新分析" }).click();
+  await expect(
+    reopened.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+  ).toBeVisible();
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(reopened.getByText("纳入本次整理").first()).toBeVisible({
+    timeout: 30_000,
+  });
+
+  // Drop only the second Execute's browser-visible response after the
+  // production API committed its durable admission.
+  let dropped = false;
+  await page.route(
+    /\/api\/operations\/organize\/previews\/[^/]+\/execute$/,
+    async (route) => {
+      if (dropped) {
+        await route.continue();
+        return;
+      }
+      dropped = true;
+      await route.fetch();
+      await route.abort("connectionreset");
+    },
+  );
+  await reopened.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(page.getByText("执行结果未知")).toBeVisible({
+    timeout: 30_000,
+  });
+  expect(executePosts()).toHaveLength(2);
+  const secondPost = executePosts()[1];
+  expect(secondPost).toBeDefined();
+  const secondPreviewId = (secondPost?.path.match(
+    /previews\/([^/]+)\/execute$/,
+  ) ?? [])[1];
+  expect(secondPreviewId).toBeTruthy();
+  expect(secondPreviewId).not.toBe(
+    (executePosts()[0]?.path.match(/previews\/([^/]+)\/execute$/) ?? [])[1],
+  );
+
+  // The real Worker completes the second admitted subset on the same Task.
+  const secondWorker = await request.post(
+    `${BASE}/__harness__/run-manual-worker`,
+  );
+  expect(secondWorker.ok()).toBe(true);
+  expect(await secondWorker.json()).toMatchObject({
+    completed: true,
+    taskId,
+    status: "completed",
+    itemCount: 1,
+  });
+  expect((await fileState(secondFile)).sourceExists).toBe(false);
+
+  // A full reload and reconnect reopen the exact Task; both durable
+  // confirmations remain separately visible with their own results.
+  await page.goto(`${BASE}/operations?run=${taskId}`);
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  const reopenedDetail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(reopenedDetail).toBeVisible({ timeout: 30_000 });
+  const submissions = reopenedDetail.getByRole("region", {
+    name: "原整理提交",
+  });
+  await expect(submissions).toBeVisible();
+  await expect(submissions).toContainText("2 次已受理的精确整理提交");
+  const firstRecord = submissions.getByRole("article", {
+    name: "第 1 次提交",
+  });
+  const secondRecord = submissions.getByRole("article", {
+    name: "第 2 次提交",
+  });
+  await expect(firstRecord).toContainText(firstFile);
+  await expect(secondRecord).toContainText(secondFile);
+  await expect(firstRecord).toContainText("成功");
+  await expect(secondRecord).toContainText("成功");
+
+  const commandMark = commands.length;
+  await secondRecord.getByRole("button", { name: "核对提交结果" }).click();
+  await expect(
+    secondRecord.getByRole("heading", { name: "核对结果" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(secondRecord).toContainText("并指向本任务");
+  await expect(secondRecord).toContainText("成功 1 项，失败 0 项");
+
+  const admissionGets = commands.filter(
+    (command) =>
+      command.method === "GET" &&
+      /\/operations\/organize\/previews\/[^/]+\/admission$/.test(command.path),
+  );
+  expect(admissionGets).toHaveLength(1);
+  expect(admissionGets[0]?.path).toBe(
+    `/api/operations/organize/previews/${secondPreviewId}/admission`,
+  );
+  const admissionParams = new URLSearchParams(admissionGets[0]?.search ?? "");
+  expect(admissionParams.get("itemIds")).toBe(
+    (secondPost?.body?.["itemIds"] as string[]).join(","),
+  );
+  expect(admissionParams.get("expectedIntentVersion")).toBe(
+    String(secondPost?.body?.["expectedIntentVersion"]),
+  );
+  expect(admissionParams.get("allowOverwrite")).toBe(
+    String(secondPost?.body?.["allowOverwrite"] === true),
+  );
+  expect(admissionParams.get("allowSourceCleanup")).toBe(
+    String(secondPost?.body?.["allowSourceCleanup"] === true),
+  );
+
+  // The read-only reconciliation did not replay or add a third execution.
+  expect(executePosts()).toHaveLength(2);
+  expect(
+    commands.slice(commandMark).filter((command) => command.method !== "GET"),
+  ).toEqual([]);
+});
+
 test("a real destination conflict is decided, re-analyzed and confirmed on the current file", async ({
   page,
   request,

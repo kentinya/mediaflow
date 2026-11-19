@@ -1021,11 +1021,22 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             status, ui = http_request(f"{base}/")
             if status != 200 or b'<div id="root">' not in ui:
                 raise RuntimeError("current V2 Web shell is not reachable")
-            for retired_path in ("/ui", "/ui/", "/ui/app.js", "/ui/style.css"):
-                status, _ = http_request(f"{base}{retired_path}")
+            # The retired Web prefixes are ordinary unknown client routes: the
+            # same entry document renders the ordinary not-found view at the
+            # same address, with no redirect or retained bytes.  Their old
+            # static asset addresses stay plain 404s.
+            for retired_path in ("/ui", "/ui/", "/ui-v2", "/ui-v2/", "/ui-v2/explore"):
+                status, body = http_request(f"{base}{retired_path}")
+                if status != 200 or body != ui:
+                    raise RuntimeError(
+                        f"retired Web path {retired_path} returned HTTP {status}, "
+                        "expected the ordinary entry document"
+                    )
+            for retired_asset in ("/ui/app.js", "/ui/style.css", "/ui-v2/app.js"):
+                status, _ = http_request(f"{base}{retired_asset}")
                 if status != 404:
                     raise RuntimeError(
-                        f"retired V1 Web path {retired_path} returned HTTP {status}, expected 404"
+                        f"retired Web asset {retired_asset} returned HTTP {status}, expected 404"
                     )
 
             before_reads = {

@@ -843,67 +843,108 @@ describe("run original manual Organize acceptance normalization", () => {
     };
   }
 
-  it("normalizes the exact original submission identity and per-item state", () => {
+  it("normalizes the exact original submission identities and per-item state", () => {
     const run = normalizeRunSummary(
       runDocument({
         task_id: "task-1",
-        manualOrganizeSubmission: submissionDocument(),
+        manualOrganizeSubmissions: [
+          submissionDocument(),
+          submissionDocument({
+            executionId: "execution-2",
+            previewId: "preview-2",
+            intentVersion: 4,
+            selectedItemIds: ["item-2"],
+            items: [
+              {
+                itemId: "item-2",
+                taskItemId: "task-item-2",
+                status: "admitted",
+                resultId: null,
+                sourcePath: "Dialog/DialogReopen.2029.mkv",
+                checkpointPath: "/api/tasks/task-1/items/task-item-2",
+              },
+            ],
+          }),
+        ],
       }),
     );
-    expect(run.manualOrganizeSubmission).toEqual({
-      executionId: "execution-1",
-      previewId: "preview-1",
-      intentVersion: 3,
-      selectedItemIds: ["item-1"],
-      status: "completed",
-      createdAt: "2026-08-30T12:00:00+00:00",
-      allowOverwrite: false,
-      allowSourceCleanup: true,
-      items: [
-        {
-          itemId: "item-1",
-          taskItemId: "task-item-1",
-          status: "success",
-          resultId: "result-1",
-          sourcePath: "Dialog/DialogUnknown.2021.mkv",
-          checkpointPath: "/api/tasks/task-1/items/task-item-1",
-        },
-      ],
-    });
+    expect(run.manualOrganizeSubmissions).toEqual([
+      {
+        executionId: "execution-1",
+        previewId: "preview-1",
+        intentVersion: 3,
+        selectedItemIds: ["item-1"],
+        status: "completed",
+        createdAt: "2026-08-30T12:00:00+00:00",
+        allowOverwrite: false,
+        allowSourceCleanup: true,
+        items: [
+          {
+            itemId: "item-1",
+            taskItemId: "task-item-1",
+            status: "success",
+            resultId: "result-1",
+            sourcePath: "Dialog/DialogUnknown.2021.mkv",
+            checkpointPath: "/api/tasks/task-1/items/task-item-1",
+          },
+        ],
+      },
+      {
+        executionId: "execution-2",
+        previewId: "preview-2",
+        intentVersion: 4,
+        selectedItemIds: ["item-2"],
+        status: "completed",
+        createdAt: "2026-08-30T12:00:00+00:00",
+        allowOverwrite: false,
+        allowSourceCleanup: true,
+        items: [
+          {
+            itemId: "item-2",
+            taskItemId: "task-item-2",
+            status: "admitted",
+            resultId: null,
+            sourcePath: "Dialog/DialogReopen.2029.mkv",
+            checkpointPath: "/api/tasks/task-1/items/task-item-2",
+          },
+        ],
+      },
+    ]);
   });
 
-  it("normalizes an absent or explicit null acceptance to null", () => {
+  it("normalizes an absent or explicit null acceptance list to empty", () => {
     expect(
-      normalizeRunSummary(runDocument()).manualOrganizeSubmission,
-    ).toBeNull();
+      normalizeRunSummary(runDocument()).manualOrganizeSubmissions,
+    ).toEqual([]);
     expect(
-      normalizeRunSummary(runDocument({ manualOrganizeSubmission: null }))
-        .manualOrganizeSubmission,
-    ).toBeNull();
-    // Inventory rows carry only the run identity, never an acceptance record.
+      normalizeRunSummary(runDocument({ manualOrganizeSubmissions: null }))
+        .manualOrganizeSubmissions,
+    ).toEqual([]);
+    // Inventory rows carry only the run identity, never acceptance records.
     const page = normalizeRunInventoryPage(pageDocument());
-    expect(page.items[0]?.manualOrganizeSubmission).toBeNull();
+    expect(page.items[0]?.manualOrganizeSubmissions).toEqual([]);
   });
 
-  it("rejects an acceptance without the exact Task identity", () => {
+  it("rejects an acceptance list without the exact Task identity", () => {
     expect(() =>
       normalizeRunSummary(
         runDocument({
           task_id: null,
-          manualOrganizeSubmission: submissionDocument(),
+          manualOrganizeSubmissions: [submissionDocument()],
         }),
       ),
     ).toThrow(RunNormalizationError);
   });
 
-  it("rejects an acceptance whose item list differs from the submitted selection", () => {
+  it("rejects a repeated acceptance identity or a mismatched item list", () => {
     expect(() =>
       normalizeRunSummary(
         runDocument({
           task_id: "task-1",
-          manualOrganizeSubmission: submissionDocument({
-            selectedItemIds: ["item-2"],
-          }),
+          manualOrganizeSubmissions: [
+            submissionDocument(),
+            submissionDocument(),
+          ],
         }),
       ),
     ).toThrow(RunNormalizationError);
@@ -911,9 +952,19 @@ describe("run original manual Organize acceptance normalization", () => {
       normalizeRunSummary(
         runDocument({
           task_id: "task-1",
-          manualOrganizeSubmission: submissionDocument({
-            sideEffects: "replayed",
-          }),
+          manualOrganizeSubmissions: [
+            submissionDocument({ selectedItemIds: ["item-2"] }),
+          ],
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          task_id: "task-1",
+          manualOrganizeSubmissions: [
+            submissionDocument({ sideEffects: "replayed" }),
+          ],
         }),
       ),
     ).toThrow(RunNormalizationError);

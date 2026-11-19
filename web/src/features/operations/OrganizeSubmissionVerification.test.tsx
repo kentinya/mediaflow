@@ -8,7 +8,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../../../tests/utils";
 import { authStore } from "../../shared/api/auth-store";
@@ -89,7 +89,7 @@ describe("OrganizeSubmissionVerification", () => {
     renderWithProviders(
       <OrganizeSubmissionVerification
         taskId="task-1"
-        submission={submission()}
+        submissions={[submission()]}
       />,
     );
 
@@ -119,6 +119,81 @@ describe("OrganizeSubmissionVerification", () => {
     expect(requests).toHaveLength(1);
   });
 
+  it("keeps every acceptance separately reconcilable by its own original request", async () => {
+    authStore.setToken("token");
+    const requests: Array<{ readonly url: string; readonly method: string }> =
+      [];
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        requests.push({ url: String(input), method: init?.method ?? "GET" });
+        const preview = url.pathname.split("/").at(-2);
+        return jsonResponse(
+          admissionOutcome({
+            executionId:
+              preview === "preview-2" ? "execution-2" : "execution-1",
+            selectedItemIds: [preview === "preview-2" ? "item-2" : "item-1"],
+          }),
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderWithProviders(
+      <OrganizeSubmissionVerification
+        taskId="task-1"
+        submissions={[
+          submission(),
+          submission({
+            executionId: "execution-2",
+            previewId: "preview-2",
+            intentVersion: 4,
+            selectedItemIds: ["item-2"],
+            createdAt: "2026-08-30T12:05:00+00:00",
+            items: [
+              {
+                itemId: "item-2",
+                taskItemId: "task-item-2",
+                status: "admitted",
+                resultId: null,
+                sourcePath: "Dialog/DialogReopen.2029.mkv",
+                checkpointPath: "/api/tasks/task-1/items/task-item-2",
+              },
+            ],
+          }),
+        ]}
+      />,
+    );
+
+    const card = await screen.findByRole("region", { name: "原整理提交" });
+    expect(card).toHaveTextContent("2 次已受理的精确整理提交");
+    const first = within(card).getByRole("article", { name: "第 1 次提交" });
+    const second = within(card).getByRole("article", { name: "第 2 次提交" });
+    expect(first).toHaveTextContent("DialogUnknown.2021.mkv");
+    expect(second).toHaveTextContent("DialogReopen.2029.mkv");
+    expect(second).toHaveTextContent("preview-2");
+    expect(second).toHaveTextContent("4");
+    expect(requests).toHaveLength(0);
+
+    await user.click(
+      within(second).getByRole("button", { name: "核对提交结果" }),
+    );
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    const url = new URL(requests[0]?.url ?? "", "http://localhost");
+    expect(requests[0]?.method).toBe("GET");
+    expect(url.pathname).toBe(
+      "/api/operations/organize/previews/preview-2/admission",
+    );
+    expect(url.searchParams.get("itemIds")).toBe("item-2");
+    expect(url.searchParams.get("expectedIntentVersion")).toBe("4");
+    expect(url.searchParams.get("allowOverwrite")).toBe("false");
+    expect(url.searchParams.get("allowSourceCleanup")).toBe("true");
+    expect(await within(second).findByText(/并指向本任务/)).toBeVisible();
+    // The first acceptance keeps its own state and sends no read.
+    expect(requests).toHaveLength(1);
+  });
+
   it("reports a non-equivalent durable record without guessing or replaying", async () => {
     authStore.setToken("token");
     const fetchMock = vi.fn(async () =>
@@ -137,7 +212,7 @@ describe("OrganizeSubmissionVerification", () => {
     renderWithProviders(
       <OrganizeSubmissionVerification
         taskId="task-1"
-        submission={submission()}
+        submissions={[submission()]}
       />,
     );
 
@@ -165,7 +240,7 @@ describe("OrganizeSubmissionVerification", () => {
     renderWithProviders(
       <OrganizeSubmissionVerification
         taskId="task-1"
-        submission={submission()}
+        submissions={[submission()]}
       />,
     );
 
@@ -199,7 +274,7 @@ describe("OrganizeSubmissionVerification", () => {
     renderWithProviders(
       <OrganizeSubmissionVerification
         taskId="task-1"
-        submission={submission()}
+        submissions={[submission()]}
       />,
     );
 
@@ -229,7 +304,7 @@ describe("OrganizeSubmissionVerification", () => {
     renderWithProviders(
       <OrganizeSubmissionVerification
         taskId="task-1"
-        submission={submission()}
+        submissions={[submission()]}
       />,
     );
 

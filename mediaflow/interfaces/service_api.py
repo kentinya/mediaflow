@@ -11470,69 +11470,76 @@ class MediaFlowApi:
         # one.  The bounded identity lets Task Center reopen the same existing
         # summary/preparation instead of keeping a second record list.
         document["filesPreparation"] = self._operations_run_files_preparation(overview)
-        # The selected run's own original manual Organize submission, when the
-        # reading principal is the operator who admitted it.  This is the
-        # durable acceptance record behind a lost Execute response: it carries
-        # the exact Preview/version/selection/effect authority the original
-        # request used, so Task Center can reconcile that request without
-        # guessing from today's summary or replaying the mutation.
-        document["manualOrganizeSubmission"] = self._operations_run_manual_organize_submission(
+        # The selected run's own manual Organize acceptances, when the reading
+        # principal admitted them.  A Task can receive several explicit
+        # confirmations (for example one ready subset, then the remaining
+        # source after its own analysis).  Each is the durable acceptance
+        # record behind a lost Execute response: it carries the exact
+        # Preview/version/selection/effect authority that request used, so Task
+        # Center can reconcile that request without guessing from today's
+        # summary or replaying the mutation.
+        document["manualOrganizeSubmissions"] = self._operations_run_manual_organize_submissions(
             overview, principal
         )
         return self._response(start_response, 200, document)
 
-    def _operations_run_manual_organize_submission(
+    def _operations_run_manual_organize_submissions(
         self, overview, principal: ResolvedApiPrincipal
-    ) -> dict[str, object] | None:
-        """The original manual Organize acceptance of this exact Task, read-only.
+    ) -> list[dict[str, object]]:
+        """The manual Organize acceptances of this exact Task, read-only.
 
-        The Task may later receive recovery confirmations that adopt the same
-        durable identity, so the original submission is the earliest admitted
-        execution on this Task, not the newest row.  Only that execution's own
-        submitting principal may reconcile it; another authorized reader gets
-        no acceptance projection instead of someone else's request identity.
-        The projection contains no authority material and performs no write.
+        Every confirmation is its own durable admission with its own Preview,
+        summary version, selected items and effect authority.  The list keeps
+        the chronological order, so the first and any later subset remain
+        distinguishable by time, summary and scope.  Only executions admitted
+        by the reading principal are published; another authorized reader gets
+        an empty list instead of someone else's request identity.  The
+        projection contains no authority material and performs no write.
         """
 
         repository = self._repository
         task_id = getattr(overview, "task_id", None)
         if not isinstance(task_id, str) or not task_id:
-            return None
+            return []
         reader = getattr(repository, "list_manual_executions_for_task", None)
         if not callable(reader):
-            return None
+            return []
         executions = tuple(reader(task_id, limit=500))
-        if not executions:
-            return None
-        original = min(executions, key=lambda value: (value.created_at, value.execution_id))
-        if original.actor != principal.principal_id:
-            return None
-        return redact_manual_value(
-            {
-                "executionId": original.execution_id,
-                "previewId": original.preview_id,
-                "intentVersion": original.intent_version,
-                "selectedItemIds": list(original.selected_item_ids),
-                "destructiveAuthority": {
-                    "allowOverwrite": original.allow_overwrite,
-                    "allowSourceCleanup": original.allow_source_cleanup,
-                },
-                "status": original.status.value,
-                "createdAt": original.created_at.isoformat(),
-                "items": [
-                    {
-                        "itemId": item.item_id,
-                        "taskItemId": item.task_item_id,
-                        "status": item.status.value,
-                        "resultId": item.result_id,
-                        "sourcePath": item.source.path,
-                        "checkpointPath": (f"/api/tasks/{item.task_id}/items/{item.task_item_id}"),
-                    }
-                    for item in original.items
-                ],
-                "sideEffects": "none",
-            }
+        submissions = sorted(
+            (value for value in executions if value.actor == principal.principal_id),
+            key=lambda value: (value.created_at, value.execution_id),
         )
+        return [
+            redact_manual_value(
+                {
+                    "executionId": execution.execution_id,
+                    "previewId": execution.preview_id,
+                    "intentVersion": execution.intent_version,
+                    "selectedItemIds": list(execution.selected_item_ids),
+                    "destructiveAuthority": {
+                        "allowOverwrite": execution.allow_overwrite,
+                        "allowSourceCleanup": execution.allow_source_cleanup,
+                    },
+                    "status": execution.status.value,
+                    "createdAt": execution.created_at.isoformat(),
+                    "items": [
+                        {
+                            "itemId": item.item_id,
+                            "taskItemId": item.task_item_id,
+                            "status": item.status.value,
+                            "resultId": item.result_id,
+                            "sourcePath": item.source.path,
+                            "checkpointPath": (
+                                f"/api/tasks/{item.task_id}/items/{item.task_item_id}"
+                            ),
+                        }
+                        for item in execution.items
+                    ],
+                    "sideEffects": "none",
+                }
+            )
+            for execution in submissions
+        ]
 
     def _operations_run_files_preparation(self, overview) -> dict[str, object] | None:
         """The selected run's own Files preparation identity, or ``None``.

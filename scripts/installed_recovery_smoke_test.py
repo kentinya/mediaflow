@@ -3,6 +3,9 @@
 
 Only test infrastructure and an approved example config are copied. Production
 imports must resolve from the wheel's site-packages, never the source checkout.
+The two current Task-native journeys are the same named cases the repository
+runs: one exact summary confirmation and one metadata-candidate recovery, each
+of which the real Worker completes on the original Task.
 """
 
 from __future__ import annotations
@@ -18,6 +21,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+RECOVERY_CASES = (
+    "tests.test_manual_task_engine.ManualTaskDiscoveryTests."
+    "test_native_summary_is_confirmable_on_the_same_task_from_the_center",
+    "tests.test_manual_task_engine.ManualTaskDiscoveryTests."
+    "test_native_metadata_candidate_confirms_on_the_same_task",
+)
+
+TEST_SUPPORT = (
+    "tests/__init__.py",
+    "tests/test_media_discovery.py",
+    "tests/task_engine_test_helpers.py",
+    "tests/test_manual_task_engine.py",
+)
+
 
 def smoke(wheel: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="mediaflow-wheel-recovery-") as directory:
@@ -30,25 +47,21 @@ def smoke(wheel: Path) -> None:
             cwd=root,
             check=True,
         )
-        (root / "scripts").mkdir()
         (root / "config").mkdir()
         shutil.copyfile(
             ROOT / "config/strategy.example.json", root / "config/strategy.example.json"
         )
-        shutil.copyfile(
-            ROOT / "scripts/operations_inventory_harness.py",
-            root / "scripts/operations_inventory_harness.py",
-        )
-        shutil.copyfile(
-            ROOT / "tests/test_task_center_recovery_lineage.py", root / "test_recovery.py"
-        )
-        probe = """
-import hashlib, json, pathlib, unittest
+        for relative in TEST_SUPPORT:
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, target)
+        probe = f"""
+import json, pathlib, unittest
 import mediaflow
 package = pathlib.Path(mediaflow.__file__).parent
 assert 'site-packages' in str(package), package
-print(json.dumps({'installedPackage':str(package)}, sort_keys=True), flush=True)
-loaded = unittest.defaultTestLoader.discover('.', pattern='test_recovery.py')
+print(json.dumps({{'installedPackage':str(package)}}, sort_keys=True), flush=True)
+loaded = unittest.defaultTestLoader.loadTestsFromNames({RECOVERY_CASES!r})
 result = unittest.TextTestRunner(verbosity=2).run(loaded)
 raise SystemExit(not result.wasSuccessful())
 """

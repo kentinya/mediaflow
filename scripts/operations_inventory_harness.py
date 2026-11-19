@@ -534,6 +534,16 @@ def build_managed_fixture(
     (dialog_root / "DialogReopen.2029.mkv").write_bytes(
         b"slice56 reopened original submission synthetic media"
     )
+    # Slice56.1 B56-01 second-confirmation regression: two unambiguous sources
+    # let the operator confirm one ready subset, then re-analyze and confirm
+    # the remaining sibling on the same Task.  The later lost response is
+    # reconciled from that Task's second durable acceptance record.
+    (dialog_root / "DialogSubsetFirst.2030.mkv").write_bytes(
+        b"slice56 second confirmation first synthetic media"
+    )
+    (dialog_root / "DialogSubsetSecond.2031.mkv").write_bytes(
+        b"slice56 second confirmation second synthetic media"
+    )
     conflict_time = time.time() - 86400
     os.utime(dialog_root / "DialogConflict.2022.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSibling.2023.mkv", (conflict_time, conflict_time))
@@ -544,6 +554,8 @@ def build_managed_fixture(
     os.utime(dialog_root / "DialogReconcile.2027.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogUnselected.2028.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogReopen.2029.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogSubsetFirst.2030.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogSubsetSecond.2031.mkv", (conflict_time, conflict_time))
     # The managed definition's own reviewed scope.  It stays empty: the
     # Scheduler only *admits* the occurrence, so the fixture needs a real
     # ResourceLibrary-relative directory and no media of its own.  Adding a file
@@ -754,7 +766,7 @@ def build_managed_fixture(
                         "field": "filename",
                         "operator": "regex",
                         "value": (
-                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025|Reconcile\.2027|Unselected\.2028|Reopen\.2029)\.mkv$"
+                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025|Reconcile\.2027|Unselected\.2028|Reopen\.2029|SubsetFirst\.2030|SubsetSecond\.2031)\.mkv$"
                         ),
                     },
                 ],
@@ -1280,6 +1292,24 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogReopen",
                         year=2029,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "712",
+                        MediaType.MOVIE,
+                        "DialogSubsetFirst",
+                        year=2030,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "713",
+                        MediaType.MOVIE,
+                        "DialogSubsetSecond",
+                        year=2031,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -3917,6 +3947,8 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Dialog/DialogReconcile.2027.mkv",
         "Dialog/DialogUnselected.2028.mkv",
         "Dialog/DialogReopen.2029.mkv",
+        "Dialog/DialogSubsetFirst.2030.mkv",
+        "Dialog/DialogSubsetSecond.2031.mkv",
         "YearProbe/DialogYear.2025.mkv",
     )
     if filename not in allowed:

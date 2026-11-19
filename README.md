@@ -88,7 +88,7 @@ looks like this (never use a write call to test the switch):
 
 ```bash
 BASE=http://127.0.0.1:8787
-TOKEN=<configured API-principal token>
+TOKEN="replace-with-configured-api-principal-token"
 curl -fsS "$BASE/health"
 curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/tasks?limit=1" >/dev/null
 curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/api/v1/tasks?limit=1"   # expect 404

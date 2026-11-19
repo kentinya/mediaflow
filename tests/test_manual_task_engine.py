@@ -2447,6 +2447,40 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                 self.assertEqual(2, reopened.get_task(task_id).completed_items)
                 self.assertEqual(2, len(reopened.list_results(task_id)))
 
+            # Both explicit confirmations remain separately readable for the
+            # submitting principal, in submission order, each with its own
+            # Preview, summary version and exact selected item.
+            status, run = self.request(value, f"/api/operations/runs/{task_id}")
+            self.assertEqual(200, status, run)
+            submissions = run["manualOrganizeSubmissions"]
+            self.assertEqual(2, len(submissions), submissions)
+            by_preview = {item["previewId"]: item for item in submissions}
+            first_submission = by_preview[preview["previewId"]]
+            self.assertEqual([first], first_submission["selectedItemIds"])
+            self.assertEqual(
+                ["Movies/One.2001.mkv"],
+                [item["sourcePath"] for item in first_submission["items"]],
+            )
+            second_item_id = remaining["items"][0]["itemId"]
+            second_submission = by_preview[remaining["previewId"]]
+            self.assertEqual([second_item_id], second_submission["selectedItemIds"])
+            self.assertEqual(
+                ["Movies/Two.2002.mkv"],
+                [item["sourcePath"] for item in second_submission["items"]],
+            )
+            executions = value.repository.list_manual_executions_for_task(task_id)
+            self.assertEqual(
+                {execution.execution_id for execution in executions},
+                {submission["executionId"] for submission in submissions},
+            )
+            status, viewer_run = self.request(
+                value,
+                f"/api/operations/runs/{task_id}",
+                token="viewer-token",
+            )
+            self.assertEqual(200, status, viewer_run)
+            self.assertEqual([], viewer_run["manualOrganizeSubmissions"])
+
     def test_native_summary_is_confirmable_on_the_same_task_from_the_center(self) -> None:
         """The Task Center reads and confirms the Task's own linked summary.
 

@@ -1,18 +1,21 @@
 /**
- * The Task Center's read-only reconciliation of one original manual Organize
- * submission.
+ * The Task Center's read-only reconciliation of the Task's manual Organize
+ * submissions.
  *
  * A lost Execute response records its durable admission, but the browser that
- * sent it may never learn the accepted Task identity. Reopening the Task in a
- * later session must still let the operator prove the original request from
- * the accepted record, not from a possibly-updated current summary.
+ * sent it may never learn the accepted Task identity.  A Task can receive
+ * several explicit confirmations (for example one ready subset, then the
+ * remaining source after its own analysis), and any of them may have lost its
+ * response.  Reopening the Task in a later session must still let the operator
+ * prove each original request from its own accepted record, not from a
+ * possibly-updated current summary.
  *
- * This card therefore reads only the Task's persisted original acceptance
+ * Every record therefore carries only its persisted original acceptance
  * (Preview, summary version, selected items and effect authority) and asks the
  * existing admission-reconciliation read whether exactly that request was
- * admitted. It never replays Execute, mints authority or offers a continuation
- * action; the Task's own per-item recovery remains the only continuation
- * entrance.
+ * admitted.  The cards never replay Execute, mint authority or offer a
+ * continuation action; the Task's own per-item recovery remains the only
+ * continuation entrance.
  */
 
 import { useMutation } from "@tanstack/react-query";
@@ -25,6 +28,7 @@ import type { OrganizeAdmissionOutcomeModel } from "../../entities/operations/or
 import type { RunManualOrganizeSubmission } from "../../entities/operations/run";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { formatRunDateTime } from "./run-time";
 
 const ITEM_STATUS_LABELS: Readonly<Record<string, string>> = {
   admitted: "已受理，等待执行",
@@ -105,16 +109,47 @@ function readProblemFromFailure(kind: string): ReadProblem {
 }
 
 export interface OrganizeSubmissionVerificationProps {
-  /** The exact Task the selected run resolves to. */
+  /** The exact Task every listed submission was admitted for. */
   readonly taskId: string;
-  /** The original accepted submission durably linked to that Task. */
-  readonly submission: RunManualOrganizeSubmission;
+  /** The accepted submissions durably linked to that Task, chronological. */
+  readonly submissions: readonly RunManualOrganizeSubmission[];
 }
 
 export function OrganizeSubmissionVerification({
   taskId,
-  submission,
+  submissions,
 }: OrganizeSubmissionVerificationProps) {
+  if (submissions.length === 0) return null;
+  return (
+    <section className="mf-run-fact-preparation" aria-label="原整理提交">
+      <h4>原整理提交</h4>
+      <p>
+        该任务关联 {submissions.length}{" "}
+        次已受理的精确整理提交。当前摘要可能已被其他文件的分析更新，
+        因此每一次核对都使用该次提交自己的摘要版本、选择与效果权限；它们只读取持久受理记录，
+        不会重新执行。
+      </p>
+      {submissions.map((submission, index) => (
+        <SubmissionRecord
+          key={submission.executionId}
+          taskId={taskId}
+          submission={submission}
+          index={index}
+        />
+      ))}
+    </section>
+  );
+}
+
+function SubmissionRecord({
+  taskId,
+  submission,
+  index,
+}: {
+  readonly taskId: string;
+  readonly submission: RunManualOrganizeSubmission;
+  readonly index: number;
+}) {
   const token = useAuthToken();
   const reconcile = useMutation({
     mutationFn: () =>
@@ -146,14 +181,16 @@ export function OrganizeSubmissionVerification({
         : null;
 
   return (
-    <section className="mf-run-fact-preparation" aria-label="原整理提交">
-      <h4>原整理提交</h4>
-      <p>
-        该任务关联一次已受理的精确整理提交。当前摘要可能已被其他文件的分析更新，
-        因此核对使用下方原提交的摘要版本、选择与效果权限；它只读取持久受理记录，
-        不会重新执行。
-      </p>
+    <article
+      className="mf-run-fact-preparation"
+      aria-label={`第 ${index + 1} 次提交`}
+    >
+      <h5>第 {index + 1} 次提交</h5>
       <dl className="mf-dashboard-facts">
+        <div>
+          <dt>提交时间</dt>
+          <dd>{formatRunDateTime(submission.createdAt)}</dd>
+        </div>
         <div>
           <dt>原方案摘要</dt>
           <dd>
@@ -242,6 +279,6 @@ export function OrganizeSubmissionVerification({
           </div>
         </StatusBanner>
       ) : null}
-    </section>
+    </article>
   );
 }
