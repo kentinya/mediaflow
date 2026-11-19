@@ -4,6 +4,7 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -431,6 +432,125 @@ class ContainerArtifactTests(unittest.TestCase):
                     )
                     self.assertEqual(code, 0, stderr.getvalue())
                 self.assertEqual(json.loads(stdout.getvalue())["status"], "active")
+
+    def test_openlist_example_imports_through_documented_first_setup(self) -> None:
+        """The shipped OpenList example imports exactly as the guide describes.
+
+        An administrator appends the published ``storage`` object to the
+        generated ``mediaflow.activation.json`` and imports it with
+        ``config draft-import --file``.  The retired top-level connection
+        spelling — the shape this example used to ship — must fail closed
+        before anything is persisted, naming the retired field and the current
+        ``Storage.options`` location.  The same instance then accepts the
+        corrected input, keeps the two standard Storages and the example's
+        original rootPath/readOnly/token reference, and holds one recoverable
+        Draft.  The example service address is unresolvable, so a passing
+        import also proves the phase never contacts OpenList.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = str(root / "runtime.sqlite3")
+            bootstrap_path = root / "mediaflow.json"
+            configuration_path = root / "mediaflow.activation.json"
+            subprocess.check_output(
+                [
+                    os.sys.executable,
+                    str(ROOT / "scripts" / "make_deployment_config.py"),
+                    "--output",
+                    str(bootstrap_path),
+                    "--configuration-output",
+                    str(configuration_path),
+                ],
+                cwd=ROOT,
+                text=True,
+            )
+            bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+            bootstrap["persistence"] = {"databasePath": database}
+            bootstrap_path.write_text(json.dumps(bootstrap, ensure_ascii=False), encoding="utf-8")
+            example = json.loads(
+                (ROOT / "config" / "alist.example.json").read_text(encoding="utf-8")
+            )
+            deployment = json.loads(configuration_path.read_text(encoding="utf-8"))
+
+            def candidate_with(storage: dict) -> Path:
+                document = json.loads(configuration_path.read_text(encoding="utf-8"))
+                document["storages"] = [*document["storages"], storage]
+                path = root / "with-openlist.json"
+                path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+                return path
+
+            def run(command: list[str]) -> tuple[int, str, str]:
+                stdout, stderr = io.StringIO(), io.StringIO()
+                code = final_main(
+                    ["--config", str(bootstrap_path), *command],
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+                return code, stdout.getvalue(), stderr.getvalue()
+
+            def status() -> dict:
+                code, stdout, stderr = run(["config", "status"])
+                assert code == 0, stderr
+                return json.loads(stdout)
+
+            # The retired spelling must fail closed with the exact correction.
+            retired = dict(example["storage"])
+            retired.update(retired.pop("options"))
+            code, _, error = run(["config", "draft-import", "--file", str(candidate_with(retired))])
+            self.assertEqual(code, 2)
+            self.assertIn("storages[openlist-example].baseUrl is retired", error)
+            self.assertIn("Storage.options", error)
+            failed = status()
+            self.assertTrue(failed["setupRequired"])
+            self.assertIsNone(failed["active"])
+            self.assertEqual(failed["revisions"], [])
+
+            # The corrected shipped shape continues on the same instance.
+            code, stdout, error = run(
+                ["config", "draft-import", "--file", str(candidate_with(example["storage"]))]
+            )
+            self.assertEqual(code, 0, error)
+            imported = json.loads(stdout)
+            self.assertEqual(imported["status"], "draft")
+            staged = status()
+            self.assertTrue(staged["setupRequired"])
+            self.assertIsNone(staged["active"])
+            self.assertEqual(
+                [item["revisionId"] for item in staged["revisions"]],
+                [imported["revisionId"]],
+            )
+            self.assertEqual(staged["revisions"][0]["status"], "draft")
+
+            # The persisted Draft keeps the example's own values verbatim.
+            connection = sqlite3.connect(database)
+            try:
+                payloads = [
+                    json.loads(row[0])
+                    for row in connection.execute(
+                        "SELECT payload FROM managed_configuration_revisions"
+                    )
+                ]
+            finally:
+                connection.close()
+            self.assertEqual(len(payloads), 1)
+            storages = payloads[0]["storages"]
+            self.assertEqual(
+                storages,
+                [*deployment["storages"], example["storage"]],
+            )
+            self.assertEqual(storages[0]["rootPath"], "/media/incoming")
+            self.assertIs(storages[0]["readOnly"], True)
+            self.assertEqual(storages[1]["rootPath"], "/media/organized")
+            self.assertIs(storages[1]["readOnly"], False)
+            self.assertEqual(storages[2]["rootPath"], "/Media")
+            self.assertIs(storages[2]["readOnly"], True)
+            self.assertEqual(storages[2]["options"]["tokenEnv"], "OPENLIST_TOKEN")
+
+            # The staged Draft is recoverable through the canonical loader.
+            code, stdout, error = run(["config", "draft-validate", imported["revisionId"]])
+            self.assertEqual(code, 0, error)
+            self.assertEqual(json.loads(stdout)["status"], "validated")
 
     def test_management_bootstrap_helper_needs_no_media_mount_and_no_secret(self) -> None:
         """The default deployment bootstrap is usable with durable data alone.

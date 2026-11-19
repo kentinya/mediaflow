@@ -379,6 +379,15 @@ new submission. For genuine setup-required state, the Storage page offers the cu
 Settings (`/ui-v2/configuration`) first-Draft handoff and returns to refreshed Storage truth. No
 direct database edit, configuration reset or physical-file migration is required.
 
+`config/alist.example.json` is the secret-free OpenList Storage template. Append its `storage`
+object to the generated `mediaflow.activation.json`'s `storages`, replace `options.baseUrl` with
+the real service address, and provide `OPENLIST_TOKEN` only in the deployment environment where
+the Storage is actually checked or used. Connection fields belong under `Storage.options`; the
+retired top-level spelling fails import with the correction. Import reuses the
+`config draft-import --file` command above and never contacts OpenList; publish the resulting
+Draft through the [System Settings Web](#system-settings-web) journey, and a ResourceLibrary that
+references the Storage runs its read-only check as part of that journey's `发布前检查`.
+
 ### OpenList metadata and content reads
 
 OpenList `stat`／`exists` use `/api/fs/list` to locate the exact entry in its parent directory,
