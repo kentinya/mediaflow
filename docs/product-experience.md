@@ -11,9 +11,16 @@ points to the current implementation state and immutable review packet.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
+## TARGET — Canonical entry journey (Slice56 PLANNED)
+
+用户从 `/` 连接后进入探索，也可以用 `/resourcelib/files` 的带参链接直达目录。
+刷新、重连或从设置返回时，恢复当前权限允许的原位置。切换后从任务中心打开原任务，
+核对进度、逐项结果和原请求，再按实际状态显式继续。失效或旧地址使用通用未知路由，
+用户可从根入口重新导航。验收包括新深链返回及 Base 有效工作继续使用。[Slice56](../SLICE.md)
+
 ## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 
-[Slice55](../SLICE.md#a-final-review--pass--closed) 于 2026-11-19 经独立 A 终审关闭。
+[Slice55](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed) 于 2026-11-19 经独立 A 终审关闭。
 下列旅程落实 `V2-RETIRE-001–010`，取代先前的 V1 共存、旧链接承接和废弃迁移格式义务。
 
 - **目标／入口：** 新实例四服务从最小管理 bootstrap 启动，无业务 JSON runtime 或媒体

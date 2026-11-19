@@ -8,9 +8,21 @@ in [`requirements.md`](requirements.md). Slice-specific architecture and proof d
 remain in [`SLICE.md`](../SLICE.md) and the architecture document; this file records only durable
 product and authority boundaries.
 
+## TARGET — Canonical Web and API routes (Slice56 PLANNED)
+
+[Slice56](../SLICE.md) plans a V2 path amendment to `V2-RETIRE-001/006` and `V2-MIG-001/002`.
+The CURRENT contract below governs before acceptance.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-ROUTE-001 | Web uses the root namespace. | `/` opens the connection entry. Current pages including `/resourcelib/files` support navigation, parameterized deep links, refresh, authentication and contextual return. |
+| V2-ROUTE-002 | Current HTTP API uses `/api/*`. | Current methods, data contracts, distinct projections, authorization, audit and recovery apply at canonical paths. Machine API errors remain JSON, and `/health` retains its independent liveness contract. |
+| V2-ROUTE-003 | Public paths switch together. | The old Web and API prefixes retire with ordinary unknown-route behavior. Runtime links, bundled assets, tests, deployment checks and operator guidance use the canonical paths. |
+| V2-ROUTE-004 | Valid work survives the path change. | Current configuration, Task and request identities, results, pins and history remain readable. Active links are generated from their original object identities. Users can reconcile unknown outcomes and safely continue work under current rules. |
+
 ## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 
-[Slice55](../SLICE.md#a-final-review--pass--closed) 于 2026-11-19 经独立 A 终审关闭。
+[Slice55](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed) 于 2026-11-19 经独立 A 终审关闭。
 下列 CURRENT 要求取代 V1 共存、旧客户端兼容和纯迁移承接义务。既有稳定 V2 数据、正式契约、
 历史验收和冻结 V1 定义保留原有意义。
 

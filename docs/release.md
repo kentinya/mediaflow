@@ -18,7 +18,7 @@ version, code and artifacts retain their existing meaning.
 
 ## Current V2 validation boundary
 
-[Slice55](../SLICE.md#a-final-review--pass--closed) passed independent A Final Review on 2026-11-19.
+[Slice55](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed) passed independent A Final Review on 2026-11-19.
 Reviewed implementation `80334ccaa30d54019934b50855f7dee00525abcc` retired V1 and its migration paths
 on main. V2 first setup uses the managed Draft and checked activation. Accepted stable V2 data at
 Base `2b2e7c1824fa5681864455714d0f97b26555c7dc` remains usable with its original task and snapshot identities.

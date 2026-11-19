@@ -8,15 +8,16 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice55](../SLICE.md#a-final-review--pass--closed) is **PASS / CLOSED** after independent A Final Review on 2026-11-19.
-[TASK.md](../TASK.md) records no active implementation Task. **A SELECTS THE NEXT LARGE SLICE**.
+[Slice56](../SLICE.md) is **PLANNED** at Base `33c70735e0a8f45426dde614587ea3d43af94e9b`.
+[TASK.md](../TASK.md) records no active implementation Task.
+**USER ACTIVATES SLICE / B THEN PLANS THE FIRST TASK**.
 
 ## Latest accepted closure — Slice55
 
 V2 is the sole current Web product. The retirement covers V1 UI and migration handoffs, old schedules,
 tickets, independent grants, transports and obsolete formats. The current Task kernel, supported V2 data,
 original pins and unknown-request reconciliation remain available. The OpenList example follows checked
-Draft publication. Exact results and limits are in the [A Final Review](../SLICE.md#a-final-review--pass--closed) and
+Draft publication. Exact results and limits are in the [A Final Review](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed) and
 the B Closure Packet at `db079872dd348569d6f5f2e86682aaebf7e28325:TASK.md`.
 
 ## Prior accepted closure — Slice54

@@ -27,6 +27,9 @@ V2 amendments supersede only the listed meanings; all other scope and safety rem
 Detailed stable acceptance lives once in [V2 Requirements](v2-requirements.md); current Slice/Task
 scope and delivery state remain in root contracts, [Roadmap](roadmap.md) and [Progress](progress.md).
 
+[Slice56 TARGET](v2-requirements.md#target--canonical-web-and-api-routes-slice56-planned)
+plans a V2 public-path amendment under `REQ-WEB-001/003/004/005` and `REQ-API-001–003`.
+
 | Authorized amendment | Superseded V1 meaning / retained boundary |
 |---|---|
 | 2026-11-15 authorization / 2026-11-19 acceptance, `V2-RETIRE-001–010` — CURRENT / Slice55 PASS / CLOSED | V2 on main uses only native Web and current Python API/CLI. The V1 and deprecated-migration entrances, schedules, tickets, independent grants, execution/recovery paths, input formats and upgrade machinery are retired. Stable V2 data and formal contracts continue, including automation.maximumActiveJobs, CANCEL_JOB/cancel_job, managed Draft/Active, legitimate Tasks/requests/results/audit and their original IDs, relations, digests, pins and effects. Necessary structural changes fail atomically. Unsupported/deprecated inputs are rejected before adoption. The accepted range is `2b2e7c1824fa5681864455714d0f97b26555c7dc` through `80334ccaa30d54019934b50855f7dee00525abcc`. The frozen V1 baseline and historical acceptance retain their original meaning. Details are in V2 Requirements and Slice55. |

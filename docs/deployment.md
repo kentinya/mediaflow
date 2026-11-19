@@ -39,7 +39,7 @@ installation, health, restart, backup, restore and failure-recovery procedures.
   `/run/mediaflow/deployment.env`. Compose source and rendered Compose output
   contain only the file path and variable references, never secret values.
 - Accepted V2 data already present at the
-  [Slice55 Base](../SLICE.md#a-final-review--pass--closed) — managed Draft/Active revisions, Storage and both library kinds, rules,
+  [Slice55 Base](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed) — managed Draft/Active revisions, Storage and both library kinds, rules,
   runtime settings, Automation/notification definitions, legal Task/request/result/audit rows and
   original pins — keeps its IDs, relationships, digests and target semantics. It needs no
   reinitialization or resubmission, and completed/unknown effects are never replayed. V1 and

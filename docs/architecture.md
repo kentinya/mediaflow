@@ -11,9 +11,18 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
+## TARGET — Root Web and unversioned API (Slice56 PLANNED)
+
+The Python WSGI service owns the distinct `/health`, `/api/*` and root Web/static boundaries.
+API dispatch, permission checks, error handling and audit classification interpret the same
+canonical route. Vite and the client router use the same root as Python static serving, with SPA
+fallback reserved for Web navigation. Action and recovery projections use the current paths.
+Historical audit keeps its recorded route, and existing Tasks, requests and snapshots keep their
+identities. Acceptance and retirement rules are defined in [Slice56](../SLICE.md).
+
 ## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 
-[Slice55](../SLICE.md#a-final-review--pass--closed) 于 2026-11-19 经独立 A 终审关闭。
+[Slice55](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed) 于 2026-11-19 经独立 A 终审关闭。
 `V2-RETIRE-001–010` 定义当前原生 V2 架构，取代先前的 V1 共存与废弃迁移承接约定。
 
 ```text
