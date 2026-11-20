@@ -1,15 +1,15 @@
 # Task PATCH-20261120-1 — 修复后续季剧集匹配与逐文件元数据修正
 
-Next Action: DEVELOPER APPLIES THE CONFIRMATION THRESHOLD TO THE FINAL SEASON SCORE IN PATCH-20261120-1
+Next Action: B PERFORMS T4 ACCEPTANCE ON THE PATCH-20261120-1 CANDIDATE
 
-用户于 2026-11-20 授权激活独立 Task。B 已核实上一轮修正并通过真实浏览器发现任务中心表单阻塞。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
+用户于 2026-11-20 授权激活独立 Task。B 复核后续季识别后要求把完整季集证据计入确认阈值判断；Developer 已完成修正，交回 B 审查（修正报告见本页末尾）。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
 [独立缺陷流程](docs/development-workflow.md#31-independent-minor-bugs) · [现有逐项恢复流程](docs/product-experience.md#tasks-results-and-per-item-recovery) · [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/c8039f1f3d7bdfdb7fd927c75f99df0cb8a9e523/TASK.md#patch-20261119-2--b-验收-pass)
 
 ```text
 Task ID: PATCH-20261120-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
 Difficulty: High
 Test Level: T4
@@ -481,3 +481,70 @@ B 使用现有 Files 受理和 Worker 复验了《黑袍纠察队》S04E01–E08
 - 两项 Files／Worker 阈值回归通过。B 另用同一夹具发布五组策略，重走文件页受理、Worker 和逐项恢复读取。
 - 证据位于 `.git/validation-evidence/f69e78b4/b-review/`，分别见 `files-existing-thresholds.log` 和 `files-confirmation-threshold.log`。
   B 以已复现的交付阻塞结束本候选验收，T4 全量门禁留待修正候选。
+
+## Developer Completion Report — 季集证据参与确认阈值判断
+
+```text
+Task Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
+Reviewed Fix Target: 79c56c40471f04281e99ddba46bd01c62ad1ad6a
+Implementation Candidate: a38f1550b5f539af07b4f8e20a87e1d83eedbbb4
+Branch: main
+Status: READY FOR B REVIEW
+```
+
+**起点**
+
+本轮从 `main`／`79c56c40`（B 的返工指导检查点）开始，工作区与暂存区干净，无既存未提交文件。
+实现提交为 `a38f1550`，本报告与 TASK.md 交接单独提交。
+
+**修正结果**
+
+1. **候选用季集证据的天花板判断是否值得查询。** 新增 `_season_verified_ceiling`，取标题基础分加上
+   上限 15 分季集证据、总分上限 100；`_season_verified_score` 复用同一函数生成最终分数，因此
+   「是否有机会达到人工确认阈值」与「核实后的实际最终分数」由同一个界决定。基础分低于确认阈值、
+   但加上季集证据能达到的候选现在进入季集验证；验证后仍用实际最终分数区分自动采用与候选选择。
+   预算未验证完的候选沿用原候选确认流程。天花板低于确认阈值时不发季集请求，保留既有「修正作品搜索」。
+2. **可读原因。** 没有候选能达到确认阈值时，返回的 `NOT_FOUND` 原因由「标题证据不足」改为
+   「No candidate reaches the confirmation threshold 96.0 with the bounded season/episode
+   evidence」，随既有修正记录显示在文件页和任务中心；模型选择与自动采用原因不变。
+3. **测试扩充。** `tests.test_manual_task_engine` 的同一批八集 `黑袍纠察队.2024.S04E01–E08` 复用
+   既有 Files 受理、Worker、缺季 404 夹具，改为三组已发布策略：`90/85` 八项以 2019 作品、
+   95 分、季集证据生成待确认摘要并断言两部同名剧都查了第四季；`100/85` 先给出该候选供选择，
+   保存后同一文件才生成摘要；`100/96` 八项进入既有逐文件「修正作品搜索」，恢复读取带标题、
+   年份 `2024`、类型 `tv` 与阈值原因，且 Provider 未收到任何季请求。三条路径都断言源/目标零变更、
+   无结果行和执行。
+4. **共享识别层单测。** `tests.test_metadata` 增加 `90/85` 自动采用（含两部同名剧都进入季集验证）
+   与 `100/96` 不查季集直接落入修正；既有自动采用、候选选择、顺序互换、缺集、预算耗尽与
+   电影/首季用例未改。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，候选工作树）**
+
+```text
+python3 scripts/check_governance.py                                   -> PASS
+git diff --check                                                      -> clean
+.venv/bin/ruff format --check / check <3 changed files>               -> OK
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest
+    tests.test_metadata tests.test_manual_task_engine
+    tests.test_task_item_metadata_search
+    tests.test_automation_entrance_recovery                           -> 118 tests OK (5.99s)
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest
+    tests.test_metadata_resolution tests.test_metadata_correction
+    tests.test_metadata_review tests.test_media_discovery
+    tests.test_configuration_objects tests.test_operations_task_center
+    tests.test_file_media_detail tests.test_processing_recovery_admission
+    tests.test_v2_manual_organize tests.test_media_parser              -> 203 tests OK (5.19s)
+```
+
+修复前复现：把 `mediaflow/application/metadata.py` 换回 `79c56c40` 版本后，本轮新增/修改的
+4 项用例全部失败，表现为八项停在 `waiting_metadata_correction`（90/85、100/85）与
+「No candidate had enough title evidence」原因，与本轮报告一致；恢复修正后全部通过。
+同一入口按四组策略离线驱动共享识别，得到 `90/70` 采用、`90/85` 采用、`100/85` 候选选择、
+`100/96` 修正且零季请求。
+
+**剩余与风险**
+
+- B 仍需在冻结候选上执行本 Task 的 T4 全量 Python/Web/E2E、构建与封装门禁；Developer 未运行
+  Playwright、全量套件或生产产物验证，本轮未改 Web 代码。
+- 天花板判断让基础分低于确认阈值的候选也会花一次季请求；真实 Provider 下这仍受
+  `maxProviderRequests` 限制，预算耗尽的余量继续进入候选确认，B 可在真实返回形态下核对。
+- 本轮未连接真实 TMDB；同名剧、季集缺失与三组阈值均由本地模拟 Provider 覆盖，与上轮风险一致。
