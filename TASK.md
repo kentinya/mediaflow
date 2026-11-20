@@ -1,13 +1,13 @@
 # Task PATCH-20261120-2 — 手动整理主文件超限后的任务收尾
 
-用户于 2026-11-20 授权激活独立 Task，待 Developer 开始实施。
+用户于 2026-11-20 授权激活独立 Task，当前候选经 B 审查后进入同一 Task 的返修。
 [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/66e1e799b5bc5ada7b8ea81bd15052969c40b38a/TASK.md#patch-20261120-1--b-验收-pass)
 
 ```text
 Task ID: PATCH-20261120-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 1323d56c71390551424b0134f3500d25f77fb9d9
 Difficulty: High
 Test Level: T4
@@ -72,4 +72,18 @@ Implementation Authorization: USER AUTHORIZED ON 2026-11-20
 
 ### 交接与评审记录
 
-Developer 实施后记录候选 SHA、受影响测试及风险，交 B 独立验收。B 记录审查范围、实际结果及 PASS 或 FIX REQUIRED。
+```text
+Reviewed Base: 1323d56c71390551424b0134f3500d25f77fb9d9
+Reviewed Head: 808a020da153d9a633a3ac74dcaa0ead981e4998
+Decision: FIX REQUIRED — 2026-11-20
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+B 审查了完整 Base..Head。101 个主文件拒绝执行且同一来源可重新受理、100 个主文件生成完整摘要、旧任务重开、已取消任务和不确定效果保护共 5 项 Python 定向测试通过。Web 生产构建通过。使用真实 API、临时 SQLite、Local Storage 和构建产物复现下列两个阻塞。T4 全量验收留待返修候选。
+
+### Developer 返修指导
+
+1. **让打开的整理弹窗读到任务终态。** 用户从资源库选择 101 个主文件的目录并发起整理。扫描超限和任务结算分别提交。B 在真实 Worker 的结算提交前延时，浏览器读到了「扫描超限、任务运行中」，随后因已有扫描拒绝而停止刷新。后台已标记失败，原弹窗仍停留在通用超限提示。调整 `ManualOrganizeDialog` 已有的准备状态轮询。收到主文件超限且关联任务仍在运行时，继续读取同一准备记录，直到任务结束。用户看到可以缩小范围重新发起的提示时，同一来源已可重新受理。
+2. **用现有位置展示准确的失败事实。** 超限任务从 Files 或既有历史地址打开时，弹窗同时声称「原计划摘要保留为只读历史」和「从未生成过计划摘要」。用超限专用提示准确说明准备阶段停止、本次没有生成方案或执行，以及如何缩小范围。任务中心结束详情的现有流程状态处保留「失败／准备阶段超限」和提示，移除新增的「文件整理准备」区。保存过方案的历史任务沿用现有只读摘要。参考 [V2-OPS-019](docs/v2-requirements.md#current--manual-organize-dialog-slice53-pass--closed)。
+3. 使用现有 Python 浏览器测试覆盖从 Files 提交目录、弹窗读到扫描超限后继续读到任务失败、任务中心无准备区或继续入口、历史地址只读，以及回原目录选择同一个文件重新进入确认。增加组件断言，确保没有已保存摘要的提示。按上面的 Developer 受影响检查复跑，记录候选 SHA 和实际结果后交 B。
