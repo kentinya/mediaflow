@@ -1,15 +1,15 @@
 # Task PATCH-20261120-1 — 修复后续季剧集匹配与逐文件元数据修正
 
-Next Action: B RE-REVIEWS THE PATCH-20261120-1 FIX CANDIDATE
+Next Action: DEVELOPER CORRECTS THE TASK CENTER FORM IN PATCH-20261120-1
 
-用户于 2026-11-20 授权激活独立 Task。B 审查首个候选后要求在同一 Task 内返工；Developer 已完成修正，交回 B 审查（修正报告见本页末尾）。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
+用户于 2026-11-20 授权激活独立 Task。B 已核实上一轮修正并通过真实浏览器发现任务中心表单阻塞。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
 [独立缺陷流程](docs/development-workflow.md#31-independent-minor-bugs) · [现有逐项恢复流程](docs/product-experience.md#tasks-results-and-per-item-recovery) · [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/c8039f1f3d7bdfdb7fd927c75f99df0cb8a9e523/TASK.md#patch-20261119-2--b-验收-pass)
 
 ```text
 Task ID: PATCH-20261120-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
 Difficulty: High
 Test Level: T4
@@ -58,14 +58,14 @@ Implementation Authorization: USER AUTHORIZED ON 2026-11-20
 
 ### 测试计划
 
-**Developer**
+**Developer — 新增／修改与直接受影响测试**
 
 - 从仓库根目录运行 `.venv/bin/python -m unittest tests.test_media_parser tests.test_metadata tests.test_metadata_resolution tests.test_metadata_correction tests.test_task_item_metadata_search tests.test_manual_task_engine tests.test_automation_entrance_recovery`。
   在这些模块中补齐同名剧、季集验证、业务结果与技术故障、请求预算、修正后再失败、按不同入口重分析和混合批次的回归。
 - 从 `web/` 运行 `npm run test -- run src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/ManualOrganizeDialog.test.tsx src/features/operations/RunDetailTabs.test.tsx`。
   验证两个入口的原因、已有操作和保存后新摘要。运行 `git diff --check` 及改动文件对应的 Ruff 或 Web 静态检查。
 
-**B**
+**B — 独立验收与完整回归**
 
 - 在冻结候选上独立复现八集与反例，检查 Files 和自动整理逐项状态、同一 Task 恢复、权限和固定配置、等待记录写入的原子性、
   过期决定拒绝及明确效果边界。在临时 SQLite、本地 Storage、模拟 Provider 和构建产物上补跑真实浏览器验收。
@@ -233,3 +233,36 @@ web: npm run typecheck                                                 -> OK
 - 本轮未连接真实 TMDB；同名剧、季集缺失、译名和预算场景均由本地模拟 Provider 覆盖，B 需在
   独立验收中核对真实 Provider 返回形态与两个入口的一致投影。
 - 候选审核重开复用既有记录与审计，不迁移历史数据；历史 pending/resolved 行仍按原状态读取。
+
+## B Re-Review — FIX REQUIRED
+
+```text
+Reviewed Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
+Reviewed Implementation: ec8dce1b92003218a61e3404b870f7ac0ea6a518
+Reviewed Head: a25b4e54bb6c867b44a6ca40a963388822a16be1
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+B 通过现有 Files API 和 Worker 独立复测，八集以 2019 年作品生成待确认摘要。选错同名剧后只保存搜索条件，可在同一文件再次选择候选并生成摘要。
+电影从 Files 受理后花费一次搜索和一次详情查询即匹配译名。三段操作在确认前均为零 Storage 变更。
+
+真实浏览器中，从文件页整理 `黑袍纠察队.2024.S04E01.mkv`，选择 2024 年候选并重新分析。看到该作品没有第四季后，关闭对话框，
+进入「任务中心 → 元数据恢复 → 查看问题文件」，打开同一文件。系统显示第四季不匹配，但搜索标题和年份为空，类型显示「电影」，保存按钮禁用。
+该项 `/recovery` 读取仍返回标题「黑袍纠察队」、年份 `2024`、类型 `tv`。
+
+### Developer 返工指导
+
+1. 修改 `TaskItemRecoveryPanel` 的表单初始值。文件页已加载同一条目时，任务中心首次渲染就能读到当前决定。
+   用该次渲染的决定与检查点初始化内部表单，保留宿主对同一检查点的草稿。当前代码始终以空值初始化，而同一次渲染已记录当前检查点，因此后续读取相同检查点不会填入表单。
+2. 在现有元数据原生浏览器验收中增加一条从 Files 到任务中心的 S04E01 用例。选择缺少第四季的作品后打开同一条目的修正表单，确认标题、年份、剧集类型和失败原因正确。
+   只清空年份并保存，回到候选选择，选能验证第四季的作品后查看待确认摘要。搜索、保存和重新分析期间检查源与目标零变更。
+   补充首次挂载已有查询数据的前端回归，运行 `npm run test -- run src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/RunDetailTabs.test.tsx src/features/operations/ManualOrganizeDialog.test.tsx`，以及涉及的原生用例。
+
+### B 实际验收
+
+- Python 全量运行 2332 项，1 项失败，7 项跳过。唯一失败来自 `TASK.md` 测试分工标题，B 已对齐工作流模板并单独复测该检查。
+- Web 单测 1642 项、Web 浏览器 287 项、现有真实 Python 浏览器 12 项通过。额外的 S04E01 浏览器复测发现上述跨入口阻塞。
+- Python 与 Web 静态门禁、Web 构建、wheel 安装验收、Docker 镜像构建及发布安全验收通过。首次 Docker 安全验收因 Colima 不共享系统临时目录未启动容器，改用已共享临时目录通过。
+- 本地证据 `.git/validation-evidence/a25b4e54/b-review/`，重点为 `native-season.log`、`native-season-center-confirm.log`、`native-season-center-data.log` 和 `python.log`。
