@@ -8,7 +8,7 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice57](../SLICE.md) is **PLANNED**. Activation and first-Task planning are pending.
+[Slice56](../SLICE.md) is **PASS / CLOSED**. No implementation Task is active.
 [TASK.md](../TASK.md) records the next action.
 
 ## Latest accepted closure — Slice56
