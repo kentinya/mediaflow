@@ -1,6 +1,6 @@
 # Task PATCH-20261120-1 — 修复后续季剧集匹配与逐文件元数据修正
 
-Next Action: DEVELOPER CORRECTS THE TASK CENTER FORM IN PATCH-20261120-1
+Next Action: B PERFORMS T4 ACCEPTANCE ON THE PATCH-20261120-1 CANDIDATE
 
 用户于 2026-11-20 授权激活独立 Task。B 已核实上一轮修正并通过真实浏览器发现任务中心表单阻塞。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
 [独立缺陷流程](docs/development-workflow.md#31-independent-minor-bugs) · [现有逐项恢复流程](docs/product-experience.md#tasks-results-and-per-item-recovery) · [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/c8039f1f3d7bdfdb7fd927c75f99df0cb8a9e523/TASK.md#patch-20261119-2--b-验收-pass)
@@ -266,3 +266,75 @@ B 通过现有 Files API 和 Worker 独立复测，八集以 2019 年作品生�
 - Web 单测 1642 项、Web 浏览器 287 项、现有真实 Python 浏览器 12 项通过。额外的 S04E01 浏览器复测发现上述跨入口阻塞。
 - Python 与 Web 静态门禁、Web 构建、wheel 安装验收、Docker 镜像构建及发布安全验收通过。首次 Docker 安全验收因 Colima 不共享系统临时目录未启动容器，改用已共享临时目录通过。
 - 本地证据 `.git/validation-evidence/a25b4e54/b-review/`，重点为 `native-season.log`、`native-season-center-confirm.log`、`native-season-center-data.log` 和 `python.log`。
+
+## Developer Completion Report — 任务中心表单初始化与原生 S04E01 验收用例
+
+```text
+Task Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
+Reviewed Fix Target: a25b4e54bb6c867b44a6ca40a963388822a16be1
+Implementation Candidate: 54e624491ca957e60d82e115d5ae8d4ebc0b9d83
+Branch: main
+Status: READY FOR B REVIEW
+```
+
+**起点**
+
+本轮从 `main`／`48a53122`（B 的返工指导检查点）开始，工作区与暂存区干净，无既存未提交文件。
+实现提交为 `54e62449`，本报告与 TASK.md 交接单独提交。
+
+**修正结果**
+
+1. **首次渲染即读取当前决定。** `TaskItemRecoveryPanel` 的内部决定草稿改为用首次渲染已经持有的
+   决定与检查点初始化。Files 对话框和任务中心共用同一个恢复读取缓存：任务中心首次挂载同一
+   TaskItem 时表单立即显示已保存的标题、年份、剧集类型和失败原因，保存按钮可用；读取仍在途时
+   （空身份）保持原空表单并由既有按检查点重置逻辑在真实身份到达后填充；宿主对同一检查点的草稿
+   仍优先于服务端决定，过期检查点草稿仍被拒绝保留。未改任何 SQLite 结构或 API。
+2. **原生浏览器验收用例（Files → 任务中心 S04E01）。** 在 `metadata-search-year.python.spec.ts`
+   新增端到端用例：`SeasonProbe/黑袍纠察队.2024.S04E01.mkv` 经真实 Files 受理后，两部同名剧进入
+   有界候选判定；操作者选择 2024 候选并重新分析，看到「第四季不匹配」的可读原因、已保存的标题/
+   年份/剧集类型；关闭对话框后在任务中心「元数据恢复 → 查看问题文件」打开同一文件，修正表单
+   首次渲染即正确；只清空年份保存后，Provider 收到无年份搜索并回到候选选择；选择能验证第四季的
+   2019 作品后同一面板显示待确认摘要。全程断言源与目标零变更、无 Execute 命令、Provider 从未
+   收到 `2024` 年过滤。该用例在未修正的构件上复现 B 报告的空表单阻塞（标题为空、保存禁用），
+   修正后通过。
+3. **harness 支持（仅测试基础设施）。** `operations_inventory_harness.py` 新增
+   `_SeasonProbeMetadataProvider`（两部同名剧、季读取按身份区分 404 与 E01–E08、记录探测搜索）、
+   `SeasonProbe` 夹具源文件、专用识别规则/类型/策略（两请求 TV 元数据策略，与既有夹具隔离）及
+   `manual-file-state` 白名单条目；既有用例未改。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，候选工作树）**
+
+```text
+python3 scripts/check_governance.py                                   -> PASS
+git diff --check                                                      -> clean
+.venv/bin/ruff format --check scripts/operations_inventory_harness.py -> already formatted
+.venv/bin/ruff check scripts/operations_inventory_harness.py          -> All checks passed
+web: npm run typecheck / lint / format:check                          -> OK
+web: npm run test -- run TaskItemRecoveryPanel.test.tsx
+     ManualOrganizeDialog.test.tsx RunDetailTabs.test.tsx              -> 3 files, 72 tests OK (19.75s)
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest tests.test_media_parser
+     tests.test_metadata tests.test_metadata_resolution
+     tests.test_metadata_correction tests.test_task_item_metadata_search
+     tests.test_manual_task_engine tests.test_automation_entrance_recovery -> 133 tests OK (5.55s)
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest tests.test_metadata_review
+     tests.test_operations_task_center tests.test_task_item_metadata_search -> 44 tests OK (1.21s)
+web: npm run build                                                     -> OK
+web: npx playwright test --config=playwright.python.config.ts
+     tests/e2e/metadata-search-year.python.spec.ts                     -> 3 tests OK (23.6s)
+web: npx playwright test --config=playwright.python.config.ts
+     tests/e2e/manual-organize-dialog.python.spec.ts                   -> 10 tests OK (1.0m)
+```
+
+新增前端回归覆盖首次挂载已有查询数据：预置缓存后渲染面板，断言标题/年份/类型/原因立即正确、
+保存可用、无任何变更请求，且编辑年份后搜索按输入值提交。原生用例中的 Provider 为本地模拟实现；
+Files 受理、Worker、恢复 API、SQLite 与 Local Storage 均使用仓库既有真实入口，未构造不存在的入口。
+另以临时脚本按同一入口顺序离线驱动了完整链路（候选选择→错误候选→季不匹配→清空年份→候选选择→
+正确候选→待确认摘要），与浏览器用例结论一致。
+
+**剩余与风险**
+
+- B 仍需在冻结候选上执行本 Task 的 T4 全量 Python/Web 回归、构建与封装门禁；Developer 未运行
+  Playwright 之外的其余原生套件、全量单测或生产产物验证。
+- 原生用例的请求预算依赖夹具策略的 `maxProviderRequests: 2`；真实 TMDB 在同等预算下同样进入
+  人工候选判定，但候选顺序由评分决定，B 需在独立验收中核对真实返回形态下的两入口一致投影。
+- 本轮未连接真实 TMDB；同名剧与季集场景均由本地模拟 Provider 覆盖，与上一轮风险一致。
