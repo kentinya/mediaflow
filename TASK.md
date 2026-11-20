@@ -1,6 +1,6 @@
 # Task PATCH-20261120-3 — 手动整理提交自动核对
 
-用户于 2026-11-20 授权激活独立 Task，待 Developer 开始实施。
+用户于 2026-11-20 授权激活独立 Task。当前复核结论和开发指导见文末。
 [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/e5fd939f17bf43fcff55d0fed66ec13d644868a6/TASK.md#patch-20261120-2--b-验收-pass)
 
 ```text
@@ -63,19 +63,19 @@ Files 整理弹窗及任务中心继续整理共用的组件把原提交身份�
 
 ### 测试与分工
 
-**Developer 受影响检查**
+**Developer — 新增／修改与直接受影响测试**
 
 - 在 `web/` 运行 `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/task-item-recovery-confirmation-session.test.ts src/features/operations/RunDetailTabs.test.tsx` 和 `npm run typecheck`。新保留或调度模块的单测随对应模块执行。
 - 根目录运行 `.venv/bin/python -m unittest tests.test_manual_organize_execution.CurrentSourceManualOrganizeTests.test_task_center_reconciles_the_original_submission_for_its_submitter_only tests.test_manual_organize_execution.CurrentSourceManualOrganizeTests.test_concurrent_execute_consumes_authority_once`。
   对延迟受理与合法重复确认进行隔离服务回归，核对权限、受理次数和文件变更次数。提交候选前运行 `git diff --check`。
 
-**B 独立验收**
+**B — 独立验收与完整回归**
 
 - 审查 Base 到候选检查点的完整差异。在 `web/` 运行 `npm run build` 和 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts`。
   复用真实 Python、SQLite、Worker 与请求拦截，验证丢响应后重开、同任务第二次确认、兄弟方案变动与受理延迟。
   用 Base 受理过的隔离数据重开任务，验证历史详情及受理记录可读。检查桌面和窄屏的实际呈现。
-- 在 `web/` 运行 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts -g 'native .*recovery'`，
-  在同一真实服务链路覆盖逐项恢复的确认交接，并对其中一个恢复入口注入丢响应，检查自动读回同一 Task 与唯一文件效果。
+- 在 `web/` 运行 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts -g 'exact sibling subset admission|native .*recovery'`，
+  在同一真实服务链路覆盖逐项恢复的确认交接、只选兄弟文件时的丢响应与刷新重连，验证自动查回原 Task 和唯一文件效果。
 - 执行[适用的 T4 门禁](docs/development-workflow.md#shared-full-regression-commands)，记录候选 SHA、测试结果及实际受理和文件效果计数。
 
 ### 边界与交接
@@ -144,3 +144,41 @@ Next: SAME TASK FIX LOOP
    「重新读取条目后再继续」按现行规则服务于其他恢复操作。检查逐项恢复正文和紧凑呈现各自的按钮条件。
 2. 在现有分类恢复迟到场景中，断言等待期间没有人工核对按钮。放行原请求后，断言页面自动显示受理，仍在原任务且只有一次文件结果。
    复跑同批显式确认、原请求竞争和现有分析恢复入口的相关用例。
+
+### B 复核修正候选 — 2026-11-20
+
+```text
+Reviewed: 20df0749e3d949d378969f34bc64bdb860a6fadf..5bf8f43311c62921486f00efdf631c4a4982c5a9
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+完整范围复核确认任务详情已移除「原整理提交」卡片。逐项恢复正文和紧凑模式在等待受理时均使用一行状态，人工核对按钮已移除。
+
+#### 阻塞项 — 随仓浏览器回归仍走旧交互
+
+用户从 Files 发起两个文件的批量整理，在任务中心打开其中一个文件的证据，从摘要里只选择另一个文件并确认。服务端已受理，
+浏览器丢失响应。随仓用例此时仍等「请求响应未送达」，刷新并以同一账号重新连接后还会寻找并点击「重新读取条目后再继续」。
+首个旧提示断言失败后，用例在运行真实 Worker 前退出。同组其余六例随后在文件移动检查处失败。
+[随仓用例](web/tests/e2e/operations-inventory.python.spec.ts#L1838)
+
+B 用同一入口做对照，仅调整该用例的浏览器步骤。提交后暂时让受理查询失败，等到「本次确认暂未确认」，刷新并用同一账号重连，
+再次打开原文件证据。放行查询后，系统自动查回原摘要、所选文件和同一个 Task，全程只有首次确认发出的一次执行 POST。
+真实 Worker 只移动被选中的文件。先前打开的文件仍在原处，随后可回到 Files 修正并重新分析。该用例与同组其余六例均通过。
+
+#### 本轮开发指导
+
+1. 更新随仓用例的丢响应与重连步骤。后端保留真实受理，响应丢失后暂时拦住受理 GET，等「本次确认暂未确认」。
+   刷新、同账号重连、打开原文件证据，确认没有人工核对按钮，然后放行请求并等待系统自动显示原确认已受理。
+2. 保留原有行为断言。核对 GET 使用原摘要 ID、版本、所选文件及覆盖／清理选项，执行 POST 总计一次，原执行归属同一个 Task。
+   保留真实 Worker、两个文件的独立结果和未选文件重分析后的受理查询断言。
+3. 在 `web/` 按本 Task 的 `exact sibling subset admission|native .*recovery` 过滤条件跑原 spec，提交包含该修正的候选和实跑结果。
+
+#### 验证记录
+
+Web 生产构建、类型检查、lint、格式检查、全量单测（1,657 项）及默认浏览器回归（287 项）通过。
+Python Ruff、编译、依赖检查、两份示例配置校验和治理检查通过。
+候选的 Python 全量回归运行 2,341 项，跳过 7 项，唯一失败是本 Task 的测试分工标题不符合仓库约定。B 更正标题后，单独复跑该检查通过。
+正式真实浏览器组失败，对照组 7 项通过。两组日志分别为 `recovery.log` 和 `auto-sibling-proof.log`，
+本轮记录位于 `.git/validation-evidence/5bf8f433/patch-b/`。其余真实浏览器验收和 T4 封装门禁留待修正候选。
