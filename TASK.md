@@ -1,13 +1,15 @@
 # Task PATCH-20261120-2 — 手动整理主文件超限后的任务收尾
 
-用户于 2026-11-20 授权激活独立 Task，当前候选经 B 审查后进入同一 Task 的返修。
+Next Action: B RE-REVIEWS THE PATCH-20261120-2 FIX CANDIDATE
+
+用户于 2026-11-20 授权激活独立 Task，当前候选经 B 审查后进入同一 Task 的返修；Developer 已完成修正，交回 B 审查（修正报告见本页末尾）。
 [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/66e1e799b5bc5ada7b8ea81bd15052969c40b38a/TASK.md#patch-20261120-1--b-验收-pass)
 
 ```text
 Task ID: PATCH-20261120-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 1323d56c71390551424b0134f3500d25f77fb9d9
 Difficulty: High
 Test Level: T4
@@ -87,3 +89,70 @@ B 审查了完整 Base..Head。101 个主文件拒绝执行且同一来源可重
 1. **让打开的整理弹窗读到任务终态。** 用户从资源库选择 101 个主文件的目录并发起整理。扫描超限和任务结算分别提交。B 在真实 Worker 的结算提交前延时，浏览器读到了「扫描超限、任务运行中」，随后因已有扫描拒绝而停止刷新。后台已标记失败，原弹窗仍停留在通用超限提示。调整 `ManualOrganizeDialog` 已有的准备状态轮询。收到主文件超限且关联任务仍在运行时，继续读取同一准备记录，直到任务结束。用户看到可以缩小范围重新发起的提示时，同一来源已可重新受理。
 2. **用现有位置展示准确的失败事实。** 超限任务从 Files 或既有历史地址打开时，弹窗同时声称「原计划摘要保留为只读历史」和「从未生成过计划摘要」。用超限专用提示准确说明准备阶段停止、本次没有生成方案或执行，以及如何缩小范围。任务中心结束详情的现有流程状态处保留「失败／准备阶段超限」和提示，移除新增的「文件整理准备」区。保存过方案的历史任务沿用现有只读摘要。参考 [V2-OPS-019](docs/v2-requirements.md#current--manual-organize-dialog-slice53-pass--closed)。
 3. 使用现有 Python 浏览器测试覆盖从 Files 提交目录、弹窗读到扫描超限后继续读到任务失败、任务中心无准备区或继续入口、历史地址只读，以及回原目录选择同一个文件重新进入确认。增加组件断言，确保没有已保存摘要的提示。按上面的 Developer 受影响检查复跑，记录候选 SHA 和实际结果后交 B。
+
+## Developer Completion Report — B 反馈：继续读取超限终态与准确失败事实
+
+```text
+Task Base: 1323d56c71390551424b0134f3500d25f77fb9d9
+Reviewed Fix Target: f849f7df3a67b97c0adf9ca926b14c3570e6601f
+Implementation Candidate: 031ac45b805360713f82fd9bc0349fcdfb86c1af
+Branch: main
+Status: READY FOR B REVIEW
+```
+
+**起点**
+
+本轮从 `main`／`f849f7df`（B 的 FIX REQUIRED 检查点）开始，工作区与暂存区干净，无既存
+未提交文件。实现提交为 `031ac45b`，本报告与 TASK.md 交接单独提交。
+
+**修正结果**
+
+1. **超限后发现与任务结算的轮询间隔。** `ManualOrganizeDialog` 的既有准备轮询新增一个
+   明确条件：持久发现已有 `primary_limit`，且其精确关联的 `organizeFlow.continuable`
+   仍为真时，继续以同一 1.5 秒间隔读取同一条准备记录；任务结算提交后，`continuable`
+   变为假，弹窗直接进入真实结束状态。等待期间提示「正在结束关联任务」，不再让操作员在
+   来源仍被占用时误以为可以立即重提交。没有新增提交入口、重试按钮或本地推断终态。
+2. **准确展示超限失败事实。** 超限任务结束时只显示专用提示：本次未执行整理、最多 100 个
+   主文件、检查在第 101 个合格主文件处停止、本次没有生成方案或受理执行，以及关闭返回原
+   文件页缩小范围后重新发起。没有已保存摘要时不再同时声称「原计划摘要保留为只读历史」和
+   「从未生成过计划摘要」；保存过方案的历史任务仍沿用既有只读摘要。任务中心保留
+   「失败／准备阶段超限」和同一提示，移除新增的「文件整理准备」区；结束详情没有
+   「继续整理」入口。旧 hosted 地址仅呈现只读结束事实和关闭操作。
+3. **真实入口的回归证明。** 在现有 Files→整理弹窗和任务中心路径上补充组件断言与真实
+   Python 浏览器旅程。新增浏览器夹具目录 `PrimaryLimit` 恰好 101 个合格主文件；harness
+   仅在真实 Worker 的发现发布与任务失败结算之间增加可释放等待，未伪造阶段或产品状态。
+   旅程覆盖目录提交、弹窗先读到扫描超限再读到任务失败、任务中心结束详情、旧地址只读，
+   以及回到原目录选择同一 `DialogLimit.2032.mkv` 重新受理并进入确认。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，候选工作树）**
+
+```text
+python3 scripts/check_governance.py                                   -> PASS
+git diff --check                                                      -> clean
+.venv/bin/ruff format --check .                                       -> 361 files already formatted
+.venv/bin/ruff check <changed Python and harness files>               -> All checks passed
+.venv/bin/python -m unittest tests.test_media_discovery.RetainedTaskKernelFilesJourneyTests
+    tests.test_manual_task_engine.ManualTaskDiscoveryTests            -> 51 tests OK (6.004s)
+web: npx prettier --write <5 changed TS/TSX files>                    -> formatted
+web: npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx
+     src/features/operations/OperationsInventory.test.tsx             -> 2 files, 85 tests passed (36.85s)
+web: npm run typecheck                                                -> OK
+web: npm run build                                                    -> built dist (Vite, 302 modules)
+web: npm run test:e2e -- --config=playwright.python.config.ts
+     tests/e2e/manual-organize-dialog.python.spec.ts -g "101-file directory"
+                                                                      -> 1 passed (6.5s)
+```
+
+组件覆盖包括：超限等待态继续轮询到任务结算；结束后没有已保存摘要提示、只读摘要区、
+确认或重新分析入口；任务中心无准备区或继续入口。浏览器旅程使用真实的 API、SQLite、
+Local Storage、Worker claim／settlement 与构建产物，未构造不存在的入口。
+
+**剩余与风险**
+
+- Developer 未运行 T4 全量 Python/Web/E2E、完整 `manual-organize-dialog.python.spec.ts`
+  文件或 Docker／封装矩阵；这些仍按 Task 由 B 在冻结候选上验收。
+- 本轮未连接真实 TMDB、SMB、OpenList 或 S3/R2；101 文件、旧记录重开、取消竞争与结算
+  失败注入由现有临时 SQLite／Local Storage／模拟 Provider 测试覆盖，B 仍需用真实 API
+  和更新前格式记录复核。
+- 超限准备继续轮询依赖后端发布的 `organizeFlow.continuable`；若 Worker 长时间未结算，
+  弹窗保持「正在结束关联任务」并允许关闭，来源保护仍由后端权威状态维持。
