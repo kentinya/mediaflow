@@ -1,6 +1,6 @@
 # Task PATCH-20261120-1 — 修复后续季剧集匹配与逐文件元数据修正
 
-Next Action: B PERFORMS T4 ACCEPTANCE ON THE PATCH-20261120-1 CANDIDATE
+Next Action: DEVELOPER CORRECTS LATER-SEASON MATCH THRESHOLDS IN PATCH-20261120-1
 
 用户于 2026-11-20 授权激活独立 Task。B 已核实上一轮修正并通过真实浏览器发现任务中心表单阻塞。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
 [独立缺陷流程](docs/development-workflow.md#31-independent-minor-bugs) · [现有逐项恢复流程](docs/product-experience.md#tasks-results-and-per-item-recovery) · [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/c8039f1f3d7bdfdb7fd927c75f99df0cb8a9e523/TASK.md#patch-20261119-2--b-验收-pass)
@@ -338,3 +338,41 @@ Files 受理、Worker、恢复 API、SQLite 与 Local Storage 均使用仓库既
 - 原生用例的请求预算依赖夹具策略的 `maxProviderRequests: 2`；真实 TMDB 在同等预算下同样进入
   人工候选判定，但候选顺序由评分决定，B 需在独立验收中核对真实返回形态下的两入口一致投影。
 - 本轮未连接真实 TMDB；同名剧与季集场景均由本地模拟 Provider 覆盖，与上一轮风险一致。
+
+## B Re-Review — FIX REQUIRED（后续季识别绕过自动匹配阈值）
+
+```text
+Reviewed Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
+Reviewed Implementation: 54e624491ca957e60d82e115d5ae8d4ebc0b9d83
+Reviewed Head: 307752c4b7c01d78c9f7a89ce11110e0bc917109
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+上轮表单阻塞已解决。B 在真实浏览器中从文件页整理 S04E01，选中缺少第四季的 2024 年同名剧，
+再到「任务中心 → 元数据恢复 → 查看问题文件」。同一条目显示标题、年份、剧集类型和失败原因。
+只清空年份即可保存并再次选择候选。选中 2019 年作品后出现待确认摘要，源文件和目标目录均无变更。
+
+在「规则 → 元数据策略」将剧集自动匹配阈值设为 100、人工确认阈值设为 70 并发布，
+再从文件页批量整理《黑袍纠察队》S04E01–E08。Worker 验证出 2019 年作品包含对应季集，八项都以
+80 分直接采用该作品并生成待确认摘要，逐项恢复读取没有作品确认决定。用户设定的阈值要求先确认作品。
+该规则也约束自动整理所用的共享识别逻辑。依据为 §29.1 和 REQ-META-004/005。
+
+### Developer 返工指导
+
+1. 在共享后续季识别中，把完整验证季集得到的证据计入有界候选评分，并以该最终分数同时生成匹配理由和匹配状态。
+   只有唯一已验证候选达到固定策略的自动匹配阈值时才自动采用。唯一候选达到人工确认阈值但低于自动匹配阈值时，
+   通过既有候选确认入口等待用户选择。多部通过或者预算内还无法排除其他候选时继续交给用户决定。
+2. 用现有 Files 受理和 Worker 夹具验证同一批文件在两套已发布策略下的结果。默认策略下，两部同名剧经过季集判定后，
+   八集应以 2019 年作品生成带有季集得分依据的待确认摘要。把自动匹配阈值提高到高于同一候选最终分数时，
+   文件页应先显示该候选供选择，选中后才为同一文件生成摘要。两条路径在显式执行确认前均应保持源与目标零变更。
+3. 运行 `.venv/bin/python -m unittest tests.test_metadata tests.test_manual_task_engine tests.test_task_item_metadata_search tests.test_automation_entrance_recovery`。
+   保留本轮已通过的 Files 到任务中心原生用例及电影两请求用例。
+
+### B 实际验收
+
+- Python 全量 2332 项，其中 7 项跳过。Web 单测 1643 项、Web E2E 287 项、原生浏览器 13 项通过。
+- Python 和 Web 静态检查、Web 构建、wheel 安装验收和 Docker 发布安全验收通过。
+- 验收在临时 SQLite、本地 Storage 和模拟 Provider 上运行。证据保存于 `.git/validation-evidence/307752c4/b-review/`。
+  跨入口结果见 `native.log`，阈值复现结果见 `files-season-threshold-confirmed.log`。
