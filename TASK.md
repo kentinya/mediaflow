@@ -7,7 +7,7 @@
 Task ID: PATCH-20261120-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 20df0749e3d949d378969f34bc64bdb860a6fadf
 Difficulty: High
 Test Level: T4
@@ -82,3 +82,37 @@ Files 整理弹窗及任务中心继续整理共用的组件把原提交身份�
 
 本次范围为 Files 手动确认、任务中心继续整理和逐项恢复的最终执行确认。自动化、CLI、其他命令的未知结果、跨设备续查及通用通知属于独立范围。
 验收后的现行说明在任务中心页面规范和 Files 整理旅程记录。Developer 交受影响测试和候选 SHA 后，由 B 独立记录 PASS 或 FIX REQUIRED。
+
+### B 独立复核 — 2026-11-20
+
+```text
+Reviewed: 20df0749e3d949d378969f34bc64bdb860a6fadf..b1d1c6290fc592bdea70b69f6b1e8a61912f56be
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+任务详情已移除「原整理提交」卡片。生产 Web 构建通过。真实 Python、SQLite 和 Worker 的三个浏览器用例通过，覆盖
+Files 丢响应后自动打开原任务、重新打开原任务后自动查询、同一任务的第二次确认按自己的范围查询。
+命令见本 Task 的 Playwright 计划，使用 `-g 'an unknown Execute response|a Task reopened after a lost Execute|a second confirmation on the same Task'`。
+日志见 `.git/validation-evidence/b1d1c629/patch-b/native.log`。T4 全量验收留待修正候选。
+
+#### 阻塞项 — 逐项恢复提前宣布未受理并停止查询
+
+从任务中心打开有分类问题的文件，选择分类、重新分析、复核摘要，再点击「确认继续整理 1 项」。B 在现有真实浏览器用例中
+模拟这次确认的响应丢失和服务端迟到。两次受理查询都发生在原请求到达服务端之前。此时页面显示「本次确认未获受理」，
+同时删除原确认记录。随后让同一笔原请求到达真实服务，服务端返回 `202` 和原任务 ID，Worker 完成该文件。
+逐项恢复面板把第二次查不到记录当成终态，之后的自动查询失去了原确认。
+[逐项恢复自动查询](web/src/features/operations/TaskItemRecoveryPanel.tsx#L711)
+
+#### 本轮开发指导
+
+1. 在 `TaskItemRecoveryPanel.tsx` 复用已有自动查询。只读查询暂无记录时保留原确认，显示「暂未确认」并继续现有退避查询。
+   收到可关联的受理记录时清理该次确认并刷新原任务和文件。处理现有人工「重新读取条目后再继续」入口时，
+   让最终确认沿用同一套自动查询。该入口仍可服务于其他操作。
+2. 逐项恢复的再次确认沿用 Task 当前约定。校验原摘要和选择仍有效，有权限时才允许用户显式确认同一批。
+   遇到重复或过期响应继续查询原确认。保留原请求身份直到有确定结果。
+3. 在 `operations-inventory.python.spec.ts` 的原生分类恢复旅程中加入迟到用例。
+   点击原确认按钮，让真实受理查询连续两次在原请求到达前返回。核对页面仍显示待确认，
+   再让原请求到达，验证系统自动显示已受理、仍在原任务，且该文件只执行一次。
+   同一测试入口覆盖原请求始终未到达后用户显式确认同一批，以及该确认与迟到原请求竞争时的受理与执行次数。
