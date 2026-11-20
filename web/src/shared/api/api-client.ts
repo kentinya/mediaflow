@@ -5709,8 +5709,12 @@ export async function fetchNotificationDefinitionDraft(
   }
   let response: Response;
   try {
+    // The current definition is edited in place: saving validates and
+    // publishes a checked successor directly.  This read uses the normal
+    // definition route and adapts the exact Active identity into the existing
+    // editor model; no draft route exists.
     response = await fetchImpl(
-      `/api/operations/notifications/webhooks/${encodeURIComponent(webhookId)}/draft`,
+      `/api/operations/notifications/webhooks/${encodeURIComponent(webhookId)}`,
       { method: "GET", headers: operationsHeaders(token) },
     );
   } catch {
@@ -5735,7 +5739,76 @@ export async function fetchNotificationDefinitionDraft(
     throw new OperationsApiError("malformed");
   }
   try {
-    return { ok: true, model: normalizeNotificationDraftDocument(payload) };
+    const definition = readRecord(payload, "notification_definition");
+    const active = readRecord(definition["activeConfiguration"], "activeConfiguration");
+    const webhook = readRecord(definition["webhook"], "webhook");
+    const revisionId = String(active["revisionId"] ?? "");
+    const revisionVersion = Number(active["version"] ?? 0);
+    if (revisionId === "" || !Number.isFinite(revisionVersion)) {
+      throw new Error("missing active identity");
+    }
+    const actions = readRecord(webhook["actions"], "webhook.actions");
+    const editAction = readRecord(actions["edit"], "webhook.actions.edit");
+    const adapted = {
+      webhookId,
+      activeConfiguration: active,
+      webhook,
+      draft: {
+        revisionId,
+        revisionVersion,
+        revisionStatus: "validated",
+        baseActiveRevisionId: null,
+        updatedAt: null,
+        validatedAt: null,
+        validationErrors: [],
+        webhook,
+      },
+      supportedEvents: definition["supportedEvents"] ?? [],
+      actions: {
+        createDraft: {
+          available: false,
+          reason: "Webhook definitions are published directly; no draft exists",
+          method: "POST",
+          path: null,
+          requiresConfirmation: false,
+          sideEffects: "none",
+          durableOutcome: "none",
+          nextAction: "apply the Webhook form",
+        },
+        save: {
+          available: editAction["available"] === true,
+          reason: typeof editAction["reason"] === "string" ? editAction["reason"] : null,
+          method: "PUT",
+          path: `/api/configuration/revisions/${encodeURIComponent(revisionId)}/objects/webhooks/${encodeURIComponent(webhookId)}`,
+          requiresConfirmation: false,
+          sideEffects: "none",
+          durableOutcome: "the definition is validated and published directly",
+          nextAction: "apply the reviewed form",
+        },
+        validate: {
+          available: false,
+          reason: "validation is part of direct publication",
+          method: "POST",
+          path: null,
+          requiresConfirmation: false,
+          sideEffects: "none",
+          durableOutcome: "none",
+          nextAction: "apply the form",
+        },
+        activate: {
+          available: false,
+          reason: "the definition is already Active; saving publishes a successor",
+          method: "POST",
+          path: null,
+          requiresConfirmation: true,
+          sideEffects: "none",
+          durableOutcome: "none",
+          nextAction: "apply the form",
+        },
+        test: actions["test"],
+      },
+    };
+    return { ok: true, model: normalizeNotificationDraftDocument(adapted) };
   } catch {
     throw new OperationsApiError("malformed");
   }

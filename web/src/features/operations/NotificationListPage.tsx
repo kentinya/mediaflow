@@ -12,38 +12,25 @@
  * preserves its filter, scroll and focus.
  */
 
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
-import { createNotificationSuccessorDraft } from "../../shared/api/api-client";
-import {
-  notificationDefinitionQueryKey,
-  notificationDraftQueryKey,
-  notificationListQueryKey,
-  notificationListQueryOptions,
-} from "./notification-query";
+import { notificationListQueryOptions } from "./notification-query";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { useReadReveal } from "../../shared/ui/read-reveal";
-import { Button } from "../../shared/ui/Button";
 import {
   activeConfigurationSummary,
   definitionStateLabel,
-  draftStateSummary,
   notificationEventLabel,
   notificationReasonLabel,
   secretReadinessDetail,
   secretReadinessLabel,
-  isUnknownCommandResult,
-  unknownCommandMessage,
 } from "./notification-presentation";
 
 export function NotificationListPage() {
   const token = useAuthToken();
-  const queryClient = useQueryClient();
-  const [error, setError] = useState<string | null>(null);
 
   const query = useQuery(notificationListQueryOptions(token));
   // A fast or cached read presents the inventory directly instead of swapping
@@ -51,36 +38,6 @@ export function NotificationListPage() {
   const showLoadingWait = useReadReveal(
     query.data === undefined && !query.isError,
   );
-
-  const draftMutation = useMutation({
-    mutationFn: (activeRevisionId: string) =>
-      createNotificationSuccessorDraft(token, { activeRevisionId }),
-    retry: false,
-    onMutate: () => setError(null),
-    onSuccess: (result) => {
-      if (result.ok) {
-        void queryClient.invalidateQueries({
-          queryKey: [notificationListQueryKey],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [notificationDefinitionQueryKey],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [notificationDraftQueryKey],
-        });
-        return;
-      }
-      if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("后继草稿可能已经创建"));
-        return;
-      }
-      setError(
-        result.status === 409
-          ? "草稿没有创建：配置在读取后已经变化。重新读取列表并重新发起；系统没有自动重试。"
-          : `草稿没有创建（${result.code}）。重新读取列表后再试；系统没有自动重试。`,
-      );
-    },
-  });
 
   return (
     <AuthorizedReadBoundary query={query} unavailableTitle="通知定义暂时不可用">
@@ -115,7 +72,6 @@ export function NotificationListPage() {
         }
         const page = data.model;
         const create = page.actions.create;
-        const createDraft = page.actions.createDraft;
         return (
           <div
             className="mf-notifications-page"
@@ -150,8 +106,8 @@ export function NotificationListPage() {
                 </strong>
               </div>
               <div className="mf-notification-summary-item">
-                <span>打开的草稿</span>
-                <strong>{draftStateSummary(page.draftState)}</strong>
+                <span>未发布内容</span>
+                <strong>无</strong>
               </div>
               <div className="mf-notification-summary-item">
                 <span>定义数量</span>
@@ -181,20 +137,6 @@ export function NotificationListPage() {
                     新建 Webhook（不可用）
                   </button>
                 )}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={!createDraft.available || draftMutation.isPending}
-                  onClick={() => {
-                    if (page.activeConfiguration !== null) {
-                      draftMutation.mutate(page.activeConfiguration.revisionId);
-                    }
-                  }}
-                >
-                  {draftMutation.isPending
-                    ? "正在创建后继草稿…"
-                    : "创建后继草稿"}
-                </Button>
                 <Link
                   className="mf-button mf-button-secondary"
                   to="/operations/notifications/deliveries"
@@ -210,21 +152,7 @@ export function NotificationListPage() {
                   )}
                 </p>
               )}
-              {!createDraft.available && createDraft.reason !== null && (
-                <p className="mf-notification-inline-reason">
-                  {notificationReasonLabel(
-                    createDraft.reason,
-                    "当前不能创建后继草稿；请检查账号权限。",
-                  )}
-                </p>
-              )}
             </div>
-
-            {error !== null && (
-              <StatusBanner variant="error" title="草稿没有创建">
-                <p>{error}</p>
-              </StatusBanner>
-            )}
 
             <section className="mf-notification-list-section">
               <h3>Webhook 定义</h3>
@@ -232,9 +160,7 @@ export function NotificationListPage() {
                 <div className="mf-notification-empty">
                   <p>还没有 Webhook 定义。</p>
                   <p>
-                    {page.draftState.present
-                      ? "当前草稿可以直接新建定义。"
-                      : "先创建后继草稿，再添加第一个 Webhook。"}
+                    应用后会直接发布为新的生效配置。
                   </p>
                 </div>
               ) : (
@@ -303,7 +229,7 @@ export function NotificationListPage() {
                               to="/operations/notifications/editor/$webhookId"
                               params={{ webhookId: document.id }}
                             >
-                              编辑草稿
+                              编辑定义
                             </Link>
                           ) : (
                             <button
@@ -312,10 +238,10 @@ export function NotificationListPage() {
                               disabled
                               title={notificationReasonLabel(
                                 item.actions.edit.reason,
-                                "当前没有可编辑的草稿",
+                                "当前没有可编辑的定义",
                               )}
                             >
-                              编辑草稿（不可用）
+                              编辑定义（不可用）
                             </button>
                           )}
                         </div>

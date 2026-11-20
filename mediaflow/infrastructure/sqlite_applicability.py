@@ -28,6 +28,11 @@ from pathlib import Path
 #: lower marker is the retired V1 Job schema.
 MIN_RUNTIME_SCHEMA_VERSION = 58
 
+#: The immediately previous managed-configuration schema.  It contains the same
+#: current tables plus unpublished draft revisions that this build retires on
+#: open.  Any older marker remains unsupported.
+MIN_CONFIGURATION_SCHEMA_VERSION = 11
+
 #: Tables that prove a pre-V2 database even when its runtime marker is absent.
 RETIRED_TABLE_NAMES = frozenset(
     {
@@ -158,7 +163,7 @@ def evaluate_database_applicability(
             raise DatabaseApplicabilityError(
                 "its configuration schema is newer than this MediaFlow version"
             )
-        if markers.configuration_version < current_configuration_version:
+        if markers.configuration_version < MIN_CONFIGURATION_SCHEMA_VERSION:
             raise DatabaseApplicabilityError(
                 "its configuration schema predates the current supported V2 configuration"
             )

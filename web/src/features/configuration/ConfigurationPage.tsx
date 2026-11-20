@@ -10,7 +10,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Link,
   useBlocker,
-  useNavigate,
   useSearch,
 } from "@tanstack/react-router";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
@@ -18,7 +17,6 @@ import { AutomationSettingsPanel } from "../operations/AutomationSettingsPanel";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { Button } from "../../shared/ui/Button";
 import { ModalCardShell, useModalLayer } from "../../shared/ui/modal-card";
-import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
@@ -35,18 +33,13 @@ import {
 } from "../../entities/rules/rules-readiness";
 import { fetchAuthenticatedPrincipal } from "../../shared/api/api-client";
 import {
-  activateRevision,
-  createFirstDraft,
   exportConfigurationPackage,
   fetchConfigurationStatus,
   fetchRevision,
   fetchRevisionObjects,
   fetchSystemSettings,
-  runDestinationPrecheck,
-  runRecognitionStrategyTest,
-  runStorageCheck,
+  initializeConfiguration,
   saveSystemSettings,
-  validateRevision,
   ConfigurationApiError,
   ConfigurationConflictError,
   ConfigurationUnknownOutcomeError,
@@ -57,7 +50,6 @@ import {
   booleanStateLabel,
   boundaryLabel,
   collectGroupEdits,
-  editableFields,
   fieldChanged,
   groupBoundaryLabel,
   groupChanged,
@@ -70,17 +62,6 @@ import {
   writeRetainedSettingsSession,
   type RetainedSettingsSession,
 } from "./configuration-draft-session";
-import {
-  destinationFailureCopy,
-  destinationVerdictLabel,
-  readCheckEvidence,
-  readCheckObjects,
-  readPublishChecks,
-  storageFailureCopy,
-  type CheckObjects,
-  type PublishCheckItem,
-  type PublishCheckModel,
-} from "./configuration-checks";
 
 const QUERY_KEY = ["configuration-status"] as const;
 
@@ -326,12 +307,6 @@ export function configurationMutationFailure(
   };
 }
 
-interface StatusDraft {
-  readonly revisionId: string;
-  readonly version: number | null;
-  readonly status: string;
-}
-
 interface StatusModel {
   readonly activeId: string | null;
   readonly activeRecord: Record<string, unknown> | null;
@@ -343,7 +318,6 @@ interface StatusModel {
   readonly authority: string;
   readonly canManage: boolean;
   readonly canActivate: boolean;
-  readonly drafts: readonly StatusDraft[];
   readonly statusLabel: string;
   readonly statusTone: "success" | "warning" | "error" | "info";
 }
@@ -360,30 +334,10 @@ function readStatusModel(data: ConfigurationStatus | undefined): StatusModel {
     data?.recoveryRequired === true;
   const activeHealthy = activeId !== null && !activeUnavailable;
   const setupRequired = data?.setupRequired === true;
-  const revisions = Array.isArray(data?.revisions) ? data.revisions : [];
-  const drafts: StatusDraft[] = [];
-  const seen = new Set<string>();
-  for (const item of [data?.setupDraft, ...revisions]) {
-    const record = asRecord(item);
-    const id = revisionIdOf(record);
-    if (id === null || seen.has(id) || id === activeId) continue;
-    const status = text(record?.status, "draft");
-    if (status !== "draft" && status !== "validated") continue;
-    seen.add(id);
-    drafts.push({
-      revisionId: id,
-      version:
-        numberValue(record?.version) ?? numberValue(record?.draftVersion),
-      status,
-    });
-  }
-  drafts.sort((left, right) => (right.version ?? 0) - (left.version ?? 0));
   const statusLabel = activeUnavailable
     ? "生效配置不可用，需要恢复"
     : setupRequired
-      ? drafts.length > 0
-        ? "已有草稿待恢复"
-        : "需要首次设置"
+      ? "需要初始化"
       : data?.emptyActive === true
         ? "空配置已生效"
         : activeHealthy
@@ -405,7 +359,6 @@ function readStatusModel(data: ConfigurationStatus | undefined): StatusModel {
     authority: text(data?.authority, "未提供"),
     canManage: data?.canManageConfiguration !== false,
     canActivate: data?.canActivateConfiguration !== false,
-    drafts,
     statusLabel,
     statusTone,
   };
@@ -739,408 +692,8 @@ function RuleReadinessPanel({
   );
 }
 
-interface CheckInputs {
-  readonly strategyLibraryId: string;
-  readonly syntheticPath: string;
-  readonly recognitionType: string;
-  readonly sampleTitle: string;
-  readonly sampleMediaType: "movie" | "tv";
-  readonly sampleYear: string;
-  readonly sampleGenres: string;
-  readonly sampleCountries: string;
-  readonly sampleExtension: string;
-}
-
-const DEFAULT_SYNTHETIC_PATH = "Example.Movie.2024.1080p.mkv";
-
-function defaultCheckInputs(objects: CheckObjects): CheckInputs {
-  const library = objects.resourceLibraries.find((item) => item.enabled);
-  const recognitionType = objects.recognitionTypes.find((item) => item.enabled);
-  return {
-    strategyLibraryId: library?.id ?? "",
-    syntheticPath: DEFAULT_SYNTHETIC_PATH,
-    recognitionType: recognitionType?.id ?? "",
-    sampleTitle: "The Matrix",
-    sampleMediaType: "movie",
-    sampleYear: "1999",
-    sampleGenres: "Action",
-    sampleCountries: "",
-    sampleExtension: "mkv",
-  };
-}
-
-function splitSampleList(value: string): readonly string[] {
-  return value
-    .split(/[,，]/)
-    .map((item) => item.trim())
-    .filter((item) => item !== "");
-}
-
-function formatCheckTime(value: string | null): string | null {
-  if (value === null) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toLocaleString("zh-CN", { hour12: false });
-}
-
-/** Chinese, action-oriented result of one check that has just answered. */
-function checkResultNotice(
-  entry: PublishCheckItem,
-  result: Record<string, unknown>,
-  version: number,
-): Notice {
-  if (entry.kind === "storage") {
-    if (result.status === "passed") {
-      return {
-        tone: "success",
-        title: "存储检查通过",
-        text: `该存储的只读检查已通过（编辑版本 ${version}）。`,
-      };
-    }
-    const failure = storageFailureCopy(result.failureCategory);
-    return {
-      tone: "error",
-      title: "存储检查未通过",
-      text: `该存储的只读检查未通过：${failure.label}（编辑版本 ${version}）。${failure.nextAction}`,
-    };
-  }
-  if (entry.kind === "strategy") {
-    if (result.status === "completed") {
-      const recognition = asRecord(asRecord(result.result)?.recognition);
-      const recognitionStatus = text(recognition?.status, "");
-      const recognitionType = text(recognition?.recognitionType, "");
-      const caveat =
-        recognitionStatus === "unrecognized"
-          ? "识别结果为未识别，不会阻止 checked 激活，但请核对识别规则。"
-          : recognitionStatus === "ambiguous"
-            ? "匹配到多个识别类型，请核对规则优先级；这不阻止 checked 激活。"
-            : "";
-      return {
-        tone: "success",
-        title: "识别策略测试已完成",
-        text: `编辑版本 ${version} 的识别策略测试已完成${
-          recognitionType === "" ? "" : `（识别类型 ${recognitionType}）`
-        }。${caveat}`,
-      };
-    }
-    return {
-      tone: "error",
-      title: "识别策略测试未完成",
-      text: `编辑版本 ${version} 的识别策略测试未完成；请核对识别规则与所选资源库后重新运行。`,
-    };
-  }
-  const verdict = text(asRecord(result.result)?.verdict, "");
-  if (result.status === "completed" && verdict !== "capability_gap") {
-    return {
-      tone: "success",
-      title: "目标预检通过",
-      text: `编辑版本 ${version} 的目标预检已通过：${
-        destinationVerdictLabel(verdict) ?? "目标可推算"
-      }。`,
-    };
-  }
-  if (result.status === "completed") {
-    return {
-      tone: "error",
-      title: "目标预检未通过",
-      text: `目标存储缺少当前整理操作所需的全部能力（编辑版本 ${version}）；请更改整理操作或目标存储后重新运行预检。`,
-    };
-  }
-  const failure = destinationFailureCopy(result.failureCategory);
-  return {
-    tone: "error",
-    title: "目标预检未通过",
-    text: `${failure.label}（编辑版本 ${version}）。${failure.nextAction}`,
-  };
-}
-
-/**
- * The exact-revision publish checks for one Draft.
- *
- * Every action binds the selected revision and its current version/digest; the
- * panel never accepts a hand-copied revision, digest or authority token. A
- * check that is not applicable in this Draft is absent rather than shown as a
- * successful no-op, and a Storage referenced but missing stays a correction.
- */
-function PublishChecksPanel({
-  model,
-  inputs,
-  validated,
-  checksState,
-  canRun,
-  busyId,
-  notice,
-  onChange,
-  onRun,
-}: {
-  readonly model: PublishCheckModel;
-  readonly inputs: CheckInputs;
-  readonly validated: boolean;
-  readonly checksState: LoadState;
-  readonly canRun: boolean;
-  readonly busyId: string | null;
-  readonly notice: Notice | null;
-  readonly onChange: (patch: Partial<CheckInputs>) => void;
-  readonly onRun: (entry: PublishCheckItem) => void;
-}) {
-  return (
-    <section className="mf-panel mf-settings-checks" aria-label="发布前检查">
-      <header className="mf-settings-checks-head">
-        <div>
-          <h3>发布前检查</h3>
-          <p className="mf-dashboard-meta">
-            这些检查只读取该草稿引用的存储、识别与目标配置，不修改配置或媒体，也不授予整理权限。
-          </p>
-        </div>
-        <span
-          className={`mf-settings-check-summary ${
-            model.satisfied
-              ? "mf-settings-check-summary-passed"
-              : "mf-settings-check-summary-pending"
-          }`}
-          role="status"
-        >
-          {checksState === "ready"
-            ? model.applicable === 0
-              ? "该草稿没有适用检查"
-              : model.satisfied
-                ? "适用检查已全部通过"
-                : `还有 ${model.blocking.length} 项未通过`
-            : checksState === "loading"
-              ? "正在读取检查证据"
-              : checksState === "error"
-                ? "检查证据读取失败"
-                : "等待读取检查证据"}
-        </span>
-      </header>
-      {notice !== null && (
-        <p
-          className={`mf-settings-check-notice is-${notice.tone}`}
-          role="status"
-        >
-          <strong>{notice.title}</strong> {notice.text}
-        </p>
-      )}
-      {checksState === "loading" || checksState === "idle" ? (
-        <p className="mf-settings-check-empty" role="status">
-          正在读取该草稿的存储、类型引用和检查证据…
-        </p>
-      ) : checksState === "error" ? (
-        <p className="mf-settings-check-empty" role="status">
-          本次没有读取到该草稿的检查证据；页面不会用上次结果判断当前检查状态。请重新读取该修订后再运行检查或激活。
-        </p>
-      ) : model.applicable === 0 ? (
-        <p className="mf-settings-check-empty">
-          该草稿没有被引用的启用存储，也没有启用的资源库或媒体库，因此 checked
-          激活不要求运行这些检查。
-        </p>
-      ) : (
-        <ul className="mf-settings-check-list">
-          {model.items.map((entry) => {
-            const busy = busyId === entry.id;
-            const strategyBlocked = entry.kind === "strategy" && !validated;
-            return (
-              <li
-                key={entry.id}
-                className={`mf-settings-check mf-settings-check-${entry.state}`}
-              >
-                <div className="mf-settings-check-row">
-                  <strong>{entry.title}</strong>
-                  <span className="mf-settings-check-state">
-                    {entry.stateLabel}
-                  </span>
-                </div>
-                <p className="mf-settings-check-detail">{entry.detail}</p>
-                {formatCheckTime(entry.checkedAt) !== null && (
-                  <p className="mf-dashboard-meta">
-                    上次检查：{formatCheckTime(entry.checkedAt)}
-                  </p>
-                )}
-                {entry.nextAction !== null && (
-                  <p className="mf-settings-check-next">{entry.nextAction}</p>
-                )}
-                {entry.kind === "strategy" && (
-                  <div className="mf-settings-check-inputs">
-                    <label>
-                      <span>测试用资源库</span>
-                      <select
-                        value={inputs.strategyLibraryId}
-                        disabled={!canRun || busy}
-                        onChange={(event) =>
-                          onChange({ strategyLibraryId: event.target.value })
-                        }
-                      >
-                        <option value="">请选择启用的资源库</option>
-                        {model.strategyLibraries.map((library) => (
-                          <option key={library.id} value={library.id}>
-                            {library.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>合成文件名</span>
-                      <input
-                        type="text"
-                        spellCheck={false}
-                        autoComplete="off"
-                        value={inputs.syntheticPath}
-                        disabled={!canRun || busy}
-                        onChange={(event) =>
-                          onChange({ syntheticPath: event.target.value })
-                        }
-                      />
-                    </label>
-                  </div>
-                )}
-                {entry.kind === "destination" && (
-                  <div className="mf-settings-check-inputs">
-                    <label>
-                      <span>示例片名</span>
-                      <input
-                        type="text"
-                        spellCheck={false}
-                        autoComplete="off"
-                        value={inputs.sampleTitle}
-                        disabled={!canRun || busy}
-                        onChange={(event) =>
-                          onChange({ sampleTitle: event.target.value })
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>示例媒体类型</span>
-                      <select
-                        value={inputs.sampleMediaType}
-                        disabled={!canRun || busy}
-                        onChange={(event) =>
-                          onChange({
-                            sampleMediaType:
-                              event.target.value === "tv" ? "tv" : "movie",
-                          })
-                        }
-                      >
-                        <option value="movie">电影</option>
-                        <option value="tv">剧集</option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>示例年份</span>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        spellCheck={false}
-                        autoComplete="off"
-                        value={inputs.sampleYear}
-                        disabled={!canRun || busy}
-                        onChange={(event) =>
-                          onChange({ sampleYear: event.target.value })
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>示例题材</span>
-                      <input
-                        type="text"
-                        spellCheck={false}
-                        autoComplete="off"
-                        placeholder="动画, 动作"
-                        value={inputs.sampleGenres}
-                        disabled={!canRun || busy}
-                        onChange={(event) =>
-                          onChange({ sampleGenres: event.target.value })
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>示例国家/地区</span>
-                      <input
-                        type="text"
-                        spellCheck={false}
-                        autoComplete="off"
-                        placeholder="JP, US"
-                        value={inputs.sampleCountries}
-                        disabled={!canRun || busy}
-                        onChange={(event) =>
-                          onChange({ sampleCountries: event.target.value })
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>示例扩展名</span>
-                      <input
-                        type="text"
-                        spellCheck={false}
-                        autoComplete="off"
-                        value={inputs.sampleExtension}
-                        disabled={!canRun || busy}
-                        onChange={(event) =>
-                          onChange({ sampleExtension: event.target.value })
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>示例识别类型</span>
-                      <select
-                        value={inputs.recognitionType}
-                        disabled={!canRun || busy}
-                        onChange={(event) =>
-                          onChange({ recognitionType: event.target.value })
-                        }
-                      >
-                        <option value="">请选择启用的识别类型</option>
-                        {model.recognitionTypeOptions.map((option) => (
-                          <option key={option.id} value={option.id}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                )}
-                <div className="mf-settings-check-actions">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={!canRun || busy || strategyBlocked}
-                    onClick={() => onRun(entry)}
-                  >
-                    {busy
-                      ? "检查中…"
-                      : entry.state === "missing"
-                        ? "运行检查"
-                        : "重新运行检查"}
-                  </Button>
-                  {strategyBlocked && (
-                    <span className="mf-dashboard-meta">
-                      先验证草稿，才能运行识别策略测试。
-                    </span>
-                  )}
-                </div>
-                {(entry.backendMessage !== null ||
-                  entry.backendNextAction !== null) && (
-                  <details className="mf-settings-check-diagnostics">
-                    <summary>后端原始说明（诊断）</summary>
-                    {entry.backendMessage !== null && (
-                      <p>{entry.backendMessage}</p>
-                    )}
-                    {entry.backendNextAction !== null && (
-                      <p>{entry.backendNextAction}</p>
-                    )}
-                  </details>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
-  );
-}
-
 export function ConfigurationPage() {
   const token = useAuthToken();
-  const navigate = useNavigate();
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const returnContext = readSettingsReturnContext(search);
   const client = useQueryClient();
@@ -1326,7 +879,6 @@ export function ConfigurationPage() {
                   checksState: "ready" as const,
                   objects:
                     asRecord(objectsProjection.objects) ?? current.objects,
-                  ...readCheckEvidence(objectsProjection),
                 }),
           },
         };
@@ -1416,7 +968,6 @@ export function ConfigurationPage() {
                   checksState: "ready" as const,
                   objects:
                     asRecord(objectsProjection.objects) ?? current.objects,
-                  ...readCheckEvidence(objectsProjection),
                 }),
             readError: settingsOk
               ? detail === null
@@ -1444,11 +995,8 @@ export function ConfigurationPage() {
   // it started. Validation/activation/export stay locked for the short command.
   const inputsLocked = busy !== null && busy.kind !== "save";
 
-  // Show the exact Active JSON by default; an existing Draft is never selected
-  // implicitly. A no-Active instance stays unloaded until the operator chooses
-  // recovery or creates the first Draft. The default is derived, never written
-  // as an implicit selection, so an unavailable Active cannot leave a stale
-  // choice behind.
+  // Show the exact Active JSON by default; an unavailable or uninitialized
+  // instance never borrows a stale selection or a read-only historical value.
   const selectionId =
     chosenSelectionId ?? (model.activeHealthy ? model.activeId : null);
   useEffect(() => {
@@ -1498,328 +1046,19 @@ export function ConfigurationPage() {
     () => readSettingGroups(selectedView?.settings ?? null),
     [selectedView?.settings],
   );
-  const fields = useMemo(() => editableFields(groups), [groups]);
   const baseline = useMemo(() => baselineValues(groups), [groups]);
   const form = selectionId === null ? undefined : forms[selectionId];
   const values = useMemo(
     () => formValues(form, groups, baseline),
     [form, groups, baseline],
   );
-  const dirty = useMemo(
-    () =>
-      fields.some((field) => fieldChanged(field, values[field.path], baseline)),
-    [fields, values, baseline],
-  );
   const unsavedAnywhere = useMemo(
     () => anyUnsaved(views, forms),
     [views, forms],
   );
-  const selectionIsActive =
-    selectedView !== null && model.activeId === selectedView.revisionId;
-  const selectedDraftSummary = model.drafts.find(
-    (draft) => draft.revisionId === selectionId,
-  );
-  // A failed read must still name the identity the status document reported;
-  // it never invents a version or treats the draft as the Active.
-  const selectedSequence = selectionIsActive
-    ? (selectedView?.revisionVersion ?? model.activeVersion)
-    : null;
-  const selectedEditVersion =
-    selectedView?.draftVersion ?? selectedDraftSummary?.version ?? null;
-  const viewStatus = selectedView?.status ?? null;
-  const canValidate =
-    selectedView !== null &&
-    !selectionIsActive &&
-    showManage &&
-    selectedView.settingsState === "ready" &&
-    selectedView.detailState !== "error" &&
-    canWrite;
-  const validatedVersion =
-    viewStatus === "validated" ? (selectedView?.draftVersion ?? null) : null;
-  const canActivate =
-    validatedVersion !== null && model.canActivate && canWrite;
-
-  // Publish checks bind the selected Draft's exact version and digest. Their
-  // applicability comes from the same revision read that rendered the page;
-  // the backend remains the sole authority on checked activation.
-  const [checkInputs, setCheckInputs] = useState<Record<string, CheckInputs>>(
-    {},
-  );
-  const [checkNotice, setCheckNotice] = useState<{
-    readonly revisionId: string;
-    readonly notice: Notice;
-  } | null>(null);
-  const checkObjects = useMemo(
-    () => readCheckObjects(selectedView?.objects ?? null),
-    [selectedView?.objects],
-  );
-  const checkModel = useMemo(
-    () =>
-      readPublishChecks(checkObjects, {
-        storageChecks: selectedView?.storageChecks ?? [],
-        strategyTest: selectedView?.strategyTest ?? null,
-        destinationPrecheck: selectedView?.destinationPrecheck ?? null,
-      }),
-    [
-      checkObjects,
-      selectedView?.destinationPrecheck,
-      selectedView?.storageChecks,
-      selectedView?.strategyTest,
-    ],
-  );
-  const checkInputsForSelection =
-    selectionId === null
-      ? null
-      : (checkInputs[selectionId] ?? defaultCheckInputs(checkObjects));
-  const updateCheckInputs = (patch: Partial<CheckInputs>) => {
-    if (selectionId === null) return;
-    setCheckInputs((previous) => ({
-      ...previous,
-      [selectionId]: {
-        ...(previous[selectionId] ?? defaultCheckInputs(checkObjects)),
-        ...patch,
-      },
-    }));
-  };
-  const checkTarget = (): {
-    readonly revisionId: string;
-    readonly version: number;
-    readonly digest: string;
-  } | null => {
-    if (selectedView === null) return null;
-    const version = selectedView.draftVersion;
-    const digest = selectedView.digest;
-    if (version === null || digest === null || digest === "") return null;
-    return {
-      revisionId: selectedView.revisionId,
-      version,
-      digest,
-    };
-  };
-  const canRunChecks =
-    showManage &&
-    !awaitingVerification &&
-    busy === null &&
-    selectedView !== null &&
-    selectedView.settingsState === "ready" &&
-    selectedView.checksState === "ready" &&
-    selectedView.detailState !== "error" &&
-    checkTarget() !== null;
-
-  const runCheckFailure = (error: unknown): Notice => {
-    if (error instanceof ConfigurationConflictError) {
-      const current = numberValue(error.details?.currentVersion);
-      return {
-        tone: "error",
-        title: "检查未执行",
-        text: `该编辑版本已变化${
-          current === null ? "" : `（当前编辑版本 ${current}）`
-        }；本次检查没有执行，也没有改变配置或媒体。请核对重新读取的结果后再次运行检查。`,
-      };
-    }
-    if (error instanceof ConfigurationApiError) {
-      if (error.category === "unauthorized") {
-        return {
-          tone: "error",
-          title: "检查未执行",
-          text: "登录状态已失效；请重新连接后再次运行检查。",
-        };
-      }
-      if (error.category === "forbidden") {
-        return {
-          tone: "error",
-          title: "检查未执行",
-          text: "当前账号没有运行该检查的权限；配置与媒体没有被改变。",
-        };
-      }
-      if (error.category === "unavailable") {
-        return {
-          tone: "error",
-          title: "检查未完成",
-          text: "检查服务暂不可用，本次没有取得结果；配置与媒体没有被改变。请稍后重新运行检查。",
-        };
-      }
-      if (error.category === "malformed") {
-        return {
-          tone: "error",
-          title: "检查结果无法识别",
-          text: "后端返回的结果不符合检查证据格式；请重新读取该修订后再次运行检查。",
-        };
-      }
-      return {
-        tone: "error",
-        title: "检查未执行",
-        text:
-          "后端拒绝了本次检查请求；配置与媒体没有被改变。请核对示例与所选对象后重试。" +
-          (error.nextAction === null ? "" : `后端说明：${error.nextAction}`),
-      };
-    }
-    return {
-      tone: "error",
-      title: "检查未完成",
-      text: "没有收到可确认的检查结果；配置与媒体没有被改变，请重新运行检查。",
-    };
-  };
-
-  const buildDestinationSample = (
-    inputs: CheckInputs,
-  ):
-    | { readonly sample: Record<string, unknown> }
-    | { readonly error: string } => {
-    const title = inputs.sampleTitle.trim();
-    if (title === "") return { error: "请输入用于预检的示例片名。" };
-    const extension = inputs.sampleExtension.trim();
-    if (!/^[A-Za-z0-9]{1,16}$/.test(extension)) {
-      return { error: "示例扩展名只能包含字母或数字。" };
-    }
-    const sample: Record<string, unknown> = {
-      title,
-      mediaType: inputs.sampleMediaType,
-      extension,
-    };
-    const year = inputs.sampleYear.trim();
-    if (year !== "") {
-      if (!/^\d{4}$/.test(year)) {
-        return { error: "示例年份需为四位数字，或留空表示不带年份。" };
-      }
-      sample.year = Number(year);
-    }
-    const genres = splitSampleList(inputs.sampleGenres);
-    if (genres.some((value) => value.length > 64)) {
-      return { error: "示例题材标签过长，请使用更短的标签。" };
-    }
-    if (genres.length > 0) sample.genres = genres;
-    const countries = splitSampleList(inputs.sampleCountries);
-    if (countries.some((value) => value.length > 64)) {
-      return { error: "示例国家/地区代码过长，请使用更短的值。" };
-    }
-    if (countries.length > 0) sample.countries = countries;
-    return { sample };
-  };
-
-  const runPublishCheck = async (entry: PublishCheckItem) => {
-    if (!canRunChecks || selectedView === null) return;
-    const target = checkTarget();
-    if (target === null) {
-      setCheckNotice({
-        revisionId: selectedView.revisionId,
-        notice: {
-          tone: "error",
-          title: "检查未执行",
-          text: "尚未读取到该草稿的精确版本与摘要；请重新读取该修订后再运行检查。",
-        },
-      });
-      return;
-    }
-    const inputs =
-      checkInputs[target.revisionId] ?? defaultCheckInputs(checkObjects);
-    let strategyInput: {
-      readonly resourceLibraryId: string;
-      readonly syntheticPath: string;
-    } | null = null;
-    let destinationInput: {
-      readonly recognitionType: string;
-      readonly sample: Record<string, unknown>;
-    } | null = null;
-    if (entry.kind === "storage" && entry.storageId === null) return;
-    if (entry.kind === "strategy") {
-      const libraryId = inputs.strategyLibraryId.trim();
-      const syntheticPath = inputs.syntheticPath.trim();
-      if (libraryId === "" || syntheticPath === "") {
-        setCheckNotice({
-          revisionId: target.revisionId,
-          notice: {
-            tone: "error",
-            title: "检查未执行",
-            text: "请选择启用的测试资源库并填写合成文件名后再运行识别策略测试。",
-          },
-        });
-        return;
-      }
-      strategyInput = { resourceLibraryId: libraryId, syntheticPath };
-    }
-    if (entry.kind === "destination") {
-      const recognitionType = inputs.recognitionType.trim();
-      if (recognitionType === "") {
-        setCheckNotice({
-          revisionId: target.revisionId,
-          notice: {
-            tone: "error",
-            title: "检查未执行",
-            text: "请选择启用的识别类型后再运行目标预检。",
-          },
-        });
-        return;
-      }
-      const built = buildDestinationSample(inputs);
-      if ("error" in built) {
-        setCheckNotice({
-          revisionId: target.revisionId,
-          notice: {
-            tone: "error",
-            title: "检查未执行",
-            text: `${built.error}系统没有发送改写后的示例。`,
-          },
-        });
-        return;
-      }
-      destinationInput = { recognitionType, sample: built.sample };
-    }
-
-    setBusy({
-      kind: "check",
-      revisionId: target.revisionId,
-      checkId: entry.id,
-    });
-    setCheckNotice(null);
-    setNotice(null);
-    setReadNotice(null);
-    try {
-      const result =
-        entry.kind === "storage"
-          ? await runStorageCheck(token, target.revisionId, {
-              storageId: entry.storageId ?? "",
-              expectedVersion: target.version,
-              expectedDigest: target.digest,
-            })
-          : entry.kind === "strategy"
-            ? await runRecognitionStrategyTest(token, target.revisionId, {
-                expectedVersion: target.version,
-                expectedDigest: target.digest,
-                resourceLibraryId: strategyInput?.resourceLibraryId ?? "",
-                syntheticPath: strategyInput?.syntheticPath ?? "",
-              })
-            : await runDestinationPrecheck(token, target.revisionId, {
-                expectedVersion: target.version,
-                expectedDigest: target.digest,
-                recognitionType: destinationInput?.recognitionType ?? "",
-                sample: destinationInput?.sample ?? {},
-              });
-      const refreshed = await loadDetail(target.revisionId);
-      setCheckNotice({
-        revisionId: target.revisionId,
-        notice: checkResultNotice(entry, result, target.version),
-      });
-      if (!refreshed) {
-        setReadNotice(
-          "本次检查结果已返回，但随后读取该修订失败；请重新读取后再判断是否满足激活条件。",
-        );
-      }
-    } catch (error) {
-      const notice = runCheckFailure(error);
-      // A stale revision or a refusal still needs an honest current read; a
-      // failed read keeps the previous evidence visibly unconfirmed.
-      const refreshed = await loadDetail(target.revisionId);
-      setCheckNotice({ revisionId: target.revisionId, notice });
-      if (!refreshed) {
-        setReadNotice(
-          "检查没有取得可确认的结果，且随后读取该修订失败；页面保留上次读取的检查证据，请重新读取后再判断。",
-        );
-      }
-    } finally {
-      setBusy(null);
-    }
-  };
+  // A failed read must still name the exact published identity the status
+  // document reported; it never invents a version.
+  const selectedSequence = model.activeVersion;
 
   // Leaving with unsaved input or an in-flight command is one explicit
   // decision. The route blocker covers in-app links and browser Back; the
@@ -1852,42 +1091,6 @@ export function ConfigurationPage() {
   const groupHasMixedBoundaries =
     startGroup !== null &&
     new Set(startGroup.fields.map((field) => field.boundary)).size > 1;
-  const selectedOption = selectionId;
-  const revisionOptions = useMemo(() => {
-    const options: Array<{ value: string; label: string }> = [];
-    if (model.activeHealthy && model.activeId !== null) {
-      options.push({
-        value: model.activeId,
-        label: `生效配置（序号 ${model.activeVersion ?? "未知"}）`,
-      });
-    }
-    for (const draft of model.drafts) {
-      options.push({
-        value: draft.revisionId,
-        label: `草稿（编辑版本 ${draft.version ?? "未知"}）${
-          draft.status === "validated" ? " · 已验证" : ""
-        }`,
-      });
-    }
-    if (
-      selectionId !== null &&
-      !options.some((option) => option.value === selectionId)
-    ) {
-      options.push({
-        value: selectionId,
-        label: `草稿（编辑版本 ${selectedEditVersion ?? "未知"}）`,
-      });
-    }
-    return options;
-  }, [
-    model.activeHealthy,
-    model.activeId,
-    model.activeVersion,
-    model.drafts,
-    selectionId,
-    selectedEditVersion,
-  ]);
-
   const writeFailure = (
     error: unknown,
     action: MutationAction,
@@ -1905,7 +1108,6 @@ export function ConfigurationPage() {
 
   const selectRevision = (revisionId: string | null) => {
     if (busy !== null) return;
-    setCheckNotice(null);
     setSelectionId(revisionId);
     setInspectorTab("json");
     setReadNotice(null);
@@ -1914,76 +1116,25 @@ export function ConfigurationPage() {
     }
   };
 
-  const refreshPage = async () => {
-    if (busy !== null) return;
-    const result = await query.refetch();
-    if (result.error !== null || result.data === undefined) {
-      setReadNotice(
-        "配置状态刷新失败；页面保留已知状态，没有把旧内容冒充为最新读取。",
-      );
-      return;
-    }
-    setReadNotice(null);
-    const next = readStatusModel(result.data);
-    const current = selectionId;
-    if (current === null) {
-      if (next.activeHealthy && next.activeId !== null) {
-        selectRevision(next.activeId);
-      }
-      return;
-    }
-    const currentIsActive = next.activeId === current;
-    const currentDraft = next.drafts.find(
-      (draft) => draft.revisionId === current,
-    );
-    if (!currentIsActive && currentDraft === undefined) {
-      if (dirty) {
-        setReadNotice(
-          "所选修订已不再是可编辑草稿；未保存输入仍保留在此页，请先核对再选择当前配置版本。",
-        );
-        return;
-      }
-      selectRevision(next.activeHealthy ? next.activeId : null);
-      setNotice({
-        tone: "warning",
-        title: "所选修订已变化",
-        text: "该修订已不再可编辑；已切换到当前可读取的配置。",
-      });
-      return;
-    }
-    if (dirty) {
-      setReadNotice(
-        "本次刷新更新了配置状态；当前未保存输入保持不变，也没有被重新绑定到新的编辑版本。",
-      );
-      return;
-    }
-    await loadRevision(current);
-  };
-
-  const createDraft = async () => {
+  const initializeEmpty = async () => {
     if (!model.canManage || busy !== null || awaitingVerification) return;
     setBusy({ kind: "create" });
     setNotice(null);
     setReadNotice(null);
     try {
-      const result = await createFirstDraft(token);
+      const result = await initializeConfiguration(token);
       const revisionId = text(result.revisionId, "");
       setNotice({
         tone: "success",
-        title: "已创建首个草稿",
-        text: "草稿尚未生效；编辑后请验证，再显式激活。",
+        title: "配置已初始化",
+        text: "空配置已发布为当前生效快照；可以继续配置 Storage、资源库和媒体业务。",
       });
       void client.invalidateQueries({ queryKey: QUERY_KEY });
       await query.refetch();
       if (revisionId !== "") {
         selectRevision(revisionId);
       } else {
-        setAwaitingVerification(true);
-        setNotice({
-          tone: "error",
-          title: "创建结果缺少修订标识",
-          text: "系统不会猜测新草稿；请先核实现有配置状态。",
-        });
+        await loadRevision(String(result.revisionId ?? ""));
       }
     } catch (error) {
       writeFailure(error, "create-first-draft");
@@ -2036,26 +1187,17 @@ export function ConfigurationPage() {
     }
     const startedValues = { ...values };
     const submittedPaths = new Set(result.edits.map((edit) => edit.fieldPath));
-    const body =
-      authority.kind === "active"
-        ? {
-            expectedActiveRevisionId: authority.revisionId,
-            expectedActiveVersion: authority.revisionVersion,
-            ...(authority.digest === null
-              ? {}
-              : { expectedActiveDigest: authority.digest }),
-            edits: result.edits,
-          }
-        : {
-            revisionId: authority.revisionId,
-            expectedVersion:
-              authority.draftVersion ?? selectedView.draftVersion,
-            edits: result.edits,
-          };
+    const body = {
+      expectedActiveRevisionId: authority.revisionId,
+      expectedActiveVersion: authority.revisionVersion,
+      ...(authority.digest === null
+        ? {}
+        : { expectedActiveDigest: authority.digest }),
+      edits: result.edits,
+    };
     setBusy({ kind: "save", revisionId: selectionId, groupId: group.id });
     setNotice(null);
     setReadNotice(null);
-    setCheckNotice(null);
     setFieldErrors((previous) => ({ ...previous, [group.id]: {} }));
     try {
       const updated = await saveSystemSettings(token, body);
@@ -2074,25 +1216,27 @@ export function ConfigurationPage() {
       const nextGroups = readSettingGroups(updated);
       const nextBaseline = baselineValues(nextGroups);
       const nextValues: Record<string, string> = { ...nextBaseline };
-      for (const field of editableFields(nextGroups)) {
-        const current = currentValues[field.path];
-        if (current === undefined) continue;
-        const submitted = submittedPaths.has(field.path);
-        if (submitted && current === startedValues[field.path]) {
-          nextValues[field.path] = nextBaseline[field.path] ?? "";
-          continue;
-        }
-        if (current !== (previousBaseline[field.path] ?? "")) {
-          // Another group's unsaved input, or a keystroke that raced this
-          // request, survives the successor publication as still unsaved.
-          nextValues[field.path] = current;
+      for (const nextGroup of nextGroups) {
+        for (const field of nextGroup.fields) {
+          const current = currentValues[field.path];
+          if (current === undefined) continue;
+          const submitted = submittedPaths.has(field.path);
+          if (submitted && current === startedValues[field.path]) {
+            nextValues[field.path] = nextBaseline[field.path] ?? "";
+            continue;
+          }
+          if (current !== (previousBaseline[field.path] ?? "")) {
+            // Another group's unsaved input, or a keystroke that raced this
+            // request, survives the published successor as still unsaved.
+            nextValues[field.path] = current;
+          }
         }
       }
       if (newRevisionId !== selectionId) bumpEpoch(selectionId);
       bumpEpoch(newRevisionId);
       const nextView: RevisionView = {
         ...emptyView(newRevisionId),
-        status: "draft",
+        status: "active",
         revisionVersion: newRevisionVersion,
         draftVersion: newDraftVersion,
         digest: text(updated.revisionDigest, "") || null,
@@ -2111,7 +1255,7 @@ export function ConfigurationPage() {
           values: nextValues,
           initial: { ...nextBaseline },
           authority: {
-            kind: "draft",
+            kind: "active",
             revisionId: newRevisionId,
             revisionVersion: newRevisionVersion,
             draftVersion: newDraftVersion,
@@ -2124,12 +1268,12 @@ export function ConfigurationPage() {
       setActiveGroup(group.id);
       setNotice({
         tone: "success",
-        title: "已保存到草稿",
+        title: "更改已应用",
         text: `「${group.title}」的 ${
           result.edits.length
-        } 项实际修改已保存为编辑版本 ${
-          newDraftVersion ?? "新版本"
-        }；草稿尚未生效，验证并显式激活后才会被运行时采用。`,
+        } 项实际修改已通过检查并发布为生效配置序号 ${
+          newRevisionVersion ?? "新版本"
+        }；需要重启的字段会在重启后采用。`,
       });
       void loadDetail(newRevisionId);
       void client.invalidateQueries({ queryKey: QUERY_KEY });
@@ -2157,133 +1301,6 @@ export function ConfigurationPage() {
     }
   };
 
-  const validateDraft = async () => {
-    if (!canValidate || selectedView === null) return;
-    setBusy({ kind: "validate", revisionId: selectedView.revisionId });
-    setNotice(null);
-    setReadNotice(null);
-    setCheckNotice(null);
-    try {
-      const result = await validateRevision(token, selectedView.revisionId);
-      const revisionId = text(result.revisionId, selectedView.revisionId);
-      const version = numberValue(result.version);
-      if (revisionId !== selectedView.revisionId || version === null) {
-        setAwaitingVerification(true);
-        setNotice({
-          tone: "error",
-          title: "验证结果不完整",
-          text: "后端没有返回精确的草稿版本；系统不会猜测版本或继续激活。请先核实当前配置状态。",
-        });
-        return;
-      }
-      bumpEpoch(revisionId);
-      const digest = text(result.digest, "");
-      updateViews((previous) => {
-        const current = previous[revisionId] ?? emptyView(revisionId);
-        return {
-          ...previous,
-          [revisionId]: {
-            ...current,
-            status: "validated",
-            revisionVersion: version,
-            draftVersion: version,
-            digest: digest === "" ? current.digest : digest,
-          },
-        };
-      });
-      const existingForm = formsRef.current[revisionId];
-      if (existingForm !== undefined) {
-        updateForms((previousForms) => ({
-          ...previousForms,
-          [revisionId]: {
-            ...existingForm,
-            authority: { ...existingForm.authority, draftVersion: version },
-          },
-        }));
-      }
-      setNotice({
-        tone: "success",
-        title: "草稿验证通过",
-        text: `编辑版本 ${version} 已通过整体校验；只有显式激活后才会生效。${
-          dirty ? "当前未保存输入不会随本次验证提交。" : ""
-        }`,
-      });
-      // Validation rotates the exact revision version this page binds, so the
-      // publish checks must re-read their evidence instead of showing the
-      // predecessor's version as current.
-      void loadDetail(revisionId);
-      void client.invalidateQueries({ queryKey: QUERY_KEY });
-      void query.refetch();
-    } catch (error) {
-      writeFailure(error, "validate");
-      void client.invalidateQueries({ queryKey: QUERY_KEY });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const activateDraft = async () => {
-    if (!canActivate || selectedView === null || validatedVersion === null) {
-      return;
-    }
-    const hadUnsavedInput = dirty;
-    setBusy({ kind: "activate", revisionId: selectedView.revisionId });
-    setNotice(null);
-    setReadNotice(null);
-    try {
-      // The generic Draft editor publishes only this exact validated revision
-      // through the normal checked activation boundary: the backend re-checks
-      // the applicable Storage evidence, Recognition Strategy Test and
-      // destination precheck before it can become Active. A refusal keeps the
-      // Draft and the previous Active untouched.
-      await activateRevision(token, selectedView.revisionId, validatedVersion);
-      bumpEpoch(selectedView.revisionId);
-      if (hadUnsavedInput) {
-        formsRef.current = {};
-        setForms({});
-        if (principalId !== null) {
-          writeRetainedSettingsSession(principalId, null);
-        }
-      }
-      setNotice({
-        tone: "success",
-        title: "配置已激活",
-        text: `编辑版本 ${validatedVersion} 已发布为新的生效配置；运行时按各字段的生效边界采用。`,
-      });
-      void client.invalidateQueries({ queryKey: QUERY_KEY });
-      const refreshed = await query.refetch();
-      if (refreshed.error !== null) {
-        setReadNotice(
-          "配置已激活，但随后读取配置状态失败；已知激活结果未被撤销，请刷新确认当前生效配置。",
-        );
-      }
-      if (returnContext !== null) {
-        // This is the confirmed, checked activation's own return; it must not be
-        // mistaken for an un-decided unsaved exit.
-        bypassBlockerRef.current = true;
-        navigate(settingsReturnDestination(returnContext));
-        return;
-      }
-      const reloaded = await loadRevision(selectedView.revisionId);
-      if (!reloaded) {
-        setReadNotice(
-          "配置已激活，但随后读取当前生效配置失败；已知激活结果未被撤销，请刷新确认。",
-        );
-      }
-    } catch (error) {
-      const failure = writeFailure(error, "activate", checkModel.blocking);
-      if (failure.currentVersion === null) {
-        // A checked-activation refusal is about this exact revision's
-        // evidence; refresh that read so the checks panel states the current
-        // truth rather than a stale local guess.
-        void loadDetail(selectedView.revisionId);
-      }
-      void client.invalidateQueries({ queryKey: QUERY_KEY });
-    } finally {
-      setBusy(null);
-    }
-  };
-
   const closeDecision = () => {
     if (busyRef.current !== null) return;
     setPendingDecision(null);
@@ -2302,18 +1319,6 @@ export function ConfigurationPage() {
       if (blocker.status === "blocked") blocker.proceed();
       return;
     }
-    // Activating the exact validated version does not submit unsaved input.
-    setPendingDecision(null);
-    void activateDraft();
-  };
-
-  const requestActivation = () => {
-    if (!canActivate || busy !== null) return;
-    if (dirty) {
-      setPendingDecision({ kind: "activate" });
-      return;
-    }
-    void activateDraft();
   };
 
   const exportPackage = async () => {
@@ -2355,9 +1360,9 @@ export function ConfigurationPage() {
       setNotice({
         tone: "success",
         title: "已生成脱敏配置包",
-        text: `配置包来源：${
-          selectionIsActive ? "生效配置" : "草稿"
-        }（编辑版本 ${selectedEditVersion ?? "未知"}）；未改变任何配置。`,
+        text: `配置包来源：生效配置（配置序号 ${
+          selectedSequence ?? "未知"
+        }）；未改变任何配置。`,
       });
     } catch (error) {
       if ((epochRef.current[revisionId] ?? 0) === epoch) {
@@ -2405,7 +1410,7 @@ export function ConfigurationPage() {
       setNotice({
         tone: "success",
         title: "已核实当前配置状态",
-        text: "系统不会自动重发上一次操作；请根据当前生效配置和草稿列表决定下一步。",
+        text: "系统不会自动重发上一次操作；请根据当前生效配置和未保存输入决定下一步。",
       });
     } finally {
       setBusy(null);
@@ -2436,11 +1441,11 @@ export function ConfigurationPage() {
 
   return (
     <AuthorizedReadBoundary query={query} unavailableTitle="配置状态不可用">
-      {({ isPending, isFetching }) => {
+      {({ isPending }) => {
         if (isPending || !data)
           return showStatusWait ? (
             <StatusBanner variant="info" title="正在读取配置状态">
-              <p>读取后端权威配置状态，不会创建草稿或启动工作。</p>
+              <p>读取后端权威配置状态，不会写入配置或启动工作。</p>
             </StatusBanner>
           ) : null;
         return (
@@ -2451,14 +1456,6 @@ export function ConfigurationPage() {
                 <p>
                   查看当前生效配置、修改运行参数，并显式验证和激活高级配置。
                 </p>
-              </div>
-              <div className="mf-settings-header-actions">
-                <RefreshControl
-                  onRefresh={() => void refreshPage()}
-                  refreshing={isFetching || busy?.kind === "verify"}
-                  label="刷新"
-                  refreshingLabel="刷新中…"
-                />
               </div>
             </header>
             {returnContext !== null && (
@@ -2529,18 +1526,8 @@ export function ConfigurationPage() {
                 </strong>
               </div>
               <div className="mf-settings-summary-item">
-                <span>草稿</span>
-                <strong>
-                  {model.drafts.length === 0
-                    ? "无"
-                    : model.drafts.length === 1
-                      ? `编辑版本 ${model.drafts[0]?.version ?? "未知"}${
-                          model.drafts[0]?.status === "validated"
-                            ? "（已验证）"
-                            : "（未验证）"
-                        }`
-                      : `${model.drafts.length} 个可恢复草稿`}
-                </strong>
+                <span>未发布内容</span>
+                <strong>无</strong>
               </div>
               <div className="mf-settings-summary-item">
                 <span>上次读取</span>
@@ -2557,30 +1544,14 @@ export function ConfigurationPage() {
                     : "尚未读取"}
                 </strong>
               </div>
-              {model.setupRequired &&
-                model.drafts.length === 0 &&
-                showManage && (
-                  <div className="mf-settings-summary-action">
-                    <Button
-                      type="button"
-                      disabled={busy !== null || awaitingVerification}
-                      onClick={() => void createDraft()}
-                    >
-                      {busy?.kind === "create" ? "创建中…" : "创建首个草稿"}
-                    </Button>
-                  </div>
-                )}
-              {model.setupRequired && model.drafts.length > 0 && (
+              {model.setupRequired && showManage && (
                 <div className="mf-settings-summary-action">
                   <Button
                     type="button"
-                    variant="secondary"
                     disabled={busy !== null || awaitingVerification}
-                    onClick={() =>
-                      selectRevision(model.drafts[0]?.revisionId ?? null)
-                    }
+                    onClick={() => void initializeEmpty()}
                   >
-                    恢复草稿（编辑版本 {model.drafts[0]?.version ?? "未知"}）
+                    {busy?.kind === "create" ? "初始化中…" : "初始化为空配置"}
                   </Button>
                 </div>
               )}
@@ -2588,8 +1559,8 @@ export function ConfigurationPage() {
             {model.activeUnavailable && (
               <StatusBanner variant="error" title="生效配置需要恢复">
                 <p>
-                  当前生效配置不可用；系统不会用草稿、旧缓存或部署配置代替它。
-                  请按恢复流程修复持久化或完整性问题，然后刷新核实。
+                  当前生效配置不可用；系统不会用旧缓存、旧修订或部署配置代替它。
+                  请通过权限校验后明确发布一份完整替换内容恢复。
                 </p>
               </StatusBanner>
             )}
@@ -2602,144 +1573,45 @@ export function ConfigurationPage() {
                 <div>
                   <h2 id="settings-advanced-title">高级配置</h2>
                   <p>
-                    编辑允许的设置字段并保存为草稿；草稿不会被运行时消费，必须显式验证并激活。
+                    编辑允许的设置字段，点击「应用更改」后由后端检查并原子发布为新的生效快照。
                   </p>
                 </div>
               </header>
-              {revisionOptions.length > 0 && (
+              {selectedView !== null && (
                 <div className="mf-settings-toolbar">
-                  <label className="mf-settings-select">
-                    <span>查看配置</span>
-                    <select
-                      value={selectedOption ?? ""}
-                      disabled={busy !== null}
-                      onChange={(event) =>
-                        selectRevision(event.target.value || null)
-                      }
-                    >
-                      {selectedOption === null && (
-                        <option value="">请选择要恢复的草稿</option>
-                      )}
-                      {revisionOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {selectedView !== null && (
-                    <div className="mf-settings-version">
-                      <span
-                        className={`mf-settings-badge ${
-                          selectionIsActive
-                            ? "mf-settings-badge-active"
-                            : "mf-settings-badge-draft"
-                        }`}
-                      >
-                        {selectionIsActive ? "生效配置" : "草稿"}
-                      </span>
-                      <span>
-                        {selectionIsActive
-                          ? `配置序号 ${selectedSequence ?? "未知"}`
-                          : `编辑版本 ${selectedEditVersion ?? "未知"}`}
-                      </span>
-                      <span className="mf-settings-boundary">
-                        {selectionIsActive
-                          ? "此快照已生效"
-                          : viewStatus === "validated"
-                            ? `验证有效（版本 ${
-                                selectedEditVersion ?? "未知"
-                              }）`
-                            : "尚未验证；修改后需重新验证"}
-                      </span>
-                    </div>
-                  )}
-                  {selectedView !== null &&
-                    !selectionIsActive &&
-                    showManage && (
-                      <div className="mf-settings-toolbar-actions">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={!canValidate}
-                          onClick={() => void validateDraft()}
-                        >
-                          {busy?.kind === "validate" ? "验证中…" : "验证草稿"}
-                        </Button>
-                        <Button
-                          type="button"
-                          disabled={!canActivate}
-                          onClick={requestActivation}
-                        >
-                          {busy?.kind === "activate" ? "激活中…" : "激活配置"}
-                        </Button>
-                      </div>
-                    )}
-                  {selectedView !== null && selectionIsActive && (
+                  <div className="mf-settings-version">
+                    <span className="mf-settings-badge mf-settings-badge-active">
+                      生效配置
+                    </span>
+                    <span>配置序号 {selectedSequence ?? "未知"}</span>
+                    <span className="mf-settings-boundary">
+                      此快照已生效；更改会在应用后发布为新快照
+                    </span>
+                  </div>
+                  {!showManage && (
                     <div className="mf-settings-toolbar-actions">
                       <span className="mf-settings-boundary">
-                        {showManage
-                          ? "生效配置不可再次激活；如需修改，请保存为新的草稿。"
-                          : "当前账号只能查看生效配置。"}
+                        当前账号只能查看生效配置；应用需要配置管理员权限。
                       </span>
                     </div>
                   )}
-                  {selectedView !== null &&
-                    !selectionIsActive &&
-                    !showManage && (
-                      <div className="mf-settings-toolbar-actions">
-                        <span className="mf-settings-boundary">
-                          当前账号只能查看此草稿；验证和激活需要配置管理员权限。
-                        </span>
-                      </div>
-                    )}
                 </div>
-              )}
-              {selectedView !== null && !selectionIsActive && (
-                <p className="mf-settings-group-note">
-                  激活只发布该已验证草稿的精确版本；下方“发布前检查”读取同一修订，
-                  任一项未满足时后端不会发布，草稿和当前生效配置保持不变。
-                </p>
-              )}
-              {selectedView !== null && !selectionIsActive && showManage && (
-                <PublishChecksPanel
-                  model={checkModel}
-                  inputs={
-                    checkInputsForSelection ?? defaultCheckInputs(checkObjects)
-                  }
-                  validated={validatedVersion !== null}
-                  checksState={selectedView.checksState}
-                  canRun={canRunChecks}
-                  busyId={
-                    busy?.kind === "check" ? (busy.checkId ?? null) : null
-                  }
-                  notice={
-                    checkNotice !== null &&
-                    checkNotice.revisionId === selectedView.revisionId
-                      ? checkNotice.notice
-                      : null
-                  }
-                  onChange={updateCheckInputs}
-                  onRun={(entry) => void runPublishCheck(entry)}
-                />
               )}
               {selectedView === null ? (
                 <section className="mf-panel mf-settings-empty">
                   <h2>
                     {model.activeUnavailable
                       ? "等待恢复生效配置"
-                      : model.drafts.length > 0
-                        ? "选择要恢复的草稿"
-                        : model.setupRequired
-                          ? "先创建首个草稿"
-                          : "尚未读取配置"}
+                      : model.setupRequired
+                        ? "先初始化配置"
+                        : "尚未读取配置"}
                   </h2>
                   <p>
                     {model.activeUnavailable
-                      ? "生效配置损坏时，系统不会用草稿替代它；请先完成恢复。"
-                      : model.drafts.length > 0
-                        ? "读取不会创建草稿；请从上面的“查看配置”明确选择，或使用状态摘要中的恢复操作。"
-                        : "读取只返回当前权威状态；创建草稿、验证和激活都需要明确操作。"}
+                      ? "生效配置损坏时，系统不会用旧修订替代它；请明确发布完整替换内容完成恢复。"
+                      : model.setupRequired
+                        ? "初始化为空配置后，运行时即可采用后续业务对象的直接保存。"
+                        : "读取只返回当前权威状态；应用更改会检查并原子发布。"}
                   </p>
                 </section>
               ) : (
@@ -2765,8 +1637,7 @@ export function ConfigurationPage() {
                         {selectedView.detailState === "error" && (
                           <StatusBanner variant="warning" title="修订状态未知">
                             <p>
-                              配置 JSON
-                              读取失败，因此验证状态无法从修订读取确认；请重新读取后再验证或激活。
+                              配置 JSON 读取失败，因此当前生效内容无法确认；请刷新后再应用更改。
                             </p>
                           </StatusBanner>
                         )}
@@ -3010,7 +1881,7 @@ export function ConfigurationPage() {
                                     {busy?.kind === "save" &&
                                     busy.groupId === startGroup.id
                                       ? "保存中…"
-                                      : "保存到草稿"}
+                                      : "应用更改"}
                                   </Button>
                                   {groupChanged(
                                     startGroup,
@@ -3075,7 +1946,7 @@ export function ConfigurationPage() {
                               </p>
                             )}
                             <p className="mf-settings-group-note">
-                              保存后仍需在同一区域验证草稿并显式激活；其他分组和未提交输入不会随本次保存提交。
+                              点击「应用更改」会检查本组字段并原子发布新的生效快照；其他分组和未提交输入不会随本次保存提交。
                             </p>
                           </div>
                         )}
@@ -3094,16 +1965,6 @@ export function ConfigurationPage() {
                         </p>
                       </div>
                       <div className="mf-actions">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={busy !== null}
-                          onClick={() =>
-                            void loadRevision(selectedView.revisionId)
-                          }
-                        >
-                          重新读取
-                        </Button>
                         <Button
                           type="button"
                           variant="secondary"
@@ -3142,11 +2003,7 @@ export function ConfigurationPage() {
                       <>
                         <p className="mf-settings-source">
                           内容：完整配置文档 · 来源：
-                          {selectionIsActive ? "生效配置" : "草稿"}（
-                          {selectionIsActive
-                            ? `配置序号 ${selectedSequence ?? "未知"}`
-                            : `编辑版本 ${selectedEditVersion ?? "未知"}`}
-                          ）
+                          生效配置（配置序号 {selectedSequence ?? "未知"}）
                         </p>
                         {selectedView.detailState === "loading" ? (
                           <p className="mf-settings-loading" role="status">
@@ -3178,11 +2035,7 @@ export function ConfigurationPage() {
                             ? `（${selectedView.packageKind}）`
                             : ""}{" "}
                           · 来源：
-                          {selectionIsActive ? "生效配置" : "草稿"}（
-                          {selectionIsActive
-                            ? `配置序号 ${selectedSequence ?? "未知"}`
-                            : `编辑版本 ${selectedEditVersion ?? "未知"}`}
-                          ）
+                          生效配置（配置序号 {selectedSequence ?? "未知"}）
                         </p>
                         {selectedView.packageState === "loading" ? (
                           <p className="mf-settings-loading" role="status">
@@ -3296,9 +2149,7 @@ export function ConfigurationPage() {
                   <div>
                     <dt>当前查看版本</dt>
                     <dd>
-                      {selectionIsActive
-                        ? `配置序号 ${selectedSequence ?? "未知"}`
-                        : `编辑版本 ${selectedEditVersion ?? "未知"}`}
+                      配置序号 {selectedSequence ?? "未知"}
                     </dd>
                   </div>
                   <div>
@@ -3310,24 +2161,11 @@ export function ConfigurationPage() {
                     <dd>{text(data.unavailableReason, "无")}</dd>
                   </div>
                 </dl>
-                {model.drafts.length > 0 && (
-                  <div>
-                    <h4>可恢复草稿</h4>
-                    <ul className="mf-settings-diagnostic-list">
-                      {model.drafts.map((draft) => (
-                        <li key={draft.revisionId}>
-                          <code>{draft.revisionId}</code> · 编辑版本{" "}
-                          {draft.version ?? "未知"} · {draft.status}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
               </section>
               <section className="mf-settings-diagnostic-block">
                 <h3>运行时消费证据</h3>
                 <p className="mf-dashboard-meta">
-                  描述当前生效配置的消费情况，不代表所选草稿已被消费。
+                  描述当前生效配置的消费情况。
                 </p>
                 <dl className="mf-detail-grid">
                   <div>
@@ -3358,25 +2196,15 @@ export function ConfigurationPage() {
             {activeDecision !== null && (
               <SettingsDecisionDialog
                 title={
-                  activeDecision.kind === "activate"
-                    ? "激活不会提交未保存输入"
-                    : busy !== null
-                      ? "操作正在进行"
-                      : "有未保存修改"
+                  busy !== null ? "操作正在进行" : "有未保存修改"
                 }
                 description={
-                  activeDecision.kind === "activate"
-                    ? "当前有未保存输入；激活只发布已验证的草稿版本，未保存输入不会提交，离开此页后也不会保留。"
-                    : busy !== null
-                      ? "保存、验证或激活仍在进行；完成前不能离开，以避免重复提交或结果未知。"
-                      : "当前修改尚未保存到草稿。离开会丢弃这些输入，已保存或已激活的配置保持不变。"
+                  busy !== null
+                    ? "应用或初始化仍在进行；完成前不能离开，以避免重复提交或结果未知。"
+                    : "当前修改尚未应用。离开会丢弃这些输入，已发布的生效配置保持不变。"
                 }
                 confirmLabel={
-                  activeDecision.kind === "activate"
-                    ? "继续激活"
-                    : busy !== null
-                      ? "请等待完成"
-                      : "放弃修改并离开"
+                  busy !== null ? "请等待完成" : "放弃修改并离开"
                 }
                 busy={busy !== null}
                 onConfirm={proceedLeave}

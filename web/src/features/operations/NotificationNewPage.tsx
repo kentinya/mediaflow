@@ -119,14 +119,14 @@ export function NotificationNewPage() {
         return;
       }
       if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("Webhook 定义可能已经保存到草稿"));
+        setError(unknownCommandMessage("Webhook 定义可能已经发布"));
         return;
       }
       setShowIssues(true);
       setError(
         result.status === 409
-          ? "定义没有写入：草稿在你编辑期间已经变化。重新读取草稿后再提交；服务端保留了胜出的版本。"
-          : `定义没有写入（${result.code}）。修正表单后重试；系统没有自动重试。`,
+          ? "定义没有发布：配置在你编辑期间已经变化。重新读取后再提交；服务端保留了胜出的版本。"
+          : `定义没有发布（${result.code}）。修正表单后重试；系统没有自动重试。`,
       );
     },
   });
@@ -144,13 +144,13 @@ export function NotificationNewPage() {
         return;
       }
       if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("后继草稿可能已经创建"));
+        setError(unknownCommandMessage("后继配置可能已经创建"));
         return;
       }
       setError(
         result.status === 409
-          ? "后继草稿没有创建：已生效配置在读取后已经变化。重新读取后重试。"
-          : `后继草稿没有创建（${result.code}）。重新读取后再试。`,
+          ? "后继配置没有创建：已生效配置在读取后已经变化。重新读取后重试。"
+          : `后继配置没有创建（${result.code}）。重新读取后再试。`,
       );
     },
   });
@@ -206,7 +206,7 @@ export function NotificationNewPage() {
       busy={busy}
       title={title}
       titleId={titleId}
-      description="保存到打开的草稿；检查并发布后才会生效。"
+      description="点击「应用更改」后，后端会校验并原子发布为新的生效配置。"
       closeDisabled={busy}
       onRequestClose={guard.attemptClose}
       size="form"
@@ -222,7 +222,7 @@ export function NotificationNewPage() {
           </Button>
           {draftReady && (
             <Button type="submit" form="notification-new-form" disabled={busy}>
-              {createMutation.isPending ? "正在保存到草稿…" : "保存到草稿"}
+              {createMutation.isPending ? "正在应用…" : "应用更改"}
             </Button>
           )}
         </>
@@ -236,8 +236,8 @@ export function NotificationNewPage() {
         />
       )}
       {query.isError && page === null && (
-        <NotificationCardStatus variant="error" title="草稿状态读取失败">
-          <p>没有读取到打开的草稿，因此不能安全创建定义。</p>
+        <NotificationCardStatus variant="error" title="配置状态读取失败">
+          <p>没有读取到当前生效配置，因此不能安全创建定义。</p>
           <div className="mf-actions">
             <Button
               type="button"
@@ -251,8 +251,8 @@ export function NotificationNewPage() {
         </NotificationCardStatus>
       )}
       {query.data === undefined && !query.isError && (
-        <NotificationCardStatus title="正在读取草稿状态">
-          <p>读取精确的已生效配置和打开的草稿。</p>
+        <NotificationCardStatus title="正在读取配置状态">
+          <p>读取当前生效的 Webhook 定义与配置身份。</p>
         </NotificationCardStatus>
       )}
       {query.data !== undefined && query.data.ok === false && page === null && (
@@ -279,11 +279,11 @@ export function NotificationNewPage() {
             <p>
               {notificationReasonLabel(
                 create?.reason ?? draft?.reason ?? null,
-                "需要先创建并打开一个草稿，才能保存 Webhook 定义。",
+                "需要当前生效配置才能发布 Webhook 定义。",
               )}
             </p>
             <p>
-              这是有意的只读状态：没有可编辑草稿时不会渲染可填写的表单，也不会提交任何内容。
+              当前没有可安全采用的配置身份；页面不会渲染可填写的表单，也不会提交任何内容。
             </p>
           </StatusBanner>
           <div className="mf-notification-actions">
@@ -301,8 +301,8 @@ export function NotificationNewPage() {
                   }
                 >
                   {draftMutation.isPending
-                    ? "正在创建后继草稿…"
-                    : "创建后继草稿"}
+                    ? "正在创建后继配置…"
+                    : "创建后继配置"}
                 </Button>
               )}
             <Button type="button" variant="secondary" onClick={closeCard}>
@@ -314,7 +314,7 @@ export function NotificationNewPage() {
               disabled={busy || query.isFetching}
               onClick={() => void query.refetch()}
             >
-              {query.isFetching ? "正在读取…" : "读取最新草稿状态"}
+              {query.isFetching ? "正在读取…" : "读取最新配置状态"}
             </Button>
           </div>
           {!page.actions.createDraft.available &&
@@ -352,7 +352,7 @@ export function NotificationNewPage() {
               return;
             }
             if (draft.revisionId === null || draft.revisionVersion === null) {
-              setError("当前草稿缺少精确版本，不能安全保存。重新读取后再试。");
+              setError("当前配置缺少精确版本，不能安全保存。重新读取后再试。");
               return;
             }
             setError(null);
@@ -366,7 +366,7 @@ export function NotificationNewPage() {
           {readDegraded && (
             <StatusBanner variant="warning" title="最新读取失败">
               <p>
-                显示的是上次成功读取的草稿状态，已知命令结果仍然有效。恢复读取后再提交新的内容。
+                显示的是上次成功读取的配置状态，已知命令结果仍然有效。恢复读取后再提交新的内容。
               </p>
               <div className="mf-actions">
                 <Button
@@ -383,7 +383,7 @@ export function NotificationNewPage() {
           {!readDegraded && (
             <div className="mf-notification-state-strip">
               <span className="mf-notification-badge">
-                打开的草稿 · 版本 {draft.revisionVersion ?? "未知"} ·{" "}
+                生效配置 · 版本 {draft.revisionVersion ?? "未知"} ·{" "}
                 {draftStatusLabel(draft.revisionStatus)}
               </span>
               <span className="mf-notification-badge">已生效配置不变</span>
@@ -394,14 +394,14 @@ export function NotificationNewPage() {
                   disabled={busy || query.isFetching}
                   onClick={() => void query.refetch()}
                 >
-                  {query.isFetching ? "正在读取…" : "读取最新草稿状态"}
+                  {query.isFetching ? "正在读取…" : "读取最新配置状态"}
                 </Button>
               </span>
             </div>
           )}
           <StatusBanner variant="info" title="先保存，再检查并发布">
             <p>
-              定义会写入草稿版本 {draft.revisionVersion ?? "未知"}
+              定义将发布为新的生效快照（当前版本 {draft.revisionVersion ?? "未知"}）
               。已生效配置在明确发布前保持不变。
             </p>
           </StatusBanner>
@@ -550,7 +550,7 @@ export function NotificationNewPage() {
                 <span>
                   <strong>启用这个 Webhook</strong>
                   <small>
-                    发布后才会使用；草稿内修改不影响当前已生效配置。
+                    应用后会发布到当前生效配置。
                   </small>
                 </span>
               </label>

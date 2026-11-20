@@ -2099,7 +2099,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                     ),
                     other_evidence,
                 )
-                self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 11)
+                self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 12)
                 # A same-version reopen keeps the current structure and marker.
                 self.assertEqual(RUNTIME_SCHEMA_VERSION, 58)
 

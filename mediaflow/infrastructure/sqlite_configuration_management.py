@@ -531,6 +531,69 @@ class SQLiteConfigurationRepository:
             ).fetchall()
         return tuple(self._revision(row) for row in rows)
 
+    def discard_revision(self, revision_id: str, audit: ConfigurationChangeAudit) -> None:
+        """Remove one transient, unpublished candidate and its dedicated evidence.
+
+        Direct publication stages a candidate only long enough to validate it
+        and record revision-bound read-only checks.  A failure must not leave a
+        recoverable draft behind, so the revision, its evidence and its
+        lifecycle audits are deleted in one transaction.  Published snapshots
+        are immutable and are never discarded.
+        """
+
+        if not isinstance(revision_id, str) or not revision_id.strip():
+            raise ValueError("configuration revision ID is required")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    "SELECT * FROM managed_configuration_revisions WHERE revision_id=?",
+                    (revision_id,),
+                ).fetchone()
+                if row is None:
+                    self._connection.rollback()
+                    return
+                if row["status"] in {
+                    ManagedConfigurationStatus.ACTIVE.value,
+                    ManagedConfigurationStatus.SUPERSEDED.value,
+                }:
+                    raise ConfigurationVersionConflict(
+                        "published configuration revisions are immutable"
+                    )
+                for table in (
+                    "managed_local_setup_checks",
+                    "managed_storage_setup_checks",
+                    "managed_recognition_strategy_tests",
+                    "managed_naming_previews",
+                    "managed_classification_previews",
+                    "managed_organize_authority_previews",
+                    "managed_destination_previews",
+                    "managed_destination_prechecks",
+                ):
+                    self._connection.execute(
+                        f"DELETE FROM {table} WHERE revision_id=?", (revision_id,)
+                    )
+                self._connection.execute(
+                    "DELETE FROM configuration_change_audits WHERE object_kind=? AND object_id=?",
+                    (ConfigurationObjectKind.SYSTEM_SETTINGS.value, revision_id),
+                )
+                self._connection.execute(
+                    "DELETE FROM managed_configuration_revisions WHERE revision_id=?",
+                    (revision_id,),
+                )
+                normalized_audit = self._normalize_audit(
+                    audit,
+                    ConfigurationObjectKind.SYSTEM_SETTINGS,
+                    revision_id,
+                    audit.before,
+                    audit.after,
+                )
+                self._insert_audit(normalized_audit)
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+
     def update_revision(
         self, revision: ManagedConfigurationRevision, expected_version: int
     ) -> ManagedConfigurationRevision:
@@ -2050,12 +2113,91 @@ class SQLiteConfigurationRepository:
         marker = self._connection.execute(
             "SELECT version FROM schema_version WHERE component='configuration_management'"
         ).fetchone()
-        if marker is None or int(marker["version"]) != CONFIGURATION_SCHEMA_VERSION:
+        if marker is None:
             self._connection.execute(
                 "INSERT INTO schema_version VALUES ('configuration_management', ?)",
                 (CONFIGURATION_SCHEMA_VERSION,),
             )
+        elif int(marker["version"]) < CONFIGURATION_SCHEMA_VERSION:
+            self._retire_unpublished_revisions_locked()
+            self._connection.execute(
+                "UPDATE schema_version SET version=? WHERE component='configuration_management'",
+                (CONFIGURATION_SCHEMA_VERSION,),
+            )
         self._insert_internal_key_locked()
+
+    def _retire_unpublished_revisions_locked(self) -> None:
+        """Switch a supported previous store to published-history-only structure.
+
+        Direct publication no longer keeps recoverable drafts.  The switch lists
+        every affected revision, refuses to proceed when an admitted Task still
+        pins one of them, and deletes the draft-only validation evidence in the
+        same transaction as the schema marker.  Any failure rolls the whole
+        initialization transaction back and leaves the file unchanged.
+        """
+
+        rows = self._connection.execute(
+            "SELECT revision_id, status, revision_sequence FROM managed_configuration_revisions "
+            "WHERE status IN (?, ?) ORDER BY revision_sequence, revision_id",
+            (
+                ManagedConfigurationStatus.DRAFT.value,
+                ManagedConfigurationStatus.VALIDATED.value,
+            ),
+        ).fetchall()
+        if not rows:
+            return
+        retired_ids = [str(row["revision_id"]) for row in rows]
+        placeholders = ",".join("?" for _ in retired_ids)
+        tables = {
+            str(item["name"])
+            for item in self._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "tasks" in tables:
+            columns = {
+                str(item["name"])
+                for item in self._connection.execute("PRAGMA table_info(tasks)").fetchall()
+            }
+            if "configuration_snapshot_id" in columns:
+                admitted = self._connection.execute(
+                    "SELECT task_id, configuration_snapshot_id FROM tasks "
+                    f"WHERE configuration_snapshot_id IN ({placeholders}) "
+                    "ORDER BY created_at, task_id",
+                    tuple(retired_ids),
+                ).fetchall()
+                if admitted:
+                    pinned = ", ".join(
+                        f"{row['task_id']}->{row['configuration_snapshot_id']}"
+                        for row in admitted[:16]
+                    )
+                    raise ValueError(
+                        "configuration database still has admitted Tasks pinned to "
+                        f"unpublished drafts ({pinned}); the file was not modified"
+                    )
+        for table in (
+            "managed_local_setup_checks",
+            "managed_storage_setup_checks",
+            "managed_recognition_strategy_tests",
+            "managed_naming_previews",
+            "managed_classification_previews",
+            "managed_organize_authority_previews",
+            "managed_destination_previews",
+            "managed_destination_prechecks",
+        ):
+            self._connection.execute(
+                f"DELETE FROM {table} WHERE revision_id IN ({placeholders})",
+                tuple(retired_ids),
+            )
+        self._connection.execute(
+            "DELETE FROM configuration_change_audits "
+            f"WHERE object_kind=? AND object_id IN ({placeholders})",
+            (ConfigurationObjectKind.SYSTEM_SETTINGS.value, *retired_ids),
+        )
+        self._connection.execute(
+            f"DELETE FROM managed_configuration_revisions WHERE revision_id IN ({placeholders})",
+            tuple(retired_ids),
+        )
 
     def _insert_internal_key_locked(self) -> None:
         # The cursor-authentication key is deployment-internal metadata.  It is

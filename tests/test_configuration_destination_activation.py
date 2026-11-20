@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import sqlite3
 import tempfile
@@ -518,8 +519,6 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 self.assertEqual(activated.status.value, "active")
                 self.assertEqual(activated.revision_id, managed.active().revision_id)
 
-                second = self._validated(managed, document)
-                run_evidence_gates(second)
                 principal = ResolvedApiPrincipal(
                     "admin",
                     "admin-token",
@@ -532,10 +531,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                     storage_adapters=adapters,
                     bootstrap_document=document,
                 )
-                evidence_before = repository.get_storage_setup_check(
-                    second.revision_id, "media-target"
-                )
-                endpoint = f"/api/configuration/revisions/{second.revision_id}/activate"
+                endpoint = "/api/configuration/publish"
                 with patch.dict(
                     os.environ,
                     {"MEDIAFLOW_TEST_OPENLIST_TOKEN": ""},
@@ -544,21 +540,25 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                         api,
                         endpoint,
                         method="POST",
-                        body={"expectedVersion": second.version, "checked": True},
+                        body={
+                            "document": _canonical_document(document),
+                            "expectedActiveRevisionId": activated.revision_id,
+                            "expectedActiveVersion": activated.revision_sequence,
+                            "expectedActiveDigest": activated.digest,
+                        },
                     )
-                self.assertEqual(status, 409)
-                self.assertEqual(blocked["error"]["code"], "configuration_conflict")
-                self.assertIn("media-target", blocked["error"]["message"])
-                self.assertIn("secret readiness", blocked["error"]["message"])
-                self.assertIn("unchanged", blocked["error"]["message"])
-                self.assertIn("rerun", blocked["error"]["details"]["nextAction"])
+                self.assertEqual(status, 409, blocked)
+                self.assertEqual(blocked["error"]["code"], "resource_library_storage_check_failed")
+                self.assertIn("media-target", repr(blocked))
+                self.assertEqual(blocked["error"]["details"]["durableState"], "active_preserved")
                 self.assertLessEqual(len(blocked["error"]["message"]), 384)
                 self.assertNotIn("unit-token", repr(blocked))
                 self.assertEqual(managed.active().revision_id, activated.revision_id)
-                self.assertEqual(managed.require(second.revision_id).status.value, "validated")
-                self.assertEqual(
-                    repository.get_storage_setup_check(second.revision_id, "media-target"),
-                    evidence_before,
+                self.assertFalse(
+                    any(
+                        revision.status.value in {"draft", "validated"}
+                        for revision in repository.list_revisions()
+                    )
                 )
                 self.assertEqual(fake.mutations, [])
 
@@ -972,15 +972,17 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                     )
                 self.assertEqual(activated.status.value, "active")
                 self._assert_runtime_empty(runtime_database)
-                self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 11)
+                self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 12)
                 # Runtime schema 43 adds durable scope continuations; schema
                 # 44 links exact-Preview recovery to the paused source Task and
                 # schema 54 adds the Task-owned scheduling facts.
                 self.assertEqual(RUNTIME_SCHEMA_VERSION, 58)
 
-    def test_api_blocked_and_satisfied_use_existing_contract(self) -> None:
+    def test_api_apply_requires_activation_authority_and_publishes_checked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            (root / "target" / "Movies").mkdir(parents=True, exist_ok=True)
             document = self._document(root)
             with (
                 SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository,
@@ -999,47 +1001,38 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                     configuration_service=managed,
                     bootstrap_document=document,
                 )
-                revision = self._validated(managed, document)
-                self._save_existing_gates(repository, revision)
-                endpoint = f"/api/configuration/revisions/{revision.revision_id}/activate"
-                for checked in (False, True):
-                    denied_status, denied = request(
-                        api,
-                        endpoint,
-                        method="POST",
-                        token="manager-token",
-                        body={"expectedVersion": revision.version, "checked": checked},
-                    )
-                    self.assertEqual(denied_status, 403)
-                    self.assertEqual(denied["error"]["code"], "forbidden")
-                status, blocked = request(
+                endpoint = "/api/configuration/publish"
+                denied_status, denied = request(
                     api,
                     endpoint,
                     method="POST",
-                    body={"expectedVersion": revision.version, "checked": True},
+                    token="manager-token",
+                    body={"document": document},
                 )
-                self.assertEqual(status, 409)
-                self.assertEqual(blocked["error"]["code"], "configuration_conflict")
-                self.assertIn("current read-only destination precheck", blocked["error"]["message"])
-                self.assertIn(
-                    "run the read-only destination precheck",
-                    blocked["error"]["details"]["nextAction"],
-                )
-                self.assertLessEqual(len(blocked["error"]["message"]), 384)
-                self.assertNotIn(str(root), repr(blocked))
+                self.assertEqual(denied_status, 403)
+                self.assertEqual(denied["error"]["code"], "forbidden")
+                self.assertIsNone(managed.active())
                 self._assert_runtime_empty(root / "runtime.sqlite3")
-                self._save_precheck(repository, revision)
-                status, active = request(
+
+                invalid = json.loads(json.dumps(document))
+                invalid["recognitionTypePolicies"][0]["metadataPolicy"] = "missing-policy"
+                status, refused = request(
                     api,
                     endpoint,
                     method="POST",
-                    body={"expectedVersion": revision.version, "checked": True},
+                    body={"document": invalid},
                 )
-                self.assertEqual(status, 200)
-                self.assertEqual(active["status"], "active")
-                self.assertEqual(set(active), set(revision.summary()))
-                self._assert_runtime_empty(root / "runtime.sqlite3")
+                self.assertIn(status, {400, 409, 422})
+                self.assertIsNone(managed.active())
+                self.assertEqual(repository.list_revisions(), ())
 
-
-if __name__ == "__main__":
-    unittest.main()
+                status, published = request(
+                    api,
+                    endpoint,
+                    method="POST",
+                    body={"document": document},
+                )
+                self.assertEqual(status, 200, published)
+                self.assertTrue(published["published"])
+                self.assertEqual(published["status"], "active")
+                self.assertEqual(managed.active().revision_id, published["revisionId"])

@@ -255,10 +255,20 @@ class ManagedConfigurationService:
             health = "UNAVAILABLE"
             unavailable_reason = "managed Active configuration is missing"
         try:
-            revisions = self._repository.list_revisions(limit=100)
+            revisions = tuple(
+                revision
+                for revision in self._repository.list_revisions(limit=100)
+                if revision.status
+                in {
+                    ManagedConfigurationStatus.ACTIVE,
+                    ManagedConfigurationStatus.SUPERSEDED,
+                }
+            )
         except Exception:
             revisions = ()
-        setup_draft = self._first_setup_draft(revisions)
+        # Only current and historical published snapshots are configuration
+        # revisions.  An unpublished candidate is never a resumable state.
+        setup_draft = None
         setup_required = not managed_activation
         if setup_required:
             authority = ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value
@@ -281,15 +291,10 @@ class ManagedConfigurationService:
         )
         if empty_active:
             next_action = "配置已激活，媒体业务尚未配置；前往 Storage 或资源库配置"
-        elif setup_draft is not None:
-            next_action = (
-                "open and resume the existing setup Draft, complete guided setup, "
-                "validate it, and activate it"
-            )
         elif setup_required:
-            next_action = "create the first setup Draft, then complete guided setup"
+            next_action = "initialize configuration, then configure media capabilities"
         elif managed_activation and not runtime_configured:
-            next_action = "inspect configuration status and stage an explicit recovery Draft"
+            next_action = "inspect configuration status and publish an explicit replacement"
         else:
             next_action = None
         return {
@@ -418,7 +423,6 @@ class ManagedConfigurationService:
         normalized = _canonical_document(self._bind_deployment_authority(normalized))
         reject_retired_remote_execution_input(normalized)
         _reject_literal_secrets(normalized)
-        _reject_unsafe_webhook_urls(normalized, current=None)
         now = self._clock()
         try:
             active = self._repository.get_active_revision()
@@ -661,6 +665,164 @@ class ManagedConfigurationService:
         created = self._repository.create_revision(revision)
         self._record_audit(audit)
         return created
+
+    def publish_document(
+        self,
+        document: object,
+        *,
+        actor: str,
+        expected_active_revision_id: str | None = None,
+        expected_active_version: int | None = None,
+        expected_active_digest: str | None = None,
+        readiness: Callable[[ManagedConfigurationRevision], object] | None = None,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+        replace_active: bool = False,
+    ) -> ManagedConfigurationRevision:
+        """Validate and atomically publish one complete configuration document.
+
+        The candidate exists durably only for the duration of this command: it
+        is written as a validated staging revision so revision-bound read-only
+        checks can record their exact evidence, then activated.  Any refusal or
+        failure discards the staging revision and its dedicated evidence, so no
+        recoverable configuration draft is exposed after the command.
+        """
+
+        normalized = _canonical_document(document)
+        normalized = _canonical_document(self._bind_deployment_authority(normalized))
+        normalized = _canonical_document(strip_retired_remote_execution(normalized))
+        _reject_literal_secrets(normalized)
+        now = self._clock()
+        try:
+            active = self._repository.get_active_revision()
+        except Exception:
+            if not replace_active:
+                raise
+            active = None
+        current_revision_id = active.revision_id if active is not None else None
+        current_version = (
+            (active.revision_sequence or active.version) if active is not None else None
+        )
+        current_digest = active.digest if active is not None else None
+        if active is not None:
+            self.verify_integrity(active)
+            reject_retired_configuration_input(normalized, baseline=active.document)
+            _reject_unsafe_webhook_urls(normalized, current=active.document)
+        else:
+            reject_retired_configuration_input(normalized)
+            _reject_unsafe_webhook_urls(normalized, current=None)
+        if active is None and self._has_managed_activation() and not replace_active:
+            marker = self._last_known_active() or {}
+            raise RuntimeSnapshotUnavailable(
+                "managed Active configuration is unavailable; explicit replacement is required",
+                revision_id=marker.get("revisionId"),
+                version=marker.get("revisionSequence", marker.get("version")),
+                digest=marker.get("digest"),
+                reason="managed_active_unavailable",
+            )
+        if expected_active_revision_id is not None and (
+            expected_active_revision_id != current_revision_id
+        ):
+            raise ConfigurationVersionConflict(
+                "Active revision does not match expectedActiveRevisionId; reload before publishing",
+                revision_id=current_revision_id,
+                current_version=current_version,
+                current_digest=current_digest,
+                durable_state="active_preserved",
+                next_action="reload configuration status, then apply the change again",
+            )
+        if expected_active_version is not None and expected_active_version != current_version:
+            raise ConfigurationVersionConflict(
+                "Active version does not match expectedActiveVersion; reload before publishing",
+                revision_id=current_revision_id,
+                current_version=current_version,
+                current_digest=current_digest,
+                durable_state="active_preserved",
+                next_action="reload configuration status, then apply the change again",
+            )
+        if expected_active_digest is not None and expected_active_digest != current_digest:
+            raise ConfigurationVersionConflict(
+                "Active digest does not match expectedActiveDigest; reload before publishing",
+                revision_id=current_revision_id,
+                current_version=current_version,
+                current_digest=current_digest,
+                durable_state="active_preserved",
+                next_action="reload configuration status, then apply the change again",
+            )
+        try:
+            self._loader(copy.deepcopy(normalized))
+        except Exception as error:
+            raise ValueError(
+                f"configuration candidate is not runtime-valid: {_bounded_error(error)}"
+            ) from error
+        revision = ManagedConfigurationRevision(
+            str(uuid4()),
+            1,
+            ManagedConfigurationStatus.VALIDATED,
+            MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+            _digest(normalized),
+            normalized,
+            now,
+            now,
+            (),
+            now,
+            base_active_revision_id=current_revision_id,
+        )
+        audit = self._audit(
+            revision,
+            "publish_candidate",
+            actor,
+            _document_evidence(revision),
+            before={
+                "authority": (
+                    ConfigurationAuthority.MANAGED.value
+                    if current_revision_id is not None
+                    else ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value
+                ),
+                "revisionId": current_revision_id,
+                "version": current_version,
+                "digest": current_digest,
+            },
+        )
+        create = getattr(self._repository, "create_revision_with_audit", None)
+        if callable(create):
+            staged = create(revision, audit)
+        else:
+            staged = self._repository.create_revision(revision)
+            self._record_audit(audit)
+        discard = getattr(self._repository, "discard_revision", None)
+        try:
+            if readiness is not None:
+                readiness(staged)
+            if before_publish is not None:
+                before_publish(staged)
+            activation_audit = self._audit(
+                staged,
+                "activate",
+                actor,
+                _document_evidence(staged, status=ManagedConfigurationStatus.ACTIVE),
+                before=(
+                    _document_evidence(active)
+                    if active is not None
+                    else {
+                        "authority": ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value,
+                        "revisionId": None,
+                    }
+                ),
+            )
+            return self._repository.activate_revision(
+                staged.revision_id, staged.version, activation_audit
+            )
+        except Exception:
+            if callable(discard):
+                discard_audit = self._audit(
+                    staged,
+                    "publish_candidate_discarded",
+                    actor,
+                    {"revisionId": staged.revision_id, "status": "discarded"},
+                    before=_document_evidence(staged),
+                )
+                discard(staged.revision_id, discard_audit)
+            raise
 
     def _first_setup_draft(
         self,

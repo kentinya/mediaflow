@@ -28,6 +28,7 @@ from mediaflow.application.automation_definition_execution import (
     DefinitionScopedExecutionService,
 )
 from mediaflow.application.automation_execution_authority import AutomationExecutionAuthority
+from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import (
     MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
     ManagedConfigurationService,
@@ -123,19 +124,12 @@ def final_main(
     config_commands = config.add_subparsers(dest="config_command", required=True)
     config_commands.add_parser("validate", help="validate configuration without processing media")
     config_commands.add_parser("status", help="show JSON bootstrap/managed Active authority")
-    draft_import = config_commands.add_parser(
-        "draft-import", aliases=("import",), help="import a JSON document as a Draft"
+    config_commands.add_parser("initialize", help="publish an empty managed configuration")
+    publish = config_commands.add_parser(
+        "publish", help="check and publish one complete configuration document"
     )
-    draft_import.add_argument("--file", help="JSON file; defaults to --config")
-    draft_validate = config_commands.add_parser(
-        "draft-validate", aliases=("validate-draft",), help="validate one Draft revision"
-    )
-    draft_validate.add_argument("revision_id")
-    draft_validate.add_argument("--actor", default="local-cli")
-    activate = config_commands.add_parser("activate", help="activate a Validated Draft")
-    activate.add_argument("revision_id")
-    activate.add_argument("--expected-version", type=int, required=True)
-    activate.add_argument("--actor", default="local-cli")
+    publish.add_argument("--file", help="JSON file; defaults to the current Active document")
+    publish.add_argument("--actor", default="local-cli")
     analyze = commands.add_parser("analyze", help="analyze one file without planning execution")
     analyze.add_argument("path")
     analyze.add_argument("--offline", action="store_true")
@@ -310,11 +304,8 @@ def final_main(
             and arguments.config_command
             in {
                 "status",
-                "draft-import",
-                "import",
-                "draft-validate",
-                "validate-draft",
-                "activate",
+                "initialize",
+                "publish",
             }
         )
         management_bootstrap_database_path = None
@@ -405,11 +396,8 @@ def final_main(
             bootstrap_document = _configuration_document(arguments.config)
             managed_config_command = arguments.config_command in {
                 "status",
-                "draft-import",
-                "import",
-                "draft-validate",
-                "validate-draft",
-                "activate",
+                "initialize",
+                "publish",
             }
             if managed_config_command:
                 database_path = management_bootstrap_database_path
@@ -428,34 +416,54 @@ def final_main(
                             + "\n"
                         )
                         return 0
-                    if arguments.config_command in {"draft-import", "import"}:
+                    objects = ConfigurationObjectService(service)
+                    if arguments.config_command == "initialize":
+                        if service.status_document().get("managedActivation") is True:
+                            raise ValueError(
+                                "managed configuration already exists; initialize is closed"
+                            )
+                        from mediaflow.application.configuration_snapshot import (
+                            build_first_setup_starter_document,
+                        )
+                        from mediaflow.infrastructure.runtime_configuration import (
+                            load_minimal_management_bootstrap,
+                        )
+
+                        document = build_first_setup_starter_document(
+                            load_minimal_management_bootstrap(bootstrap_document)
+                        )
+                        revision = objects.publish_document(document, actor=arguments.actor)
+                        stdout.write(
+                            json.dumps(
+                                {**revision.summary(), "initialized": True},
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                            + "\n"
+                        )
+                        return 0
+                    if arguments.config_command == "publish":
                         if arguments.file:
                             document = json.loads(Path(arguments.file).read_text(encoding="utf-8"))
                         else:
+                            active = service.active()
+                            if active is None:
+                                raise ValueError(
+                                    "no Active configuration exists; use `config initialize` "
+                                    "or supply --file"
+                                )
                             document = service.current_document(bootstrap_document)
-                        revision = service.import_draft(
+                        revision = objects.publish_document(
                             document,
-                            actor="local-cli",
-                            source="file" if arguments.file else "current",
-                        )
-                        stdout.write(
-                            json.dumps(revision.summary(), ensure_ascii=False, indent=2) + "\n"
-                        )
-                        return 0
-                    if arguments.config_command in {"draft-validate", "validate-draft"}:
-                        revision = service.validate(arguments.revision_id, actor=arguments.actor)
-                        stdout.write(
-                            json.dumps(revision.summary(), ensure_ascii=False, indent=2) + "\n"
-                        )
-                        return 0 if revision.status.value == "validated" else 1
-                    if arguments.config_command == "activate":
-                        revision = service.activate(
-                            arguments.revision_id,
-                            expected_version=arguments.expected_version,
                             actor=arguments.actor,
                         )
                         stdout.write(
-                            json.dumps(revision.summary(), ensure_ascii=False, indent=2) + "\n"
+                            json.dumps(
+                                {**revision.summary(), "published": True},
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                            + "\n"
                         )
                         return 0
             strategy = configuration.strategy

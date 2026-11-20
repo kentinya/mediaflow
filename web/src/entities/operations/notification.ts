@@ -1045,13 +1045,25 @@ export function normalizeWebhookDefinitionMutation(
   const source = requiredRecord(payload, "webhook_definition_mutation");
   const revisionId = uriSafeSegment(source, "revisionId", 128);
   const version = count(source, "version");
-  if (
+  const publishedFromRevisionId = optionalText(
+    source,
+    "publishedFromRevisionId",
+  );
+  if (publishedFromRevisionId !== null) {
+    // Direct publication answers from the new immutable Active revision while
+    // echoing the exact submitted Active identity.  A different echo is
+    // another mutation's outcome; the new revision must be a current identity
+    // and every other field is still bound to the requested definition.
+    if (
+      publishedFromRevisionId !== requested.revisionId ||
+      count(source, "publishedFromVersion") !== requested.expectedVersion
+    ) {
+      return fail("publishedFromRevisionId");
+    }
+  } else if (
     revisionId !== requested.revisionId ||
     version !== requested.expectedVersion + 1
   ) {
-    // A definition mutation stores the successor Draft version of the exact
-    // submitted revision; a document about another revision, or at any other
-    // version, never renders as this mutation's outcome.
     return fail("revisionId");
   }
   const document = requiredRecord(

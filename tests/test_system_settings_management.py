@@ -225,26 +225,36 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertEqual(data["consumption"]["runtimeSnapshotDigest"], active.digest)
             self.assertIn("automation.maximumActiveJobs", data["consumption"]["consumedFields"])
 
-    def test_api_read_draft_settings_via_query_and_revision_route(self) -> None:
+    def test_api_read_active_and_rejects_retired_draft_routes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api, service, active, repo = setup_test_api(directory)
-            draft = service.create_successor_draft(actor="tester")
 
-            # Via query param
-            status, data1 = request(api, f"/api/system/settings?revisionId={draft.revision_id}")
+            status, data = request(api, f"/api/system/settings?revisionId={active.revision_id}")
             self.assertEqual(status, 200)
-            self.assertEqual(data1["revisionId"], draft.revision_id)
-            self.assertFalse(data1["isActive"])
+            self.assertEqual(data["revisionId"], active.revision_id)
+            self.assertTrue(data["isActive"])
 
-            # Via revision route
-            status, data2 = request(
-                api, f"/api/configuration/revisions/{draft.revision_id}/settings"
+            status, data = request(
+                api, f"/api/configuration/revisions/{active.revision_id}/settings"
             )
             self.assertEqual(status, 200)
-            self.assertEqual(data2["revisionId"], draft.revision_id)
-            self.assertFalse(data2["isActive"])
+            self.assertTrue(data["isActive"])
 
-    def test_api_edit_creates_successor_draft_and_preserves_active(self) -> None:
+            status, body = request(
+                api, "/api/configuration/drafts/first", method="POST", body=b"{}"
+            )
+            self.assertEqual(status, 404)
+            self.assertEqual(body["error"]["code"], "not_found")
+            status, body = request(
+                api,
+                f"/api/configuration/revisions/{active.revision_id}/activate",
+                method="POST",
+                body=json.dumps({"expectedVersion": active.version}).encode("utf-8"),
+            )
+            self.assertEqual(status, 404)
+            self.assertEqual(body["error"]["code"], "not_found")
+
+    def test_api_apply_publishes_immediately_and_preserves_published_history(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api, service, active, repo = setup_test_api(directory)
             body = json.dumps(
@@ -253,89 +263,80 @@ class SystemSettingsManagementTests(unittest.TestCase):
                         "automation.maximumActiveJobs": 75,
                         "operationalLogging.minimumLevel": "DEBUG",
                         "workflowRetry.maxAttempts": 5,
-                    }
+                    },
+                    "expectedActiveRevisionId": active.revision_id,
+                    "expectedActiveVersion": active.revision_sequence,
+                    "expectedActiveDigest": active.digest,
                 }
             ).encode("utf-8")
             status, data = request(api, "/api/system/settings", method="PUT", body=body)
-            self.assertEqual(status, 201)
-            self.assertTrue(data["created"])
+            self.assertEqual(status, 200)
+            self.assertTrue(data["published"])
             self.assertNotEqual(data["revisionId"], active.revision_id)
+            self.assertTrue(data["isActive"])
             self.assertEqual(data["settings"]["automation.maximumActiveJobs"], 75)
             self.assertEqual(data["settings"]["operationalLogging.minimumLevel"], "DEBUG")
             self.assertEqual(data["settings"]["workflowRetry.maxAttempts"], 5)
 
-            # Prior Active remains unchanged
             active_after = service.active()
-            self.assertEqual(active_after.revision_id, active.revision_id)
+            self.assertEqual(active_after.revision_id, data["revisionId"])
             self.assertEqual(
-                active_after.document.get("automation", {}).get("maximumActiveJobs"), 100
+                active_after.document.get("automation", {}).get("maximumActiveJobs"), 75
             )
+            prior = service.require(active.revision_id)
+            self.assertEqual(prior.status.value, "superseded")
+            self.assertEqual(prior.document.get("automation", {}).get("maximumActiveJobs"), 100)
+            statuses = {revision.status.value for revision in repo.list_revisions(limit=100)}
+            self.assertEqual(statuses, {"active", "superseded"})
 
-    def test_api_edit_existing_draft_with_expected_version(self) -> None:
+    def test_api_stale_active_apply_returns_conflict_without_publication(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api, service, active, repo = setup_test_api(directory)
-            draft = service.create_successor_draft(actor="tester")
+            before = len(repo.list_revisions(limit=100))
             body = json.dumps(
                 {
-                    "expectedVersion": draft.version,
-                    "settings": {
-                        "workflowRetry.maxAttempts": 7,
-                    },
+                    "expectedActiveVersion": active.revision_sequence + 99,
+                    "settings": {"workflowRetry.maxAttempts": 7},
                 }
             ).encode("utf-8")
-            status, data = request(
-                api,
-                f"/api/configuration/revisions/{draft.revision_id}/settings",
-                method="PUT",
-                body=body,
-            )
-            self.assertEqual(status, 200)
-            self.assertEqual(data["revisionId"], draft.revision_id)
-            self.assertEqual(data["settings"]["workflowRetry.maxAttempts"], 7)
+            status, data = request(api, "/api/system/settings", method="PUT", body=body)
+            self.assertEqual(status, 409)
+            self.assertEqual(data["error"]["code"], "configuration_version_conflict")
+            self.assertEqual(data["error"]["details"]["durableState"], "active_preserved")
+            self.assertEqual(service.active().revision_id, active.revision_id)
+            self.assertEqual(len(repo.list_revisions(limit=100)), before)
 
-            # Re-read Draft from repo
-            updated_draft = service.require(draft.revision_id)
-            self.assertEqual(updated_draft.document.get("workflowRetry", {}).get("maxAttempts"), 7)
-            self.assertEqual(updated_draft.version, draft.version + 1)
-
-    def test_api_edit_response_can_continue_draft_journey(self) -> None:
+    def test_api_repeated_apply_uses_the_new_active_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api, service, active, repo = setup_test_api(directory)
-            create_body = json.dumps(
-                {"edits": [{"fieldPath": "automation.maximumActiveJobs", "value": 75}]}
-            ).encode("utf-8")
-            status, created = request(api, "/api/system/settings", method="PUT", body=create_body)
-            self.assertEqual(status, 201)
-            draft_id = created["revisionId"]
-            status, draft_view = request(api, f"/api/system/settings?revisionId={draft_id}")
-            self.assertEqual(status, 200)
-            self.assertEqual(draft_view["revisionId"], draft_id)
-            self.assertFalse(draft_view["isActive"])
-            # The mutable Draft version is exposed separately from the immutable
-            # revision sequence and is the token successive edits must send.
-            self.assertEqual(draft_view["draftVersion"], created["draftVersion"])
-            self.assertEqual(draft_view["revisionVersion"], created["revisionVersion"])
-            self.assertNotEqual(draft_view["draftVersion"], None)
+            view = service.active()
             for value in (80, 85, 90):
-                update_body = json.dumps(
+                body = json.dumps(
                     {
-                        "revisionId": draft_id,
-                        "expectedVersion": draft_view["draftVersion"],
-                        "edits": [{"fieldPath": "automation.maximumActiveJobs", "value": value}],
+                        "expectedActiveRevisionId": view.revision_id,
+                        "expectedActiveVersion": view.revision_sequence,
+                        "expectedActiveDigest": view.digest,
+                        "edits": [
+                            {
+                                "fieldPath": "automation.maximumActiveJobs",
+                                "value": value,
+                            }
+                        ],
                     }
                 ).encode("utf-8")
-                status, updated = request(
-                    api, "/api/system/settings", method="PUT", body=update_body
-                )
+                status, updated = request(api, "/api/system/settings", method="PUT", body=body)
                 self.assertEqual(status, 200)
-                self.assertEqual(updated["revisionId"], draft_id)
                 self.assertEqual(updated["settings"]["automation.maximumActiveJobs"], value)
-                self.assertEqual(updated["draftVersion"], draft_view["draftVersion"] + 1)
-                self.assertEqual(updated["revisionVersion"], draft_view["revisionVersion"])
-                draft_view = updated
-            edited = service.require(draft_id)
-            self.assertEqual(edited.version, 5)
-            self.assertEqual(edited.revision_sequence, 2)
+                self.assertTrue(updated["isActive"])
+                view = service.active()
+                self.assertEqual(view.revision_id, updated["revisionId"])
+            self.assertEqual(len(repo.list_revisions(limit=100)), 4)
+            self.assertFalse(
+                any(
+                    revision.status.value in {"draft", "validated"}
+                    for revision in repo.list_revisions(limit=100)
+                )
+            )
 
     def test_consumption_evidence_fails_closed_on_runtime_snapshot_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -358,27 +359,21 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertEqual(data["consumption"]["reason"], "runtime_snapshot_mismatch")
             self.assertEqual(data["consumption"]["revisionId"], active.revision_id)
 
-    def test_api_stale_concurrency_returns_conflict(self) -> None:
+    def test_api_rejects_retired_draft_parameters(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api, service, active, repo = setup_test_api(directory)
-            draft = service.create_successor_draft(actor="tester")
-            body = json.dumps(
-                {
-                    "expectedVersion": draft.version + 99,
-                    "settings": {
-                        "workflowRetry.maxAttempts": 7,
-                    },
-                }
-            ).encode("utf-8")
-            status, data = request(
-                api,
-                f"/api/configuration/revisions/{draft.revision_id}/settings",
-                method="PUT",
-                body=body,
-            )
-            self.assertEqual(status, 409)
-            self.assertEqual(data["error"]["code"], "configuration_version_conflict")
-            self.assertEqual(data["error"]["details"]["durableState"], "draft_preserved")
+            before = len(repo.list_revisions(limit=100))
+            for field, value in (
+                ("revisionId", active.revision_id),
+                ("expectedVersion", 1),
+                ("fromActive", True),
+            ):
+                body = json.dumps({field: value, "settings": {"locale": "en-US"}}).encode("utf-8")
+                status, data = request(api, "/api/system/settings", method="PUT", body=body)
+                self.assertEqual(status, 400)
+                self.assertEqual(data["error"]["code"], "invalid_request")
+            self.assertEqual(service.active().revision_id, active.revision_id)
+            self.assertEqual(len(repo.list_revisions(limit=100)), before)
 
     def test_api_rbac_enforcement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -422,7 +417,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
                 }
             ).encode("utf-8")
             status, data = request(api, "/api/system/settings", method="PUT", body=body)
-            self.assertEqual(status, 201)
+            self.assertEqual(status, 200)
 
             audits = repo.list_revision_audits(data["revisionId"])
             self.assertTrue(
@@ -454,7 +449,7 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertEqual(details["durableState"], "managed_active_unavailable")
             self.assertEqual(details["sideEffects"], "none")
             self.assertTrue(details["retrySafe"])
-            self.assertIn("Draft", details["nextAction"])
+            self.assertIn("replacement", details["nextAction"])
             self.assertEqual(details["revisionId"], active.revision_id)
             self.assertEqual(details["digest"], active.digest)
 
@@ -554,36 +549,24 @@ class SystemSettingsManagementTests(unittest.TestCase):
             api, service, active, repo = setup_test_api(directory)
             body = json.dumps(
                 {
+                    "expectedActiveRevisionId": active.revision_id,
+                    "expectedActiveVersion": active.revision_sequence,
+                    "expectedActiveDigest": active.digest,
                     "edits": [
                         {"fieldPath": "cachePath", "value": ".mediaflow/cache-2"},
                         {"fieldPath": "locale", "value": "zh-CN"},
-                    ]
+                    ],
                 }
             ).encode("utf-8")
-            status, created = request(api, "/api/system/settings", method="PUT", body=body)
-            self.assertEqual(status, 201)
-            draft_id = created["revisionId"]
-
-            # The restart-required values move only through the normal exact
-            # validate/checked-activate path.
-            status, _ = request(
-                api,
-                f"/api/configuration/revisions/{draft_id}/validate",
-                method="POST",
-                body=b"{}",
-            )
+            status, applied = request(api, "/api/system/settings", method="PUT", body=body)
             self.assertEqual(status, 200)
-            status, activated = request(
-                api,
-                f"/api/configuration/revisions/{draft_id}/activate",
-                method="POST",
-                body=json.dumps({"expectedVersion": created["draftVersion"]}).encode("utf-8"),
-            )
-            self.assertEqual(status, 200)
+            self.assertTrue(applied["published"])
+            new_id = applied["revisionId"]
+            self.assertNotEqual(new_id, active.revision_id)
 
             status, view = request(api, "/api/system/settings")
             self.assertEqual(status, 200)
-            self.assertEqual(view["revisionId"], draft_id)
+            self.assertEqual(view["revisionId"], new_id)
             self.assertTrue(view["isActive"])
             self.assertEqual(view["settings"]["cachePath"], ".mediaflow/cache-2")
             self.assertEqual(view["settings"]["locale"], "zh-CN")
@@ -593,19 +576,14 @@ class SystemSettingsManagementTests(unittest.TestCase):
             self.assertEqual(
                 view["sections"]["Localization"]["locale"]["boundary"], "restart_required"
             )
-            # Consumption evidence names the exact new snapshot but never claims
-            # the restart-required values as hot-consumed readiness.
             evidence = view["consumption"]
-            self.assertTrue(evidence["consumed"])
-            self.assertEqual(evidence["revisionId"], draft_id)
-            self.assertEqual(evidence["runtimeSnapshotId"], draft_id)
+            self.assertEqual(evidence["revisionId"], new_id)
+            self.assertEqual(evidence["runtimeSnapshotId"], new_id)
             self.assertNotIn("cachePath", evidence["consumedFields"])
             self.assertNotIn("locale", evidence["consumedFields"])
             self.assertIn("cachePath", evidence["restartRequiredFields"])
             self.assertIn("locale", evidence["restartRequiredFields"])
-            self.assertIn("automation.maximumActiveJobs", evidence["consumedFields"])
 
-            # The prior Active remains superseded and intact.
             prior = service.require(active.revision_id)
             self.assertEqual(prior.status.value, "superseded")
             self.assertIsNone(prior.document.get("locale"))
@@ -616,100 +594,69 @@ class SystemSettingsManagementTests(unittest.TestCase):
             api, service, active, repo = setup_test_api(directory)
             revisions_before = len(repo.list_revisions(limit=100))
 
-            # 1. Web enters Settings and reads the Active view.
             status, active_view = request(api, "/api/system/settings")
             self.assertEqual(status, 200)
             self.assertTrue(active_view["isActive"])
 
-            # 2. Web saves an edit from the Active view using the exact body
-            #    construction of the served client.
-            web_body = {
-                "edits": [{"fieldPath": "automation.maximumActiveJobs", "value": 80}],
+            base_body = {
                 "expectedActiveRevisionId": active_view["revisionId"],
                 "expectedActiveVersion": active_view["revisionVersion"],
                 "expectedActiveDigest": active_view["revisionDigest"],
             }
-            status, created = request(
-                api, "/api/system/settings", method="PUT", body=json.dumps(web_body).encode()
-            )
-            self.assertEqual(status, 201)
-            self.assertTrue(created["created"])
-            draft_id = created["revisionId"]
 
-            # 3. Web reopens the returned Draft; consumption stays bound to the
-            #    Active, never to the Draft being edited.
-            status, draft_view = request(api, f"/api/system/settings?revisionId={draft_id}")
+            def apply(value: int, authority: dict) -> tuple[int, dict]:
+                body = {
+                    **authority,
+                    "edits": [
+                        {
+                            "fieldPath": "automation.maximumActiveJobs",
+                            "value": value,
+                        }
+                    ],
+                }
+                return request(
+                    api,
+                    "/api/system/settings",
+                    method="PUT",
+                    body=json.dumps(body).encode("utf-8"),
+                )
+
+            status, first = apply(80, base_body)
             self.assertEqual(status, 200)
-            self.assertFalse(draft_view["isActive"])
-            self.assertEqual(draft_view["consumption"]["revisionId"], active.revision_id)
-            first_token = draft_view["draftVersion"]
+            self.assertTrue(first["published"])
+            self.assertNotEqual(first["revisionId"], active.revision_id)
+            self.assertTrue(first["isActive"])
+            self.assertEqual(first["settings"]["automation.maximumActiveJobs"], 80)
 
-            def draft_edit(value: int, token: int) -> bytes:
-                return json.dumps(
-                    {
-                        "revisionId": draft_id,
-                        "expectedVersion": token,
-                        "edits": [{"fieldPath": "automation.maximumActiveJobs", "value": value}],
-                    }
-                ).encode("utf-8")
-
-            # 4. First Draft edit with the mutable Draft version succeeds.
-            status, updated = request(
-                api, "/api/system/settings", method="PUT", body=draft_edit(85, first_token)
-            )
-            self.assertEqual(status, 200)
-            self.assertEqual(updated["settings"]["automation.maximumActiveJobs"], 85)
-
-            # 5. A stale writer (second operator) advances the same Draft with
-            #    an independent field edit; the Web replay with its now-stale
-            #    token fails closed with bounded durable recovery evidence and
-            #    zero side effects.
-            status, _ = request(
-                api,
-                "/api/system/settings",
-                method="PUT",
-                body=json.dumps(
-                    {
-                        "revisionId": draft_id,
-                        "expectedVersion": updated["draftVersion"],
-                        "edits": [{"fieldPath": "workflowRetry.maxAttempts", "value": 7}],
-                    }
-                ).encode("utf-8"),
-            )
-            self.assertEqual(status, 200)
-            status, conflict = request(
-                api, "/api/system/settings", method="PUT", body=draft_edit(90, first_token)
-            )
+            # The previous token is stale after the first publication and never
+            # silently overwrites the winning Active.
+            status, conflict = apply(85, base_body)
             self.assertEqual(status, 409)
             self.assertEqual(conflict["error"]["code"], "configuration_version_conflict")
-            details = conflict["error"]["details"]
-            self.assertEqual(details["revisionId"], draft_id)
-            self.assertEqual(details["durableState"], "draft_preserved")
-            self.assertEqual(details["sideEffects"], "none")
-            self.assertTrue(details["retrySafe"])
-            self.assertIn("refresh", details["nextAction"])
+            self.assertEqual(conflict["error"]["details"]["durableState"], "active_preserved")
+            self.assertEqual(service.active().document["automation"]["maximumActiveJobs"], 80)
 
-            # 6. Recovery: refresh the Draft and retry with the current token.
-            status, refreshed = request(api, f"/api/system/settings?revisionId={draft_id}")
+            # Recovery: read the actual Active identity, then apply again.
+            status, refreshed = request(api, "/api/system/settings")
             self.assertEqual(status, 200)
-            self.assertNotEqual(refreshed["draftVersion"], first_token)
-            status, recovered = request(
-                api,
-                "/api/system/settings",
-                method="PUT",
-                body=draft_edit(90, refreshed["draftVersion"]),
+            status, recovered = apply(
+                90,
+                {
+                    "expectedActiveRevisionId": refreshed["revisionId"],
+                    "expectedActiveVersion": refreshed["revisionVersion"],
+                    "expectedActiveDigest": refreshed["revisionDigest"],
+                },
             )
             self.assertEqual(status, 200)
             self.assertEqual(recovered["settings"]["automation.maximumActiveJobs"], 90)
-            # The stale writer's independent edit is preserved, not overwritten.
-            self.assertEqual(recovered["settings"]["workflowRetry.maxAttempts"], 7)
-
-            # Prior Active, its values and the revision set remain intact; the
-            # whole journey created exactly one settings Draft and started no
-            # media work.
-            self.assertEqual(service.active().revision_id, active.revision_id)
-            self.assertEqual(service.active().document["automation"]["maximumActiveJobs"], 100)
-            self.assertEqual(len(repo.list_revisions(limit=100)), revisions_before + 1)
+            self.assertEqual(service.active().revision_id, recovered["revisionId"])
+            self.assertEqual(len(repo.list_revisions(limit=100)), revisions_before + 2)
+            self.assertFalse(
+                any(
+                    revision.status.value in {"draft", "validated"}
+                    for revision in repo.list_revisions(limit=100)
+                )
+            )
 
     def test_runtime_projection_preserves_extended_settings(self) -> None:
         from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration

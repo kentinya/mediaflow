@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import hmac
 import json
 import os
@@ -523,7 +522,15 @@ class MediaFlowApi:
             else None
         )
         self._package_exchange = (
-            PackageExchangeService(configuration_service, self._repository)
+            PackageExchangeService(
+                configuration_service,
+                self._repository,
+                publisher=(
+                    self._configuration_objects.publish_document
+                    if self._configuration_objects is not None
+                    else None
+                ),
+            )
             if configuration_service is not None
             else None
         )
@@ -2671,6 +2678,7 @@ class MediaFlowApi:
             )
         if parts == ["api", "automation", "task-definitions"] and method == "POST":
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
             if self._configuration_objects is None:
                 return self._error(
                     start_response,
@@ -2692,14 +2700,15 @@ class MediaFlowApi:
             value = document.get("object", document.get("definition"))
             if not isinstance(value, dict):
                 raise ValueError("Automation Task Definition must be an object")
-            revision = self._configuration_objects.mutate(
-                revision_id,
+            revision = self._configuration_objects.publish_object(
                 ConfigurationObjectKind.SCHEDULE,
                 object_id=None,
                 value=value,
                 expected_version=expected,
                 actor=principal.principal_id,
+                action="save",
             )
+            self._refresh_configuration_binding()
             values = revision.document.get("automationTaskDefinitions", [])
             response = revision.summary()
             response["configurationRevisionId"] = revision.revision_id
@@ -2711,6 +2720,7 @@ class MediaFlowApi:
             and method == "PUT"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
             if self._configuration_objects is None:
                 return self._error(
                     start_response,
@@ -2732,14 +2742,15 @@ class MediaFlowApi:
             value = document.get("object", document.get("definition"))
             if not isinstance(value, dict):
                 raise ValueError("Automation Task Definition must be an object")
-            revision = self._configuration_objects.mutate(
-                revision_id,
+            revision = self._configuration_objects.publish_object(
                 ConfigurationObjectKind.SCHEDULE,
                 object_id=parts[3],
                 value=value,
                 expected_version=expected,
                 actor=principal.principal_id,
+                action="save",
             )
+            self._refresh_configuration_binding()
             definition = next(
                 (
                     item
@@ -2930,12 +2941,13 @@ class MediaFlowApi:
                 200,
                 self._configuration_status_document(principal),
             )
-        if parts == ["api", "configuration", "drafts", "first"]:
+        if parts == ["api", "configuration", "initialize"]:
             if method != "POST":
                 return self._error(start_response, 405, "method_not_allowed", "POST required")
-            self._require_empty_query(environ, "first setup Draft")
+            self._require_empty_query(environ, "configuration initialization")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
-            if self._configuration_service is None:
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_service is None or self._configuration_objects is None:
                 return self._error(
                     start_response,
                     503,
@@ -2943,24 +2955,41 @@ class MediaFlowApi:
                     "managed configuration service is unavailable",
                 )
             document = self._optional_document(environ)
-            if set(document):
-                raise ValueError("first setup Draft does not accept configuration fields")
-            revision = self._configuration_service.create_first_draft(
-                self._bootstrap_document,
-                actor=principal.principal_id,
+            if document:
+                raise ValueError("empty configuration initialization accepts no document")
+            status = self._configuration_service.status_document()
+            if status.get("managedActivation") is True:
+                raise ConfigurationFirstDraftConflict(
+                    "managed configuration already exists; initialize is closed",
+                    durable_state="active_configuration_preserved",
+                    next_action="open Settings and apply the intended configuration change",
+                )
+            from mediaflow.application.configuration_snapshot import (
+                build_first_setup_starter_document,
             )
+            from mediaflow.infrastructure.runtime_configuration import (
+                load_minimal_management_bootstrap,
+            )
+
+            starter = build_first_setup_starter_document(
+                load_minimal_management_bootstrap(self._bootstrap_document)
+            )
+            revision = self._configuration_objects.publish_document(
+                starter, actor=principal.principal_id
+            )
+            self._refresh_configuration_binding()
             response = revision.summary()
-            response["created"] = True
-            response["nextAction"] = (
-                "open the setup Draft and complete guided setup before validation and activation"
-            )
+            response["initialized"] = True
+            response["businessState"] = "EMPTY_ACTIVE"
+            response["nextAction"] = "配置已激活，媒体业务尚未配置"
             return self._response(start_response, 201, response)
-        if parts == ["api", "configuration", "drafts", "successor"]:
+        if parts == ["api", "configuration", "publish"]:
             if method != "POST":
                 return self._error(start_response, 405, "method_not_allowed", "POST required")
-            self._require_empty_query(environ, "successor Draft")
+            self._require_empty_query(environ, "configuration publication")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
-            if self._configuration_service is None:
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_service is None or self._configuration_objects is None:
                 return self._error(
                     start_response,
                     503,
@@ -2968,11 +2997,16 @@ class MediaFlowApi:
                     "managed configuration service is unavailable",
                 )
             document = self._document(environ)
-            allowed = {"expectedActiveRevisionId", "expectedActiveVersion", "expectedActiveDigest"}
-            if set(document).difference(allowed):
+            allowed = {
+                "document",
+                "expectedActiveRevisionId",
+                "expectedActiveVersion",
+                "expectedActiveDigest",
+                "replaceActive",
+            }
+            if set(document).difference(allowed) or not isinstance(document.get("document"), dict):
                 raise ValueError(
-                    "successor Draft accepts optional expectedActiveRevisionId, "
-                    "expectedActiveVersion, and expectedActiveDigest only"
+                    "configuration publication requires a document and the exact Active identity"
                 )
             expected_revision_id = document.get("expectedActiveRevisionId")
             if expected_revision_id is not None and not isinstance(expected_revision_id, str):
@@ -2985,18 +3019,22 @@ class MediaFlowApi:
             expected_digest = document.get("expectedActiveDigest")
             if expected_digest is not None and not isinstance(expected_digest, str):
                 raise ValueError("expectedActiveDigest must be a string")
-            revision = self._configuration_service.create_successor_draft(
+            replace_active = document.get("replaceActive", False)
+            if not isinstance(replace_active, bool):
+                raise ValueError("replaceActive must be boolean")
+            revision = self._configuration_objects.publish_document(
+                document["document"],
                 actor=principal.principal_id,
                 expected_active_revision_id=expected_revision_id,
                 expected_active_version=expected_version,
                 expected_active_digest=expected_digest,
+                replace_active=replace_active,
             )
+            self._refresh_configuration_binding()
             response = revision.summary()
-            response["created"] = True
-            response["nextAction"] = (
-                "open the successor Draft, edit configuration objects, validate, and activate"
-            )
-            return self._response(start_response, 201, response)
+            response["published"] = True
+            response["nextAction"] = "当前运行时已按新 Active 重新绑定"
+            return self._response(start_response, 200, response)
         if parts == ["api", "configuration"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -3036,11 +3074,10 @@ class MediaFlowApi:
                     )
                 if method == "POST":
                     self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
-                    package_value, recovery = self._package_import_request(environ)
+                    package_value, _recovery = self._package_import_request(environ)
                     result = self._package_exchange.import_configuration(
                         package_value,
                         actor=principal.principal_id,
-                        recovery=recovery,
                     )
                     return self._response(
                         start_response,
@@ -3704,6 +3741,7 @@ class MediaFlowApi:
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
             if self._configuration_objects is None:
                 return self._error(
                     start_response,
@@ -3744,15 +3782,18 @@ class MediaFlowApi:
                         "validationError",
                     }
                 }
-            revision = self._configuration_objects.mutate(
-                parts[3],
+            revision = self._configuration_objects.publish_object(
                 kind,
                 object_id=None,
                 value=value,
                 expected_version=expected,
                 actor=principal.principal_id,
+                action="save",
             )
+            self._refresh_configuration_binding()
             response = revision.summary()
+            response["publishedFromRevisionId"] = parts[3]
+            response["publishedFromVersion"] = expected
             if kind is ConfigurationObjectKind.STORAGE:
                 storages = self._configuration_objects.revision_detail(revision.revision_id)[
                     "objects"
@@ -3779,6 +3820,7 @@ class MediaFlowApi:
             and method == "POST"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
             if self._configuration_objects is None:
                 return self._error(
                     start_response,
@@ -3803,27 +3845,31 @@ class MediaFlowApi:
                     raise ValueError(f"{label} copied id must be a string")
                 if new_name is not None and not isinstance(new_name, str):
                     raise ValueError(f"{label} copied name must be a string")
-                revision = self._configuration_objects.copy_object(
-                    parts[3],
+                revision = self._configuration_objects.publish_object(
                     kind,
                     object_id=parts[6],
-                    new_object_id=new_id,
-                    new_name=new_name,
+                    value=None,
                     expected_version=expected,
                     actor=principal.principal_id,
+                    action="copy",
+                    new_object_id=new_id,
+                    new_name=new_name,
                 )
             else:
                 if set(document) != {"expectedVersion"}:
                     raise ValueError(f"{label} enable/disable requires expectedVersion")
-                revision = self._configuration_objects.set_object_enabled(
-                    parts[3],
+                revision = self._configuration_objects.publish_object(
                     kind,
                     object_id=parts[6],
-                    enabled=action == "enable",
+                    value=None,
                     expected_version=expected,
                     actor=principal.principal_id,
+                    action=action,
                 )
+            self._refresh_configuration_binding()
             response = revision.summary()
+            response["publishedFromRevisionId"] = parts[3]
+            response["publishedFromVersion"] = expected
             section = ConfigurationObjectService._SECTIONS.get(kind, parts[5])
             items = revision.document.get(section) if section in revision.document else None
             updated = None
@@ -3849,6 +3895,7 @@ class MediaFlowApi:
             and method == "PUT"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
             if self._configuration_objects is None:
                 return self._error(
                     start_response,
@@ -3883,15 +3930,18 @@ class MediaFlowApi:
                         "validationError",
                     }
                 }
-            revision = self._configuration_objects.mutate(
-                parts[3],
+            revision = self._configuration_objects.publish_object(
                 kind,
                 object_id=parts[6],
                 value=value,
                 expected_version=expected,
                 actor=principal.principal_id,
+                action="save",
             )
+            self._refresh_configuration_binding()
             response = revision.summary()
+            response["publishedFromRevisionId"] = parts[3]
+            response["publishedFromVersion"] = expected
             if kind is ConfigurationObjectKind.STORAGE:
                 storages = self._configuration_objects.revision_detail(revision.revision_id)[
                     "objects"
@@ -3927,6 +3977,7 @@ class MediaFlowApi:
             and method == "DELETE"
         ):
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
             if self._configuration_objects is None:
                 return self._error(
                     start_response,
@@ -3941,15 +3992,16 @@ class MediaFlowApi:
             expected = document["expectedVersion"]
             if isinstance(expected, bool) or not isinstance(expected, int):
                 raise ValueError("configuration expectedVersion must be an integer")
-            revision = self._configuration_objects.mutate(
-                parts[3],
+            revision = self._configuration_objects.publish_object(
                 kind,
                 object_id=parts[6],
                 value=None,
                 expected_version=expected,
                 actor=principal.principal_id,
+                action="remove",
                 delete=True,
             )
+            self._refresh_configuration_binding()
             return self._response(start_response, 200, revision.summary())
         if (
             len(parts) == 8
@@ -4066,163 +4118,6 @@ class MediaFlowApi:
                 live_metadata=live_metadata,
             )
             return self._response(start_response, 200, evidence.document())
-        if (
-            len(parts) == 4
-            and parts[:2] == ["api", "configuration"]
-            and parts[2] == "revisions"
-            and method == "PUT"
-        ):
-            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
-            if self._configuration_service is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "managed configuration service is unavailable",
-                )
-            document = self._document(environ)
-            if set(document) != {"document", "expectedVersion"}:
-                raise ValueError("configuration Draft edit requires document and expectedVersion")
-            expected = document["expectedVersion"]
-            if isinstance(expected, bool) or not isinstance(expected, int):
-                raise ValueError("configuration expectedVersion must be an integer")
-            if not isinstance(document["document"], dict):
-                raise ValueError("configuration Draft document must be an object")
-            revision = self._configuration_service.edit_draft(
-                parts[3],
-                document["document"],
-                expected_version=expected,
-                actor=principal.principal_id,
-            )
-            return self._response(start_response, 200, revision.summary())
-        if parts == ["api", "configuration", "drafts"] and method == "POST":
-            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
-            if self._configuration_service is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "managed configuration service is unavailable",
-                )
-            document = self._document(environ)
-            if set(document) == {"source"} and document.get("source") in {
-                "current",
-                "active",
-                "successor",
-            }:
-                draft_document = self._configuration_service.current_document(
-                    self._bootstrap_document
-                )
-            elif set(document) == {"document"} and isinstance(document["document"], dict):
-                draft_document = document["document"]
-            else:
-                raise ValueError("configuration Draft import requires a document object")
-            revision = self._configuration_service.import_draft(
-                draft_document, actor=principal.principal_id, source="api"
-            )
-            return self._response(start_response, 201, revision.summary())
-        if (
-            len(parts) == 5
-            and parts[:2] == ["api", "configuration"]
-            and parts[2] == "revisions"
-            and parts[4] in {"validate", "activate"}
-            and method == "POST"
-        ):
-            if self._configuration_service is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "managed configuration service is unavailable",
-                )
-            document = self._document(environ)
-            if parts[4] == "validate":
-                self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
-                if document:
-                    raise ValueError("configuration validation does not accept request fields")
-                revision = self._configuration_service.validate(
-                    parts[3], actor=principal.principal_id
-                )
-                return self._response(start_response, 200, revision.summary())
-            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
-            allowed = {"expectedVersion", "checked"}
-            if set(document).difference(allowed) or "expectedVersion" not in document:
-                raise ValueError(
-                    "configuration activation requires expectedVersion and optional checked"
-                )
-            expected = document["expectedVersion"]
-            if isinstance(expected, bool) or not isinstance(expected, int):
-                raise ValueError("configuration expectedVersion must be an integer")
-            checked = document.get("checked", False)
-            if not isinstance(checked, bool):
-                raise ValueError("configuration activation checked must be boolean")
-            if checked:
-                if self._configuration_objects is None:
-                    return self._error(
-                        start_response,
-                        503,
-                        "service_unavailable",
-                        "managed configuration object service is unavailable",
-                    )
-                revision = self._configuration_objects.activate_checked(
-                    parts[3], expected_version=expected, actor=principal.principal_id
-                )
-            else:
-                revision = self._configuration_service.activate(
-                    parts[3], expected_version=expected, actor=principal.principal_id
-                )
-            self._refresh_configuration_binding()
-            return self._response(start_response, 200, revision.summary())
-        if (
-            len(parts) == 5
-            and parts[:2] == ["api", "configuration"]
-            and parts[2] == "revisions"
-            and parts[4] == "successor"
-            and method == "POST"
-        ):
-            self._require_empty_query(environ, "successor Draft")
-            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
-            if self._configuration_service is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "managed configuration service is unavailable",
-                )
-            document = self._optional_document(environ)
-            allowed = {"expectedActiveRevisionId", "expectedActiveVersion", "expectedActiveDigest"}
-            if set(document).difference(allowed):
-                raise ValueError(
-                    "successor Draft from a specific revision accepts optional "
-                    "expectedActiveRevisionId, expectedActiveVersion, and expectedActiveDigest only"
-                )
-            if (
-                "expectedActiveRevisionId" in document
-                and document["expectedActiveRevisionId"] != parts[3]
-            ):
-                raise ValueError(
-                    "expectedActiveRevisionId in request body does not match revision ID in URL"
-                )
-            expected_version = document.get("expectedActiveVersion")
-            if expected_version is not None and (
-                isinstance(expected_version, bool) or not isinstance(expected_version, int)
-            ):
-                raise ValueError("expectedActiveVersion must be an integer")
-            expected_digest = document.get("expectedActiveDigest")
-            if expected_digest is not None and not isinstance(expected_digest, str):
-                raise ValueError("expectedActiveDigest must be a string")
-            revision = self._configuration_service.create_successor_draft(
-                actor=principal.principal_id,
-                expected_active_revision_id=parts[3],
-                expected_active_version=expected_version,
-                expected_active_digest=expected_digest,
-            )
-            response = revision.summary()
-            response["created"] = True
-            response["nextAction"] = (
-                "open the successor Draft, edit configuration objects, validate, and activate"
-            )
-            return self._response(start_response, 201, response)
         if (
             len(parts) == 4
             and parts[:2] == ["api", "resource-libraries"]
@@ -5216,43 +5111,39 @@ class MediaFlowApi:
                     "system settings service is unavailable",
                 )
             document = self._document(environ)
-            expected_version = document.get("expectedVersion")
+            retired_draft_fields = {"revisionId", "expectedVersion", "fromActive"}
+            if retired_draft_fields.intersection(document):
+                raise ValueError(
+                    "draft settings edit parameters are retired; apply changes to the "
+                    "current Active configuration instead"
+                )
+            if not document:
+                raise ValueError("system settings apply requires at least one setting")
+            expected_revision_id = document.get("expectedActiveRevisionId")
+            if expected_revision_id is not None and not isinstance(expected_revision_id, str):
+                raise ValueError("expectedActiveRevisionId must be a string")
+            expected_version = document.get("expectedActiveVersion")
             if expected_version is not None and (
                 isinstance(expected_version, bool) or not isinstance(expected_version, int)
             ):
-                raise ValueError("expectedVersion must be an integer")
+                raise ValueError("expectedActiveVersion must be an integer")
+            expected_digest = document.get("expectedActiveDigest")
+            if expected_digest is not None and not isinstance(expected_digest, str):
+                raise ValueError("expectedActiveDigest must be a string")
             edits = self._extract_system_settings_edits(document)
-            if expected_version is not None:
-                # Edit an existing Draft by revision ID.
-                revision_id = document.get("revisionId")
-                if not isinstance(revision_id, str) or not revision_id:
-                    raise ValueError("revisionId is required when expectedVersion is provided")
-                updated = self._system_settings.edit_draft(
-                    revision_id,
-                    edits=edits,
-                    expected_version=expected_version,
-                    actor=principal.principal_id,
-                )
-                status_code = 200
-            else:
-                # Create successor Draft from Active and apply edits.
-                updated = self._system_settings.edit(
-                    edits=edits,
-                    actor=principal.principal_id,
-                    expected_active_revision_id=document.get("expectedActiveRevisionId"),
-                    expected_active_version=(
-                        int(document["expectedActiveVersion"])
-                        if document.get("expectedActiveVersion") is not None
-                        else None
-                    ),
-                    expected_active_digest=document.get("expectedActiveDigest"),
-                )
-                status_code = 201
+            updated = self._system_settings.publish(
+                edits=edits,
+                actor=principal.principal_id,
+                expected_active_revision_id=expected_revision_id,
+                expected_active_version=expected_version,
+                expected_active_digest=expected_digest,
+            )
+            self._refresh_configuration_binding()
             response = updated.as_projection()
             response["authority"] = "MANAGED"
-            response["created"] = expected_version is None
+            response["published"] = True
             response["consumption"] = self._system_settings.consumption_evidence()
-            return self._response(start_response, status_code, response)
+            return self._response(start_response, 200, response)
 
         # GET /api/configuration/revisions/<revision_id>/settings
         if (
@@ -5290,38 +5181,6 @@ class MediaFlowApi:
             projection["authority"] = "MANAGED"
             projection["consumption"] = self._system_settings.consumption_evidence()
             return self._response(start_response, 200, projection)
-
-        # PUT /api/configuration/revisions/<revision_id>/settings
-        if (
-            len(parts) == 5
-            and parts[:2] == ["api", "configuration"]
-            and parts[2] == "revisions"
-            and parts[4] == "settings"
-            and method == "PUT"
-        ):
-            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
-            if self._system_settings is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "system settings service is unavailable",
-                )
-            document = self._document(environ)
-            expected_version = document.get("expectedVersion")
-            if isinstance(expected_version, bool) or not isinstance(expected_version, int):
-                raise ValueError("expectedVersion must be an integer")
-            edits = self._extract_system_settings_edits(document)
-            updated = self._system_settings.edit_draft(
-                parts[3],
-                edits=edits,
-                expected_version=expected_version,
-                actor=principal.principal_id,
-            )
-            response = updated.as_projection()
-            response["authority"] = "MANAGED"
-            response["consumption"] = self._system_settings.consumption_evidence()
-            return self._response(start_response, 200, response)
 
         if (
             len(parts) == 4
@@ -9414,14 +9273,14 @@ class MediaFlowApi:
                 next_action="import an unmodified JSON configuration package",
             )
         if "package" in value:
-            allowed = {"package", "recovery"}
+            allowed = {"package"}
             if set(value).difference(allowed):
                 raise PackageExchangeError(
                     "package import request contains unsupported fields",
                     code="invalid_request",
                     status=422,
                     durable_state="no_configuration_changed",
-                    next_action="send only the package and optional recovery authority",
+                    next_action="send only the exact configuration package",
                 )
             package_value = value["package"]
             recovery = value.get("recovery")
@@ -9436,13 +9295,13 @@ class MediaFlowApi:
                 durable_state="no_configuration_changed",
                 next_action="import a supported configuration package",
             )
-        if recovery is not None and not isinstance(recovery, dict):
+        if recovery is not None:
             raise PackageExchangeError(
-                "package import recovery authority must be an object",
+                "package import does not accept recovery/draft authority",
                 code="invalid_request",
                 status=422,
                 durable_state="no_configuration_changed",
-                next_action="omit recovery or supply the exact current Draft identity",
+                next_action="send only the exact configuration package",
             )
         return package_value, recovery
 
@@ -14833,15 +14692,7 @@ class MediaFlowApi:
             )
         detail = self._configuration_objects.revision_detail(active.revision_id)
         all_items = detail["objects"].get("automationTaskDefinitions", [])
-        try:
-            drafts = self._configuration_service.open_draft_revisions()
-        except Exception:
-            return self._error(
-                start_response,
-                503,
-                "service_unavailable",
-                "managed configuration service is unavailable",
-            )
+        drafts = (active,)
         active_ids = {
             str(candidate.get("id"))
             for candidate in all_items
@@ -16934,10 +16785,6 @@ class MediaFlowApi:
             return self._notification_webhook_operator_test(
                 parts[4], environ, start_response, principal
             )
-        if len(parts) == 6 and method == "POST" and parts[5] == "activate-draft":
-            return self._notification_webhook_activate_checked_draft(
-                parts[4], environ, start_response, principal
-            )
         if method != "GET":
             return self._error(start_response, 405, "method_not_allowed", "GET required")
         self._require(principal, ApiPermission.READ)
@@ -16954,9 +16801,6 @@ class MediaFlowApi:
         if len(parts) == 5:
             self._require_empty_query(environ, "operations notification definition")
             return self._notification_webhook_operator_detail(parts[4], start_response, principal)
-        if len(parts) == 6 and parts[5] == "draft":
-            self._require_empty_query(environ, "operations notification definition draft")
-            return self._notification_webhook_operator_draft(parts[4], start_response, principal)
         return self._error(start_response, 404, "not_found", "route was not found")
 
     def _notification_webhook_resolution(self, webhook_id: str, start_response: Callable):
@@ -16982,7 +16826,6 @@ class MediaFlowApi:
             )
         try:
             active = self._configuration_service.active()
-            draft = self._configuration_service.latest_open_draft_containing("webhooks", webhook_id)
         except Exception:
             return self._error(
                 start_response,
@@ -16990,6 +16833,8 @@ class MediaFlowApi:
                 "service_unavailable",
                 "managed configuration service is unavailable",
             )
+        # The current object form edits the Active definition and publishes a
+        # checked successor directly.  There is no separate open draft.
         raw = None
         in_active = False
         if active is not None:
@@ -17005,21 +16850,9 @@ class MediaFlowApi:
                 None,
             )
             in_active = raw is not None
-        if raw is None and draft is not None:
-            projected = self._configuration_objects.revision_detail(draft.revision_id)[
-                "objects"
-            ].get("webhooks", [])
-            raw = next(
-                (
-                    item
-                    for item in projected
-                    if isinstance(item, dict) and item.get("id") == webhook_id
-                ),
-                None,
-            )
         if raw is None:
             raise LookupError(f"webhooks {webhook_id!r} was not found")
-        return active, draft, raw, in_active
+        return active, active, raw, in_active
 
     def _notification_webhook_actions(
         self,
@@ -17041,9 +16874,9 @@ class MediaFlowApi:
         permissions = principal.permissions
         manage = ApiPermission.MANAGE_CONFIGURATION in permissions
         activate_permitted = ApiPermission.ACTIVATE_CONFIGURATION in permissions
-        active_revision_id = active.revision_id if active is not None else None
         draft_revision_id = draft.revision_id if draft is not None else None
-        no_draft_reason = "an open successor Draft is required to edit this Webhook definition"
+        apply_permitted = manage and activate_permitted
+        no_draft_reason = "the current Webhook definition is unavailable"
         manage_reason = "the connected API principal cannot manage Webhook Definitions"
         return {
             "detail": {
@@ -17074,7 +16907,7 @@ class MediaFlowApi:
                 ),
             },
             "edit": {
-                "available": manage and draft is not None,
+                "available": apply_permitted and draft is not None,
                 "reason": (
                     self._organize_unavailable_reason(
                         manage,
@@ -17099,7 +16932,7 @@ class MediaFlowApi:
                 "nextAction": "save the bounded form, then validate and explicitly activate",
             },
             "copy": {
-                "available": manage and draft is not None,
+                "available": apply_permitted and draft is not None,
                 "reason": (
                     self._organize_unavailable_reason(
                         manage,
@@ -17124,7 +16957,7 @@ class MediaFlowApi:
                 "nextAction": "open the copied definition, edit it, then validate and activate",
             },
             "enable": {
-                "available": manage and draft is not None,
+                "available": apply_permitted and draft is not None,
                 "reason": (
                     self._organize_unavailable_reason(
                         manage,
@@ -17148,7 +16981,7 @@ class MediaFlowApi:
                 "nextAction": "review the Draft, validate it, then explicitly activate",
             },
             "disable": {
-                "available": manage and draft is not None,
+                "available": apply_permitted and draft is not None,
                 "reason": (
                     self._organize_unavailable_reason(
                         manage,
@@ -17172,63 +17005,23 @@ class MediaFlowApi:
                 "nextAction": "review the Draft, validate it, then explicitly activate",
             },
             "draftCreate": {
-                "available": manage and active is not None,
-                "reason": (
-                    self._organize_unavailable_reason(
-                        manage,
-                        ApiPermission.MANAGE_CONFIGURATION,
-                        manage_reason,
-                    )
-                    if not manage
-                    else (
-                        None
-                        if active is not None
-                        else "no Active configuration exists; managed "
-                        "configuration setup owns the first Draft"
-                    )
-                ),
+                "available": False,
+                "reason": "Webhook definitions are published directly; no draft exists",
                 "method": "POST",
-                "path": (
-                    f"/api/configuration/revisions/{active_revision_id}/successor"
-                    if active_revision_id is not None
-                    else None
-                ),
+                "path": None,
                 "sideEffects": "none",
-                "durableOutcome": (
-                    "a successor Draft seeded from the immutable Active configuration is stored"
-                ),
-                "nextAction": (
-                    "create or open the successor Draft, then add or edit Webhook "
-                    "definitions inside it"
-                ),
+                "durableOutcome": "none",
+                "nextAction": "apply the Webhook form; validation and publication are atomic",
             },
             "activate": {
-                "available": activate_permitted and draft is not None,
-                "reason": (
-                    self._organize_unavailable_reason(
-                        activate_permitted,
-                        ApiPermission.ACTIVATE_CONFIGURATION,
-                        "the connected API principal cannot activate configuration",
-                    )
-                    if not activate_permitted
-                    else (None if draft is not None else no_draft_reason)
-                ),
+                "available": False,
+                "reason": "the definition is already Active; saving applies a new Active snapshot",
                 "method": "POST",
-                "path": (
-                    f"/api/operations/notifications/webhooks/{webhook_id}/activate-draft"
-                    if draft_revision_id is not None
-                    else None
-                ),
-                "requiresConfirmation": True,
+                "path": None,
+                "requiresConfirmation": False,
                 "sideEffects": "none",
-                "durableOutcome": (
-                    "the exact reviewed Webhook-only Draft change becomes the immutable "
-                    "Active configuration; no delivery is created"
-                ),
-                "nextAction": (
-                    "activate the reviewed Draft after validating it; the resulting Active "
-                    "identity is reported without a digest"
-                ),
+                "durableOutcome": "none",
+                "nextAction": "save the Webhook form to publish a checked successor",
             },
         }
 
@@ -17397,7 +17190,6 @@ class MediaFlowApi:
                 )
             )
         manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
-        draft_revision_id = drafts[0].revision_id if drafts else None
         return self._response(
             start_response,
             200,
@@ -17418,54 +17210,31 @@ class MediaFlowApi:
                 "supportedEvents": list(webhook_events_supported()),
                 "actions": {
                     "create": {
-                        "available": manage and draft_revision_id is not None,
-                        "reason": (
-                            self._organize_unavailable_reason(
-                                manage,
-                                ApiPermission.MANAGE_CONFIGURATION,
-                                "the connected API principal cannot create Webhook Definitions",
-                            )
-                            if not manage
-                            else (
-                                None
-                                if draft_revision_id is not None
-                                else "an open successor Draft is required to add a "
-                                "Webhook definition"
-                            )
-                        ),
-                        "method": "POST",
-                        "path": (
-                            f"/api/configuration/revisions/{draft_revision_id}/objects/webhooks"
-                            if draft_revision_id is not None
-                            else None
-                        ),
-                        "sideEffects": "none",
-                        "durableOutcome": (
-                            "the bounded Webhook definition is stored inside the open "
-                            "successor Draft"
-                        ),
-                        "nextAction": (
-                            "start or open a successor Draft, then create the definition inside it"
-                        ),
-                    },
-                    "createDraft": {
                         "available": manage,
                         "reason": self._organize_unavailable_reason(
                             manage,
                             ApiPermission.MANAGE_CONFIGURATION,
-                            "the connected API principal cannot create a successor Draft",
+                            "the connected API principal cannot create Webhook Definitions",
                         ),
                         "method": "POST",
-                        "path": f"/api/configuration/revisions/{active.revision_id}/successor",
+                        "path": (
+                            f"/api/configuration/revisions/{active.revision_id}/objects/webhooks"
+                        ),
                         "sideEffects": "none",
                         "durableOutcome": (
-                            "a successor Draft seeded from the immutable Active "
-                            "configuration is stored"
+                            "the bounded Webhook definition is validated and published "
+                            "as a new immutable Active configuration"
                         ),
-                        "nextAction": (
-                            "create or open the successor Draft, then add or edit "
-                            "Webhook definitions inside it"
-                        ),
+                        "nextAction": "apply the definition; it becomes effective immediately",
+                    },
+                    "createDraft": {
+                        "available": False,
+                        "reason": "Webhook definitions are published directly; no draft exists",
+                        "method": "POST",
+                        "path": None,
+                        "sideEffects": "none",
+                        "durableOutcome": "none",
+                        "nextAction": "apply the definition from the Webhook form",
                     },
                 },
             },
@@ -17490,190 +17259,6 @@ class MediaFlowApi:
                     in_active=in_active,
                 ),
                 "activeConfiguration": self._automation_active_configuration(active),
-            },
-        )
-
-    def _notification_webhook_operator_draft(
-        self, webhook_id: str, start_response: Callable, principal: ResolvedApiPrincipal
-    ) -> None:
-        resolution = self._notification_webhook_resolution(webhook_id, start_response)
-        if not isinstance(resolution, tuple):
-            return resolution
-        active, draft, raw, in_active = resolution
-        draft_webhook = None
-        if draft is not None:
-            projected = ConfigurationObjectService._webhooks_projection(draft.document)
-            draft_webhook = next(
-                (
-                    item
-                    for item in projected
-                    if isinstance(item, dict) and item.get("id") == webhook_id
-                ),
-                None,
-            )
-        permissions = principal.permissions
-        manage = ApiPermission.MANAGE_CONFIGURATION in permissions
-        activate_permitted = ApiPermission.ACTIVATE_CONFIGURATION in permissions
-        draft_revision_id = draft.revision_id if draft is not None else None
-        active_revision_id = active.revision_id if active is not None else None
-        no_draft_reason = "an open successor Draft is required to edit this Webhook definition"
-        manage_reason = "the connected API principal cannot manage Webhook Definitions"
-        return self._response(
-            start_response,
-            200,
-            {
-                "webhookId": webhook_id,
-                "activeConfiguration": self._automation_active_configuration(active),
-                "webhook": raw if in_active else None,
-                "draft": (
-                    None
-                    if draft is None or draft_webhook is None
-                    else {
-                        "revisionId": draft.revision_id,
-                        "revisionVersion": draft.version,
-                        "revisionStatus": draft.status.value,
-                        "baseActiveRevisionId": draft.base_active_revision_id,
-                        "updatedAt": draft.updated_at.isoformat(),
-                        "validatedAt": (
-                            draft.validated_at.isoformat() if draft.validated_at else None
-                        ),
-                        "validationErrors": list(draft.validation_errors),
-                        "webhook": draft_webhook,
-                    }
-                ),
-                "supportedEvents": list(webhook_events_supported()),
-                "actions": {
-                    "createDraft": {
-                        "available": manage and active is not None,
-                        "reason": (
-                            self._organize_unavailable_reason(
-                                manage,
-                                ApiPermission.MANAGE_CONFIGURATION,
-                                manage_reason,
-                            )
-                            if not manage
-                            else (
-                                None
-                                if active is not None
-                                else "no Active configuration exists; managed "
-                                "configuration setup owns the first Draft"
-                            )
-                        ),
-                        "method": "POST",
-                        "path": (
-                            f"/api/configuration/revisions/{active_revision_id}/successor"
-                            if active_revision_id is not None
-                            else None
-                        ),
-                        "sideEffects": "none",
-                        "durableOutcome": (
-                            "a successor Draft seeded from the immutable Active "
-                            "configuration is stored"
-                        ),
-                        "nextAction": (
-                            "create the successor Draft, then edit this Webhook definition "
-                            "inside it"
-                        ),
-                    },
-                    "save": {
-                        "available": manage and draft is not None,
-                        "reason": (
-                            self._organize_unavailable_reason(
-                                manage,
-                                ApiPermission.MANAGE_CONFIGURATION,
-                                manage_reason,
-                            )
-                            if not manage
-                            else (None if draft is not None else no_draft_reason)
-                        ),
-                        "method": "PUT",
-                        "path": (
-                            f"/api/configuration/revisions/{draft_revision_id}/objects/"
-                            f"webhooks/{webhook_id}"
-                            if draft_revision_id is not None
-                            else None
-                        ),
-                        "sideEffects": "none",
-                        "durableOutcome": (
-                            "the bounded definition form is stored in the open successor "
-                            "Draft at a new optimistic revision version"
-                        ),
-                        "nextAction": (
-                            "save the bounded form, then validate and explicitly activate"
-                        ),
-                    },
-                    "validate": {
-                        "available": manage and draft is not None,
-                        "reason": (
-                            self._organize_unavailable_reason(
-                                manage,
-                                ApiPermission.MANAGE_CONFIGURATION,
-                                "the connected API principal cannot validate configuration",
-                            )
-                            if not manage
-                            else (None if draft is not None else no_draft_reason)
-                        ),
-                        "method": "POST",
-                        "path": (
-                            f"/api/configuration/revisions/{draft_revision_id}/validate"
-                            if draft_revision_id is not None
-                            else None
-                        ),
-                        "sideEffects": "none",
-                        "durableOutcome": (
-                            "the open Draft is validated without any runtime or Storage effect"
-                        ),
-                        "nextAction": "validate the Draft, then review the validation evidence",
-                    },
-                    "activate": {
-                        "available": activate_permitted and draft is not None,
-                        "reason": (
-                            self._organize_unavailable_reason(
-                                activate_permitted,
-                                ApiPermission.ACTIVATE_CONFIGURATION,
-                                "the connected API principal cannot activate configuration",
-                            )
-                            if not activate_permitted
-                            else (None if draft is not None else no_draft_reason)
-                        ),
-                        "method": "POST",
-                        "path": (
-                            f"/api/operations/notifications/webhooks/{webhook_id}/activate-draft"
-                            if draft_revision_id is not None
-                            else None
-                        ),
-                        "requiresConfirmation": True,
-                        "sideEffects": "none",
-                        "durableOutcome": (
-                            "the exact reviewed Webhook-only Draft change becomes the "
-                            "immutable Active configuration; no delivery is created"
-                        ),
-                        "nextAction": (
-                            "activate the reviewed Draft after validating it; the resulting "
-                            "Active identity is reported without a digest"
-                        ),
-                    },
-                    "test": {
-                        "available": manage,
-                        "reason": (
-                            self._organize_unavailable_reason(
-                                manage,
-                                ApiPermission.MANAGE_CONFIGURATION,
-                                manage_reason,
-                            )
-                        ),
-                        "method": "POST",
-                        "path": f"/api/operations/notifications/webhooks/{webhook_id}/test",
-                        "sideEffects": "one_signed_test_request",
-                        "durableOutcome": (
-                            "no durable change; only the bounded test outcome category is returned"
-                        ),
-                        "nextAction": (
-                            "test the exact displayed revision after reviewing its endpoint "
-                            "and secret readiness"
-                        ),
-                    },
-                },
             },
         )
 
@@ -17845,284 +17430,6 @@ class MediaFlowApi:
             }
         detail["actions"] = actions
         return self._response(start_response, 200, detail)
-
-    def _notification_webhook_activate_checked_draft(
-        self,
-        webhook_id: str,
-        environ: dict,
-        start_response: Callable,
-        principal: ResolvedApiPrincipal,
-    ) -> None:
-        """Checked-activate the exact open successor Draft that owns this Webhook.
-
-        The browser supplies the Draft's exact advertised revision identity and
-        optimistic version — never a digest. The action is bound to that exact
-        Draft revision, the Active base is pinned, and the Draft's changes are
-        compared with the Active document so a revision that touches anything
-        outside the Webhook Definition boundary is rejected before any
-        activation, and so the ``webhooks`` section changes only at the
-        reviewed definition's exact identity — a sibling definition can never
-        be added, removed or modified while riding along. Because the
-        confinement comparison proves every other section and every other
-        definition is identical to the live Active configuration, the published
-        configuration carries no new Storage, strategy or destination
-        semantics. No delivery is created by activation, and a Draft-only
-        definition (newly created or copied) is activatable exactly like an
-        edited Active definition.
-        """
-
-        if self._configuration_service is None or self._configuration_objects is None:
-            return self._error(
-                start_response,
-                503,
-                "service_unavailable",
-                "managed configuration service is unavailable",
-            )
-        self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
-        self._require_empty_query(environ, "operations notification draft activation")
-        document = self._document(environ)
-        if set(document) != {"expectedRevisionId", "expectedVersion"}:
-            raise ValueError(
-                "notification draft activation requires expectedRevisionId and expectedVersion only"
-            )
-        expected_revision_id = document["expectedRevisionId"]
-        if not isinstance(expected_revision_id, str) or not expected_revision_id.strip():
-            raise ValueError(
-                "notification draft activation expectedRevisionId must be a non-empty string"
-            )
-        expected = document["expectedVersion"]
-        if isinstance(expected, bool) or not isinstance(expected, int):
-            raise ValueError("notification draft activation expectedVersion must be an integer")
-        active = self._configuration_service.active()
-        try:
-            draft = self._configuration_service.latest_open_draft_containing("webhooks", webhook_id)
-        except Exception:
-            return self._error(
-                start_response,
-                503,
-                "service_unavailable",
-                "managed configuration service is unavailable",
-            )
-        if active is None:
-            raise AutomationExecutionIntentError(
-                "no Active configuration exists; managed configuration setup owns the first Draft",
-                code="notification_active_missing",
-                status=409,
-                durable_state="no configuration was activated",
-                next_action="complete managed configuration setup, then stage a successor Draft",
-            )
-        if draft is None:
-            raise AutomationExecutionIntentError(
-                "no open successor Draft contains this Webhook definition",
-                code="notification_draft_required",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action="create a successor Draft, edit the definition, then activate",
-            )
-        if draft.revision_id != expected_revision_id:
-            raise ConfigurationVersionConflict(
-                "the submitted Draft identity does not match the current open successor "
-                "Draft; reload the Draft",
-                revision_id=draft.revision_id,
-                current_version=draft.version,
-                durable_state="draft_preserved",
-                next_action=(
-                    "reload the Draft document, then activate the exact advertised "
-                    "Draft revision again"
-                ),
-            )
-        if draft.version != expected:
-            raise ConfigurationVersionConflict(
-                "the successor Draft changed before activation; reload the Draft",
-                revision_id=draft.revision_id,
-                current_version=draft.version,
-                durable_state="draft_preserved",
-                next_action="reload the Draft, then activate the current version again",
-            )
-        if draft.base_active_revision_id != active.revision_id:
-            raise ConfigurationVersionConflict(
-                "the Active configuration changed after this Draft was created; "
-                "stage a fresh successor Draft",
-                revision_id=draft.revision_id,
-                current_version=draft.version,
-                durable_state="draft_preserved",
-                next_action=(
-                    "create a fresh successor Draft from the current Active "
-                    "configuration, then edit, validate and activate it"
-                ),
-            )
-        changed = self._notification_draft_changed_sections(draft.document, active.document)
-        if changed - {"webhooks"}:
-            raise AutomationExecutionIntentError(
-                "this Draft changes configuration outside the Webhook Definition boundary",
-                code="notification_activation_out_of_scope",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action=(
-                    "remove the unrelated configuration changes from the Draft, or use the "
-                    "managed configuration activation journey with explicit review"
-                ),
-            )
-        self._require_webhook_only_change(active.document, draft.document, webhook_id)
-        # The exact-revision binding, Active-base pin and Webhook-only
-        # confinement above prove every non-Webhook section and every other
-        # Webhook definition is identical to the live Active configuration, so
-        # no new Storage, strategy or destination semantics are published by
-        # this activation. The managed activation revalidates the exact
-        # revision digest, optimistic version and document loader atomically
-        # before publishing.
-        activated = self._configuration_service.activate(
-            draft.revision_id,
-            expected_version=draft.version,
-            actor=principal.principal_id,
-        )
-        self._refresh_configuration_binding()
-        active_after = self._configuration_service.active()
-        webhook_after = next(
-            (
-                item
-                for item in ConfigurationObjectService._webhooks_projection(activated.document)
-                if isinstance(item, dict) and item.get("id") == webhook_id
-            ),
-            None,
-        )
-        return self._response(
-            start_response,
-            200,
-            {
-                "activatedRevisionId": activated.revision_id,
-                "activatedVersion": activated.version,
-                "revisionSequence": activated.revision_sequence,
-                # Echo of the exact reviewed Draft identity the activation was
-                # bound to, so the Web client can verify the success document
-                # against the submitted mutation.
-                "publishedFromRevisionId": draft.revision_id,
-                "publishedFromVersion": draft.version,
-                "activeConfiguration": self._automation_active_configuration(active_after),
-                "webhook": webhook_after,
-            },
-        )
-
-    @staticmethod
-    def _notification_webhook_canonical_document(document: object) -> dict:
-        """Copy of one document with the legacy nested Webhook spelling normalized.
-
-        The managed Webhook edit path moves ``notifications.webhooks`` to the
-        root ``webhooks`` section, so the confinement comparison must treat
-        that spelling migration as the same boundary, not as an unrelated
-        configuration change.
-        """
-
-        value = copy.deepcopy(document) if isinstance(document, dict) else {}
-        if "webhooks" not in value:
-            notifications = value.get("notifications")
-            if isinstance(notifications, dict) and isinstance(notifications.get("webhooks"), list):
-                value["webhooks"] = copy.deepcopy(notifications["webhooks"])
-                nested = dict(notifications)
-                nested.pop("webhooks", None)
-                value["notifications"] = nested
-        return value
-
-    @classmethod
-    def _notification_draft_changed_sections(
-        cls, draft_document: object, active_document: object
-    ) -> set[str]:
-        """Top-level configuration sections the Draft changes versus Active.
-
-        Both documents are first normalized to the canonical root ``webhooks``
-        spelling so a managed Webhook edit inside a legacy-spelled Active
-        document is confined to the Webhook boundary instead of being read as
-        an unrelated configuration change.
-        """
-
-        return MediaFlowApi._automation_draft_changed_sections(
-            cls._notification_webhook_canonical_document(draft_document),
-            cls._notification_webhook_canonical_document(active_document),
-        )
-
-    @staticmethod
-    def _webhook_identity_map(document: object) -> dict[str, object] | None:
-        """Effective Webhook id → entry map for either section spelling.
-
-        Returns ``None`` when the effective section is malformed (not a list,
-        an entry that is not an object, a non-string id, or a duplicated id),
-        so the caller can fail closed instead of activating an unverifiable
-        boundary.
-        """
-
-        if not isinstance(document, dict):
-            return None
-        section = document.get("webhooks")
-        if not isinstance(section, list):
-            notifications = document.get("notifications")
-            if isinstance(notifications, dict) and isinstance(notifications.get("webhooks"), list):
-                section = notifications["webhooks"]
-            else:
-                section = []
-        definitions: dict[str, object] = {}
-        for entry in section:
-            if not (isinstance(entry, dict) and isinstance(entry.get("id"), str)):
-                return None
-            entry_id = entry["id"]
-            if entry_id in definitions:
-                return None
-            definitions[entry_id] = entry
-        return definitions
-
-    def _require_webhook_only_change(
-        self,
-        active_document: object,
-        draft_document: object,
-        webhook_id: str,
-    ) -> None:
-        """Fail closed unless the Draft's only Webhook change is this definition.
-
-        The section-level confinement proves no other configuration section
-        changed; this comparison proves the effective ``webhooks`` section
-        changed only at the reviewed definition's exact identity. Every other
-        definition must be present in both documents and identical, so a
-        sibling definition cannot be added, removed or modified while riding
-        along with the reviewed activation — including the create/copy case,
-        where the new or copied definition must be the sole Webhook change.
-        Malformed sections fail closed: an unverifiable boundary is never
-        activated.
-        """
-
-        active_definitions = self._webhook_identity_map(active_document)
-        draft_definitions = self._webhook_identity_map(draft_document)
-        if active_definitions is None or draft_definitions is None:
-            raise AutomationExecutionIntentError(
-                "the Webhook definition section is malformed; activation "
-                "cannot verify its exact boundary",
-                code="notification_activation_out_of_scope",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action=(
-                    "create a fresh successor Draft from the current Active "
-                    "configuration, then edit, validate and activate it"
-                ),
-            )
-        unexpected = sorted(
-            candidate_id
-            for candidate_id in set(active_definitions) | set(draft_definitions)
-            if candidate_id != webhook_id
-            and (
-                candidate_id not in active_definitions
-                or candidate_id not in draft_definitions
-                or draft_definitions[candidate_id] != active_definitions[candidate_id]
-            )
-        )
-        if unexpected:
-            raise AutomationExecutionIntentError(
-                "this Draft changes other Webhook Definitions beyond the reviewed definition",
-                code="notification_activation_definition_scope",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action=(
-                    "remove the other definition changes from this Draft, then edit, "
-                    "validate and activate one definition per Draft"
-                ),
-            )
 
     def _pipeline_evidence_value(evidence) -> dict:
         return evidence.document()

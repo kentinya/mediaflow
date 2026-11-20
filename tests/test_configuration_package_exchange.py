@@ -142,45 +142,22 @@ class PackageExchangeApiTests(unittest.TestCase):
         self.assertEqual(document["packageKinds"]["configuration"], CONFIGURATION_PACKAGE_KIND)
         self.assertEqual(document["currentActive"]["revisionId"], active.revision_id)
         self.assertEqual(document["currentActive"]["digest"], active.digest)
-        self.assertIsNone(document["currentDraft"])
-        self.assertIn("active", document["supportedRevisionStatuses"])
+        self.assertNotIn("currentDraft", document)
+        self.assertEqual(document["supportedRevisionStatuses"], ["active", "superseded"])
 
-    def test_export_active_and_explicit_draft_validated_superseded(self) -> None:
+    def test_export_active_and_superseded_only(self) -> None:
         api, service, _, active = self._bootstrap()
         root = Path(self.temporary.name)
 
-        # Active export with no Draft.
         code, active_package = request(api, "/api/configuration/packages/export/configuration")
         self.assertEqual(code, 200)
         self.assertEqual(active_package["source"]["status"], "active")
         self.assertTrue(active_package["currentness"]["sourceIsCurrent"])
-
-        # Draft then Validated package from the same Active base.
-        draft = service.import_draft(example_document(root, "draft.jsonl"), actor="tester")
-        code, draft_package = request(
-            api,
-            "/api/configuration/packages/export/configuration",
-            query=f"revisionId={draft.revision_id}",
-        )
-        self.assertEqual(code, 200)
-        self.assertEqual(draft_package["source"]["status"], "draft")
-        self.assertFalse(draft_package["currentness"]["sourceIsCurrent"])
-
-        validated = service.validate(draft.revision_id, actor="tester")
-        code, validated_package = request(
-            api,
-            "/api/configuration/packages/export/configuration",
-            query=f"revisionId={validated.revision_id}",
-        )
-        self.assertEqual(code, 200)
-        self.assertEqual(validated_package["source"]["status"], "validated")
-        self.assertEqual(validated_package["source"]["digest"], validated.digest)
         self.assertEqual(
-            validated_package["payload"]["documentDigest"],
-            canonical_digest(validated_package["payload"]["document"]),
+            active_package["payload"]["documentDigest"],
+            canonical_digest(active_package["payload"]["document"]),
         )
 
-        # Superseded revision after a second checked activation.
         second = activate(service, example_document(root, "second-history.jsonl"))
         superseded = next(
             revision
@@ -194,40 +171,32 @@ class PackageExchangeApiTests(unittest.TestCase):
         )
         self.assertEqual(code, 200)
         self.assertEqual(superseded_package["source"]["status"], "superseded")
+        self.assertFalse(superseded_package["currentness"]["sourceIsCurrent"])
         self.assertEqual(
             superseded_package["currentness"]["currentActiveRevisionId"],
             second.revision_id,
         )
-        self.assertEqual(
-            active_package["currentness"]["currentActiveRevisionId"], active.revision_id
-        )
 
-    def test_configuration_export_is_secret_free_and_bounded(self) -> None:
-        api, service, _, _ = self._bootstrap()
-        draft = service.import_draft(
-            {
-                **example_document(Path(self.temporary.name), "secret.jsonl"),
-                "api": {
-                    "principals": [
-                        {
-                            "id": "admin",
-                            "tokenEnv": "MEDIAFLOW_API_TOKEN",
-                            "roles": ["admin"],
-                            "enabled": True,
-                        }
-                    ],
-                    "storedToken": "top-secret-token",
-                },
-            },
-            actor="tester",
-        )
-        code, package = request(
+        # A transient staging revision created by a failed publication is not
+        # an exportable document.
+        draft = service.import_draft(example_document(root, "draft.jsonl"), actor="tester")
+        code, refused = request(
             api,
             "/api/configuration/packages/export/configuration",
             query=f"revisionId={draft.revision_id}",
         )
+        self.assertEqual(code, 404)
+        self.assertEqual(refused["error"]["code"], "revision_not_published")
+
+    def test_configuration_export_is_secret_free_and_bounded(self) -> None:
+        api, service, _, active = self._bootstrap()
+        code, package = request(
+            api,
+            "/api/configuration/packages/export/configuration",
+            query=f"revisionId={active.revision_id}",
+        )
         self.assertEqual(code, 200)
-        self.assertEqual(package["source"]["status"], "draft")
+        self.assertEqual(package["source"]["status"], "active")
         encoded = json.dumps(package, ensure_ascii=False)
         self.assertNotIn("top-secret-token", encoded)
         entries = package["redaction"]["entries"]
@@ -250,7 +219,7 @@ class PackageExchangeApiTests(unittest.TestCase):
         )
         self.assertLess(len(encoded.encode("utf-8")), 1_500_000)
 
-    def test_import_creates_draft_and_does_not_activate_or_overwrite(self) -> None:
+    def test_import_publishes_directly_and_never_creates_a_draft(self) -> None:
         api, service, _, active = self._bootstrap()
         code, package = request(api, "/api/configuration/packages/export/configuration")
         self.assertEqual(code, 200)
@@ -261,50 +230,42 @@ class PackageExchangeApiTests(unittest.TestCase):
             method="POST",
             body={"package": package},
         )
-        self.assertEqual(code, 201)
-        self.assertEqual(imported["action"], "created")
-        self.assertEqual(imported["revision"]["status"], "draft")
-        self.assertEqual(imported["revision"]["revisionId"], imported["currentDraft"]["revisionId"])
-        self.assertEqual(service.active().revision_id, active.revision_id)
-        self.assertNotEqual(service.active().revision_id, imported["revision"]["revisionId"])
+        self.assertEqual(code, 200)
+        self.assertEqual(imported["action"], "published")
+        self.assertEqual(imported["revision"]["status"], "active")
+        self.assertNotIn("currentDraft", imported)
+        self.assertEqual(
+            imported["publishedActive"]["revisionId"],
+            imported["revision"]["revisionId"],
+        )
 
-        # A second import must fail closed; it cannot overwrite the current Draft.
-        code, conflict = request(
+        # The imported document is the new Active.  The previous Active is
+        # preserved as superseded history; no unpublished revision remains.
+        self.assertNotEqual(service.active().revision_id, active.revision_id)
+        statuses = [revision.status.value for revision in service.repository.list_revisions()]
+        self.assertEqual(statuses, ["active", "superseded"])
+
+        # The same package is now stale: it names the previous Active and can
+        # not overwrite the winner by being replayed.
+        code, replayed = request(
             api,
             "/api/configuration/packages",
             method="POST",
             body={"package": package},
         )
         self.assertEqual(code, 409)
-        self.assertEqual(conflict["error"]["code"], "package_import_draft_conflict")
-        self.assertEqual(
-            conflict["error"]["details"]["currentDraft"]["revisionId"],
-            imported["revision"]["revisionId"],
-        )
-        self.assertEqual(conflict["error"]["details"]["sideEffects"], "none")
-        self.assertTrue(conflict["error"]["details"]["retrySafe"])
-        revisions = service.repository.list_revisions()
-        self.assertEqual(
-            [revision.revision_id for revision in revisions].count(
-                imported["revision"]["revisionId"]
-            ),
-            1,
+        self.assertEqual(replayed["error"]["code"], "package_stale")
+        self.assertFalse(
+            any(
+                revision.status.value in {"draft", "validated"}
+                for revision in service.repository.list_revisions()
+            )
         )
 
-    def test_import_updates_exact_draft_with_explicit_recovery_identity(self) -> None:
+    def test_import_publishes_changed_settings_and_rejects_draft_recovery_authority(self) -> None:
         api, service, _, active = self._bootstrap()
         code, package = request(api, "/api/configuration/packages/export/configuration")
         self.assertEqual(code, 200)
-        code, imported = request(
-            api,
-            "/api/configuration/packages",
-            method="POST",
-            body={"package": package},
-        )
-        self.assertEqual(code, 201)
-        draft = service.repository.get_revision(imported["revision"]["revisionId"])
-        self.assertIsNotNone(draft)
-        assert draft is not None
 
         changed = json.loads(json.dumps(package))
         changed["payload"]["document"]["historyPath"] = str(
@@ -316,24 +277,27 @@ class PackageExchangeApiTests(unittest.TestCase):
             api,
             "/api/configuration/packages",
             method="POST",
-            body={
-                "package": changed,
-                "recovery": {
-                    "replaceDraft": True,
-                    "expectedRevisionId": draft.revision_id,
-                    "expectedVersion": draft.version,
-                    "expectedDigest": draft.digest,
-                },
-            },
+            body={"package": changed},
         )
         self.assertEqual(code, 200)
-        self.assertEqual(updated["action"], "updated")
-        self.assertGreater(updated["revision"]["version"], draft.version)
-        self.assertEqual(service.active().revision_id, active.revision_id)
+        self.assertEqual(updated["action"], "published")
+        self.assertEqual(updated["revision"]["status"], "active")
         self.assertEqual(
-            service.repository.get_revision(draft.revision_id).version,
-            updated["revision"]["version"],
+            service.active().document["historyPath"],
+            str(Path(self.temporary.name) / "recovery-history.jsonl"),
         )
+        self.assertEqual(service.require(active.revision_id).status.value, "superseded")
+
+        # The retired draft recovery envelope is an invalid input, never a
+        # compatibility path.
+        code, refused = request(
+            api,
+            "/api/configuration/packages",
+            method="POST",
+            body={"package": package, "recovery": {"replaceDraft": True}},
+        )
+        self.assertEqual(code, 422)
+        self.assertEqual(refused["error"]["code"], "invalid_request")
 
     def test_stale_package_fails_closed_with_current_active_evidence(self) -> None:
         api, service, _, first = self._bootstrap()
@@ -354,7 +318,7 @@ class PackageExchangeApiTests(unittest.TestCase):
             details["currentActive"]["revisionId"],
             first.revision_id,
         )
-        self.assertIsNone(details["currentDraft"])
+        self.assertNotIn("currentDraft", details)
         self.assertEqual(details["sideEffects"], "none")
         self.assertEqual(len(service.repository.list_revisions()), 2)
 
@@ -564,9 +528,9 @@ class PackageExchangeApiTests(unittest.TestCase):
             method="POST",
             body={"package": package},
         )
-        self.assertEqual(code, 201)
+        self.assertEqual(code, 200)
         self.assertEqual(len(repository.list_tasks(limit=100)), before_tasks)
-        self.assertEqual(service.active().revision_id, active.revision_id)
+        self.assertNotEqual(service.active().revision_id, active.revision_id)
         actions = {record.action for record in repository.list_security_audit(limit=100)}
         self.assertIn("configuration_package_export", actions)
         self.assertIn("configuration_package_import", actions)
@@ -605,8 +569,8 @@ class PackageExchangeRequestContractTests(unittest.TestCase):
                     method="POST",
                     body={"package": exported},
                 )
-                self.assertEqual(code, 201)
-                self.assertEqual(imported["action"], "created")
+                self.assertEqual(code, 200)
+                self.assertEqual(imported["action"], "published")
 
                 # The same Web control on a stale package fails through the
                 # shared API and displays the same durable recovery details via

@@ -393,7 +393,7 @@ occurrence evidence. They do not change Scheduler's timing-only responsibility o
 | REQ-CONFIG-009 | REQUIRED | Validation and policy tests are zero-mutation; connectivity/read/write tests use the least authority necessary and clearly state their effects. | §策略测试工具; §存储配置; §安全预览 | A test cannot silently scan, organize or grant execution authority. |
 | REQ-CONFIG-010 | REQUIRED | Credentials are stored encrypted or resolved through an approved external secret source and never returned in normal configuration payloads. | §TMDB 配置; §安全要求; §配置导入导出 | Copy, diff, export, audit and error paths remain secret-free. |
 | REQ-CONFIG-011 | REQUIRED | System settings cover database/work/cache/log/export locations, default locale/timezone/log level and retention, concurrency and retry policy. | §系统设置 | Values are validated, permission-aware and consumed from the same configuration authority. |
-| REQ-CONFIG-012 | REQUIRED | The primary Web configuration journey uses discoverable typed forms/cards; the general configuration surface exposes the Draft lifecycle, while a focused ResourceLibrary Save may bundle successor creation, validation and activation. Whole-document JSON remains an Advanced/import/export/support surface. | §配置生命周期; §配置操作; §配置导入导出; §最终管理界面; §文件列表 | Active remains immutable, ordinary object management does not feel JSON-only, and a page-local Save cannot publish an invalid or partially activated runtime. |
+| REQ-CONFIG-012 | REQUIRED | The primary Web configuration journey uses discoverable typed forms/cards; applying a form validates, runs applicable checks and atomically publishes the checked successor without exposing a resumable draft. Whole-document JSON remains an Advanced/import/export/support surface with explicit check and publish. | §配置生命周期; §配置操作; §配置导入导出; §最终管理界面; §文件列表 | Active remains immutable, ordinary object management does not feel JSON-only, and no entry can publish an invalid or partially published runtime or leave a recoverable configuration draft. |
 
 ## Deployment and self-hosting requirements
 
@@ -611,28 +611,29 @@ Domain、Repository、Application Service、数据库表或内部测试完成，
 Managed Configuration 的目标生命周期为：
 
 ```Plain Text
-Draft
+Candidate
 → Validate / Test
-→ Validated
-→ Explicit Activate
+→ Atomic Publish
 → Immutable Runtime Snapshot
 → Engine
 ```
 
-- Draft 可编辑但不影响运行时。
-- Validated 表示某个确定版本通过结构、引用和适用的安全测试；后续编辑会使其重新成为 Draft。
-- Active 只能指已经显式激活、且正被运行时消费的不可变快照。界面必须显示版本/摘要和激活时间。
-- 激活失败时旧 Active 保持有效，不允许部分激活。
-- JSON 长期保留用于 bootstrap、导入导出、迁移和支持包；Managed Activation 实现后，JSON 不得与
-  Managed Configuration 同时成为互相竞争的 Active source of truth。
+- 候选内容来自当前业务表单、显式导入或完整替换；未提交的输入、只读检查证据和提交结果各自
+  只服务于对应操作，不构成可恢复的配置草稿。
+- 应用时后端绑定当前生效基线、依赖范围和权限，重新校验候选内容并完成适用的只读检查，
+  然后原子发布。普通校验、检查、越权或基线过期失败时保留旧 Active 和可修正输入。
+- Active 只能指已经显式应用、且正被运行时消费的不可变快照。界面必须显示版本/摘要和采用时间。
+- 发布失败时旧 Active 保持有效，不允许部分发布；持久化失败时 Active、审计和发布标记一起回滚。
+- JSON 长期保留用于 bootstrap、导入导出、迁移和支持包；持久配置修订只包含当前和历史已发布
+  快照。JSON 不得与 Managed Configuration 同时成为互相竞争的 Active source of truth。
 
 #### **当前 Managed Configuration 产品边界（已实现）**
 
-- 已实现 whole-document Draft/Validated/Active revision 的 SQLite 持久化、版本/digest、验证证据、
-  原子激活和脱敏 Before/After 审计。
+- 已实现 whole-document 已发布 Active revision 的 SQLite 持久化、版本/digest、验证证据、
+  原子发布和脱敏 Before/After 审计；检查候选只在一次命令内短暂存在，失败即清理。
 - 已接入受鉴权 API 与 Operator Web Configuration 视图，以及本地 `config status`、
-  `config draft-import`、`config draft-validate` 和 `config activate` 管理命令。
-- 新建 Task/Automation Job 记录其 configuration snapshot ID/digest；激活不启动扫描、Provider、
+  `config initialize` 和 `config publish` 管理命令。旧草稿导入、验证、激活命令和参数退出。
+- 新建 Task/Automation Job 记录其 configuration snapshot ID/digest；发布不启动扫描、Provider、
   Storage 或 Organizer，旧在途工作继续使用原快照。
 - 运行时缺失/损坏场景会拒绝工作且不回退 JSON；F1 在完整 runtime 校验成功前不发布 identity，
   runtime-invalid Active 的重复 API 请求持续返回结构化 503 且不创建 Job。
@@ -646,20 +647,20 @@ Draft
   identity；加载失败不发出 Job、不推进 due 状态。已持久化但未 pin 的旧工作在 managed authority
   建立后会拒绝继续。
 - 当前 API/Web 已将配置状态、对象编辑、引用保护、精确 revision 预览、provider-neutral 目标只读预检、
-  checked activation 和 immutable runtime binding 连接到同一 Application 行为；配置对象删除仅在
+  checked publication 和 immutable runtime binding 连接到同一 Application 行为；配置对象删除仅在
   仍有引用时安全阻止，合法未引用对象可删除。
-- 当前 Active UI 身份来自实际用于运行时绑定的 Active revision。激活替换失败时保留原 Active 和
-  候选 Draft；Active 缺失、损坏、schema 不兼容或运行时无效时，媒体工作 fail closed，不回退 JSON。
+- 当前 Active UI 身份来自实际用于运行时绑定的 Active revision。发布替换失败时保留原 Active 和
+  可修正输入；Active 缺失、损坏、schema 不兼容或运行时无效时，媒体工作 fail closed，不回退 JSON。
+  损坏 Active 只能通过权限校验后的完整替换内容和原子发布恢复。
 - Slice 26 已完成最小 bootstrap 首次设置、远程 Storage 引导配置/只读测试、Storage Browser、
   Storage-relative path selection 和 provider-neutral checked activation；Slice 28 已完成 System
   Settings 对象旅程、配置/结果导入导出和 Webhook 管理恢复。Docker production release 属于 Slice 29。
 
-Files 页的 `+ 添加资源库` 是一个页面级的 ResourceLibrary 创建入口。它不要求操作员单独管理
-Draft、Validate 和 Activate 三个内部步骤；最终点击 `保存` 后，后端以保存时的当前 Active
-配置为基础，自动完成 ResourceLibrary 合并、完整配置校验、适用的 checked activation 和
-运行时重新绑定。全部成功后才发布新的 immutable Active snapshot；任一字段、依赖、Storage
-检查、激活或运行时加载错误都拒绝本次保存，并保留之前的 Active 配置不变。通用 Configuration
-页面仍可保留显式的 Draft/Validate/Activate 管理旅程。
+Files 页的 `+ 添加资源库` 是一个页面级的 ResourceLibrary 创建入口。它不要求操作员管理
+中间草稿状态；最终点击 `保存` 后，后端以保存时的当前 Active 配置为基础，自动完成
+ResourceLibrary 合并、完整配置校验、适用的 checked publication 和运行时重新绑定。全部成功
+后才发布新的 immutable Active snapshot；任一字段、依赖、Storage 检查、发布或运行时加载错误
+都拒绝本次保存，并保留之前的 Active 配置不变。系统设置与业务表单使用同一直接发布规则。
 
 #### **V2 设置与空业务基线（CURRENT；Slice 40 PASS / CLOSED）**
 
@@ -669,21 +670,21 @@ Draft、Validate 和 Activate 三个内部步骤；最终点击 `保存` 后，�
 的高级配置，不要求用户在首次设置中填写媒体业务表单。
 
 - 部署只提供应用配置文件、持久化位置和管理员 API 凭据。进入 V2 系统设置后，由管理员明确
-  创建首个 Draft；进入、刷新、重连和返回恢复已有 Draft，不重复生成，不隐式激活。
+  将空配置初始化并发布；进入、刷新、重连和返回只读取当前 Active 与历史已发布快照。
 - Draft/Active 的 Storage、ResourceLibrary、MediaLibrary、RecognitionType、规则、类型策略绑定、
   Metadata/Naming/Classification/Organize 策略、Automation 和 Webhook 可以全部没有业务对象。
   空业务图是合法配置状态，不是格式错误的文档，不填入开发示例或合成业务默认值。
-- 用户可直接显式激活空 Draft。成功显示“配置已激活，媒体业务尚未配置”和各工作能力就绪状态。
+- 用户可直接初始化并发布空配置。成功显示“配置已激活，媒体业务尚未配置”和各工作能力就绪状态。
   每个已填写对象仍通过结构、值、路径、唯一性和已声明依赖校验；非法引用不能借空区段绕过。
   仅对实际适用的启用库/Storage、Recognition 处理链和目标执行对应只读检查、策略测试或目标预检。
-- Active 存在后，各业务页面沿用精确 Active successor、适用检查和原子激活；失败保留原 Active
+- Active 存在后，各业务页面沿用精确 Active 基线、适用检查和原子发布；失败保留原 Active
   和可修正输入。Storage/库配置可先于媒体策略生效；不存在的能力报告未配置/未就绪，不能将
   “有 Active”或“库可浏览”误报为“可识别/整理”。提交和执行仍由后端按实际命令与作用域复核。
-- JSON 默认查看运行时实际消费的 Active，明确标注 Active/Draft；无 Active 时显示 Draft 或无
-  Draft，已有 Active 损坏时显示恢复状态，不能用 Draft、启动 JSON 或旧缓存冒充 Active。
+- JSON 默认查看运行时实际消费的 Active；无 Active 时显示未初始化，已有 Active 损坏时显示
+  恢复状态，不能用启动 JSON、旧缓存或历史快照冒充 Active。
   导出覆盖全部受支持的可移植受管配置且无秘密值，可保留安全环境变量引用，禁止 Token、密码、
   Secret 和 URL 凭据泄漏。数据库定位、API 身份/角色及实际 API Token 属于部署启动权威，不能
-  通过受管编辑、激活或导出导入变更；可移植 JSON 排除这些权威，导入绑定接收环境。
+  通过受管编辑、发布或导出导入变更；可移植 JSON 排除这些权威，导入经明确核对和发布后绑定接收环境。
 - 高级编辑仅覆盖其他页面未支持且后端有实际消费者的配置，使用受限字段/schema 和相同 RBAC、
   校验、审计、并发与发布边界；不是任意 JSON 写入口。部署/重启才生效的项不得误报为已热生效。
 - MediaFlow Worker 无 Active 或空 Active 时启动、注册并常驻，FileTransfer 消费能力保持存在。

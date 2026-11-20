@@ -607,6 +607,155 @@ class ConfigurationObjectService:
             before_publish=before_publish,
         )
 
+    def publish_document(
+        self,
+        document: object,
+        *,
+        actor: str,
+        expected_active_revision_id: str | None = None,
+        expected_active_version: int | None = None,
+        expected_active_digest: str | None = None,
+        run_checks: bool = True,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+        replace_active: bool = False,
+    ) -> ManagedConfigurationRevision:
+        """Publish one complete candidate through the shared checked boundary."""
+
+        def readiness(revision: ManagedConfigurationRevision) -> None:
+            if run_checks:
+                self._checked_successor_evidence(revision, actor=actor)
+
+        return self._managed.publish_document(
+            document,
+            actor=actor,
+            expected_active_revision_id=expected_active_revision_id,
+            expected_active_version=expected_active_version,
+            expected_active_digest=expected_active_digest,
+            readiness=readiness,
+            before_publish=before_publish,
+            replace_active=replace_active,
+        )
+
+    def publish_object(
+        self,
+        kind: ConfigurationObjectKind,
+        *,
+        object_id: str | None,
+        value: Mapping[str, object] | None,
+        expected_version: int,
+        actor: str,
+        delete: bool = False,
+        action: str = "save",
+        new_object_id: str | None = None,
+        new_name: str | None = None,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+    ) -> ManagedConfigurationRevision:
+        """Apply one object command and publish the checked successor directly.
+
+        The candidate staging revision is not an operator-recoverable draft: a
+        validation, evidence or activation refusal removes it and its dedicated
+        evidence while the previous Active remains authoritative.
+        """
+
+        if not isinstance(kind, ConfigurationObjectKind):
+            raise ValueError("configuration object kind is required")
+        active = self._managed.active()
+        if active is None:
+            if self._managed.has_managed_activation():
+                marker = self._managed.last_known_active() or {}
+                raise RuntimeSnapshotUnavailable(
+                    "managed Active configuration is unavailable",
+                    revision_id=marker.get("revisionId"),
+                    version=marker.get("revisionSequence", marker.get("version")),
+                    digest=marker.get("digest"),
+                    reason="managed_active_unavailable",
+                )
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists; complete first setup in Settings",
+                reason="active_missing",
+            )
+        self._managed.verify_integrity(active)
+        current_version = active.revision_sequence or active.version
+        if expected_version not in {current_version, active.version}:
+            raise ConfigurationVersionConflict(
+                "the displayed Active configuration is stale; reload before saving",
+                revision_id=active.revision_id,
+                current_version=current_version,
+                current_digest=active.digest,
+                durable_state="active_preserved",
+                next_action="reload the current Active configuration, then apply the change again",
+            )
+        draft = self._managed.create_successor_draft(
+            actor=actor,
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=current_version,
+            expected_active_digest=active.digest,
+            verified_active=active,
+        )
+        discard = getattr(self._repository, "discard_revision", None)
+
+        def _discard() -> None:
+            if callable(discard):
+                audit = self._managed._audit(
+                    draft,
+                    "publish_candidate_discarded",
+                    actor,
+                    {"revisionId": draft.revision_id, "status": "discarded"},
+                )
+                discard(draft.revision_id, audit)
+
+        try:
+            if action == "copy":
+                edited = self.copy_object(
+                    draft.revision_id,
+                    kind,
+                    object_id=str(object_id),
+                    new_object_id=new_object_id,
+                    new_name=new_name,
+                    expected_version=draft.version,
+                    actor=actor,
+                )
+            elif action in {"enable", "disable"}:
+                edited = self.set_object_enabled(
+                    draft.revision_id,
+                    kind,
+                    object_id=str(object_id),
+                    enabled=action == "enable",
+                    expected_version=draft.version,
+                    actor=actor,
+                )
+            else:
+                if value is None and not delete:
+                    raise ValueError("configuration object update requires an object")
+                edited = self.mutate(
+                    draft.revision_id,
+                    kind,
+                    object_id=object_id,
+                    value=value,
+                    expected_version=draft.version,
+                    actor=actor,
+                    delete=delete,
+                )
+            validated = self._managed.validate(edited.revision_id, actor=actor)
+            if validated.status is not ManagedConfigurationStatus.VALIDATED:
+                detail = "; ".join(validated.validation_errors) or "validation failed"
+                raise ValueError(f"configuration candidate failed validation: {detail}")
+            if kind not in {
+                ConfigurationObjectKind.WEBHOOK_DEFINITION,
+                ConfigurationObjectKind.SCHEDULE,
+            }:
+                self._checked_successor_evidence(validated, actor=actor)
+            if before_publish is not None:
+                before_publish(validated)
+            return self._managed.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor=actor,
+            )
+        except Exception:
+            _discard()
+            raise
+
     def save_resource_library(
         self,
         candidate: Mapping[str, object],

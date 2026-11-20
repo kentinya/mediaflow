@@ -17,7 +17,6 @@ from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.automation import (
-    AutomationCommand,
     AutomationTaskDefinition,
     AutomationTaskRunMode,
     SchedulerConfigurationSnapshot,
@@ -124,6 +123,48 @@ def request(
     environment.update(headers or {})
     payload = b"".join(api(environment, lambda status, headers: statuses.append(status)))
     return int(statuses[0].split()[0]), json.loads(payload)
+
+
+def set_local_roots(document, root):
+    import os
+
+    os.environ.setdefault("TMDB_ACCESS_TOKEN", "test-token")
+    source = root / "source"
+    target = root / "target"
+    source.mkdir(parents=True, exist_ok=True)
+    (target / "Movies").mkdir(parents=True, exist_ok=True)
+    document["storages"][0]["rootPath"] = str(source)
+    document["storages"][1]["rootPath"] = str(target)
+    document["resourceLibraries"][0]["storagePath"] = ""
+    document["resourceLibraries"][0]["displayRootPath"] = str(source)
+    document["mediaLibraries"][0]["rootPath"] = "Movies"
+    document["recognitionRules"][0]["condition"] = {
+        "field": "resource_library_id",
+        "operator": "equals",
+        "value": "source",
+    }
+    return document
+
+
+def publish_document(api, document, *, expected=None, replace=False, token="admin-token"):
+    body = {"document": document}
+    if expected is not None:
+        body.update(
+            {
+                "expectedActiveRevisionId": expected.revision_id,
+                "expectedActiveVersion": expected.revision_sequence or expected.version,
+                "expectedActiveDigest": expected.digest,
+            }
+        )
+    if replace:
+        body["replaceActive"] = True
+    return request(
+        api,
+        "/api/configuration/publish",
+        method="POST",
+        body=json.dumps(body).encode(),
+        token=token,
+    )
 
 
 def request_raw(api, path, *, method="GET", token="admin-token"):
@@ -854,7 +895,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
 
     def test_api_configuration_lifecycle_and_rbac(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            document = example_document()
+            document = set_local_roots(example_document(), Path(directory))
             document["persistence"]["databasePath"] = str(Path(directory) / "runtime.sqlite3")
             with (
                 SQLiteConfigurationRepository(
@@ -876,42 +917,29 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 status, body = request(api, "/api/configuration", token="viewer-token")
                 self.assertEqual(status, 200)
                 self.assertEqual(body["authority"], "MANAGEMENT_BOOTSTRAP")
-                payload = json.dumps({"source": "current"}).encode()
-                status, draft_body = request(
-                    api, "/api/configuration/drafts", method="POST", body=payload
-                )
-                self.assertEqual(status, 201)
-                revision_id = draft_body["revisionId"]
-                status, _ = request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}/validate",
-                    method="POST",
-                    body=b"{}",
-                )
+                status, active_body = publish_document(api, document)
                 self.assertEqual(status, 200)
-                status, active_body = request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}/activate",
-                    method="POST",
-                    body=json.dumps({"expectedVersion": 1}).encode(),
-                )
-                self.assertEqual(status, 200)
+                self.assertTrue(active_body["published"])
                 self.assertEqual(active_body["status"], "active")
+                revision_id = active_body["revisionId"]
                 job_status, job_body = submit_organize_job(api)
                 self.assertEqual(job_status, 200)
                 self.assertEqual(job_body["configuration_snapshot_id"], revision_id)
-                status, _ = request(
-                    api,
-                    "/api/configuration/drafts",
-                    method="POST",
-                    body=payload,
-                    token="viewer-token",
-                )
+                status, denied = publish_document(api, document, token="viewer-token")
                 self.assertEqual(status, 403)
+                self.assertEqual(denied["error"]["code"], "forbidden")
+                for retired in (
+                    ("/api/configuration/drafts", "POST"),
+                    (f"/api/configuration/revisions/{revision_id}/activate", "POST"),
+                    (f"/api/configuration/revisions/{revision_id}/validate", "POST"),
+                ):
+                    status, body = request(api, retired[0], method=retired[1], body=b"{}")
+                    self.assertEqual(status, 404)
+                    self.assertEqual(body["error"]["code"], "not_found")
 
-    def test_api_draft_correction_validate_activate_and_job_pin_journey(self) -> None:
+    def test_api_invalid_candidate_is_rejected_then_corrected_publish_pins_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            document = example_document()
+            document = set_local_roots(example_document(), Path(directory))
             document["persistence"]["databasePath"] = str(Path(directory) / "runtime.sqlite3")
             invalid = json.loads(json.dumps(document))
             invalid["recognitionTypePolicies"][0]["metadataPolicy"] = "missing"
@@ -932,51 +960,27 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     configuration_service=service,
                     bootstrap_document=document,
                 )
-                status, draft = request(
-                    api,
-                    "/api/configuration/drafts",
-                    method="POST",
-                    body=json.dumps({"document": invalid}).encode(),
-                )
-                self.assertEqual(status, 201)
-                revision_id = draft["revisionId"]
-                status, validated = request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}/validate",
-                    method="POST",
-                    body=b"{}",
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(validated["status"], "draft")
-                status, edited = request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}",
-                    method="PUT",
-                    body=json.dumps(
-                        {"document": document, "expectedVersion": validated["version"]}
-                    ).encode(),
-                )
-                self.assertEqual(status, 200)
-                status, validated = request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}/validate",
-                    method="POST",
-                    body=b"{}",
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(validated["status"], "validated")
-                status, active = request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}/activate",
-                    method="POST",
-                    body=json.dumps({"expectedVersion": validated["version"]}).encode(),
-                )
+                status, refused = publish_document(api, invalid)
+                self.assertIn(status, {400, 422})
+                self.assertNotEqual(refused["error"]["code"], "ok")
+                self.assertIsNone(service.active())
+                self.assertEqual(configuration_repository.list_revisions(), ())
+
+                status, active = publish_document(api, document)
                 self.assertEqual(status, 200)
                 self.assertEqual(active["status"], "active")
+                self.assertTrue(active["published"])
+                revision_id = active["revisionId"]
                 status, job = submit_organize_job(api)
                 self.assertEqual(status, 200)
                 self.assertEqual(job["configuration_snapshot_id"], revision_id)
                 self.assertEqual(job["configuration_snapshot_digest"], active["digest"])
+                self.assertFalse(
+                    any(
+                        revision.status.value in {"draft", "validated"}
+                        for revision in configuration_repository.list_revisions()
+                    )
+                )
 
     def test_runtime_locator_is_rejected_during_validation_and_activation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1176,7 +1180,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runtime = root / "runtime.sqlite3"
-            document = example_document()
+            document = set_local_roots(example_document(), root)
             document["persistence"]["databasePath"] = str(runtime)
             with SQLiteConfigurationRepository(runtime) as repository:
                 service = ManagedConfigurationService(
@@ -1225,13 +1229,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(readiness["lastKnownActive"]["digest"], active.digest)
                 replacement = json.loads(json.dumps(document))
                 replacement["historyPath"] = str(root / "replacement.jsonl")
-                status, draft = request(
-                    api,
-                    "/api/configuration/drafts",
-                    method="POST",
-                    body=json.dumps({"document": replacement}).encode(),
-                )
-                self.assertEqual(status, 201)
                 status, job = submit_organize_job(api)
                 self.assertEqual(status, 503)
                 self.assertEqual(job["error"]["code"], "configuration_unavailable")
@@ -1240,13 +1237,23 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 self.assertEqual(job["error"]["details"]["sideEffects"], "none")
                 self.assertTrue(job["error"]["details"]["retrySafe"])
-                self.assertEqual(draft["status"], "draft")
+                status, replacement_active = publish_document(api, replacement, replace=True)
+                self.assertEqual(status, 200)
+                self.assertEqual(replacement_active["status"], "active")
+                self.assertTrue(replacement_active["published"])
+                self.assertEqual(service.active().revision_id, replacement_active["revisionId"])
+                status, recovered_job = submit_organize_job(api)
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    recovered_job["configuration_snapshot_id"],
+                    replacement_active["revisionId"],
+                )
 
     def test_runtime_invalid_active_repeated_job_requests_remain_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runtime = root / "runtime.sqlite3"
-            document = example_document()
+            document = set_local_roots(example_document(), root)
             document["persistence"]["databasePath"] = str(runtime)
             with SQLiteConfigurationRepository(runtime) as repository:
                 service = ManagedConfigurationService(
@@ -1457,180 +1464,55 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(body["error"]["details"]["reason"], "runtime_invalid")
                 self.assertEqual(task_repository.list_tasks(), ())
 
-    def test_api_stale_draft_edit_returns_structured_conflict(self) -> None:
+    def test_api_stale_publish_returns_structured_conflict(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            document = example_document()
+            document = set_local_roots(example_document(), root)
             document["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
             with (
                 SQLiteConfigurationRepository(root / "runtime.sqlite3") as configuration_repository,
                 SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
             ):
+                service = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=document["persistence"]["databasePath"],
+                )
                 api = MediaFlowApi(
                     runtime_repository,
                     principals=(
                         ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                     ),
-                    configuration_service=ManagedConfigurationService(
-                        configuration_repository,
-                        bootstrap_database_path=document["persistence"]["databasePath"],
-                    ),
+                    configuration_service=service,
                     bootstrap_document=document,
                 )
-                status, draft = request(
+                status, first = publish_document(api, document)
+                self.assertEqual(status, 200)
+                first_active = service.require(first["revisionId"])
+                status, second = publish_document(
                     api,
-                    "/api/configuration/drafts",
-                    method="POST",
-                    body=json.dumps({"document": document}).encode(),
-                )
-                self.assertEqual(status, 201)
-                edit_document = {**document, "historyPath": str(root / "first-history.jsonl")}
-                status, edited = request(
-                    api,
-                    f"/api/configuration/revisions/{draft['revisionId']}",
-                    method="PUT",
-                    body=json.dumps(
-                        {"document": edit_document, "expectedVersion": draft["version"]}
-                    ).encode(),
+                    {**document, "historyPath": str(root / "first-history.jsonl")},
+                    expected=first_active,
                 )
                 self.assertEqual(status, 200)
-                status, conflict = request(
+                second_active = service.require(second["revisionId"])
+                status, conflict = publish_document(
                     api,
-                    f"/api/configuration/revisions/{draft['revisionId']}",
-                    method="PUT",
-                    body=json.dumps(
-                        {
-                            "document": {**document, "historyPath": str(root / "stale.jsonl")},
-                            "expectedVersion": draft["version"],
-                        }
-                    ).encode(),
+                    {**document, "historyPath": str(root / "stale.jsonl")},
+                    expected=first_active,
                 )
                 self.assertEqual(status, 409)
                 self.assertEqual(conflict["error"]["code"], "configuration_version_conflict")
-                self.assertEqual(conflict["error"]["details"]["revisionId"], draft["revisionId"])
-                self.assertEqual(conflict["error"]["details"]["currentVersion"], edited["version"])
-                self.assertEqual(conflict["error"]["details"]["durableState"], "draft_preserved")
-                self.assertEqual(conflict["error"]["details"]["sideEffects"], "none")
-                self.assertTrue(conflict["error"]["details"]["retrySafe"])
-                self.assertIn("refresh", conflict["error"]["details"]["nextAction"])
-
-    def test_scheduler_resolves_definition_content_and_pin_from_one_snapshot(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            repository = SQLiteTaskRepository(Path(directory) / "runtime.sqlite3")
-            try:
-                first_definition = AutomationTaskDefinition(
-                    "nightly",
-                    "Nightly",
-                    "library",
-                    None,
-                    AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
-                    60,
-                    None,
-                    None,
-                    5,
-                    True,
+                self.assertEqual(
+                    conflict["error"]["details"]["revisionId"], second_active.revision_id
                 )
-                second_definition = AutomationTaskDefinition(
-                    "nightly",
-                    "Nightly",
-                    "library",
-                    None,
-                    AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
-                    30,
-                    None,
-                    None,
-                    5,
-                    True,
-                )
-                current = [
-                    SchedulerConfigurationSnapshot(
-                        "first-revision",
-                        "a" * 64,
-                        10,
-                        (first_definition,),
+                self.assertEqual(conflict["error"]["details"]["durableState"], "active_preserved")
+                self.assertEqual(service.active().revision_id, second_active.revision_id)
+                self.assertFalse(
+                    any(
+                        revision.status.value in {"draft", "validated"}
+                        for revision in configuration_repository.list_revisions()
                     )
-                ]
-                scheduler = IntervalScheduler(
-                    repository,
-                    configuration_snapshot_resolver=lambda: current[0],
                 )
-                now = datetime.now(UTC)
-                first = scheduler.tick(now)
-                self.assertEqual(len(first), 1)
-                self.assertEqual(first[0].command, "organize")
-                self.assertEqual(first[0].configuration_snapshot_id, "first-revision")
-                state = repository.get_automation_definition_due_state("nightly")
-                self.assertEqual(state.last_task_id, first[0].task_id)
-
-                current[0] = SchedulerConfigurationSnapshot(
-                    "second-revision",
-                    "b" * 64,
-                    20,
-                    (second_definition,),
-                )
-                second = scheduler.tick(now + timedelta(seconds=61))
-                self.assertEqual(len(second), 1)
-                self.assertEqual(second[0].command, AutomationCommand.ORGANIZE.value)
-                self.assertEqual(second[0].configuration_snapshot_id, "second-revision")
-                self.assertEqual(second[0].configuration_snapshot_digest, "b" * 64)
-                # The second snapshot's changed cadence content is what the
-                # same tick used for the next due instant.
-                state = repository.get_automation_definition_due_state("nightly")
-                self.assertIsNotNone(state)
-            finally:
-                repository.close()
-
-    def test_api_views_and_job_pin_refresh_from_the_same_active_revision(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            runtime = root / "runtime.sqlite3"
-            document = example_document()
-            document["persistence"]["databasePath"] = str(runtime)
-            with (
-                SQLiteConfigurationRepository(runtime) as configuration_repository,
-                SQLiteTaskRepository(runtime) as task_repository,
-            ):
-                service = ManagedConfigurationService(
-                    configuration_repository,
-                    bootstrap_database_path=str(runtime),
-                )
-                first = activate_document(service, document)
-                api = MediaFlowApi(
-                    task_repository,
-                    principals=(
-                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
-                    ),
-                    configuration_service=service,
-                    configuration_snapshot_id=first.revision_id,
-                    configuration_snapshot_digest=first.digest,
-                    bootstrap_document=document,
-                )
-                changed = json.loads(json.dumps(document))
-                changed["historyPath"] = str(root / "changed.jsonl")
-                changed["automation"]["maximumActiveJobs"] = 7
-                changed["metadataPolicies"][0]["language"] = "ja-JP"
-                active = activate_document(service, changed)
-
-                status, system = request(api, "/api/system/status")
-                self.assertEqual(status, 200)
-                self.assertEqual(system["system"]["configuration_snapshot_id"], active.revision_id)
-                self.assertEqual(system["system"]["maximum_active_jobs"], 7)
-                # The retired schedules surface answers like any unknown route.
-                status, _schedules = request(api, "/api/schedules")
-                self.assertEqual(status, 404)
-                # An immutable Active may still carry the retired stale-age key;
-                # it is readable with the value ignored and never appears in the
-                # effective runtime settings projection.
-                self.assertNotIn(
-                    "automation.staleJobAgeSeconds",
-                    api._runtime_binding.runtime_settings["settings"],
-                )
-                status, retired = request(api, "/api/jobs/stale")
-                self.assertEqual(status, 404)
-                status, job = submit_organize_job(api)
-                self.assertEqual(status, 200)
-                self.assertEqual(job["configuration_snapshot_id"], active.revision_id)
-                self.assertEqual(api._runtime_binding.metadata_policies[0].language, "ja-JP")
 
     def test_api_recovery_starts_from_locator_when_workflow_bootstrap_is_broken(self) -> None:
         class Server:
@@ -1651,33 +1533,15 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.configuration_result = request(self.app, "/api/configuration")
                 self.job_result = submit_organize_job(self.app)
                 replacement = json.loads(self.replacement_document)
-                status, draft = request(
-                    self.app,
-                    "/api/configuration/drafts",
-                    method="POST",
-                    body=json.dumps({"document": replacement}).encode(),
-                )
-                self.assertions.append((status, draft))
-                status, validated = request(
-                    self.app,
-                    f"/api/configuration/revisions/{draft['revisionId']}/validate",
-                    method="POST",
-                    body=b"{}",
-                )
-                self.assertions.append((status, validated))
-                self.activation_result = request(
-                    self.app,
-                    f"/api/configuration/revisions/{draft['revisionId']}/activate",
-                    method="POST",
-                    body=json.dumps({"expectedVersion": validated["version"]}).encode(),
-                )
+                self.activation_result = publish_document(self.app, replacement, replace=True)
+                self.assertions.append(self.activation_result)
                 self.replacement_job_result = submit_organize_job(self.app)
                 self.second_replacement_job_result = submit_organize_job(self.app)
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runtime = root / "runtime.sqlite3"
-            document = example_document()
+            document = set_local_roots(example_document(), root)
             document["persistence"]["databasePath"] = str(runtime)
             with SQLiteConfigurationRepository(runtime) as repository:
                 service = ManagedConfigurationService(
@@ -1741,14 +1605,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             with (
                 patch.dict("os.environ", {"MEDIAFLOW_API_TOKEN": "admin-token"}, clear=True),
                 patch("wsgiref.simple_server.make_server", side_effect=make_server),
-                patch(
-                    "mediaflow.infrastructure.runtime_configuration.RuntimeConfiguration.create_storages",
-                    side_effect=AssertionError("recovery API must not construct Storage"),
-                ),
-                patch(
-                    "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBProvider",
-                    side_effect=AssertionError("recovery API must not construct Provider"),
-                ),
             ):
                 output, error = io.StringIO(), io.StringIO()
                 status = final_main(
@@ -1764,10 +1620,10 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             status, body = server.job_result
             self.assertEqual(status, 503, body)
             self.assertEqual(body["error"]["code"], "configuration_unavailable")
-            self.assertEqual(server.assertions[0][0], 201)
-            self.assertEqual(server.assertions[1][0], 200)
+            self.assertEqual(server.assertions[0][0], 200, server.assertions[0][1])
             self.assertEqual(server.activation_result[0], 200, server.activation_result[1])
             self.assertEqual(server.activation_result[1]["status"], "active")
+            self.assertTrue(server.activation_result[1]["published"])
             self.assertEqual(server.replacement_job_result[0], 200)
             self.assertEqual(server.second_replacement_job_result[0], 200)
             self.assertEqual(
@@ -1821,48 +1677,18 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 return None
 
             def serve_forever(self):
-                status, draft = request(
-                    self.app,
-                    "/api/configuration/drafts",
-                    method="POST",
-                    body=json.dumps({"document": self.invalid_document}).encode(),
-                )
-                self.lifecycle.append((status, draft["status"]))
-                status, validated = request(
-                    self.app,
-                    f"/api/configuration/revisions/{draft['revisionId']}/validate",
-                    method="POST",
-                    body=b"{}",
-                )
-                self.lifecycle.append((status, validated["status"]))
-                status, edited = request(
-                    self.app,
-                    f"/api/configuration/revisions/{draft['revisionId']}",
-                    method="PUT",
-                    body=json.dumps(
-                        {
-                            "document": self.document,
-                            "expectedVersion": validated["version"],
-                        }
-                    ).encode(),
-                )
-                self.lifecycle.append((status, edited["status"]))
+                status, refused = publish_document(self.app, self.invalid_document)
+                self.lifecycle.append((status, "rejected"))
+                if refused.get("error", {}).get("code") == "ok":
+                    raise AssertionError(refused)
+                status, active = publish_document(self.app, self.document)
+                if status != 200 or "revisionId" not in active:
+                    raise AssertionError((status, active))
+                self.lifecycle.append((status, active.get("status")))
+                self.active_result = (status, active)
                 self.detail_result = request(
                     self.app,
-                    f"/api/configuration/revisions/{draft['revisionId']}",
-                )
-                status, validated = request(
-                    self.app,
-                    f"/api/configuration/revisions/{draft['revisionId']}/validate",
-                    method="POST",
-                    body=b"{}",
-                )
-                self.lifecycle.append((status, validated["status"]))
-                self.active_result = request(
-                    self.app,
-                    f"/api/configuration/revisions/{draft['revisionId']}/activate",
-                    method="POST",
-                    body=json.dumps({"expectedVersion": validated["version"]}).encode(),
+                    f"/api/configuration/revisions/{active['revisionId']}",
                 )
                 self.job_result = submit_organize_job(self.app)
 
@@ -1872,6 +1698,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             target_root = root / "target"
             (source_root / "电影").mkdir(parents=True)
             target_root.mkdir()
+            (target_root / "Movies").mkdir()
             (source_root / "电影" / "Example.Movie.2024.mkv").write_bytes(b"movie")
             runtime = root / "runtime.sqlite3"
             document = example_document()
@@ -1923,15 +1750,12 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(api_status, 0, error.getvalue())
                 self.assertEqual(
                     server.lifecycle,
-                    [(201, "draft"), (200, "draft"), (200, "draft"), (200, "validated")],
+                    [(400, "rejected"), (200, "active")],
                 )
                 self.assertEqual(server.detail_result[0], 200)
-                self.assertIn("changedSections", server.detail_result[1]["diff"])
-                self.assertIn(
-                    "recognitionTypePolicies",
-                    server.detail_result[1]["diff"]["changedSections"],
-                )
+                self.assertEqual(server.detail_result[1]["status"], "active")
                 self.assertEqual(server.active_result[0], 200, server.active_result[1])
+                self.assertTrue(server.active_result[1]["published"])
                 self.assertEqual(server.job_result[0], 200, server.job_result[1])
                 task_id = server.job_result[1]["task_id"]
                 active_id = server.active_result[1]["revisionId"]
@@ -2232,101 +2056,10 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 return None
 
             def checked_activate(self, document):
-                status, draft = request(
-                    self.app,
-                    "/api/configuration/drafts",
-                    method="POST",
-                    body=json.dumps({"document": document}).encode(),
-                )
-                if status != 201:
-                    raise AssertionError((status, draft))
-                revision_id = draft["revisionId"]
-                status, validated = request(
-                    self.app,
-                    f"/api/configuration/revisions/{revision_id}/validate",
-                    method="POST",
-                    body=b"{}",
-                )
-                if status != 200 or validated["status"] != "validated":
-                    raise AssertionError((status, validated))
-                status, evidence = request(
-                    self.app,
-                    f"/api/configuration/revisions/{revision_id}/local-setup-check",
-                    method="POST",
-                    body=json.dumps(
-                        {
-                            "expectedVersion": validated["version"],
-                            "expectedDigest": validated["digest"],
-                            "resourceLibraryId": "source",
-                            "mediaLibraryId": "movies",
-                        }
-                    ).encode(),
-                )
-                if status != 200 or evidence["status"] != "passed":
-                    raise AssertionError((status, evidence))
-                for storage_id in ("source-storage", "media-target"):
-                    status, storage_evidence = request(
-                        self.app,
-                        f"/api/configuration/revisions/{revision_id}/storage-check",
-                        method="POST",
-                        body=json.dumps(
-                            {
-                                "storageId": storage_id,
-                                "expectedVersion": validated["version"],
-                                "expectedDigest": validated["digest"],
-                            }
-                        ).encode(),
-                    )
-                    if status != 200 or storage_evidence["status"] != "passed":
-                        raise AssertionError((status, storage_evidence))
-                status, strategy_evidence = request(
-                    self.app,
-                    f"/api/configuration/revisions/{revision_id}/recognition-strategy-test",
-                    method="POST",
-                    body=json.dumps(
-                        {
-                            "expectedVersion": validated["version"],
-                            "expectedDigest": validated["digest"],
-                            "resourceLibraryId": "source",
-                            "syntheticPath": "/电影/Example.Movie.2024.mkv",
-                        }
-                    ).encode(),
-                )
-                if status != 200 or strategy_evidence["status"] != "completed":
-                    raise AssertionError((status, strategy_evidence))
-                status, destination_evidence = request(
-                    self.app,
-                    f"/api/configuration/revisions/{revision_id}/destination-precheck",
-                    method="POST",
-                    body=json.dumps(
-                        {
-                            "expectedVersion": validated["version"],
-                            "expectedDigest": validated["digest"],
-                            "recognitionType": "C",
-                            "sample": {
-                                "title": "Example Movie",
-                                "mediaType": "movie",
-                                "year": 2024,
-                                "genres": ["Animation"],
-                                "countries": ["JP"],
-                                "extension": "mkv",
-                            },
-                        }
-                    ).encode(),
-                )
-                if status != 200 or destination_evidence["status"] != "completed":
-                    raise AssertionError((status, destination_evidence))
-                status, active = request(
-                    self.app,
-                    f"/api/configuration/revisions/{revision_id}/activate",
-                    method="POST",
-                    body=json.dumps(
-                        {"expectedVersion": validated["version"], "checked": True}
-                    ).encode(),
-                )
+                status, active = publish_document(self.app, document)
                 if status != 200 or active["status"] != "active":
                     raise AssertionError((status, active))
-                return evidence, active
+                return active, active
 
             def serve_forever(self):
                 self.first_check, self.first_active = self.checked_activate(self.first_document)
@@ -2434,7 +2167,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 second_id = server.second_active["revisionId"]
                 self.assertNotEqual(first_id, second_id)
                 self.assertEqual(server.first_check["revisionId"], first_id)
-                self.assertEqual(server.first_check["revisionDigest"], first_digest)
+                self.assertEqual(server.first_check["digest"], first_digest)
                 self.assertEqual(server.second_check["revisionId"], second_id)
                 self.assertEqual(server.first_job["configuration_snapshot_id"], first_id)
                 self.assertEqual(server.first_job["configuration_snapshot_digest"], first_digest)

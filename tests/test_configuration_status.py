@@ -403,3 +403,159 @@ class ConcurrentFirstInitializationTests(unittest.TestCase):
                 self.assertEqual(runtime.schema_version, SCHEMA_VERSION)
             with SQLiteConfigurationRepository(database):
                 pass
+
+
+class ConfigurationDraftRetirementTests(unittest.TestCase):
+    def _seed_store(self, database: Path):
+        import sqlite3
+
+        from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+
+        document = example_document()
+        document["persistence"]["databasePath"] = str(database)
+        service = ManagedConfigurationService(
+            SQLiteConfigurationRepository(database),
+            bootstrap_database_path=str(database),
+        )
+        draft = service.import_draft(document, actor="tester")
+        validated = service.validate(draft.revision_id, actor="tester")
+        active = service.activate(
+            validated.revision_id, expected_version=validated.version, actor="tester"
+        )
+        unpublished = service.import_draft(document, actor="tester")
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                "INSERT INTO managed_local_setup_checks "
+                "(revision_id, revision_version, revision_digest, status, checked_at, actor, "
+                "storage_ids, operations, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    unpublished.revision_id,
+                    unpublished.version,
+                    unpublished.digest,
+                    "passed",
+                    "2026-11-20T00:00:00+00:00",
+                    "tester",
+                    "[]",
+                    "[]",
+                    1,
+                ),
+            )
+            connection.execute(
+                "UPDATE schema_version SET version=11 WHERE component='configuration_management'"
+            )
+            connection.commit()
+        service.repository.close()
+        return active, unpublished
+
+    def test_previous_store_switch_removes_unpublished_revisions_and_evidence(self) -> None:
+        import sqlite3
+
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "configuration.sqlite3"
+            active, unpublished = self._seed_store(database)
+            with SQLiteConfigurationRepository(database) as repository:
+                revisions = repository.list_revisions(limit=100)
+                self.assertEqual(
+                    [(revision.revision_id, revision.status.value) for revision in revisions],
+                    [(active.revision_id, "active")],
+                )
+                self.assertIsNone(repository.get_revision(unpublished.revision_id))
+                self.assertEqual(repository.get_active_revision().digest, active.digest)
+                self.assertFalse(repository.list_revision_audits(active.revision_id) == ())
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT version FROM schema_version "
+                        "WHERE component='configuration_management'"
+                    ).fetchone()[0],
+                    12,
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM managed_local_setup_checks WHERE revision_id=?",
+                        (unpublished.revision_id,),
+                    ).fetchone()[0],
+                    0,
+                )
+
+    def test_switch_stops_and_rolls_back_when_an_admitted_task_pins_a_draft(self) -> None:
+        import sqlite3
+
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "configuration.sqlite3"
+            active, unpublished = self._seed_store(database)
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "CREATE TABLE tasks (task_id TEXT PRIMARY KEY, status TEXT NOT NULL, "
+                    "created_at TEXT NOT NULL, configuration_snapshot_id TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, ?, ?)",
+                    (
+                        "task-pinned",
+                        "running",
+                        "2026-11-20T00:00:00+00:00",
+                        unpublished.revision_id,
+                    ),
+                )
+                connection.commit()
+            with self.assertRaises(ValueError) as raised:
+                SQLiteConfigurationRepository(database)
+            self.assertIn("admitted Tasks pinned to unpublished drafts", str(raised.exception))
+            self.assertIn(unpublished.revision_id, str(raised.exception))
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT version FROM schema_version "
+                        "WHERE component='configuration_management'"
+                    ).fetchone()[0],
+                    11,
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT status FROM managed_configuration_revisions WHERE revision_id=?",
+                        (unpublished.revision_id,),
+                    ).fetchone()[0],
+                    "draft",
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT revision_id FROM managed_configuration_revisions "
+                        "WHERE status='active'"
+                    ).fetchone()[0],
+                    active.revision_id,
+                )
+
+    def test_cli_retired_draft_commands_are_unknown_and_rejected(self) -> None:
+        from mediaflow.final_cli import final_main
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "bootstrap.json"
+            config.write_text(json.dumps(example_document()), encoding="utf-8")
+            for command in (
+                ["--config", str(config), "config", "draft-import", "--file", str(config)],
+                ["--config", str(config), "config", "draft-validate", "revision-1"],
+                [
+                    "--config",
+                    str(config),
+                    "config",
+                    "activate",
+                    "revision-1",
+                    "--expected-version",
+                    "1",
+                ],
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    final_main(command, stdout=io.StringIO(), stderr=io.StringIO())
+                self.assertEqual(raised.exception.code, 2)

@@ -71,8 +71,8 @@ function readCreatedOutcome(
     return null;
   }
   return {
-    title: "定义已保存到草稿",
-    message: `Webhook ${record["webhookId"]} 已写入草稿修订 ${record["revisionId"]} 的版本 ${record["version"]}。它还没有生效；需要在编辑卡片中检查并发布。`,
+    title: "定义已发布",
+    message: `Webhook ${record["webhookId"]} 已发布为新的生效配置（版本 ${record["version"]}）。页面正在读取真实生效状态。`,
   };
 }
 
@@ -95,8 +95,8 @@ function readActivationOutcome(
     return null;
   }
   return {
-    title: "草稿已发布为已生效配置",
-    message: `Webhook ${record["webhookId"]} 已发布，修订 ${record["revisionId"]} 版本 ${record["version"]}。页面正在读取真实已生效状态；读取失败时这条命令结果仍然有效。`,
+    title: "定义已发布为已生效配置",
+    message: `Webhook ${record["webhookId"]} 已发布，版本 ${record["version"]}。页面正在读取真实已生效状态；读取失败时这条命令结果仍然有效。`,
   };
 }
 
@@ -189,13 +189,13 @@ export function NotificationDetailPage() {
         return;
       }
       if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("后继草稿可能已经创建"));
+        setError(unknownCommandMessage("后继定义可能已经创建"));
         return;
       }
       setError(
         result.status === 409
-          ? "后继草稿没有创建：已生效配置在读取后已经变化。重新读取后再试。"
-          : `后继草稿没有创建（${result.code}）。重新读取后再试。`,
+          ? "后继定义没有创建：已生效配置在读取后已经变化。重新读取后再试。"
+          : `后继定义没有创建（${result.code}）。重新读取后再试。`,
       );
     },
   });
@@ -246,14 +246,14 @@ export function NotificationDetailPage() {
       if (isUnknownCommandResult(result.status, result.code)) {
         setError(
           unknownCommandMessage(
-            `${input.kind === "copy" ? "复制" : input.kind === "enable" ? "启用" : "停用"}可能已经写入草稿`,
+            `${input.kind === "copy" ? "复制" : input.kind === "enable" ? "启用" : "停用"}可能已经写入定义`,
           ),
         );
         return;
       }
       setError(
         result.status === 409
-          ? "草稿在动作执行前已经变化。重新读取定义后再试；服务端保留了胜出的版本。"
+          ? "定义在动作执行前已经变化。重新读取定义后再试；服务端保留了胜出的版本。"
           : `${input.kind === "copy" ? "复制" : input.kind === "enable" ? "启用" : "停用"}动作没有执行（${result.code}）。重新读取当前持久状态后再试；系统没有自动重试。`,
       );
     },
@@ -299,7 +299,7 @@ export function NotificationDetailPage() {
           ? "读取精确的 Webhook 定义。"
           : definition.definitionState === "active"
             ? "这个定义属于不可变的已生效配置。"
-            : "这个定义只存在于打开的草稿中；发布后才会生效。"
+            : "这个定义只存在于打开的定义中；发布后才会生效。"
       }
       closeDisabled={busy}
       onRequestClose={guard.attemptClose}
@@ -326,16 +326,16 @@ export function NotificationDetailPage() {
                 )
               }
             >
-              编辑草稿
+              编辑定义
             </Button>
           ) : (
             <Button
               type="button"
               variant="secondary"
               disabled
-              title={definition?.actions.edit.reason ?? "当前没有可编辑的草稿"}
+              title={definition?.actions.edit.reason ?? "当前没有可编辑的定义"}
             >
-              编辑草稿（不可用）
+              编辑定义（不可用）
             </Button>
           )}
         </>
@@ -422,7 +422,7 @@ export function NotificationDetailPage() {
                   : "mf-notification-badge"
               }
             >
-              {definition.definitionState === "active" ? "已生效" : "仅草稿"}
+              {definition.definitionState === "active" ? "已生效" : "仅定义"}
             </span>
             <span className="mf-notification-badge">
               {document.enabled ? "已启用" : "已停用"}
@@ -492,11 +492,11 @@ export function NotificationDetailPage() {
                 <dd>
                   {activeConfigurationSummary(definition.activeConfiguration)}
                 </dd>
-                <dt>打开的草稿</dt>
+                <dt>打开的定义</dt>
                 <dd>{draftStateSummary(draft)}</dd>
                 {draft.updatedAt !== null && (
                   <>
-                    <dt>草稿更新时间</dt>
+                    <dt>定义更新时间</dt>
                     <dd>
                       <time dateTime={draft.updatedAt}>
                         {formatNotificationTime(draft.updatedAt)}
@@ -558,11 +558,11 @@ export function NotificationDetailPage() {
           </section>
 
           <section className="mf-notification-form-section">
-            <h3>草稿内动作</h3>
+            <h3>定义内动作</h3>
             <p className="mf-notification-field-help">
               {draft.present
-                ? "复制、启用和停用只会写入当前打开的草稿，不会改变已生效配置，直到明确发布。"
-                : "需要打开的后继草稿才能复制、启用或停用这个定义。"}
+                ? "复制、启用和停用只会写入当前打开的定义，不会改变已生效配置，直到明确发布。"
+                : "需要打开的后继定义才能复制、启用或停用这个定义。"}
             </p>
             {!draft.present && (
               <div className="mf-notification-actions">
@@ -583,15 +583,15 @@ export function NotificationDetailPage() {
                   }}
                 >
                   {createDraftMutation.isPending
-                    ? "正在创建后继草稿…"
-                    : "创建后继草稿"}
+                    ? "正在创建后继定义…"
+                    : "创建后继定义"}
                 </Button>
                 {!definition.actions.draftCreate.available &&
                   definition.actions.draftCreate.reason !== null && (
                     <p className="mf-notification-inline-reason">
                       {notificationReasonLabel(
                         definition.actions.draftCreate.reason,
-                        "当前账号不能创建后继草稿。",
+                        "当前账号不能创建后继定义。",
                       )}
                     </p>
                   )}
@@ -604,7 +604,7 @@ export function NotificationDetailPage() {
                 disabled={!canCopy || !draft.present || busy || readDegraded}
                 title={notificationReasonLabel(
                   definition.actions.copy.reason,
-                  "当前不能复制到草稿",
+                  "当前不能复制到定义",
                 )}
                 onClick={() => {
                   if (draft.revisionVersion !== null) {
@@ -615,7 +615,7 @@ export function NotificationDetailPage() {
                   }
                 }}
               >
-                {draftMutation.isPending ? "正在执行…" : "复制到草稿"}
+                {draftMutation.isPending ? "正在执行…" : "复制到定义"}
               </Button>
               <Button
                 type="button"
@@ -623,7 +623,7 @@ export function NotificationDetailPage() {
                 disabled={!canEnable || !draft.present || busy || readDegraded}
                 title={notificationReasonLabel(
                   definition.actions.enable.reason,
-                  "当前不能在草稿中启用",
+                  "当前不能在定义中启用",
                 )}
                 onClick={() => {
                   if (draft.revisionVersion !== null) {
@@ -634,7 +634,7 @@ export function NotificationDetailPage() {
                   }
                 }}
               >
-                在草稿中启用
+                在定义中启用
               </Button>
               <Button
                 type="button"
@@ -642,7 +642,7 @@ export function NotificationDetailPage() {
                 disabled={!canDisable || !draft.present || busy || readDegraded}
                 title={notificationReasonLabel(
                   definition.actions.disable.reason,
-                  "当前不能在草稿中停用",
+                  "当前不能在定义中停用",
                 )}
                 onClick={() => {
                   if (draft.revisionVersion !== null) {
@@ -653,7 +653,7 @@ export function NotificationDetailPage() {
                   }
                 }}
               >
-                在草稿中停用
+                在定义中停用
               </Button>
             </div>
           </section>

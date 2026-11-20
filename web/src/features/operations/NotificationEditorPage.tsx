@@ -1,10 +1,10 @@
 /**
- * V2 Webhook successor-Draft editor card.
+ * V2 Webhook successor-draft editor card.
  *
- * The card reads the exact open Draft with its optimistic version and keeps
+ * The card reads the exact open draft with its optimistic version and keeps
  * three states visibly separate:
  *
- * - saved Draft: the durable revision/version and its stored form;
+ * - saved draft: the durable revision/version and its stored form;
  * - unsaved input: local values that are not the saved revision;
  * - checked/published: validation evidence and an explicit publish decision.
  *
@@ -20,11 +20,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
-  activateWebhookDraft,
   createNotificationSuccessorDraft,
   saveWebhookDefinitionDraft,
   testWebhookDefinition,
-  validateAutomationDraft,
 } from "../../shared/api/api-client";
 import {
   notificationDefinitionQueryKey,
@@ -65,7 +63,7 @@ interface SavedDraft {
 }
 
 interface RemoteDraft extends SavedDraft {
-  /** Whether the same revision moved or a different Draft revision was read. */
+  /** Whether the same revision moved or a different draft revision was read. */
   readonly kind: "updated" | "revision";
 }
 
@@ -93,14 +91,9 @@ export function NotificationEditorPage() {
   const [remote, setRemote] = useState<RemoteDraft | null>(null);
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
   const [showIssues, setShowIssues] = useState(false);
-  const [confirmActivate, setConfirmActivate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [savePermissionDenied, setSavePermissionDenied] = useState(false);
-  const [validationNotice, setValidationNotice] = useState<{
-    readonly context: string;
-    readonly message: string;
-  } | null>(null);
   const [testResult, setTestResult] = useState<{
     readonly context: string;
     readonly message: string;
@@ -146,15 +139,13 @@ export function NotificationEditorPage() {
 
   const clearEvidence = () => {
     setTestResult(null);
-    setValidationNotice(null);
-    setConfirmActivate(false);
   };
 
-  // Reconcile the durable Draft into the local saved baseline. A version or
+  // Reconcile the durable draft into the local saved baseline. A version or
   // status move with no local edits is adopted directly. A move while local
   // input exists is held as an explicit remote choice; the old input is never
-  // silently paired with the new version. Losing the open Draft (another
-  // administrator published it) and reading a different Draft revision must
+  // silently paired with the new version. Losing the open draft (another
+  // administrator published it) and reading a different draft revision must
   // preserve unsaved input instead of clearing or replacing it.
   /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
   useEffect(() => {
@@ -170,9 +161,9 @@ export function NotificationEditorPage() {
     if (server === null) {
       setRemote(null);
       if (hasLocalEdits) {
-        // The read proves there is no open Draft, but the operator still owns
+        // The read proves there is no open draft, but the operator still owns
         // input made against the old revision. Keep both local input and its
-        // original baseline; never bind them to an unread successor Draft.
+        // original baseline; never bind them to an unread successor draft.
         setSavedNotice(null);
         clearEvidence();
         return;
@@ -244,14 +235,10 @@ export function NotificationEditorPage() {
       setRemote(null);
       if (versionChanged) {
         setTestResult(null);
-        setConfirmActivate(false);
-        setValidationNotice(null);
-      }
+          }
       return;
     }
     setTestResult(null);
-    setValidationNotice(null);
-    setConfirmActivate(false);
     setRemote({
       revisionId: server.revisionId,
       version: server.revisionVersion,
@@ -301,13 +288,13 @@ export function NotificationEditorPage() {
         return;
       }
       if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("后继草稿可能已经创建"));
+        setError(unknownCommandMessage("后继当前定义可能已经创建"));
         return;
       }
       setError(
         result.status === 409
-          ? "后继草稿没有创建：已生效配置在读取后已经变化。重新读取后再试。"
-          : `后继草稿没有创建（${result.code}）。重新读取后再试。`,
+          ? "后继当前定义没有创建：已生效配置在读取后已经变化。重新读取后再试。"
+          : `后继当前定义没有创建（${result.code}）。重新读取后再试。`,
       );
     },
   });
@@ -346,8 +333,8 @@ export function NotificationEditorPage() {
         if (!editedDuringSave) setForm(input.values);
         setSavedNotice(
           editedDuringSave
-            ? `已保存提交时的内容到草稿版本 ${result.model.version}；保存请求处理期间你继续输入的内容仍保留为未保存修改，尚未写入草稿。明确再次保存后才会写入新版本。`
-            : `已保存到草稿版本 ${result.model.version}；尚未生效。检查并发布后，已生效配置才会改变。`,
+            ? `已应用提交时的内容并发布新的生效快照；保存请求处理期间你继续输入的内容仍保留为未保存修改。`
+            : `更改已通过检查并发布为新的生效配置；需要重启的字段会在重启后采用。`,
         );
         clearEvidence();
         void queryClient.invalidateQueries({
@@ -359,14 +346,14 @@ export function NotificationEditorPage() {
         return;
       }
       if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("草稿可能已经保存"));
+        setError(unknownCommandMessage("更改可能已经发布"));
         return;
       }
       if (result.status === 403) {
         setShowIssues(false);
         setSavePermissionDenied(true);
         setError(
-          "保存没有执行（403）：当前账号没有保存这个草稿的权限。读取最新草稿以核对服务端提供的动作；如果仍无权限，请联系具备配置管理权限的管理员。系统没有自动重试。",
+          "应用没有执行（403）：当前账号没有管理配置的权限。读取最新定义以核对服务端提供的动作；如果仍无权限，请联系配置管理员。系统没有自动重试。",
         );
         void queryClient.invalidateQueries({
           queryKey: [notificationDraftQueryKey],
@@ -376,37 +363,8 @@ export function NotificationEditorPage() {
       setShowIssues(true);
       setError(
         result.status === 409
-          ? "保存没有应用：草稿在你编辑期间已经变化。重新读取草稿后再提交；服务端保留了胜出的版本。"
-          : `草稿没有保存（${result.code}）。服务端校验拒绝了表单或草稿版本已过期；重新读取后修正，系统没有自动重试。`,
-      );
-    },
-  });
-
-  const validateMutation = useMutation({
-    mutationFn: (input: { context: string; revisionId: string }) =>
-      validateAutomationDraft(token, { revisionId: input.revisionId }),
-    retry: false,
-    onMutate: () => setError(null),
-    onSuccess: (result, input) => {
-      if (result.ok) {
-        if (input.context !== displayedContext) return;
-        setValidationNotice({
-          context: input.context,
-          message: "草稿检查通过，零写入。明确发布后才会生效。",
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [notificationDraftQueryKey],
-        });
-        return;
-      }
-      if (isUnknownCommandResult(result.status, result.code)) {
-        setError(
-          unknownCommandMessage("草稿可能已经检查完成；检查本身不写入配置"),
-        );
-        return;
-      }
-      setError(
-        `检查没有完成（${result.code}）。重新读取草稿后再试；检查本身不写入任何内容。`,
+          ? "应用没有执行：配置在你编辑期间已经变化。重新读取后再应用；服务端保留了胜出的版本。"
+          : `更改没有发布（${result.code}）。服务端校验拒绝了表单或配置版本已过期；重新读取后修正，系统没有自动重试。`,
       );
     },
   });
@@ -446,63 +404,8 @@ export function NotificationEditorPage() {
       }
       setError(
         result.status === 409
-          ? "显示的修订已经过期，因此没有发送测试请求。重新读取草稿，再测试当前精确版本。"
+          ? "显示的修订已经过期，因此没有发送测试请求。重新读取定义，再测试当前精确版本。"
           : `测试没有执行（${result.code}）。重新读取当前持久状态后再试；系统没有自动重试。`,
-      );
-    },
-  });
-
-  const activateMutation = useMutation({
-    mutationFn: (input: {
-      context: string;
-      expectedRevisionId: string;
-      expectedVersion: number;
-    }) =>
-      activateWebhookDraft(token, {
-        webhookId,
-        expectedRevisionId: input.expectedRevisionId,
-        expectedVersion: input.expectedVersion,
-      }),
-    retry: false,
-    onMutate: () => {
-      setError(null);
-      setConfirmActivate(false);
-    },
-    onSuccess: (result, input) => {
-      if (result.ok) {
-        if (input.context !== displayedContext) return;
-        void queryClient.invalidateQueries({
-          queryKey: [notificationDraftQueryKey],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [notificationDefinitionQueryKey],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [notificationListQueryKey],
-        });
-        guard.guardNavigation(() =>
-          navigate({
-            to: "/operations/notifications/webhooks/$webhookId",
-            params: { webhookId },
-            state: {
-              notificationActivationOutcome: {
-                webhookId,
-                revisionId: result.model.activatedRevisionId,
-                version: result.model.activatedVersion,
-              },
-            } as never,
-          }),
-        );
-        return;
-      }
-      if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("草稿可能已经发布为已生效配置"));
-        return;
-      }
-      setError(
-        result.status === 409
-          ? "发布没有执行：草稿已变化、包含其他 Webhook 定义或配置区段变化，或者已生效基线已移动。没有发布任何内容；重新读取草稿后重新准备只含本次 Webhook 的变更。"
-          : `发布没有执行（${result.code}）。重新读取当前持久状态后再试；系统没有自动重试。`,
       );
     },
   });
@@ -510,10 +413,8 @@ export function NotificationEditorPage() {
   const busy =
     draftMutation.isPending ||
     saveMutation.isPending ||
-    validateMutation.isPending ||
-    testMutation.isPending ||
-    activateMutation.isPending;
-  const activateInFlight = activateMutation.isPending;
+    testMutation.isPending;
+  const activateInFlight = saveMutation.isPending;
 
   const closeCard = () => {
     void navigate({ to: "/operations/notifications" });
@@ -529,10 +430,8 @@ export function NotificationEditorPage() {
       setRemote(null);
       setTouched(new Set());
       setShowIssues(false);
-      setConfirmActivate(false);
       setError(null);
       setSavedNotice(null);
-      setValidationNotice(null);
       setTestResult(null);
     },
     firstFieldId: "notification-edit-url",
@@ -579,12 +478,11 @@ export function NotificationEditorPage() {
     setBaseline(remote);
     setRemote(null);
     setSavedNotice(null);
-    setConfirmActivate(false);
     clearEvidence();
   };
 
   const discardRetainedLocalInput = () => {
-    // Explicit choice after the open Draft disappeared: discard only the card
+    // Explicit choice after the open draft disappeared: discard only the card
     // input. Nothing is written; the background list and Active stay as read.
     setForm(null);
     setBaseline(null);
@@ -598,17 +496,6 @@ export function NotificationEditorPage() {
 
   const canTest =
     canUseSavedVersion && loadedDraft?.actions.test.available === true;
-  const canValidate =
-    canUseSavedVersion && loadedDraft?.actions.validate.available === true;
-  const canActivate =
-    canUseSavedVersion &&
-    draft !== null &&
-    baseline !== null &&
-    draft.revisionVersion === baseline.version &&
-    draft.revisionStatus === "validated" &&
-    loadedDraft?.actions.activate.available === true &&
-    confirmActivate;
-
   const title =
     draft === null
       ? "编辑 Webhook 定义"
@@ -651,12 +538,12 @@ export function NotificationEditorPage() {
       titleId={titleId}
       description={
         retainedLocalInput
-          ? "当前没有打开的草稿；你尚未保存的输入仍保留在此卡片中，不会写入服务端。"
+          ? "当前没有可编辑的 Webhook 定义；你尚未保存的输入仍保留在此卡片中，不会写入服务端。"
           : draft === null
-            ? "没有打开的草稿包含这个 Webhook 定义。"
+            ? "当前生效配置不包含这个 Webhook 定义。"
             : readOnlyDraft
-              ? "当前账号只能查看这个草稿，不能保存修改、检查或发布。"
-              : "修改只写入打开的草稿；已生效配置在明确发布前保持不变。"
+              ? "当前账号只能查看这个定义，不能应用修改或发送测试。"
+              : "点击「应用更改」后，后端会校验并原子发布新的生效配置。"
       }
       closeDisabled={busy}
       onRequestClose={guard.attemptClose}
@@ -678,7 +565,7 @@ export function NotificationEditorPage() {
               id={SAVE_BUTTON_ID}
               disabled={saveDisabled}
             >
-              {saveMutation.isPending ? "正在保存到草稿…" : "保存到草稿"}
+              {saveMutation.isPending ? "正在应用…" : "应用更改"}
             </Button>
           )}
         </>
@@ -692,8 +579,8 @@ export function NotificationEditorPage() {
         />
       )}
       {draftQuery.isError && loadedDraft === null && (
-        <NotificationCardStatus variant="error" title="草稿读取失败">
-          <p>没有读取到打开的草稿，因此不能安全编辑或发布。</p>
+        <NotificationCardStatus variant="error" title="当前定义读取失败">
+          <p>没有读取到当前 Webhook 定义，因此不能安全编辑或应用。</p>
           <div className="mf-actions">
             <Button
               type="button"
@@ -707,8 +594,8 @@ export function NotificationEditorPage() {
         </NotificationCardStatus>
       )}
       {draftQuery.data === undefined && !draftQuery.isError && (
-        <NotificationCardStatus title="正在读取草稿">
-          <p>读取打开的草稿及其精确版本。</p>
+        <NotificationCardStatus title="正在读取定义">
+          <p>读取当前生效配置中的 Webhook 定义。</p>
         </NotificationCardStatus>
       )}
       {draftQuery.data !== undefined &&
@@ -733,11 +620,11 @@ export function NotificationEditorPage() {
         )}
       {loadedDraft !== null && draft === null && !retainedLocalInput && (
         <div className="mf-notification-card-scroll">
-          <StatusBanner variant="info" title="没有可编辑的草稿">
+          <StatusBanner variant="info" title="没有可编辑的定义">
             <p>
               {notificationReasonLabel(
                 loadedDraft.actions.createDraft.reason,
-                "需要一个打开的后继草稿，才能保存这个 Webhook 定义。",
+                "需要一个打开的后继当前定义，才能保存这个 Webhook 定义。",
               )}
             </p>
             <p>
@@ -759,7 +646,7 @@ export function NotificationEditorPage() {
                 }
               }}
             >
-              {draftMutation.isPending ? "正在创建后继草稿…" : "创建后继草稿"}
+              {draftMutation.isPending ? "正在准备…" : "重新读取定义"}
             </Button>
             <Button type="button" variant="secondary" onClick={closeCard}>
               返回通知列表
@@ -770,7 +657,7 @@ export function NotificationEditorPage() {
               disabled={busy || draftQuery.isFetching}
               onClick={() => void draftQuery.refetch()}
             >
-              {draftQuery.isFetching ? "正在读取…" : "读取最新草稿"}
+              {draftQuery.isFetching ? "正在读取…" : "读取最新当前定义"}
             </Button>
           </div>
           {error !== null && (
@@ -785,8 +672,8 @@ export function NotificationEditorPage() {
           {readDegraded && (
             <StatusBanner variant="warning" title="最新读取失败">
               <p>
-                显示的是上次成功读取的草稿版本 {draft.revisionVersion}
-                。恢复读取后再核对当前权限和草稿内容。
+                显示的是上次成功读取的当前定义版本 {draft.revisionVersion}
+                。恢复读取后再核对当前权限和当前定义内容。
               </p>
               <div className="mf-actions">
                 <Button
@@ -800,15 +687,15 @@ export function NotificationEditorPage() {
               </div>
             </StatusBanner>
           )}
-          <StatusBanner variant="warning" title="只能查看这个草稿">
+          <StatusBanner variant="warning" title="只能查看这个当前定义">
             <p>
               {notificationReasonLabel(
                 loadedDraft?.actions.save.reason ?? null,
-                "当前账号没有保存这个草稿的权限。",
+                "当前账号没有保存这个当前定义的权限。",
               )}
             </p>
             <p>
-              你仍可查看下列持久草稿内容。要修改、检查或发布，请联系具备配置管理权限的管理员；此页面不会写入草稿、发送测试或发布配置。
+              你仍可查看下列持久当前定义内容。要修改、检查或发布，请联系具备配置管理权限的管理员；此页面不会写入当前定义、发送测试或发布配置。
             </p>
             <div className="mf-notification-actions">
               <Button
@@ -835,26 +722,26 @@ export function NotificationEditorPage() {
                 disabled={busy || draftQuery.isFetching}
                 onClick={() => void draftQuery.refetch()}
               >
-                {draftQuery.isFetching ? "正在读取…" : "读取最新草稿"}
+                {draftQuery.isFetching ? "正在读取…" : "读取最新当前定义"}
               </Button>
             </div>
           </StatusBanner>
           {error !== null && (
-            <StatusBanner variant="error" title="草稿操作没有完成">
+            <StatusBanner variant="error" title="当前定义操作没有完成">
               <p>{error}</p>
             </StatusBanner>
           )}
           <div className="mf-notification-detail-badges">
             <span className="mf-notification-badge">
-              只读草稿 · 版本 {draft.revisionVersion}
+              只读当前定义 · 版本 {draft.revisionVersion}
             </span>
             <span className="mf-notification-badge">
-              {draft.revisionStatus === "validated" ? "已检查" : "草稿"}
+              {draft.revisionStatus === "validated" ? "已检查" : "当前定义"}
             </span>
             <span className="mf-notification-badge">已生效配置不变</span>
           </div>
           <section className="mf-notification-form-section">
-            <h3>草稿内容（只读）</h3>
+            <h3>当前定义内容（只读）</h3>
             <dl className="mf-notification-facts">
               <dt>HTTPS 接收地址</dt>
               <dd className="mf-notification-endpoint">{serverValues.url}</dd>
@@ -883,9 +770,9 @@ export function NotificationEditorPage() {
               <dl>
                 <dt>Webhook 标识</dt>
                 <dd>{draft.webhook.id}</dd>
-                <dt>草稿修订</dt>
+                <dt>当前定义修订</dt>
                 <dd>{draft.revisionId}</dd>
-                <dt>草稿版本</dt>
+                <dt>当前定义版本</dt>
                 <dd>{draft.revisionVersion}</dd>
                 <dt>事件标识</dt>
                 <dd>{serverValues.events.join(", ")}</dd>
@@ -929,7 +816,7 @@ export function NotificationEditorPage() {
           {readDegraded && (
             <StatusBanner variant="warning" title="最新读取失败">
               <p>
-                显示的是上次成功读取的草稿版本 {baseline.version}
+                显示的是上次成功读取的当前定义版本 {baseline.version}
                 。已知保存结果仍然有效；恢复读取后再进行测试、检查或发布。
               </p>
               <div className="mf-actions">
@@ -947,14 +834,14 @@ export function NotificationEditorPage() {
           {retainedLocalInput && (
             <StatusBanner
               variant="warning"
-              title="草稿已不再打开，本地输入已保留"
+              title="当前定义已不再打开，本地输入已保留"
             >
               <p>
-                读取显示这份打开的草稿已经不存在，通常表示另一位管理员已经保存并发布。
-                你尚未保存的输入仍显示在下方；系统没有写入服务端，也没有把本地输入静默绑定到新的草稿修订。
+                读取显示这份打开的当前定义已经不存在，通常表示另一位管理员已经保存并发布。
+                你尚未保存的输入仍显示在下方；系统没有写入服务端，也没有把本地输入静默绑定到新的当前定义修订。
               </p>
               <p>
-                已生效配置可能已经变化。创建后继草稿后，再明确选择保留本地输入或采用服务端值；也可以直接放弃本地输入。
+                已生效配置可能已经变化。创建后继当前定义后，再明确选择保留本地输入或采用服务端值；也可以直接放弃本地输入。
               </p>
               <div className="mf-actions">
                 <Button
@@ -969,8 +856,8 @@ export function NotificationEditorPage() {
                   }}
                 >
                   {draftMutation.isPending
-                    ? "正在创建后继草稿…"
-                    : "创建后继草稿"}
+                    ? "正在创建后继当前定义…"
+                    : "创建后继当前定义"}
                 </Button>
                 <Button
                   type="button"
@@ -987,7 +874,7 @@ export function NotificationEditorPage() {
             {retainedLocalInput ? (
               <>
                 <span className="mf-notification-badge">
-                  原草稿 · 版本 {baseline.version} · 已不再打开
+                  原当前定义 · 版本 {baseline.version} · 已不再打开
                 </span>
                 <span className="mf-notification-badge mf-notification-badge-warn">
                   本地未保存输入已保留
@@ -999,8 +886,8 @@ export function NotificationEditorPage() {
             ) : baselineIsOpenDraft ? (
               <>
                 <span className="mf-notification-badge">
-                  已保存草稿 · 版本 {baseline.version} ·{" "}
-                  {baseline.status === "validated" ? "已检查" : "草稿"}
+                  已保存当前定义 · 版本 {baseline.version} ·{" "}
+                  {baseline.status === "validated" ? "已检查" : "当前定义"}
                 </span>
                 {dirty && (
                   <span className="mf-notification-badge mf-notification-badge-warn">
@@ -1009,7 +896,7 @@ export function NotificationEditorPage() {
                 )}
                 {clean && (
                   <span className="mf-notification-badge mf-notification-badge-active">
-                    当前输入与已保存草稿一致
+                    当前输入与已保存当前定义一致
                   </span>
                 )}
                 <span className="mf-notification-badge">已生效配置不变</span>
@@ -1017,10 +904,10 @@ export function NotificationEditorPage() {
             ) : (
               <>
                 <span className="mf-notification-badge">
-                  原草稿 · 版本 {baseline.version}
+                  原当前定义 · 版本 {baseline.version}
                 </span>
                 <span className="mf-notification-badge mf-notification-badge-warn">
-                  读取到新的草稿修订
+                  读取到新的当前定义修订
                 </span>
                 <span className="mf-notification-badge mf-notification-badge-warn">
                   未写入服务端
@@ -1035,14 +922,14 @@ export function NotificationEditorPage() {
                   disabled={busy || draftQuery.isFetching}
                   onClick={() => void draftQuery.refetch()}
                 >
-                  {draftQuery.isFetching ? "正在读取…" : "读取最新草稿"}
+                  {draftQuery.isFetching ? "正在读取…" : "读取最新当前定义"}
                 </Button>
               </span>
             )}
           </div>
 
           {savedNotice !== null && (
-            <StatusBanner variant="success" title="已保存到草稿">
+            <StatusBanner variant="success" title="已保存到当前定义">
               <p>{savedNotice}</p>
             </StatusBanner>
           )}
@@ -1051,14 +938,14 @@ export function NotificationEditorPage() {
               variant="warning"
               title={
                 remote.kind === "revision"
-                  ? "读取到另一个草稿修订"
-                  : "草稿已在其他位置更新"
+                  ? "读取到另一个当前定义修订"
+                  : "当前定义已在其他位置更新"
               }
             >
               <p>
                 {remote.kind === "revision"
-                  ? `打开的是另一个草稿修订（版本 ${remote.version}）。`
-                  : `耐久草稿现在是版本 ${remote.version}。`}
+                  ? `打开的是另一个当前定义修订（版本 ${remote.version}）。`
+                  : `耐久当前定义现在是版本 ${remote.version}。`}
                 你还有未保存的输入；系统没有把本地输入静默绑定到新版本。
               </p>
               <div className="mf-actions">
@@ -1074,17 +961,17 @@ export function NotificationEditorPage() {
           {dirty && remote === null && !retainedLocalInput && (
             <StatusBanner variant="info" title="有未保存的修改">
               <p>
-                测试、检查和发布只针对已保存的草稿版本。先保存当前输入，或明确放弃修改后再操作已保存版本。
+                测试、检查和发布只针对已保存的当前定义版本。先保存当前输入，或明确放弃修改后再操作已保存版本。
               </p>
             </StatusBanner>
           )}
           {error !== null && (
-            <StatusBanner variant="error" title="草稿操作没有完成">
+            <StatusBanner variant="error" title="当前定义操作没有完成">
               <p>{error}</p>
             </StatusBanner>
           )}
           {draft !== null && draft.validationErrors.length > 0 && (
-            <StatusBanner variant="error" title="草稿检查发现">
+            <StatusBanner variant="error" title="当前定义检查发现">
               <ul>
                 {draft.validationErrors.map((item) => (
                   <li key={item}>{item}</li>
@@ -1193,7 +1080,7 @@ export function NotificationEditorPage() {
                 <span>
                   <strong>启用这个 Webhook</strong>
                   <small>
-                    发布后才会使用；草稿内修改不影响当前已生效配置。
+                    发布后才会使用；当前定义内修改不影响当前已生效配置。
                   </small>
                 </span>
               </label>
@@ -1287,135 +1174,49 @@ export function NotificationEditorPage() {
           </section>
 
           {draft !== null && (
-            <>
-              <section className="mf-notification-form-section">
-                <h3>检查与签名测试</h3>
-                <p className="mf-notification-field-help">
-                  检查和测试只针对已保存的草稿版本，两者都不会发布配置。
+            <section className="mf-notification-form-section">
+              <h3>签名测试</h3>
+              <p className="mf-notification-field-help">
+                测试针对当前生效定义发送一次带签名的请求；不会创建投递、不会自动重试，也不会改变配置。
+              </p>
+              {!canUseSavedVersion && (
+                <p className="mf-notification-inline-reason">
+                  {remote !== null
+                    ? "先处理上面的并发变更。"
+                    : "有未保存的修改：先应用，或放弃修改后再测试已保存定义。"}
                 </p>
-                {!canUseSavedVersion && (
-                  <p className="mf-notification-inline-reason">
-                    {remote !== null
-                      ? "先处理上面的并发变更。"
-                      : "有未保存的修改：先保存，或放弃修改后再操作已保存版本。"}
-                  </p>
-                )}
-                <div className="mf-notification-actions">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={!canValidate || busy}
-                    title={notificationReasonLabel(
-                      loadedDraft?.actions.validate.reason ?? null,
-                      "当前不能检查草稿",
-                    )}
-                    onClick={() => {
-                      if (baseline !== null) {
-                        validateMutation.mutate({
-                          context: displayedContext,
-                          revisionId: baseline.revisionId,
-                        });
-                      }
-                    }}
-                  >
-                    {validateMutation.isPending ? "正在检查…" : "检查草稿"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={!canTest || busy}
-                    title={notificationReasonLabel(
-                      loadedDraft?.actions.test.reason ?? null,
-                      "当前不能发送签名测试",
-                    )}
-                    onClick={() => {
-                      if (baseline !== null) {
-                        testMutation.mutate({
-                          context: displayedContext,
-                          expectedRevisionId: baseline.revisionId,
-                          expectedVersion: baseline.version,
-                        });
-                      }
-                    }}
-                  >
-                    {testMutation.isPending
-                      ? "正在发送签名测试…"
-                      : "发送签名测试"}
-                  </Button>
-                </div>
-                <p className="mf-notification-field-help">
-                  发送签名测试会向接收端发送一次带签名的请求；不会创建投递，也不会自动重试。
-                </p>
-                {validationNotice !== null &&
-                  validationNotice.context === displayedContext && (
-                    <StatusBanner variant="success" title="草稿检查通过">
-                      <p>{validationNotice.message}</p>
-                    </StatusBanner>
+              )}
+              <div className="mf-notification-actions">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={!canTest || busy}
+                  title={notificationReasonLabel(
+                    loadedDraft?.actions.test.reason ?? null,
+                    "当前不能发送签名测试",
                   )}
-                {testResult !== null &&
-                  testResult.context === displayedContext &&
-                  canUseSavedVersion && (
-                    <StatusBanner variant="info" title="签名测试结果">
-                      <p>{testResult.message}</p>
-                      <p>
-                        结论只对发送时的已保存版本有效；输入或版本变化后需要重新测试。
-                      </p>
-                    </StatusBanner>
-                  )}
-              </section>
-
-              <section className="mf-notification-form-section">
-                <h3>发布已检查草稿</h3>
-                <p className="mf-notification-field-help">
-                  {loadedDraft?.actions.activate.available
-                    ? "发布只在草稿的唯一变更就是这个已检查的 Webhook 定义时成功。任何兄弟定义或无关配置变化都会拒绝发布，并保留已生效配置和草稿。"
-                    : `当前不能发布：${notificationReasonLabel(
-                        loadedDraft?.actions.activate.reason ?? null,
-                        "服务端未提供发布动作。",
-                      )}`}
-                </p>
-                {dirty && (
-                  <p className="mf-notification-inline-reason">
-                    有未保存的修改，发布确认已失效。先保存并重新检查。
-                  </p>
+                  onClick={() => {
+                    if (baseline !== null) {
+                      testMutation.mutate({
+                        context: displayedContext,
+                        expectedRevisionId: baseline.revisionId,
+                        expectedVersion: baseline.version,
+                      });
+                    }
+                  }}
+                >
+                  {testMutation.isPending ? "正在发送签名测试…" : "发送签名测试"}
+                </Button>
+              </div>
+              {testResult !== null &&
+                testResult.context === displayedContext &&
+                canUseSavedVersion && (
+                  <StatusBanner variant="info" title="签名测试结果">
+                    <p>{testResult.message}</p>
+                    <p>结论只对发送时已发布的对象版本有效。</p>
+                  </StatusBanner>
                 )}
-                {loadedDraft?.actions.activate.available && (
-                  <div className="mf-notification-actions">
-                    <label className="mf-notification-check">
-                      <input
-                        type="checkbox"
-                        checked={confirmActivate}
-                        disabled={!canUseSavedVersion || busy}
-                        onChange={(event) => {
-                          setConfirmActivate(event.target.checked);
-                          if (!event.target.checked) {
-                            setError(null);
-                          }
-                        }}
-                      />
-                      <span>我确认把当前已检查的草稿发布为新的已生效配置</span>
-                    </label>
-                    <Button
-                      type="button"
-                      disabled={!canActivate || busy}
-                      onClick={() => {
-                        if (baseline !== null) {
-                          activateMutation.mutate({
-                            context: displayedContext,
-                            expectedRevisionId: baseline.revisionId,
-                            expectedVersion: baseline.version,
-                          });
-                        }
-                      }}
-                    >
-                      {activateMutation.isPending
-                        ? "正在发布草稿…"
-                        : "发布已检查草稿"}
-                    </Button>
-                  </div>
-                )}
-              </section>
-            </>
+            </section>
           )}
         </form>
       )}

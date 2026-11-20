@@ -628,21 +628,20 @@ are reconciled from durable identity before another explicit attempt; reads neve
 - **Goal/entry:** change runtime behavior through Settings/Configuration or focused business forms.
   `系统设置` starts with compact state and the three runtime fields; wider typed settings are grouped
   in `高级配置`, with rule counts, command readiness and technical identities in secondary diagnostics.
-- **State:** management bootstrap provides setup and recovery. Managed Draft/Validated/Active/Superseded states
-  show exact versions, digests, references, current evidence and capability readiness. Only Active governs runtime.
-- **Action:** explicitly create/resume a Draft or successor, edit typed objects, inspect impact,
-  validate/test and checked-activate. Advanced whole-document JSON/import/export is a labelled support
-  path; imports create inactive Drafts. Business-page Save bundles shared validation and activation.
-  Advanced settings save only the selected group's changes to the intended Draft/successor; other
-  groups' unsaved input stays available. Validate that Draft, complete its applicable read-only
-  publish checks in the same page, correct failed checks and explicitly activate the exact version.
-  The three runtime fields keep their focused one-Save publication. See the [page guide](configuration.md#system-settings-web).
-- **Success:** one immutable candidate becomes runtime Active atomically; old work keeps its pin.
+- **State:** management bootstrap provides setup and recovery. Current Active and historical published
+  revisions show exact versions, digests, references, evidence and capability readiness. Only Active
+  governs runtime; no resumable configuration draft exists.
+- **Action:** edit typed settings or business objects and explicitly apply. The backend binds the
+  current Active baseline, validates the candidate, runs the applicable read-only checks and publishes
+  atomically. Advanced whole-document JSON and portable-package import use the same explicit check and
+  publish. Other groups' unsaved input stays available. The three runtime fields keep their focused
+  one-Save publication. See the [page guide](configuration.md#system-settings-web).
+- **Success:** one checked candidate becomes runtime Active atomically; old work keeps its pin.
   Publication starts no media Task, scheduled occurrence, notification or Storage mutation.
 - **Failure/recovery:** stale/concurrent or invalid reference/evidence/runtime, denied permission or
-  unknown Save is actionable. Known rejection preserves prior Active and correctable input. Refresh
-  stale authority, repair named blockers, rerun relevant checks; verify unknown publication before
-  resubmitting. Corrupt Active stays explicit, never silently falls back to Draft/cache/JSON.
+  unknown Save is actionable. Known rejection preserves prior Active and correctable input; a lost
+  answer is verified from durable state before any new apply. Repair named blockers and reapply.
+  Corrupt Active stays explicit and is recovered only by an authorized full replacement publication.
 
 [Configuration](configuration.md) owns exact fields, lifecycle APIs, secret references and checked
 publication. Reference-safe removal preserves media, Results and historical snapshots; it cannot
@@ -652,17 +651,17 @@ silently publish unrelated Draft changes.
 
 - **Goal/entry:** authenticate a management-only installation and open `系统设置`
   (`/configuration`) or a setup-required page. Viewers get read state and admin guidance.
-- **State/action:** distinguish no Draft, resumable Draft, empty Active and broken prior Active.
-  Explicitly create the first Draft, inspect/export labelled JSON and activate empty or populated
-  configuration. No mandatory media forms or generated Storage/type/policy defaults.
+- **State/action:** distinguish uninitialized, empty Active and broken prior Active. Explicitly
+  initialize an empty managed configuration, or apply a checked full document, then inspect/export
+  JSON. No mandatory media forms, generated Storage/type/policy defaults or resumable draft.
 - **Success:** show `配置已激活，媒体业务尚未配置` for empty Active. Validate populated objects and
   their declared references; require applicable library/Storage/recognition/destination evidence,
   without blocking unrelated empty families. Browsing/transfer need not require the media pipeline.
-- **Failure/recovery:** retain saved Draft and input across reload/reconnect without duplicate
-  initialization. Fix named mount/secret/reference/schema/permission blockers. Broken prior Active
-  uses recovery, not automatic first setup. Return to the allowlisted originating page and refetch.
+- **Failure/recovery:** retain input across reload/reconnect without duplicate publication. Fix named
+  mount/secret/reference/schema/permission blockers. Broken prior Active uses explicit full replacement,
+  not automatic first setup. Return to the allowlisted originating page and refetch.
 
-JSON defaults to actual Active; before activation label Draft/no-Draft. Portable exports retain safe
+JSON defaults to actual Active; before initialization label uninitialized. Portable exports retain safe
 environment references and supported managed fields, excluding database/principal/token deployment
 authority and unsafe URL credentials. Advanced edits are backend schema/field-allowlisted; restart-
 only settings are never presented as already consumed.
@@ -1392,7 +1391,7 @@ and timeout/retry fields. Without an editable Draft or permission, explain the r
 the permitted next action instead of a writable form. Saving writes only the Draft. Check and
 signature-test the exact saved version, then explicitly confirm publication; publication refuses
 sibling-definition or unrelated configuration changes. Read the resulting immutable Active rather
-than treating local inputs or a saved Draft as effective configuration. A signature test sends one
+than treating local inputs as effective configuration. A signature test sends one
 request to the configured endpoint; it creates no delivery and publishes nothing.
 
 Unsaved edits invalidate saved-version test/check feedback and publication confirmation. Closing,

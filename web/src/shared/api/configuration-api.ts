@@ -179,11 +179,28 @@ export const fetchConfigurationStatus = (
     fetchImpl,
   );
 
-export const createFirstDraft = (token: string | null, fetchImpl?: FetchLike) =>
+/** Explicitly publish an empty managed configuration for a new instance. */
+export const initializeConfiguration = (
+  token: string | null,
+  fetchImpl?: FetchLike,
+) =>
   request<Record<string, unknown>>(
     token,
-    "/api/configuration/drafts/first",
+    "/api/configuration/initialize",
     { method: "POST", body: "{}" },
+    fetchImpl,
+  );
+
+/** Validate and atomically publish one complete configuration document. */
+export const publishConfiguration = (
+  token: string | null,
+  body: Record<string, unknown>,
+  fetchImpl?: FetchLike,
+) =>
+  request<Record<string, unknown>>(
+    token,
+    "/api/configuration/publish",
+    { method: "POST", body: JSON.stringify(body) },
     fetchImpl,
   );
 
@@ -242,34 +259,6 @@ export const saveSystemSettings = (
     fetchImpl,
   );
 
-export const validateRevision = (
-  token: string | null,
-  revisionId: string,
-  fetchImpl?: FetchLike,
-) =>
-  request<Record<string, unknown>>(
-    token,
-    `/api/configuration/revisions/${encodeURIComponent(revisionId)}/validate`,
-    { method: "POST", body: "{}" },
-    fetchImpl,
-  );
-
-export const activateRevision = (
-  token: string | null,
-  revisionId: string,
-  expectedVersion: number,
-  fetchImpl?: FetchLike,
-) =>
-  request<Record<string, unknown>>(
-    token,
-    `/api/configuration/revisions/${encodeURIComponent(revisionId)}/activate`,
-    {
-      method: "POST",
-      body: JSON.stringify({ expectedVersion, checked: true }),
-    },
-    fetchImpl,
-  );
-
 export const exportConfigurationPackage = (
   token: string | null,
   revisionId?: string,
@@ -284,62 +273,3 @@ export const exportConfigurationPackage = (
 
 export const fetchManagementReadiness = (token: string | null) =>
   request<Record<string, unknown>>(token, "/api/management/readiness", {});
-
-/** Run one exact-revision, read-only Storage root check. */
-export const runStorageCheck = (
-  token: string | null,
-  revisionId: string,
-  input: {
-    readonly storageId: string;
-    readonly expectedVersion: number;
-    readonly expectedDigest: string;
-  },
-  fetchImpl?: FetchLike,
-) =>
-  request<Record<string, unknown>>(
-    token,
-    `/api/configuration/revisions/${encodeURIComponent(revisionId)}/storage-check`,
-    { method: "POST", body: JSON.stringify(input) },
-    fetchImpl,
-    true,
-  );
-
-/** Run the offline Recognition Strategy Test for one exact revision. */
-export const runRecognitionStrategyTest = (
-  token: string | null,
-  revisionId: string,
-  input: {
-    readonly expectedVersion: number;
-    readonly expectedDigest: string;
-    readonly resourceLibraryId: string;
-    readonly syntheticPath: string;
-  },
-  fetchImpl?: FetchLike,
-) =>
-  request<Record<string, unknown>>(
-    token,
-    `/api/configuration/revisions/${encodeURIComponent(revisionId)}/recognition-strategy-test`,
-    { method: "POST", body: JSON.stringify(input) },
-    fetchImpl,
-    true,
-  );
-
-/** Run the read-only destination precheck for one exact revision. */
-export const runDestinationPrecheck = (
-  token: string | null,
-  revisionId: string,
-  input: {
-    readonly expectedVersion: number;
-    readonly expectedDigest: string;
-    readonly recognitionType: string;
-    readonly sample: Record<string, unknown>;
-  },
-  fetchImpl?: FetchLike,
-) =>
-  request<Record<string, unknown>>(
-    token,
-    `/api/configuration/revisions/${encodeURIComponent(revisionId)}/destination-precheck`,
-    { method: "POST", body: JSON.stringify(input) },
-    fetchImpl,
-    true,
-  );

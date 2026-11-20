@@ -9,6 +9,7 @@ from mediaflow.domain.configuration_management import (
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
     RuntimeSnapshotUnavailable,
+    portable_managed_configuration_document,
 )
 from mediaflow.domain.package_exchange import (
     CONFIGURATION_PACKAGE_KIND,
@@ -44,8 +45,10 @@ class PackageExchangeService:
         *,
         audit_repository=None,
         clock=None,
+        publisher=None,
     ) -> None:
         self._configuration = configuration_service
+        self._publisher = publisher
         self._task_repository = task_repository
         self._audit_repository = task_repository if audit_repository is None else audit_repository
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -69,7 +72,6 @@ class PackageExchangeService:
             )
         try:
             active = self._configuration.active()
-            revisions = self._configuration.repository.list_revisions(limit=500)
         except RuntimeSnapshotUnavailable as error:
             raise PackageExchangeError(
                 "managed Active configuration is unavailable for package exchange",
@@ -83,15 +85,6 @@ class PackageExchangeService:
                     "digest": getattr(error, "digest", None),
                 },
             ) from error
-        current_draft = next(
-            (
-                revision
-                for revision in revisions
-                if revision.status
-                in {ManagedConfigurationStatus.DRAFT, ManagedConfigurationStatus.VALIDATED}
-            ),
-            None,
-        )
         return {
             "exchangeAvailable": True,
             "packageKinds": {
@@ -102,15 +95,9 @@ class PackageExchangeService:
             "resultPackageSchemaVersion": RESULT_PACKAGE_SCHEMA_VERSION,
             "packageVersion": 1,
             "currentActive": active.summary() if active is not None else None,
-            "currentDraft": current_draft.summary() if current_draft is not None else None,
             "supportedRevisionStatuses": [
-                status.value
-                for status in (
-                    ManagedConfigurationStatus.DRAFT,
-                    ManagedConfigurationStatus.VALIDATED,
-                    ManagedConfigurationStatus.ACTIVE,
-                    ManagedConfigurationStatus.SUPERSEDED,
-                )
+                ManagedConfigurationStatus.ACTIVE.value,
+                ManagedConfigurationStatus.SUPERSEDED.value,
             ],
             "resultExport": {
                 "scope": "task",
@@ -119,15 +106,13 @@ class PackageExchangeService:
                 "source": "durable_task_result_repository",
             },
             "importBehavior": {
-                "createsNewDraft": True,
-                "updatesExactDraft": "explicit recovery identity required",
-                "neverActivates": True,
-                "sideEffects": "none",
-                "currentDraftOverwrite": "forbidden_without_exact_identity",
+                "publishesDirectly": True,
+                "requiresCurrentActive": True,
+                "sideEffects": "configuration_only",
             },
             "nextAction": (
-                "export the Active or an explicit revision as a Draft/recovery package, "
-                "or import a supported package after confirming current Active identity"
+                "export the Active as a configuration package, or import a package "
+                "exported from the current Active"
             ),
         }
 
@@ -157,6 +142,17 @@ class PackageExchangeService:
                     durable_state="no_package_state_changed",
                     next_action="refresh configuration status and select an existing revision",
                 ) from error
+            if revision.status not in {
+                ManagedConfigurationStatus.ACTIVE,
+                ManagedConfigurationStatus.SUPERSEDED,
+            }:
+                raise PackageExchangeError(
+                    "only current or historical published configuration can be exported",
+                    code="revision_not_published",
+                    status=404,
+                    durable_state="no_package_state_changed",
+                    next_action="export the current Active or a published historical revision",
+                )
         else:
             try:
                 revision = self._configuration.active()
@@ -329,7 +325,6 @@ class PackageExchangeService:
         package_value: object,
         *,
         actor: str,
-        recovery: dict[str, object] | None = None,
     ) -> dict[str, object]:
         if self._configuration is None:
             raise PackageExchangeError(
@@ -347,7 +342,7 @@ class PackageExchangeService:
                 "managed Active configuration is unavailable; import is fail-closed",
                 code="configuration_unavailable",
                 status=503,
-                durable_state="managed_active_unavailable_no_draft_change",
+                durable_state="managed_active_unavailable_no_change",
                 next_action="restore a valid Active revision, then retry package import",
                 details={
                     "revisionId": getattr(error, "revision_id", None),
@@ -359,8 +354,8 @@ class PackageExchangeService:
                 "no Active configuration exists; package import is fail-closed",
                 code="active_missing",
                 status=503,
-                durable_state="no_active_configuration_no_draft_change",
-                next_action="activate a managed configuration revision before package import",
+                durable_state="no_active_configuration_no_change",
+                next_action="initialize configuration before package import",
             )
         self._configuration.verify_integrity(active)
         currentness = parsed["currentness"]
@@ -368,148 +363,85 @@ class PackageExchangeService:
             currentness.get("currentActiveRevisionId") != active.revision_id
             or currentness.get("currentActiveDigest") != active.digest
         ):
-            current_draft = self._current_draft()
             raise PackageExchangeError(
                 "configuration package was exported from a different Active revision",
                 code="package_stale",
                 status=409,
-                durable_state="active_preserved_no_draft_change",
-                next_action=(
-                    "export the current Active revision, or create a successor Draft from "
-                    "the current Active and reapply the desired change"
-                ),
+                durable_state="active_preserved",
+                next_action="export the current Active revision, then import that exact package",
                 details={
                     "currentActive": active.summary(),
-                    "currentDraft": current_draft.summary() if current_draft else None,
                     "packageActive": {
                         "revisionId": currentness.get("currentActiveRevisionId"),
                         "digest": currentness.get("currentActiveDigest"),
                     },
                 },
             )
-        recovery = recovery or {}
-        if not isinstance(recovery, dict):
+        if self._publisher is None:
             raise PackageExchangeError(
-                "package import recovery authority must be an object",
-                code="invalid_authority",
-                status=422,
+                "configuration publication is unavailable",
+                code="service_unavailable",
+                status=503,
                 durable_state="no_configuration_changed",
-                next_action="repeat the import with the exact current Draft identity",
+                next_action="restore the managed publication service, then retry",
             )
-        current_draft = self._current_draft()
         document = copy.deepcopy(parsed["document"])
-        if current_draft is not None:
-            expected_id = recovery.get("expectedRevisionId")
-            expected_version = recovery.get("expectedVersion")
-            expected_digest = recovery.get("expectedDigest")
-            replace_draft = recovery.get("replaceDraft") is True
-            if (
-                not replace_draft
-                or expected_id != current_draft.revision_id
-                or not isinstance(expected_version, int)
-                or expected_version != current_draft.version
-                or expected_digest != current_draft.digest
-            ):
-                raise PackageExchangeError(
-                    "configuration import cannot silently overwrite the current Draft",
-                    code="package_import_draft_conflict",
-                    status=409,
-                    durable_state="current_draft_preserved_active_unchanged",
-                    next_action=(
-                        "open the current Draft, or repeat import with replaceDraft=true and "
-                        "the exact current Draft revision/version/digest"
-                    ),
-                    details={
-                        "currentActive": active.summary(),
-                        "currentDraft": current_draft.summary(),
-                    },
-                )
-            try:
-                updated = self._configuration.edit_draft(
-                    current_draft.revision_id,
-                    document,
-                    expected_version=current_draft.version,
-                    actor=actor,
-                )
-            except ConfigurationVersionConflict as error:
-                refreshed = self._current_draft()
-                raise PackageExchangeError(
-                    "configuration Draft changed before package import could update it",
-                    code="package_import_draft_conflict",
-                    status=409,
-                    durable_state="current_draft_preserved_active_unchanged",
-                    next_action="refresh the Draft and repeat the exact recovery identity",
-                    details={
-                        "currentActive": active.summary(),
-                        "currentDraft": refreshed.summary() if refreshed else None,
-                    },
-                ) from error
-            except (ValueError, RuntimeError) as error:
-                raise PackageExchangeError(
-                    "package import was rejected by managed configuration rules",
-                    code="package_import_validation_failed",
-                    status=422,
-                    durable_state="current_draft_preserved_active_unchanged",
-                    next_action="correct the configuration package and retry",
-                    details={"error": str(error)[:500]},
-                ) from error
-            result: dict[str, object] = {
-                "imported": True,
-                "action": "updated",
-                "revision": updated.summary(),
-                "sideEffects": "draft_only",
-                "retrySafe": True,
-                "nextAction": (
-                    "open the updated Draft, run validation, then use checked activation"
-                ),
-            }
-        else:
-            if recovery:
-                raise PackageExchangeError(
-                    "recovery authority was supplied but no current Draft exists",
-                    code="no_current_draft",
-                    status=409,
-                    durable_state="active_preserved_no_draft_created",
-                    next_action="repeat the import without recovery authority",
-                    details={"currentActive": active.summary()},
-                )
-            try:
-                created = self._configuration.import_draft(
-                    document,
-                    actor=actor,
-                    source="package_import",
-                )
-            except (ValueError, RuntimeError) as error:
-                raise PackageExchangeError(
-                    "package import was rejected by managed configuration rules",
-                    code="package_import_validation_failed",
-                    status=422,
-                    durable_state="no_configuration_changed",
-                    next_action="correct the configuration package and retry",
-                    details={"error": str(error)[:500]},
-                ) from error
-            result = {
-                "imported": True,
-                "action": "created",
-                "revision": created.summary(),
-                "sideEffects": "draft_only",
-                "retrySafe": True,
-                "nextAction": (
-                    "open the imported Draft/recovery candidate, run validation, "
-                    "then use checked activation"
-                ),
-            }
-        result["currentActive"] = active.summary()
-        result["currentDraft"] = (
-            result["revision"] if isinstance(result["revision"], dict) else None
-        )
+        current_projection = portable_managed_configuration_document(active.document)
+        checked_sections = {
+            "storages",
+            "resourceLibraries",
+            "mediaLibraries",
+            "recognitionTypes",
+            "recognitionRules",
+            "recognitionTypePolicies",
+            "metadataPolicies",
+            "namingPolicies",
+            "classificationPolicies",
+            "organizePolicies",
+        }
+        changed_sections = {
+            key
+            for key in set(document).union(current_projection)
+            if document.get(key) != current_projection.get(key)
+        }
+        requires_checks = bool(changed_sections.intersection(checked_sections))
+        try:
+            published = self._publisher(
+                document,
+                actor=actor,
+                expected_active_revision_id=active.revision_id,
+                expected_active_version=active.revision_sequence or active.version,
+                expected_active_digest=active.digest,
+                run_checks=requires_checks,
+            )
+        except (ConfigurationVersionConflict, RuntimeSnapshotUnavailable):
+            raise
+        except Exception as error:
+            raise PackageExchangeError(
+                "package import was rejected by managed configuration rules",
+                code="package_import_validation_failed",
+                status=422,
+                durable_state="active_preserved",
+                next_action="correct the configuration package, then retry",
+                details={"error": str(error)[:500]},
+            ) from error
+        result: dict[str, object] = {
+            "imported": True,
+            "action": "published",
+            "revision": published.summary(),
+            "sideEffects": "configuration_only",
+            "retrySafe": True,
+            "nextAction": "the imported configuration is the new Active snapshot",
+            "currentActive": active.summary(),
+            "publishedActive": published.summary(),
+        }
         self._audit(
             actor=actor,
             action="configuration_package_import",
             outcome="allowed",
             route="/api/configuration/packages",
-            status=201 if result["action"] == "created" else 200,
-            revision_id=str(result["revision"].get("revisionId")),
+            status=201,
+            revision_id=published.revision_id,
         )
         return result
 

@@ -921,28 +921,31 @@ The minimal management bootstrap locates SQLite and supplies deployment-owned AP
 environment references. It keeps setup and recovery available before the first managed Active.
 Only a validated and activated managed revision provides runtime business authority.
 
-Managed Configuration persists whole-document Draft, Validated, Active and Superseded revisions.
-Object edits, references, evidence and audits are revision-bound. Activation is an atomic pointer
-change only after validation and any checked-evidence requirements pass. Checked activation is
-provider-neutral: every enabled Storage referenced by a ResourceLibrary or MediaLibrary needs a
-current, passed, read-only per-Storage check; the Recognition Strategy Test and one read-only
-destination precheck for the MediaLibrary destination must be current for every Storage kind. The
-earlier Local-only setup check remains available as a Local diagnostic but is no longer the
-activation authority. The previous Active remains available when replacement fails.
+Managed Configuration persists current and historical published snapshots only: Active and
+Superseded revisions. Candidate content is validated in one command, bound to the exact current
+Active baseline, checked, and atomically published; a candidate staging row and its revision-bound
+evidence exist only for that command and are discarded on any refusal. Object edits, references,
+evidence and audits remain revision-bound. Publication is an atomic pointer change only after
+validation and any checked-evidence requirements pass. Checked publication is provider-neutral:
+every enabled Storage referenced by a ResourceLibrary or MediaLibrary needs a current, passed,
+read-only per-Storage check; the Recognition Strategy Test and one read-only destination precheck for
+the MediaLibrary destination must be current for every Storage kind. The earlier Local-only setup
+check remains available as a Local diagnostic but is no longer the publication authority. The
+previous Active remains available when replacement fails.
 
-After activation, `ManagedConfigurationService` verifies the digest/schema/runtime load and builds an
+After publication, `ManagedConfigurationService` verifies the digest/schema/runtime load and builds an
 immutable runtime binding containing revision ID, version and digest. API requests, Workers, Tasks and
 scheduled occurrences use that binding or their persisted snapshot identity. A missing, corrupt,
 schema-incompatible or runtime-invalid Active fails media work closed and never falls back to JSON.
-Activation itself starts no Task, schedule occurrence or media mutation.
+Publication itself starts no Task, schedule occurrence or media mutation.
 
 The Files-page `+ 添加资源库` action is a bounded convenience over this same authority. Its final
 `保存` command uses the save-time Active snapshot as the candidate base and composes successor
-configuration, ResourceLibrary validation, applicable checked evidence, activation and runtime
-rebinding inside the backend. The operator does not manage the intermediate Draft/Validated states
-in this page-local flow. A validation, dependency, Storage-check, activation or runtime-load
-failure rejects the command and leaves the previous Active pointer and runtime authority intact.
-The general Configuration surface continues to expose the explicit Draft/Validate/Activate journey.
+configuration, ResourceLibrary validation, applicable checked evidence, publication and runtime
+rebinding inside the backend. The operator does not manage intermediate candidate states. A
+validation, dependency, Storage-check, publication or runtime-load failure rejects the command and
+leaves the previous Active pointer and runtime authority intact. Settings, Rules, Storage, libraries,
+Automation and notification forms use the same direct checked-publication boundary.
 
 ## CURRENT — Empty business runtime and resident configuration lifecycle
 
@@ -967,10 +970,10 @@ prechecks for applicable configured targets/chains, and existing Automation/Webh
 relevant. Missing capability is distinct from a broken declared dependency. Inapplicable checks
 cannot be fabricated as passed; applicable stale/failed evidence still blocks atomic publication.
 
-Native `/configuration` owns explicit first-Draft create/resume/activate, labelled Active/Draft
-JSON, portable secret-free export and schema/field-allowlisted editing for supported fields absent
-elsewhere. Read/navigation creates no Draft or work. JSON defaults to runtime-consumed Active, never
-cache or a replacement Draft. Database locator and principal/role/token authority stay deployment
+Native `/configuration` owns explicit empty initialization, checked full-document publication,
+labelled Active JSON, portable secret-free export and schema/field-allowlisted editing for supported
+fields absent elsewhere. Read/navigation creates no candidate or work. JSON defaults to
+runtime-consumed Active, never cache or a historical substitute. Database locator and principal/role/token authority stay deployment
 owned and cannot be changed by managed edits or imported portable configuration. Export excludes
 that authority while retaining all portable supported settings and safe secret references. Existing
 published snapshot identities remain verifiable; this is no permission to rewrite historical pins.

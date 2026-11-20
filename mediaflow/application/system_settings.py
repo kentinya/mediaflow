@@ -80,7 +80,11 @@ class SystemSettingsService:
         )
 
     def read_draft_or_active(self, revision_id: str | None = None) -> SystemSettings:
-        """Read System Settings from the Active revision or a specific Draft."""
+        """Read System Settings from the current or a historical published revision.
+
+        A historical published revision may be inspected by its exact ID; an
+        editable draft is never a settings authority.
+        """
 
         if revision_id is None:
             return self.read_active()
@@ -100,17 +104,21 @@ class SystemSettingsService:
         return self.read_draft(revision_id)
 
     def read_draft(self, revision_id: str) -> SystemSettings:
-        """Read System Settings from a specific Draft revision."""
+        """Read System Settings from one published revision.
+
+        The historical method name is retained for internal callers; editable
+        draft revisions are never a settings authority and are refused.
+        """
 
         revision = self._config.require(revision_id)
         if revision.status not in {
-            ManagedConfigurationStatus.DRAFT,
-            ManagedConfigurationStatus.VALIDATED,
+            ManagedConfigurationStatus.ACTIVE,
+            ManagedConfigurationStatus.SUPERSEDED,
         }:
             raise RuntimeSnapshotUnavailable(
-                "settings can only be read from a Draft or Validated revision",
+                "settings can only be read from a published revision",
                 revision_id=revision.revision_id,
-                reason="revision_not_editable",
+                reason="revision_not_published",
             )
         bootstrap_db = self._config.bootstrap_database_path
         return SystemSettings.from_document(
@@ -280,6 +288,86 @@ class SystemSettingsService:
             bootstrap_database_path=bootstrap_db,
         )
 
+    def publish(
+        self,
+        *,
+        edits: tuple[SystemSettingsEdit, ...],
+        actor: str,
+        expected_active_revision_id: str | None = None,
+        expected_active_version: int | None = None,
+        expected_active_digest: str | None = None,
+    ) -> SystemSettings:
+        """Apply settings edits and atomically publish the exact successor.
+
+        The previous Active remains authoritative on any validation, permission,
+        evidence or persistence failure.  No editable draft survives the call.
+        """
+
+        validation_errors = validate_settings_edit(edits, self._config.bootstrap_database_path)
+        if validation_errors:
+            raise SystemSettingsValidationError(validation_errors)
+        active = self._config.active()
+        if active is None:
+            if self._config.has_managed_activation():
+                raise RuntimeSnapshotUnavailable(
+                    "managed Active configuration is unavailable",
+                    reason="active_missing",
+                )
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists; initialize configuration first",
+                reason="active_missing",
+            )
+        self._config.verify_integrity(active)
+        current_version = active.revision_sequence or active.version
+        if (
+            expected_active_revision_id is not None
+            and expected_active_revision_id != active.revision_id
+        ):
+            raise ConfigurationVersionConflict(
+                "Active revision changed; reload Settings before applying changes",
+                revision_id=active.revision_id,
+                current_version=current_version,
+                current_digest=active.digest,
+                durable_state="active_preserved",
+                next_action="reload the current Active settings, then apply the intended changes",
+            )
+        if expected_active_version is not None and expected_active_version != current_version:
+            raise ConfigurationVersionConflict(
+                "Active version changed; reload Settings before applying changes",
+                revision_id=active.revision_id,
+                current_version=current_version,
+                current_digest=active.digest,
+                durable_state="active_preserved",
+                next_action="reload the current Active settings, then apply the intended changes",
+            )
+        if expected_active_digest is not None and expected_active_digest != active.digest:
+            raise ConfigurationVersionConflict(
+                "Active digest changed; reload Settings before applying changes",
+                revision_id=active.revision_id,
+                current_version=current_version,
+                current_digest=active.digest,
+                durable_state="active_preserved",
+                next_action="reload the current Active settings, then apply the intended changes",
+            )
+        candidate = apply_settings_edits(dict(active.document), edits)
+        _reject_literal_secrets(candidate)
+        published = self._config.publish_document(
+            candidate,
+            actor=actor,
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=current_version,
+            expected_active_digest=active.digest,
+        )
+        return SystemSettings.from_document(
+            published.document,
+            revision_id=published.revision_id,
+            revision_version=published.revision_sequence or published.version,
+            revision_digest=published.digest,
+            draft_version=published.version,
+            is_active=True,
+            bootstrap_database_path=self._config.bootstrap_database_path,
+        )
+
     # ------------------------------------------------------------------
     # Consumption evidence
     # ------------------------------------------------------------------
@@ -292,7 +380,7 @@ class SystemSettingsService:
             return {
                 "consumed": False,
                 "reason": "no_active",
-                "nextAction": "activate a configuration revision to consume settings",
+                "nextAction": "initialize and publish a configuration revision to consume settings",
             }
         try:
             self._config.verify_integrity(active)
@@ -301,7 +389,7 @@ class SystemSettingsService:
                 "consumed": False,
                 "reason": "active_corrupt",
                 "message": str(error),
-                "nextAction": "inspect configuration status and stage a recovery Draft",
+                "nextAction": "inspect configuration status and publish an explicit replacement",
             }
         settings = SystemSettings.from_document(
             active.document,

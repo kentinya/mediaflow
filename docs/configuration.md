@@ -8,11 +8,11 @@ operator guide, not a Phase or Task log. Large-Slice status is maintained in
 
 | Path | Authority |
 |---|---|
-| Managed Configuration | Explicitly activated immutable SQLite revision/digest; sole runtime authority after activation, with no JSON/Draft/stale-cache fallback. |
+| Managed Configuration | Explicitly published immutable SQLite revision/digest; sole runtime authority after publication, with no JSON/draft/stale-cache fallback. |
 | Minimal management bootstrap (`MEDIAFLOW_CONFIG`) | Deployment-owned database locator and API-principal environment references keep status/setup/recovery available without business Active or workflow defaults. |
 
-A fresh operator creates/resumes the first Draft in Web Settings and may activate a valid empty
-business baseline. Populated objects/references still validate; missing capability and corrupt
+A fresh operator explicitly initializes an empty managed configuration in Web Settings and may
+publish a valid empty business baseline. Populated objects/references still validate; missing capability and corrupt
 prior Active are distinct states. See [the setup journey](product-experience.md#first-time-setup).
 
 ## Bootstrap configuration
@@ -32,22 +32,22 @@ A fresh deployment starts from the minimal management bootstrap:
 ```
 
 It declares no Storage, ResourceLibrary, MediaLibrary, rule, policy or Webhook, so a fresh
-installation can start all services, expose status/recovery and create the first Draft before any
-business object exists. Generate the same shape with
+installation can start all services, expose status/recovery and initialize an empty configuration
+before any business object exists. Generate the same shape with
 `python3 scripts/make_deployment_config.py --output config/mediaflow.json`; add
 `--database-path PATH` only when the durable locator differs from `/data/mediaflow.sqlite3`.
 
 `config/strategy.example.json` is the complete canonical business example. It is **not** a startup
 bootstrap: its example paths and deployment identity are not portable. Render its portable managed
 input, edit its Local Storage roots and library paths for the target deployment, and import that
-as an inactive Draft:
+as a checked publication:
 
 ```bash
 python3 scripts/make_deployment_config.py \
   --output config/mediaflow.json \
   --database-path "$PWD/.mediaflow/mediaflow.sqlite3" \
   --configuration-output config/mediaflow.activation.json
-mediaflow --config config/mediaflow.json config draft-import \
+mediaflow --config config/mediaflow.json config publish \
   --file config/mediaflow.activation.json
 ```
 
@@ -60,19 +60,15 @@ The generated input omits the database locator and API principal identity, so im
 receiving deployment's own authority. Unrelated empty families are legal and create no
 capability/defaults; populated references that point at missing objects fail validation.
 
-Import never publishes. Open `系统设置` (`/configuration`), select the same Draft under
-`高级配置 → 查看配置`, run `验证草稿`, and complete the `发布前检查` the page lists for that
-exact version: read-only checks for every referenced enabled Storage, the offline recognition
-strategy test, and the destination precheck. A failed check keeps the Draft and any prior Active
-intact and names the correction. A typical recoverable first-setup case: while the target
-directory does not exist yet, the destination precheck fails — with `暂不可用` while the
-destination Storage root itself is not created or mounted, and with `目标库根路径不存在` once
-that root is reachable but the MediaLibrary root is still missing. Create the directories the
-Draft names or repair the corresponding mount, return to the same Draft, and rerun the failed
-check. First setup has no
-Active configuration until the applicable checks pass and `激活配置` is clicked; afterwards the
-page reports the published edit version and `诊断` shows that Draft's Active revision, version
-and digest.
+The command validates the candidate, binds deployment authority and publishes atomically. It runs
+the same applicable read-only checks as the Web form: read-only checks for every referenced enabled
+Storage, the offline recognition strategy test, and the destination precheck. A failed check leaves
+the previous Active and the submitted input intact and names the correction. A typical recoverable
+first-setup case: while the target directory does not exist yet, the destination precheck fails —
+with `暂不可用` while the destination Storage root itself is not created or mounted, and with
+`目标库根路径不存在` once that root is reachable but the MediaLibrary root is still missing.
+Create the directories the candidate names or repair the corresponding mount, then apply again.
+After publication the page reports the new Active revision, version and digest.
 
 Validate without scanning, contacting a Metadata Provider or mutating Storage:
 
@@ -88,35 +84,26 @@ are referenced by environment-variable names and resolved only at the infrastruc
 
 ## Managed lifecycle
 
-Managed revisions have four persisted states:
+Managed persistence contains current and historical published snapshots only:
 
 | State | Meaning |
 |---|---|
-| `Draft` | Editable candidate. It is not consumed by runtime. |
-| `Validated` | One exact draft version passed the canonical runtime loader and reference validation. It is still not active. |
-| `Active` | Explicitly activated immutable snapshot consumed by the runtime. |
+| `Active` | Explicitly published immutable snapshot consumed by the runtime. |
 | `Superseded` | Former Active revision retained for history and pinned-work inspection. |
 
-The lifecycle is:
-
-```text
-Draft → Validate → Validated → explicit Activate → Active runtime snapshot
-```
-
-Editing a Draft increments its optimistic version, recalculates its digest and invalidates prior
-validation/test evidence. Active and Superseded revisions remain immutable. Editing the current
-Active explicitly creates a successor Draft seeded from that exact snapshot; Advanced JSON or package
-import can also create an inactive Draft for exchange or recovery. Activation is
-atomic. A failed activation leaves the previous Active revision and the candidate Draft intact. A
-missing or invalid Active revision fails media work closed while status and replacement Draft
+One apply command composes a candidate from the current Active, increments its optimistic edit
+version, recalculates its digest, revalidates references and runs applicable evidence, then
+publishes atomically. The candidate staging revision and its revision-bound evidence exist only for
+that command and are discarded on refusal. Active and Superseded revisions remain immutable. A
+missing or invalid Active revision fails media work closed while status and explicit full-replacement
 recovery remain available through the bootstrap database locator.
 
 ### Files-page ResourceLibrary save
 
 `+ 添加资源库` submits one complete candidate. The backend merges exact current Active, validates
-references/applicable read-only evidence and atomically publishes runtime. No separate ordinary
-Validate/Activate clicks. Invalid/duplicate/stale fields, failed evidence or runtime publication
-preserve prior Active and correctable input; a failed command cannot display a saved library.
+references/applicable read-only evidence and atomically publishes runtime. No separate draft
+lifecycle clicks. Invalid/duplicate/stale fields, failed evidence or runtime publication preserve
+prior Active and correctable input; a failed command cannot display a saved library.
 
 ### Current page-local library editing
 
@@ -125,25 +112,22 @@ Storage/kind-relative root and preserves hidden fields. Save uses optimistic con
 validation, applicable evidence and atomic binding. It changes configuration only, never creates/
 migrates/moves/deletes media; admitted work keeps its old pin. Removal is reference-safe and media-free.
 
-The general configuration CLI still exposes explicit lifecycle operations:
+The general configuration CLI exposes direct publication:
 
 ```bash
 mediaflow config status
-mediaflow config draft-import --file config/mediaflow.activation.json
-mediaflow config draft-validate REVISION_ID
-mediaflow config activate REVISION_ID --expected-version VERSION
+mediaflow config initialize
+mediaflow config publish --file config/mediaflow.activation.json
 ```
 
 Each command selects the deployment bootstrap with `--config PATH` or `MEDIAFLOW_CONFIG`; the
-example above relies on the `export` in the preceding section.
+example above relies on the `export` in the preceding section. `config initialize` publishes an
+empty Active only when managed activation has never existed. `config publish` validates and
+publishes the supplied document. The retired `draft-import`, `draft-validate` and `activate`
+commands, aliases and parameters are unknown command-line inputs.
 
-CLI `config activate` publishes only a revision that is already Validated with the exact
-`--expected-version`; it does not require the Settings `发布前检查` evidence. First setup and
-ordinary publication therefore follow the checked Web journey above; use the CLI command only for
-deliberate advanced publication of a validated revision.
-
-Web's general forms-first successor flow and Advanced JSON/import/export share these services.
-Imported packages/JSON are inactive Drafts, never implicit Active replacements.
+Web settings, business forms and Advanced JSON/import/export share the same direct publication
+services. Imported packages/JSON are validated and published; they never create an inactive draft.
 
 ## Immutable runtime snapshot
 
@@ -154,9 +138,9 @@ the binding from the current Active revision and fails closed if integrity, sche
 loading cannot be proven.
 
 The UI's Active identity is derived from the same managed revision used to build the runtime binding.
-It must not display a Draft, an arbitrary database row or a stale process snapshot as Active. A
-checked activation publishes no Task or Automation occurrence or media mutation; a later
-explicit organizing analysis or execution request is required.
+It must not display a draft, an arbitrary database row or a stale process snapshot as Active. A
+checked publication starts no Task or Automation occurrence or media mutation; a later explicit
+organizing analysis or execution request is required.
 
 ## Current managed object families
 
@@ -164,11 +148,12 @@ Storage; ResourceLibrary/MediaLibrary; RecognitionType/Rule/TypePolicy; Metadata
 Naming/Classification/Organize policies; Automation definitions; Webhooks/events. Applicable
 create/copy/edit/enable/disable/reference-safe delete uses bounded redacted audit, strict IDs/fields,
 optimistic versions and dependency impact. Referenced deletion fails; valid unreferenced deletion
-is not blanket-refused. Generic edits return a Draft; focused page commands may compose activation.
+is not blanket-refused. Generic edits validate and publish a checked successor; focused page
+commands use the same boundary.
 
 Typed forms cover every supported Storage kind and object family; bounded nested JSON and whole-
 document Advanced exchange remain support surfaces. Secrets stay environment references. System
-Settings distinguishes actual runtime Active/consumption from editable successor and deployment/
+Settings distinguishes actual runtime Active/consumption from submitted input and deployment/
 restart-only values; another snapshot's values cannot be labelled consumed.
 
 ## System Settings Web
@@ -179,32 +164,29 @@ Published values and actual process adoption remain separate; instance details c
 Command readiness, rule-family counts, exact snapshot identities and consumption evidence are in
 the secondary `诊断` section rather than repeated in the main settings view.
 
-The two existing save paths have different outcomes:
+The two save paths use the same direct publication rule:
 
-- `系统运行设置` → `保存设置` publishes only the changed runtime fields through the focused checked
-  Save. No separate Draft/Validate/Activate clicks are required for these three fields.
+- `系统运行设置` → `应用更改` publishes only the changed runtime fields through the focused checked
+  command. No draft or separate activation clicks are required.
 - `高级配置` groups the wider allowlisted fields into `语言与时区`, `路径`, `日志`, `重试`
-  and `通知运行`. `保存到草稿` saves only that group's changed fields; other groups'
+  and `通知运行`. `应用更改` publishes only that group's changed fields; other groups'
   unsaved input stays in the form. `放弃本组修改` affects only that group. Booleans use explicit
   choices, numbers are validated without truncation or blank-to-zero conversion, and each group
-  shows whether activation takes effect immediately or requires a restart.
+  shows whether the new value takes effect immediately or requires a restart.
 
-For advanced edits, select the intended Draft, use `验证草稿`, and complete its applicable
-`发布前检查` in the same page: referenced Storage read checks, the offline recognition test using
-a selected ResourceLibrary and synthetic filename, and the destination precheck using an explicit
-sample. Correct a failed check's input or named configuration issue and rerun it; the prior Active
-and saved Draft remain intact. `激活配置` publishes only the exact validated revision through checked
-activation. A valid empty baseline has no applicable checks to run.
+The backend binds the exact Active baseline and runs applicable checks in place. A failed check or
+stale baseline keeps the previous Active and the correctable input; there is no saved draft to
+resume. A valid empty baseline has no applicable checks to run.
 
-`配置内容` defaults to the exact Active JSON when one exists; select a Draft explicitly to inspect
-it. JSON and the separately generated redacted package identify their source. Reads and exports do
-not create a Draft or publish configuration. Unknown writes require `核实当前状态` and are never
-automatically replayed; leaving unsaved input requires an explicit decision. A setup/recovery return
-goes back to the allowlisted source page and reads its current state.
+`配置内容` defaults to the exact Active JSON. JSON and the separately generated redacted package
+identify their source and open on demand. Reads and exports do not publish configuration. Unknown
+writes require `核实当前状态` and are never automatically replayed; leaving unsaved input requires an
+explicit decision. A setup/recovery return goes back to the allowlisted source page and reads its
+current state.
 
 ## Native V2 organizing-rules management
 
-`/rules` reads Overview and seven family inventories from exact Active without creating Drafts.
+`/rules` reads Overview and seven family inventories from exact Active without creating drafts.
 Use the content header's `刷新` to read current configuration; a successful refresh keeps the family,
 keyword, state filter and unsaved input. Overview has no inventory search; each family has one local
 search and its existing state filter. Changing family clears the keyword. Overview keeps real counts,
