@@ -781,12 +781,6 @@ export function TaskItemRecoveryPanel({
             confirmationSubmission as OrganizeConfirmationSubmission,
           ),
         ) ?? null);
-  const confirmationWatchActive =
-    submittedConfirmation !== null &&
-    !(busy && pendingAction === "confirm") &&
-    (confirmationWatchState === null ||
-      (!confirmationWatchState.exhausted &&
-        confirmationWatchState.phase !== "not_equivalent"));
   const retainedSummaryMatches =
     submittedConfirmation !== null &&
     activePreparation !== null &&
@@ -809,6 +803,42 @@ export function TaskItemRecoveryPanel({
     confirmationWatchState.attempt >= 2 &&
     retainedSummaryMatches &&
     !busy;
+  // The compact decision form owns no final confirmation of its own, so only
+  // the Task Center body may offer the retained same-batch action.
+  const canOfferRetainedResubmission = !decisionMode && canResubmitRetained;
+  // A pending confirmation is owned by the automatic read-only watch. Its one
+  // line reports the current evidence and next step; no separate manual
+  // reconciliation entry competes with it.
+  const confirmationStatusText = (() => {
+    if (submittedConfirmation === null) return null;
+    if (principalIdentity.resolved !== true) {
+      return "正在重新验证账号身份；验证后继续只读核对原确认，不会重发。";
+    }
+    if (busy && pendingAction === "confirm") {
+      return "正在提交本次确认；若响应不确定，系统会继续按原请求只读核对受理结果。";
+    }
+    const phase = confirmationWatchState?.phase ?? null;
+    if (phase === null || phase === "checking") {
+      return "正在自动只读核对本次确认是否受理；原摘要、版本和选择保持不变，不会重发。";
+    }
+    if (phase === "known") {
+      return "本次确认已经受理；正在按原 Task 读取文件结果。";
+    }
+    if (phase === "not_equivalent") {
+      return "本次确认的受理证据不一致；保持提交锁定，请核对原 Task 与当前摘要。";
+    }
+    if (phase === "failed") {
+      return confirmationWatchState?.exhausted
+        ? "本次确认暂未确认；本次读取失败，恢复连接或重新打开原工作后会继续只读核对。"
+        : "本次确认暂未确认；本次读取失败，系统会继续只读核对。";
+    }
+    if (canOfferRetainedResubmission) {
+      return "本次确认暂未确认；原摘要、版本和选择仍有效，系统会继续只读核对，也可明确确认同一批。";
+    }
+    return confirmationWatchState?.exhausted
+      ? "本次确认暂未确认；原摘要、版本和选择仍保留，恢复连接、重新认证或重新打开原工作后会继续只读核对。"
+      : "本次确认暂未确认；原摘要、版本和选择仍保留，系统会继续只读核对，不会自动重发。";
+  })();
 
   const continueAt = async (
     expectedCheckpointVersion: string,
@@ -1204,17 +1234,6 @@ export function TaskItemRecoveryPanel({
   };
 
   const reconcile = async () => {
-    if (submittedConfirmation !== null) {
-      // The existing generic read entry also restarts this confirmation's
-      // bounded automatic watch. It never performs a second Execute.
-      updateRecoverySession({
-        repeatLocked: true,
-        message:
-          "本次确认暂未确认；已重新发起原请求的只读核对，原摘要、版本和选择保持不变。 ",
-      });
-      confirmationWatch.retry();
-      return;
-    }
     const result = await query.refetch();
     if (result.data?.ok !== true) {
       updateRecoverySession({
@@ -1595,13 +1614,20 @@ export function TaskItemRecoveryPanel({
             </p>
           </StatusBanner>
         )}
-        {message && !savedDecisionAnalysisVisible && (
-          <StatusBanner
-            variant={repeatLocked ? "warning" : "info"}
-            title="决定与重新分析状态"
-          >
-            <p>{message}</p>
-          </StatusBanner>
+        {message &&
+          submittedConfirmation === null &&
+          !savedDecisionAnalysisVisible && (
+            <StatusBanner
+              variant={repeatLocked ? "warning" : "info"}
+              title="决定与重新分析状态"
+            >
+              <p>{message}</p>
+            </StatusBanner>
+          )}
+        {confirmationStatusText !== null && (
+          <p className="mf-dashboard-meta" role="status">
+            {confirmationStatusText}
+          </p>
         )}
         {owesRecoveryAction && decision !== null && (
           <DecisionForm
@@ -1689,7 +1715,7 @@ export function TaskItemRecoveryPanel({
               这里不会重新提交整理，也不会执行任何文件操作。
             </p>
           ))}
-        {repeatLocked && !confirmationWatchActive && (
+        {repeatLocked && submittedConfirmation === null && (
           <div className="mf-actions">
             <button
               type="button"
@@ -1818,13 +1844,20 @@ export function TaskItemRecoveryPanel({
           </p>
         </StatusBanner>
       )}
-      {message && !savedDecisionAnalysisVisible && (
-        <StatusBanner
-          variant={repeatLocked ? "warning" : "info"}
-          title="恢复操作状态"
-        >
-          <p>{message}</p>
-        </StatusBanner>
+      {message &&
+        submittedConfirmation === null &&
+        !savedDecisionAnalysisVisible && (
+          <StatusBanner
+            variant={repeatLocked ? "warning" : "info"}
+            title="恢复操作状态"
+          >
+            <p>{message}</p>
+          </StatusBanner>
+        )}
+      {confirmationStatusText !== null && (
+        <p className="mf-dashboard-meta" role="status">
+          {confirmationStatusText}
+        </p>
       )}
       {canResubmitRetained && submittedConfirmation !== null && (
         <div className="mf-actions">
@@ -1854,7 +1887,7 @@ export function TaskItemRecoveryPanel({
             heading="新计划摘要（零变更）"
           />
         )}
-      {repeatLocked && (
+      {repeatLocked && submittedConfirmation === null && (
         <div className="mf-actions">
           <button
             type="button"

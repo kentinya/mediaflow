@@ -365,6 +365,11 @@ async function confirmNativeRecovery(
     expect(await executionIds()).toHaveLength(0);
     await expect(recovery.getByText(/本次确认暂未确认/)).toBeVisible();
     await expect(recovery.getByText(/本次确认未获受理/)).toHaveCount(0);
+    // The automatic read owns the waiting confirmation. No manual
+    // reconciliation entry may compete with it or restart the same read.
+    await expect(
+      recovery.getByRole("button", { name: /重新读取条目后再继续/ }),
+    ).toHaveCount(0);
     expect(executeAttempts).toBe(1);
     const sameBatch = recovery.getByRole("button", {
       name: "确认同一批（1 项）",

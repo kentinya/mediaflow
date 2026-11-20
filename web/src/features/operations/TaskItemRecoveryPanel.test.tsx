@@ -1677,6 +1677,11 @@ describe("TaskItemRecoveryPanel", () => {
     expect(admissionReads).toBeGreaterThanOrEqual(2);
     expect(confirmAttempts).toBe(1);
     expect(within(panel).getByText(/本次确认暂未确认/)).toBeVisible();
+    // The automatic read owns this pending confirmation: one line of status
+    // and no separate manual reconciliation entry competes with it.
+    expect(
+      within(panel).queryByRole("button", { name: /重新读取条目后再继续/ }),
+    ).toBeNull();
     expect(
       within(summary).getByRole("button", { name: "正在受理…" }),
     ).toBeDisabled();
@@ -2223,8 +2228,9 @@ describe("TaskItemRecoveryPanel", () => {
 
     // The unknown outcome keeps the exact submitted preparation's lock and
     // automatically reconciles the original admission after the late response.
+    // The pending state is a single status line owned by that read, so only
+    // the proven admission is a stable assertion here.
     releaseConfirm?.();
-    expect(await within(reopened).findByText(/请求响应未送达/)).toBeVisible();
     expect(
       await within(reopened).findByText(/已读取持久状态：本次确认已经受理/),
     ).toBeVisible();
