@@ -1,6 +1,6 @@
 # Task PATCH-20261120-1 — 修复后续季剧集匹配与逐文件元数据修正
 
-Next Action: B PERFORMS T4 ACCEPTANCE ON THE PATCH-20261120-1 CANDIDATE
+Next Action: DEVELOPER APPLIES THE CONFIRMATION THRESHOLD TO THE FINAL SEASON SCORE IN PATCH-20261120-1
 
 用户于 2026-11-20 授权激活独立 Task。B 已核实上一轮修正并通过真实浏览器发现任务中心表单阻塞。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
 [独立缺陷流程](docs/development-workflow.md#31-independent-minor-bugs) · [现有逐项恢复流程](docs/product-experience.md#tasks-results-and-per-item-recovery) · [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/c8039f1f3d7bdfdb7fd927c75f99df0cb8a9e523/TASK.md#patch-20261119-2--b-验收-pass)
@@ -447,3 +447,37 @@ SQLite 与 Local Storage 均为仓库既有入口或测试夹具，未构造不�
   标题证据只能通过译名命中（文件名标题不等于候选主标题），基础分为 70、最终 85，在默认 90 下会
   进入候选确认而不是自动采用。这是阈值策略的直接结果，B 可在真实 Provider 形态下核对是否符合预期。
 - 本轮未连接真实 TMDB；同名剧、季集缺失与阈值场景均由本地模拟 Provider 覆盖。
+
+## B Re-Review — FIX REQUIRED（季集验证前提前淘汰候选）
+
+```text
+Reviewed Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
+Reviewed Implementation: 8e38dd42350723e428ef842609d909fa518f3b39
+Reviewed Head: f69e78b448e13110911b293fcf1f1377e8f2c3fe
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+B 使用现有 Files 受理和 Worker 复验了《黑袍纠察队》S04E01–E08。发布自动／人工确认阈值为 90／70 的策略后，
+八集都采用 95 分的 2019 年作品并生成待确认摘要。把自动阈值改为 100 后，八集先显示同一作品供选择，
+保存选择并重新分析后生成摘要。两条路径在显式执行确认前的源与目标变更数均为零。
+
+在规则页发布自动／人工确认阈值为 100／85 的策略，再从文件页批量整理同一组文件，八集都会进入「修正作品搜索」，
+系统没有查任何候选的第四季。2019 年作品的基础分是 80，验证全部所需季集后应是 95 分，达到 85 分且低于 100 分，
+应直接提供作品选择。自动阈值设为 90、人工确认阈值仍为 85 时，同样被送去修正搜索，本应直接生成待确认摘要。
+根因是共享识别在获取季集证据前用人工确认阈值过滤基础分。依据为 §29.1 和 REQ-META-004/005。
+
+### Developer 返工指导
+
+1. 使用现有标题证据和请求预算挑选值得查季集的候选。对于有足够标题证据的候选，按基础分加上最多 15 分季集证据、总分上限 100 判断是否有机会达到人工确认阈值。
+   季及全部所需集数核实后，用实际最终分数判断是否达到人工确认阈值或自动匹配阈值。预算未验证完的候选沿用当前候选确认流程。
+2. 扩充现有 Files／Worker 阈值用例。相同八集在 90／85 时应以 2019 年作品生成待确认摘要，在 100／85 时应先提供该作品供选择，
+   选择后同一文件生成待确认摘要。在 100／96 时，95 分的作品进入现有搜索修正流程。沿用原用例的零变更断言和缺季 404 夹具。
+3. 运行 `.venv/bin/python -m unittest tests.test_metadata tests.test_manual_task_engine tests.test_task_item_metadata_search tests.test_automation_entrance_recovery`。
+
+### B 实际验收
+
+- 两项 Files／Worker 阈值回归通过。B 另用同一夹具发布五组策略，重走文件页受理、Worker 和逐项恢复读取。
+- 证据位于 `.git/validation-evidence/f69e78b4/b-review/`，分别见 `files-existing-thresholds.log` 和 `files-confirmation-threshold.log`。
+  B 以已复现的交付阻塞结束本候选验收，T4 全量门禁留待修正候选。
