@@ -15,8 +15,8 @@ Detailed superseded delivery notes are retained at
 
 用户从 `/` 连接后进入探索，也可以用 `/resourcelib/files` 或 `/medialib/files` 的带参链接直达目录。
 刷新、重连或从设置返回时，恢复当前权限允许的原位置。切换后从任务中心打开原任务，查看
-进度和逐项结果。整理提交人可在详情的「原整理提交」分别核对每次已受理的确认，使用原摘要、
-原选择和原效果权限读取结果。需要继续时，依照当前任务和条目状态显式操作。失效或旧地址
+进度和逐项结果。整理最终确认丢响应时，系统自动按原摘要、原选择和原效果选项查询受理结果。
+同一浏览器以原账号重连后可接着查。需要继续时，依照当前任务和条目状态显式操作。失效或旧地址
 使用通用未知路由，用户可从根入口重新导航。见 [Slice 56 A 终审](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed)。
 
 ## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
@@ -1147,11 +1147,13 @@ and the Tasks/recovery journey below remain.
    the operator to close it, narrow the selection in the original directory and start again. The
    new batch can include the same files. Task Center shows「失败／准备阶段超限」and offers read-only
    details. Exactly 100 primaries can proceed to normal review.
-   Lost responses keep the original submitted summary, exact items, version
-   and effect scope for reconciliation. The operator may correct/reanalyze an unselected sibling;
-   that newer review cannot change the original request being checked. Proven admission uses the
-   same handoff. Preserve exact known Task/request context if association/detail reading fails,
-   and allow reread rather than selecting a guessed Task.
+   If the final confirmation response is lost, the system automatically checks admission using
+   the original submitted summary, exact items, version and effect options. The check resumes when
+   the same operator reconnects in the same browser or reopens that work. A newer summary from
+   reanalyzing an unselected sibling leaves the original request intact. Proven admission uses
+   the same handoff. If admission records are still absent and the original batch is still valid,
+   the operator can explicitly confirm that same batch. If the Task or detail read is unavailable,
+   the system retains the original context for a subsequent read.
    A save failure keeps the current inputs and requests no analysis; an analysis-only refusal keeps
    the saved decision and only the same save/analyse action. An unknown analysis response is
    reconciled against the same Task before any retry. Other failures explain stage, saved state,
