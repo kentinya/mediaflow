@@ -116,3 +116,31 @@ Files 丢响应后自动打开原任务、重新打开原任务后自动查询�
    点击原确认按钮，让真实受理查询连续两次在原请求到达前返回。核对页面仍显示待确认，
    再让原请求到达，验证系统自动显示已受理、仍在原任务，且该文件只执行一次。
    同一测试入口覆盖原请求始终未到达后用户显式确认同一批，以及该确认与迟到原请求竞争时的受理与执行次数。
+
+### B 复核修正候选 — 2026-11-20
+
+```text
+Reviewed: 20df0749e3d949d378969f34bc64bdb860a6fadf..955fc733680f8646751c582f7d14690a78826ec0
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+生产 Web 构建通过。真实 Python、SQLite 和 Worker 的三个分类恢复用例通过，覆盖原请求迟到、原请求未到达后显式确认同一批、
+迟到原请求与显式确认竞争。每个用例均核对原任务、唯一受理记录和唯一成功文件结果。
+运行 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts -g 'PATCH-20261120-3 native Classification recovery'`。
+验收日志和额外探测输出位于 `.git/validation-evidence/955fc733/patch-b/`。T4 全量验收留待修正候选。
+
+#### 阻塞项 — 自动核对期间仍显示人工核对入口
+
+用户在任务中心完成分类恢复的分析，复核摘要并点击「确认继续整理 1 项」。模拟原请求迟到后，页面一边显示「本次确认暂未确认」，
+一边显示可点击的「重新读取条目后再继续」。B 在现有真实浏览器旅程中点击该按钮，观察到页面重新发起同一笔受理查询。
+逐项恢复正文按恢复锁定状态显示按钮，按钮在存在待确认提交时会重启自动查询。
+[逐项恢复正文](web/src/features/operations/TaskItemRecoveryPanel.tsx#L1857) · [按钮行为](web/src/features/operations/TaskItemRecoveryPanel.tsx#L1206)
+
+#### 本轮开发指导
+
+1. 逐项恢复存在等待受理结果的确认时，使用一行状态和符合条件的「确认同一批」。沿用现有自动查询及重连、重开恢复。
+   「重新读取条目后再继续」按现行规则服务于其他恢复操作。检查逐项恢复正文和紧凑呈现各自的按钮条件。
+2. 在现有分类恢复迟到场景中，断言等待期间没有人工核对按钮。放行原请求后，断言页面自动显示受理，仍在原任务且只有一次文件结果。
+   复跑同批显式确认、原请求竞争和现有分析恢复入口的相关用例。
