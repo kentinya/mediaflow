@@ -26,6 +26,12 @@ const BASE = "http://127.0.0.1:4183";
 const ADMIN_TOKEN = "harness-admin-token";
 const PROBE_FILE = "DialogYear.2025.mkv";
 
+/** PATCH-20261120-1: the dedicated Season-probe source and its same-title
+ * works. Only the 2019 identity owns Season 4 E01; the filename year 2024
+ * names a different work that has no Season 4 at all. */
+const SEASON_PROBE_TITLE = "黑袍纠察队";
+const SEASON_PROBE_FILE = `${SEASON_PROBE_TITLE}.2024.S04E01.mkv`;
+
 interface RecordedCommand {
   readonly method: string;
   readonly path: string;
@@ -88,6 +94,50 @@ async function probeFileState(
     sourceExists: boolean;
     destinationTargets: string[];
   };
+}
+
+/** Season-probe source/destination state for the zero-mutation checks. */
+async function seasonProbeFileState(request: APIRequestContext): Promise<{
+  readonly sourceExists: boolean;
+  readonly destinationTargets: readonly string[];
+}> {
+  const response = await request.get(
+    `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(
+      `SeasonProbe/${SEASON_PROBE_FILE}`,
+    )}`,
+  );
+  expect(response.ok()).toBe(true);
+  return (await response.json()) as {
+    sourceExists: boolean;
+    destinationTargets: string[];
+  };
+}
+
+/** One bounded admin read of a real product API document for the journey. */
+async function adminGet(
+  request: APIRequestContext,
+  path: string,
+): Promise<Record<string, unknown>> {
+  const response = await request.get(`${BASE}${path}`, {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
+  expect(response.ok()).toBe(true);
+  return (await response.json()) as Record<string, unknown>;
+}
+
+/** Advance this exact item's Task through the real resident engine pass.
+ * One pass consumes the queued analysis; a second pass is a harmless no-op
+ * when nothing is queued, so the loop never fabricates a stage. */
+async function advanceRecoveryItem(
+  request: APIRequestContext,
+  itemId: string,
+): Promise<void> {
+  for (let step = 0; step < 2; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${encodeURIComponent(itemId)}`,
+    );
+    expect(advanced.ok()).toBe(true);
+  }
 }
 
 async function driveDiscoveryFor(
@@ -415,4 +465,194 @@ test("the Files dialog search submits the current year and completes the correct
     ),
   ).toHaveLength(0);
   expect(await probeFileState(request, PROBE_FILE)).toEqual(before);
+});
+
+test("a wrong same-name candidate reaches the Task Center with its saved correction", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(360_000);
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await clearProbeCalls(request);
+  await connect(page);
+  const commands = recordCommands(page);
+  const before = await seasonProbeFileState(request);
+  expect(before).toEqual({ sourceExists: true, destinationTargets: [] });
+
+  // The Files journey admits the dedicated Season-probe source through the
+  // real organize entry; its pinned two-request policy can verify neither
+  // same-title candidate, so both stay an explicit operator choice.
+  await page.getByRole("link", { name: "Files", exact: true }).click();
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
+  await page
+    .getByRole("button", { name: /source/ })
+    .first()
+    .click();
+  await expect(page.getByRole("table")).toBeVisible();
+  await page.getByRole("button", { name: "SeasonProbe", exact: true }).click();
+  const probeCheckbox = page.getByRole("checkbox", {
+    name: `选择 ${SEASON_PROBE_FILE}`,
+  });
+  await expect(probeCheckbox).toBeVisible();
+  await probeCheckbox.check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(card.getByText("选择正确的作品")).toBeVisible({
+    timeout: 30_000,
+  });
+  expect(await seasonProbeFileState(request)).toEqual(before);
+
+  // The operator deliberately picks the 2024 identity; its re-analysis proves
+  // the work has no Season 4 and keeps the same file editable for correction.
+  await card.getByRole("radio", { name: /黑袍纠察队 \(2024\)/ }).check();
+  await saveDialogDecision(page, card);
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(card.getByText("修正作品搜索")).toBeVisible({ timeout: 30_000 });
+  await expect(
+    card.getByText(/上次修正未通过验证：Season 4 is not available/),
+  ).toBeVisible();
+  await expect(card.getByLabel("搜索标题")).toHaveValue(SEASON_PROBE_TITLE);
+  await expect(card.getByLabel("年份（可留空）")).toHaveValue("2024");
+  await expect(card.getByLabel("媒体类型")).toHaveValue("tv");
+  expect(await seasonProbeFileState(request)).toEqual(before);
+
+  // Close the dialog and continue the same file in the Task Center.
+  await card.getByRole("button", { name: "关闭整理弹窗" }).click();
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
+  await expect(page).toHaveURL(/\/operations$/);
+  await page.getByRole("button", { name: "元数据恢复", exact: true }).click();
+  const sourceRun = page
+    .getByRole("row")
+    .filter({ hasText: SEASON_PROBE_FILE });
+  await expect(sourceRun).toHaveCount(1);
+  await sourceRun.getByRole("button", { name: "查看问题文件" }).click();
+  const problemFiles = page.getByRole("region", { name: /问题文件/ });
+  const sourceItem = problemFiles
+    .getByRole("listitem")
+    .filter({ hasText: SEASON_PROBE_FILE });
+  await expect(sourceItem).toHaveCount(1);
+  await sourceItem.getByRole("button").click();
+  const recovery = page
+    .getByRole("dialog", { name: "运行详情" })
+    .getByRole("region", { name: "条目审核与恢复" });
+  await expect(recovery).toBeVisible();
+
+  // The Task Center's first render reads the decision the Files dialog
+  // already loaded for this exact item: saved title, year, TV type and the
+  // failure reason — never an empty movie form.
+  await expect(recovery.getByLabel("搜索标题")).toHaveValue(SEASON_PROBE_TITLE);
+  await expect(recovery.getByLabel("年份(可留空)")).toHaveValue("2024");
+  await expect(recovery.getByLabel("媒体类型")).toHaveValue("tv");
+  await expect(
+    recovery.getByText(/上次修正未通过验证：Season 4 is not available/),
+  ).toBeVisible();
+  await expect(
+    recovery.getByRole("button", { name: "保存并重新分析" }),
+  ).toBeEnabled();
+
+  // Resolve this exact TaskItem for the durable engine passes below.
+  const problemRunId = new URL(page.url()).searchParams.get("problemRun");
+  expect(problemRunId).toBeTruthy();
+  const problemItems = await adminGet(
+    request,
+    `/api/operations/runs/${problemRunId}/problem-items?problem=metadata&limit=20`,
+  );
+  const probeItem = (
+    (problemItems["items"] as Record<string, unknown>[] | undefined) ?? []
+  ).find((item) =>
+    String(item["sourcePath"] ?? item["source_path"] ?? "").endsWith(
+      SEASON_PROBE_FILE,
+    ),
+  );
+  expect(probeItem).toBeTruthy();
+  const itemId = String(probeItem?.["itemId"] ?? probeItem?.["item_id"] ?? "");
+  expect(itemId).not.toBe("");
+
+  // Only the year is cleared; the saved title and TV type stay. The save and
+  // its zero-mutation re-analysis stay on the same Task with no file effect.
+  await clearProbeCalls(request);
+  const yearInput = recovery.getByLabel("年份(可留空)");
+  await yearInput.fill("");
+  const decision = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/decision$/.test(new URL(response.url()).pathname),
+  );
+  const continuation = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/continue$/.test(new URL(response.url()).pathname),
+  );
+  await recovery.getByRole("button", { name: "保存并重新分析" }).click();
+  const decisionBody = (await decision).request().postDataJSON() as Record<
+    string,
+    unknown
+  >;
+  expect(decisionBody).toMatchObject({
+    kind: "metadata_correction",
+    query: SEASON_PROBE_TITLE,
+    year: null,
+    mediaType: "tv",
+  });
+  expect((await continuation).status()).toBe(202);
+
+  // The unbounded re-search reaches the Provider without the filename year.
+  await advanceRecoveryItem(request, itemId);
+  await expect(
+    recovery.getByRole("radio", { name: /候选 1：黑袍纠察队 · 2024/ }),
+  ).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(
+    recovery.getByRole("radio", { name: /候选 2：黑袍纠察队 · 2019/ }),
+  ).toBeVisible();
+  expect(await probeCalls(request)).toContainEqual({
+    mediaType: "tv",
+    title: SEASON_PROBE_TITLE,
+    year: null,
+  });
+
+  // The 2019 identity owns Season 4 E01: choosing it prepares the real
+  // summary on the same Task.
+  await recovery
+    .getByRole("radio", { name: /候选 2：黑袍纠察队 · 2019/ })
+    .check();
+  const secondDecision = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/decision$/.test(new URL(response.url()).pathname),
+  );
+  await recovery.getByRole("button", { name: "保存并重新分析" }).click();
+  const secondBody = (await secondDecision).request().postDataJSON() as Record<
+    string,
+    unknown
+  >;
+  expect(secondBody).toMatchObject({ kind: "metadata", candidateRank: 2 });
+  await advanceRecoveryItem(request, itemId);
+
+  // The pending summary is readable in the same Task Center panel. The search,
+  // both saves and both re-analyses changed no source or destination file and
+  // executed nothing, and the Provider never received the filename year.
+  await expect(
+    recovery.getByRole("region", { name: "新计划摘要" }),
+  ).toBeVisible({ timeout: 60_000 });
+  expect(await seasonProbeFileState(request)).toEqual(before);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+  expect(await probeCalls(request)).not.toContainEqual(
+    expect.objectContaining({ year: 2024 }),
+  );
 });

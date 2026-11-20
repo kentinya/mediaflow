@@ -485,9 +485,17 @@ export function TaskItemRecoveryPanel({
     checkpoint?.checkpointVersion ?? null,
     decision?.kind ?? null,
   ]);
+  // The first render already owns the exact checkpoint/decision identity
+  // above. When the recovery read is already cached — the Files organize
+  // dialog read the same TaskItem before the Task Center opened it — the
+  // internal form must start from that saved decision, so the Task Center's
+  // first render shows the saved query/year/type instead of an empty movie
+  // form that the equal `resetDecisionKey` below would never replace. A still
+  // pending read (the empty identity) starts empty and the reset below fills
+  // the form once the real identity arrives.
   const [internalDecisionDraft, setInternalDecisionDraft] =
     useState<TaskItemDecisionDraft>(() =>
-      decisionDraftFrom(null, EMPTY_DECISION_KEY),
+      decisionDraftFrom(decision, decisionKey),
     );
   const [resetDecisionKey, setResetDecisionKey] = useState(decisionKey);
   if (resetDecisionKey !== decisionKey) {

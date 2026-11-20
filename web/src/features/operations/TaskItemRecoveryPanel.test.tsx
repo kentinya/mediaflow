@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
+import { QueryClient } from "@tanstack/react-query";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../../../tests/utils";
 import { authStore } from "../../shared/api/auth-store";
 import { useAuthToken } from "../../shared/api/auth-context";
 import fixture from "../../entities/operations/__fixtures__/manual-operations.json";
+import { normalizeTaskItemRecovery } from "../../entities/operations/task-item-recovery";
 import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
+import { taskItemRecoveryQueryKey } from "./run-detail-query";
 import { TaskItemRecoverySessionProvider } from "./task-item-recovery-session";
 
 const checkpointVersion = "b".repeat(64);
@@ -275,6 +278,21 @@ function metadataCorrectionRecovery(resolved = false): Record<string, unknown> {
       ? "continue safe analysis"
       : "correct the metadata search",
   };
+}
+
+/**
+ * The saved Season 4 correction decision the Files dialog left behind: the
+ * Task Center's first render must read this exact durable decision instead of
+ * starting from an empty movie form.
+ */
+function seasonCorrectionRecovery(): Record<string, unknown> {
+  const value = metadataCorrectionRecovery();
+  const decision = value["decision"] as Record<string, unknown>;
+  decision["query"] = "黑袍纠察队";
+  decision["year"] = 2024;
+  decision["media_type"] = "tv";
+  decision["reason"] = "Season 4 is not available for '黑袍纠察队' (2024)";
+  return value;
 }
 
 function queuedAnalysisRecovery(status: string): Record<string, unknown> {
@@ -569,6 +587,140 @@ describe("TaskItemRecoveryPanel", () => {
       mediaType: "movie",
     });
     expect(decisionBodies[0]).not.toHaveProperty("providerId");
+  });
+
+  it("fills the correction form from an already cached recovery read on first mount", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    const mutationBodies: Record<string, unknown>[] = [];
+    const searchBodies: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(
+      async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(seasonCorrectionRecovery()), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/tasks/task-1/items/item-1/recovery/metadata-search"
+        ) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+            string,
+            unknown
+          >;
+          searchBodies.push(body);
+          return new Response(
+            JSON.stringify({
+              task_id: "task-1",
+              item_id: "item-1",
+              checkpoint_version: checkpointVersion,
+              provider: "tmdb",
+              media_type: body["mediaType"] ?? "tv",
+              query: body["query"] ?? "",
+              candidates: [
+                {
+                  rank: 1,
+                  provider_id: "832",
+                  media_type: "tv",
+                  title: "黑袍纠察队",
+                  original_title: null,
+                  year: body["year"],
+                  release_date: null,
+                  original_language: "en",
+                },
+              ],
+              truncated: false,
+              next_action: "choose one candidate and save the decision",
+            }),
+            { status: 200 },
+          );
+        }
+        if (method !== "GET") {
+          mutationBodies.push({
+            method,
+            url,
+            body: init?.body === undefined ? null : String(init.body),
+          });
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    // The Files organize dialog read this exact recovery earlier in the same
+    // session, so the Task Center panel mounts with the read already in the
+    // query cache. The first render must seed the decision form from that
+    // durable decision instead of an empty movie form.
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    queryClient.setQueryData([taskItemRecoveryQueryKey, "task-1", "item-1"], {
+      ok: true as const,
+      model: normalizeTaskItemRecovery(seasonCorrectionRecovery()),
+    });
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+      queryClient,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    const title = await within(panel).findByLabelText("搜索标题");
+    expect(title).toHaveValue("黑袍纠察队");
+    expect(within(panel).getByLabelText("年份(可留空)")).toHaveValue(2024);
+    expect(within(panel).getByLabelText("媒体类型")).toHaveValue("tv");
+    expect(
+      within(panel).getByText(
+        /上次修正未通过验证：Season 4 is not available for '黑袍纠察队' \(2024\)/,
+      ),
+    ).toBeVisible();
+    // The exact saved query keeps the save action available immediately.
+    expect(
+      within(panel).getByRole("button", { name: "保存并重新分析" }),
+    ).toBeEnabled();
+    // Mounting and the first render never submitted a mutation; only reads
+    // and the stale-query refetch happened so far.
+    expect(mutationBodies).toEqual([]);
+
+    // The prefilled inputs are live draft state: editing only the year and
+    // searching submits the exact edited year with the saved TV type.
+    await user.clear(within(panel).getByLabelText("年份(可留空)"));
+    await user.type(within(panel).getByLabelText("年份(可留空)"), "2019");
+    await user.click(
+      within(panel).getByRole("button", {
+        name: "显式搜索 Metadata Provider",
+      }),
+    );
+    await waitFor(() => expect(searchBodies).toHaveLength(1));
+    expect(searchBodies[0]).toMatchObject({
+      query: "黑袍纠察队",
+      mediaType: "tv",
+      year: 2019,
+    });
+    await within(panel).findByRole("radio", { name: /832/ });
+    // A search is a read: no decision was saved and nothing else mutated.
+    expect(mutationBodies).toEqual([]);
   });
 
   it("shows the bounded year reason when the API refuses the search year, then recovers", async () => {

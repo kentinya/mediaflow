@@ -145,9 +145,12 @@ from mediaflow.domain.metadata import (  # noqa: E402
     CandidateMatchResult,
     CandidateMatchStatus,
     CandidateScore,
+    EpisodeIdentity,
     MediaCandidate,
     MediaIdentity,
     MediaType,
+    MetadataError,
+    MetadataErrorCode,
     MetadataIdentificationResult,
     MetadataIdentificationStatus,
     ScoreComponent,
@@ -425,6 +428,87 @@ class _YearSensitiveMetadataProvider(_QueryScopedMetadataProvider):
         )
 
 
+#: The dedicated Season-probe correction journey.  Two same-title TV works
+#: differ only in first-air year and in Season 4 ownership: the 2024 identity
+#: has no Season 4 at all, the 2019 identity owns E01-E08.  The probe source's
+#: pinned two-request Metadata policy can therefore verify neither candidate
+#: automatically, which is exactly the bounded same-name judgment the
+#: PATCH-20261120-1 Task requires the real browser journey to exercise.
+_SEASON_PROBE_TITLE = "黑袍纠察队"
+_SEASON_PROBE_WRONG_ID = "831"
+_SEASON_PROBE_RIGHT_ID = "832"
+_SEASON_PROBE_CANDIDATES = (
+    MediaCandidate(
+        "tmdb",
+        _SEASON_PROBE_WRONG_ID,
+        MediaType.TV,
+        _SEASON_PROBE_TITLE,
+        year=2024,
+        genres=("Action",),
+        countries=("US",),
+    ),
+    MediaCandidate(
+        "tmdb",
+        _SEASON_PROBE_RIGHT_ID,
+        MediaType.TV,
+        _SEASON_PROBE_TITLE,
+        year=2019,
+        genres=("Action",),
+        countries=("US",),
+    ),
+)
+
+
+class _SeasonProbeMetadataProvider(_YearSensitiveMetadataProvider):
+    """Serve the Season-probe TV identities without touching any other fixture.
+
+    A probe-titled TV search returns exactly the two same-title candidates and
+    records the exact ``(media type, title, year)`` it received, so the browser
+    journey can observe that an automatic S02+ analysis and a cleared-year
+    correction both reach the Provider unbounded by the filename year.  Season
+    reads stay year-conditional: the 2024 identity has no Season 4 while the
+    2019 identity owns E01-E08.  Every other identity delegates to the
+    unchanged year-sensitive behavior.
+    """
+
+    def __init__(self, candidates, *, episodes: tuple[int, ...] = ()) -> None:
+        super().__init__((*candidates, *_SEASON_PROBE_CANDIDATES), episodes=episodes)
+
+    @staticmethod
+    def _probe_title(query) -> str | None:
+        title = getattr(query, "title_candidate", getattr(query, "title", query))
+        normalized = "".join(
+            character.casefold() for character in str(title) if character.isalnum()
+        )
+        return str(title) if normalized == _SEASON_PROBE_TITLE else None
+
+    def search_tv(self, query, policy=None, **kwargs):
+        title = self._probe_title(query)
+        if title is None:
+            return super().search_tv(query, policy, **kwargs)
+        self.search_calls.append(
+            {"mediaType": "tv", "title": title, "year": getattr(query, "year", None)}
+        )
+        return _SEASON_PROBE_CANDIDATES
+
+    def get_season(self, provider_id, season, policy=None, **kwargs):
+        if provider_id not in (_SEASON_PROBE_WRONG_ID, _SEASON_PROBE_RIGHT_ID):
+            return super().get_season(provider_id, season, policy, **kwargs)
+        self.calls += 1
+        if provider_id == _SEASON_PROBE_WRONG_ID:
+            raise MetadataError(MetadataErrorCode.NOT_FOUND, "season not found")
+        return MediaIdentity(
+            "tmdb",
+            provider_id,
+            MediaType.TV,
+            _SEASON_PROBE_TITLE,
+            season=season,
+            episode_metadata=tuple(
+                EpisodeIdentity(number, f"Episode {number}") for number in range(1, 9)
+            ),
+        )
+
+
 def build_managed_fixture(
     database: Path,
     root: Path,
@@ -509,6 +593,18 @@ def build_managed_fixture(
     probe_file = probe_root / "DialogYear.2025.mkv"
     probe_file.write_bytes(b"metadata search year probe synthetic media")
     os.utime(probe_file, (time.time() - 86400, time.time() - 86400))
+    # PATCH-20261120-1 browser fixture: a dedicated SeasonProbe source whose
+    # filename carries a year that differs from the work that really owns its
+    # season.  Its Provider responses are season-conditional (see
+    # _SeasonProbeMetadataProvider), so the Files journey reaches the real
+    # same-title candidate choice, a deliberate wrong-candidate Season mismatch
+    # and the Task Center's prefilled correction form.  No other journey's
+    # candidates or data change.
+    season_root = source_root / "SeasonProbe"
+    season_root.mkdir(parents=True, exist_ok=True)
+    season_file = season_root / f"{_SEASON_PROBE_TITLE}.2024.S04E01.mkv"
+    season_file.write_bytes(b"season probe synthetic media")
+    os.utime(season_file, (time.time() - 86400, time.time() - 86400))
     (dialog_root / "DialogPrepAction.2026.mkv").write_bytes(
         b"slice53 preparation analysis action synthetic media"
     )
@@ -684,6 +780,53 @@ def build_managed_fixture(
                 ],
             },
             "outputRecognitionType": "A",
+        }
+    )
+    # PATCH-20261120-1: the dedicated SeasonProbe source resolves through its
+    # own RecognitionType and a two-request TV Metadata policy, so the first
+    # automatic analysis can verify neither same-title candidate within the
+    # request budget and the real browser journey reaches the bounded candidate
+    # choice, the deliberate wrong-candidate Season mismatch and the prefilled
+    # correction form without touching any other fixture's rules.
+    document["metadataPolicies"].append(
+        {
+            "id": "S",
+            "name": "Season probe TV",
+            "providerId": "tmdb",
+            "mediaQueryType": "tv",
+            "language": "zh-CN",
+            "region": "CN",
+            "maxProviderRequests": 2,
+            "maxCandidateEnrichments": 2,
+        }
+    )
+    document["recognitionTypes"].append({"id": "season-probe", "name": "Season probe"})
+    document["recognitionTypePolicies"].append(
+        {
+            "id": "type-season-probe",
+            "recognitionType": "season-probe",
+            "metadataPolicy": "S",
+            "namingPolicy": "B",
+            "classificationPolicy": "B",
+            "organizePolicy": "A",
+        }
+    )
+    document["recognitionRules"].append(
+        {
+            "id": "season-probe-video",
+            "name": "Season probe TV fixture",
+            "priority": 122,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {"field": "resource_library_id", "operator": "equals", "value": "source"},
+                    {"field": "path", "operator": "contains", "value": "/SeasonProbe/"},
+                    {"field": "extension", "operator": "in", "value": ["mkv"]},
+                ],
+            },
+            "outputRecognitionType": "season-probe",
         }
     )
     # RO-2/AC-16: a Files 整理 selection resolves each source's RecognitionType
@@ -986,7 +1129,7 @@ def build_managed_fixture(
     (retirement_root / "Downloading.mkv.part").write_bytes(b"temporary")
     registry = MetadataProviderRegistry(
         (
-            _YearSensitiveMetadataProvider(
+            _SeasonProbeMetadataProvider(
                 (
                     MediaCandidate(
                         "tmdb",
@@ -3950,6 +4093,7 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Dialog/DialogSubsetFirst.2030.mkv",
         "Dialog/DialogSubsetSecond.2031.mkv",
         "YearProbe/DialogYear.2025.mkv",
+        f"SeasonProbe/{_SEASON_PROBE_TITLE}.2024.S04E01.mkv",
     )
     if filename not in allowed:
         raise RuntimeError(f"harness: unknown manual-file-state file {filename!r}")
