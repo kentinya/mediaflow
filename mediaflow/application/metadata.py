@@ -132,6 +132,12 @@ class MetadataCache:
 #: is a real Provider search condition.
 SEARCH_YEAR_NOT_PROVIDED = object()
 
+#: Bounded positive evidence for a candidate whose required later season and
+#: every requested episode were verified through the Provider season boundary.
+#: It is added to the title-based score so the exact published policy thresholds
+#: decide between automatic adoption and an operator candidate selection.
+SEASON_VERIFICATION_SCORE = 15.0
+
 
 class CandidateMatcher:
     def match(
@@ -549,9 +555,9 @@ class MetadataIdentificationService:
                 ),
                 query=parsed.title_candidate,
             )
-        passed: list[tuple[object, object]] = []
+        passed: list[tuple[CandidateScore, object]] = []
         failures: list[str] = []
-        unvalidated: tuple[object, ...] = ()
+        unvalidated: tuple[CandidateScore, ...] = ()
         for index, score in enumerate(comparable):
             if remaining_requests() <= 1:
                 unvalidated = comparable[index:]
@@ -575,7 +581,14 @@ class MetadataIdentificationService:
                 failures.append(_episode_missing_reason(score.candidate, parsed.season, missing))
                 continue
             passed.append((score, season_identity))
-        selected_scores = tuple(score for score, _ in passed) + tuple(unvalidated)
+        passed_scores = tuple(
+            _season_verified_score(
+                score,
+                _season_verified_reason(score.candidate, parsed.season, parsed.episodes),
+            )
+            for score, _ in passed
+        )
+        selected_scores = passed_scores + tuple(unvalidated)
         if unvalidated or len(passed) > 1:
             reasons = tuple(
                 _season_verified_reason(score.candidate, parsed.season, parsed.episodes)
@@ -599,6 +612,30 @@ class MetadataIdentificationService:
             )
         if len(passed) == 1:
             score, season_identity = passed[0]
+            reason = _season_verified_reason(score.candidate, parsed.season, parsed.episodes)
+            verified_score = _season_verified_score(score, reason)
+            if verified_score.total_score < policy.automatic_threshold:
+                # The verified season/episodes are real evidence, but the
+                # published policy still requires an operator to select the work
+                # before its identity is adopted for the file.
+                return MetadataIdentificationResult(
+                    MetadataIdentificationStatus.NEED_CONFIRM,
+                    recognition.recognition_type,
+                    match=CandidateMatchResult(
+                        CandidateMatchStatus.NEED_CONFIRM,
+                        verified_score.candidate,
+                        verified_score.total_score,
+                        (verified_score,),
+                        (
+                            reason,
+                            _below_automatic_threshold_reason(
+                                verified_score.total_score, policy.automatic_threshold
+                            ),
+                        ),
+                        tuple(failures[:6]),
+                    ),
+                    query=parsed.title_candidate,
+                )
             identity = enriched_identities.get(score.candidate.provider_id)
             if identity is None:
                 if remaining_requests() <= 0:
@@ -607,10 +644,10 @@ class MetadataIdentificationService:
                         recognition.recognition_type,
                         match=CandidateMatchResult(
                             CandidateMatchStatus.NEED_CONFIRM,
-                            score.candidate,
-                            score.total_score,
-                            (score,),
-                            (_season_unvalidated_reason(score.candidate, parsed.season),),
+                            verified_score.candidate,
+                            verified_score.total_score,
+                            (verified_score,),
+                            (_identity_budget_reason(verified_score.candidate, parsed.season),),
                             (),
                         ),
                         query=parsed.title_candidate,
@@ -629,15 +666,9 @@ class MetadataIdentificationService:
                 episode_title=selected[0].title,
                 episode_metadata=selected,
                 regional_release_date=score.candidate.regional_release_date,
-                confidence=score.total_score,
+                confidence=verified_score.total_score,
                 matched_by="candidate_matcher",
                 recognition_type_id=recognition.recognition_type.type_id,
-            )
-            reason = _season_verified_reason(score.candidate, parsed.season, parsed.episodes)
-            verified_score = replace(
-                score,
-                components=tuple(score.components)
-                + (ScoreComponent("season_episodes", 0, reason),),
             )
             return MetadataIdentificationResult(
                 MetadataIdentificationStatus.MATCHED,
@@ -645,10 +676,15 @@ class MetadataIdentificationService:
                 identity,
                 CandidateMatchResult(
                     CandidateMatchStatus.MATCHED,
-                    score.candidate,
-                    score.total_score,
+                    verified_score.candidate,
+                    verified_score.total_score,
                     (verified_score,),
-                    (reason,),
+                    (
+                        reason,
+                        f"Verified candidate final score {verified_score.total_score:.1f} "
+                        f"reached the automatic threshold "
+                        f"{policy.automatic_threshold:.1f}",
+                    ),
                     tuple(failures[:6]),
                 ),
                 parsed.title_candidate,
@@ -910,6 +946,32 @@ def _season_unvalidated_reason(candidate, season: int) -> str:
     return (
         f"Season {season} for {_candidate_label(candidate)} was not verified within "
         "the Provider request budget"
+    )
+
+
+def _identity_budget_reason(candidate, season: int) -> str:
+    return (
+        f"Season {season} for {_candidate_label(candidate)} is verified, but the work "
+        "details were not fetched within the Provider request budget; select the "
+        "candidate to continue"
+    )
+
+
+def _below_automatic_threshold_reason(score: float, automatic_threshold: float) -> str:
+    return (
+        f"Verified candidate final score {score:.1f} is below the automatic threshold "
+        f"{automatic_threshold:.1f}; operator selection is required"
+    )
+
+
+def _season_verified_score(score: CandidateScore, reason: str) -> CandidateScore:
+    """The bounded final score once the required season/episodes are verified."""
+    total = round(min(100.0, score.total_score + SEASON_VERIFICATION_SCORE), 3)
+    return replace(
+        score,
+        total_score=total,
+        components=tuple(score.components)
+        + (ScoreComponent("season_episodes", round(total - score.total_score, 3), reason),),
     )
 
 

@@ -386,6 +386,9 @@ class _DiscoveryFixture(unittest.TestCase):
         attachments: bool = False,
         metadata_query_type: str | None = None,
         max_provider_requests: int | None = None,
+        automatic_threshold: float | None = None,
+        confirmation_threshold: float | None = None,
+        recognition_rules: list[dict] | None = None,
         source_storage=None,
         provider=None,
         second_operator: bool = False,
@@ -407,6 +410,16 @@ class _DiscoveryFixture(unittest.TestCase):
         if max_provider_requests is not None:
             for policy in document.get("metadataPolicies", []):
                 policy["maxProviderRequests"] = max_provider_requests
+        if automatic_threshold is not None or confirmation_threshold is not None:
+            # The published thresholds decide whether verified evidence may be
+            # adopted automatically or must be confirmed by the operator.
+            for policy in document.get("metadataPolicies", []):
+                if automatic_threshold is not None:
+                    policy["automaticThreshold"] = automatic_threshold
+                if confirmation_threshold is not None:
+                    policy["confirmationThreshold"] = confirmation_threshold
+        if recognition_rules is not None:
+            document["recognitionRules"] = list(recognition_rules)
         source = _RecordingStorage(
             source_storage
             if source_storage is not None

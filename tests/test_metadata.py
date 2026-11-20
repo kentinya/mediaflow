@@ -31,7 +31,12 @@ from mediaflow.domain.metadata import (
     RetryPolicy,
 )
 from mediaflow.domain.naming import NamingResult
-from mediaflow.domain.parser import ParseResult
+from mediaflow.domain.parser import (
+    EvidenceConfidence,
+    EvidenceSource,
+    ParseEvidence,
+    ParseResult,
+)
 from mediaflow.domain.recognition import RecognitionResult, RecognitionType
 from mediaflow.infrastructure.metadata_provider_bootstrap import (
     LazyMetadataProviderRegistryFactory,
@@ -1036,7 +1041,23 @@ class TVSeasonIdentificationTests(unittest.TestCase):
             automatic_threshold=90,
         )
         self.recognition = RecognitionResult(RecognitionType("B", "B"), "rule-b")
-        self.parsed = ParseResult("黑袍纠察队", year=2024, season=4, episode=1, episodes=(1,))
+        # The real parser always records the filename title evidence, so the
+        # title-based score of an exact match is 80 before any season evidence.
+        self.parsed = ParseResult(
+            "黑袍纠察队",
+            year=2024,
+            season=4,
+            episode=1,
+            episodes=(1,),
+            evidence=(
+                ParseEvidence(
+                    "title_candidate",
+                    "黑袍纠察队",
+                    EvidenceSource.FILENAME,
+                    EvidenceConfidence.HIGH,
+                ),
+            ),
+        )
 
     @staticmethod
     def candidates():
@@ -1061,8 +1082,38 @@ class TVSeasonIdentificationTests(unittest.TestCase):
         )
         self.assertEqual(year_component.score, 0)
         self.assertIn("evidence only", year_component.reason)
+        season_component = next(
+            item
+            for item in result.match.candidate_scores[0].components
+            if item.name == "season_episodes"
+        )
+        self.assertEqual(15.0, season_component.score)
+        self.assertIn("Season 4 episodes 1 verified", season_component.reason)
+        self.assertEqual(95.0, result.match.score)
+        self.assertEqual(95.0, result.identity.confidence)
         self.assertIn("Season 4 episodes 1 verified", result.match.reasons[0])
+        self.assertIn("reached the automatic threshold 90.0", result.match.reasons[1])
         self.assertIn("Season 4 is not available", result.match.warnings[0])
+
+    def test_verified_season_below_the_automatic_threshold_waits_for_selection(self):
+        provider = SeasonRecordingProvider(self.candidates(), {"2019": tuple(range(1, 9))})
+        result = MetadataIdentificationService(MetadataProviderRegistry((provider,))).identify(
+            self.recognition,
+            self.parsed,
+            replace(self.policy, automatic_threshold=100),
+        )
+
+        self.assertEqual(result.status, MetadataIdentificationStatus.NEED_CONFIRM)
+        self.assertIsNone(result.identity)
+        best = result.match.candidate_scores[0]
+        self.assertEqual("2019", best.candidate.provider_id)
+        self.assertEqual(95.0, best.total_score)
+        self.assertIn(
+            "Season 4 episodes 1 verified",
+            next(item.reason for item in best.components if item.name == "season_episodes"),
+        )
+        self.assertIn("below the automatic threshold 100.0", result.match.reasons[1])
+        self.assertEqual([None], provider.search_years)
 
     def test_candidate_order_does_not_change_the_single_verified_work(self):
         outcomes = []
@@ -1087,6 +1138,14 @@ class TVSeasonIdentificationTests(unittest.TestCase):
         self.assertEqual(
             {score.candidate.provider_id for score in result.match.candidate_scores},
             {"2019", "2024"},
+        )
+        self.assertEqual({95.0}, {score.total_score for score in result.match.candidate_scores})
+        self.assertTrue(
+            all(
+                any(item.name == "season_episodes" for item in score.components)
+                for score in result.match.candidate_scores
+            ),
+            result.match.candidate_scores,
         )
         self.assertTrue(
             all("verified" in reason for reason in result.match.reasons),

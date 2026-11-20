@@ -21,7 +21,14 @@ from mediaflow.domain.manual_execution import (
     ManualExecutionStatus,
 )
 from mediaflow.domain.media_discovery import DiscoveryStatus
-from mediaflow.domain.metadata import MediaCandidate, MediaIdentity, MediaType
+from mediaflow.domain.metadata import (
+    EpisodeIdentity,
+    MediaCandidate,
+    MediaIdentity,
+    MediaType,
+    MetadataError,
+    MetadataErrorCode,
+)
 from mediaflow.domain.organizer import ExecutionEffectCertainty, ExecutionStatus
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
@@ -33,6 +40,53 @@ from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from tests.test_media_discovery import _DiscoveryFixture
 
 REQUEST_ID = "11111111-1111-4111-8111-111111111111"
+
+#: One explicit fixture rule publishes the example configuration's TV
+#: RecognitionType, so the Files journey resolves it through the real rule engine.
+LATER_SEASON_TV_RULE = {
+    "id": "later-season-tv-fixture",
+    "name": "Later season TV fixture",
+    "priority": 300,
+    "score": 100,
+    "stopOnMatch": True,
+    "condition": {"field": "extension", "operator": "in", "value": ["mkv", "mp4"]},
+    "outputRecognitionType": "B",
+}
+
+
+class LaterSeasonProvider(SyntheticMetadataProvider):
+    """Two same-title works; only the 2019 identity owns the wanted S04 episodes."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            (
+                MediaCandidate("tmdb", "2024", MediaType.TV, "黑袍纠察队", year=2024),
+                MediaCandidate("tmdb", "2019", MediaType.TV, "黑袍纠察队", year=2019),
+            )
+        )
+        self.search_years: list[int | None] = []
+        self.season_calls: list[tuple[str, int]] = []
+
+    def search_tv(self, query, policy=None, **kwargs):
+        self.search_years.append(query.year)
+        return super().search_tv(query, policy, **kwargs)
+
+    def get_season(self, provider_id, season, policy=None, **kwargs):
+        self.season_calls.append((provider_id, season))
+        if provider_id == "2024":
+            raise MetadataError(MetadataErrorCode.NOT_FOUND, "season not found")
+        if provider_id == "2019" and season == 4:
+            return MediaIdentity(
+                "tmdb",
+                provider_id,
+                MediaType.TV,
+                "Season 4",
+                season=season,
+                episode_metadata=tuple(
+                    EpisodeIdentity(number, f"Episode {number}") for number in range(1, 9)
+                ),
+            )
+        return super().get_season(provider_id, season, policy, **kwargs)
 
 
 class ManualTaskDiscoveryTests(_DiscoveryFixture):
@@ -3515,6 +3569,168 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             self.assertEqual((), value.repository.list_results(task_id))
+
+    # -- Later-season evidence and the published automatic threshold ----------
+
+    def _later_season_batch(self, value) -> str:
+        """Admit the real Files batch of ``黑袍纠察队.2024.S04E01-E08`` files."""
+
+        for number in range(1, 9):
+            self.media(f"电视剧/黑袍纠察队.2024.S04E{number:02d}.mkv")
+        status, admitted = self._admit(value, ["电视剧"])
+        self.assertEqual(202, status, admitted)
+        return admitted["organizeTaskId"]
+
+    def test_files_later_season_batch_auto_adopts_the_verified_work_within_threshold(self):
+        """The published default threshold still adopts the verified 2019 work.
+
+        Both same-title works enter the bounded later-season judgement.  The
+        2024 work has no fourth season, so only the 2019 work passes the full
+        season/episode verification.  That verification is real evidence in the
+        final score, the default automatic threshold accepts it, and the eight
+        files reach the pending summary with the season evidence persisted.
+        """
+
+        provider = LaterSeasonProvider()
+        with self.journey(
+            provider=provider,
+            task_scheduling=True,
+            recognition_rules=[LATER_SEASON_TV_RULE],
+        ) as value:
+            task_id = self._later_season_batch(value)
+            discovery = self._drive(value, task_id)
+            items = value.repository.list_items(task_id)
+            self.assertEqual(8, len(items))
+            for item in items:
+                self.assertIs(item.status, TaskItemStatus.WAITING_CONFIRM, item.error)
+            self.assertEqual([None] * 8, provider.search_years)
+            status, preview = self.request(
+                value, f"/api/operations/organize/previews/{discovery.preview_id}"
+            )
+            self.assertEqual(200, status, preview)
+            self.assertEqual(
+                {"previewed"}, {entry["status"] for entry in preview["items"]}, preview
+            )
+            self.assertEqual(8, len(preview["items"]), preview)
+            for number in range(1, 9):
+                entry = next(
+                    entry
+                    for entry in preview["items"]
+                    if entry["source"]["path"].endswith(f"S04E{number:02d}.mkv")
+                )
+                metadata = entry["plan"]["analysis"]["metadata"]
+                identity = metadata["identity"]
+                self.assertEqual("matched", metadata["status"], (number, metadata))
+                self.assertEqual("candidate_matcher", identity["matchedBy"], (number, metadata))
+                self.assertEqual("2019", identity["providerId"], (number, metadata))
+                self.assertEqual(2019, identity["year"], (number, metadata))
+                self.assertEqual(4, identity["season"], (number, metadata))
+                self.assertEqual(number, identity["episode"], (number, metadata))
+                self.assertEqual(95.0, metadata["match"]["score"], (number, metadata))
+                (candidate,) = metadata["match"]["candidates"]
+                self.assertEqual("2019", candidate["providerId"], (number, metadata))
+                self.assertEqual(95.0, candidate["score"], (number, metadata))
+                reasons = " ".join(metadata["match"]["reasons"])
+                self.assertIn(f"Season 4 episodes {number} verified", reasons, (number, metadata))
+                self.assertIn("reached the automatic threshold 90.0", reasons, (number, metadata))
+                self.assertIn(
+                    "Season 4 is not available",
+                    " ".join(metadata["match"]["warnings"]),
+                    (number, metadata),
+                )
+                self.assertIn(
+                    f"S04E{number:02d}",
+                    entry["plan"]["destination"]["storageRelativePath"],
+                    (number, entry["plan"]["destination"]),
+                )
+            self.assertEqual((), value.repository.list_results(task_id))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual(8, len(list(self.source_root.rglob("*.mkv"))))
+            self.assertFalse(any(path.is_file() for path in self.target_root.rglob("*")))
+
+    def test_files_later_season_raised_automatic_threshold_waits_for_selection(self):
+        """Above the same final score the verified work needs the operator.
+
+        The same eight files run under one published policy whose automatic
+        threshold is 100 while the verified work's final score is 95.  Every
+        item first waits on the existing candidate confirmation with that
+        candidate and its season evidence; only the saved selection produces the
+        item's pending summary.  Searching, selecting and re-analysis stay
+        zero-mutation until an explicit execution confirmation.
+        """
+
+        provider = LaterSeasonProvider()
+        with self.journey(
+            provider=provider,
+            task_scheduling=True,
+            recognition_rules=[LATER_SEASON_TV_RULE],
+            automatic_threshold=100,
+        ) as value:
+            task_id = self._later_season_batch(value)
+            self._drive(value, task_id)
+            items = value.repository.list_items(task_id)
+            self.assertEqual(8, len(items))
+            for item in items:
+                self.assertIs(item.status, TaskItemStatus.WAITING_METADATA, item.error)
+                status, detail = self.request(
+                    value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
+                )
+                self.assertEqual(200, status, detail)
+                self.assertEqual("metadata", detail["decision"]["kind"], detail)
+                (candidate,) = detail["decision"]["candidates"]
+                self.assertEqual("2019", candidate["provider_id"], detail)
+                self.assertEqual(95.0, candidate["total_score"], detail)
+                season_component = next(
+                    component
+                    for component in candidate["score_components"]
+                    if component["name"] == "season_episodes"
+                )
+                self.assertEqual(15.0, season_component["score"], detail)
+                self.assertIn("Season 4 episodes", season_component["reason"], detail)
+                status, decided = self.request(
+                    value,
+                    f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                    "POST",
+                    {
+                        "kind": "metadata",
+                        "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                        "candidateRank": candidate["rank"],
+                    },
+                )
+                self.assertEqual(200, status, decided)
+                status, accepted = self._continue_from_task_center(
+                    value,
+                    task_id,
+                    item.item_id,
+                    decided["checkpoint"]["checkpoint_version"],
+                )
+                self.assertEqual(202, status, accepted)
+                self._drive(value, task_id)
+                self.assertIs(
+                    value.repository.get_item(item.item_id).status,
+                    TaskItemStatus.WAITING_CONFIRM,
+                )
+                self.assertEqual([], value.source.mutations)
+                self.assertEqual([], value.target.mutations)
+            # Every automatic search kept the parsed year as evidence only; the
+            # operator never submitted a year condition in this journey.
+            self.assertGreaterEqual(len(provider.search_years), 8)
+            self.assertEqual({None}, set(provider.search_years))
+            discovery = value.repository.get_media_discovery_for_task(task_id)
+            self.assertIsNotNone(discovery)
+            status, preview = self.request(
+                value, f"/api/operations/organize/previews/{discovery.preview_id}"
+            )
+            self.assertEqual(200, status, preview)
+            self.assertEqual(
+                {"previewed"}, {entry["status"] for entry in preview["items"]}, preview
+            )
+            self.assertEqual(8, len(preview["items"]), preview)
+            self.assertEqual((), value.repository.list_results(task_id))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertFalse(any(path.is_file() for path in self.target_root.rglob("*")))
 
     def test_ignore_keeps_the_task_waiting_while_a_sibling_is_undecided(self) -> None:
         """A still-undecided sibling is never settled prematurely by an ignore.
