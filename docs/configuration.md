@@ -248,6 +248,12 @@ and a missing `mediaQueryType` reads as `auto`. A policy `none` performs no look
 source-linked, type-complete offline identity may still be planned without inventing a Provider
 identity. Saving or re-analysing a choice performs no Storage mutation.
 
+Automatic title search for TV files with an explicit second or later season and episode numbers
+keeps the filename year as evidence and searches across series premiere years. The final score
+includes bounded evidence from verifying the season and every requested episode. The configured
+`confirmationThreshold` and `automaticThreshold` govern correction, candidate selection and automatic
+matching within the existing Provider request budget.
+
 Each new organize identifies its source again. A prior same-version Result, evidence row or saved
 candidate is not copied into the new item's metadata choice; the pinned RecognitionType and its
 `mediaQueryType` run the ordinary identification. The same source-grounded identities stay available

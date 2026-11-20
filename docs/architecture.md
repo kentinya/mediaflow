@@ -1394,6 +1394,15 @@ Auto accepts both, and None performs no lookup while retaining the existing comp
 Legacy policy `mediaType` never supplies a default or limits an identity; new policy saves omit it.
 MediaCandidate/MediaIdentity retain their own types for Provider detail, naming and classification.
 
+For automatic S02+ title searches, the shared identification service uses bounded season evidence
+to decide which candidates to verify and to calculate their final scores. Within the pinned request
+budget it checks the season and every requested episode through the configured Provider. A unique
+verified candidate can match if it reaches the automatic threshold. Verified alternatives and
+eligible candidates left unchecked by the budget go to human selection. Recovery re-analysis
+checks the selected TV work against the same episode requirements. A missing season or episode
+reopens search correction for that TaskItem with the mismatch reason and prior decision audit.
+Transport, authentication and rate-limit errors retain technical failure handling.
+
 New manual intents initialize without historical metadata identities. Source-grounded typed evidence
 and candidates may be offered as `allowedMetadataIdentities`, but become analysis input only after
 an explicit save for the current item. Number-only history cannot supply a typed candidate. Existing

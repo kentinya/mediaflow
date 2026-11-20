@@ -1023,6 +1023,14 @@ automatically copying a historical Provider ID/type into the new choice. History
 normal NFO/external-ID lookup and Provider caching retain their existing behavior. A new ambiguity
 requires a choice for that request.
 
+For a file such as `黑袍纠察队.2024.S04E01.mkv`, automatic title search checks which work contains
+the requested season and episode, including works that premiered before 2024. When a season is
+unavailable or a requested episode is missing, the affected file can return to **修正作品搜索** with
+the mismatch reason. Open the file in the organize dialog or under **任务中心 → 元数据恢复 → 查看问题文件**.
+Both entries show the same file's current search inputs. Choose a work that contains the required
+episodes, save and re-analyze, then review the new summary before confirming. Provider connectivity,
+authentication and rate-limit failures keep their technical failure reasons.
+
 In the per-file organizer, select an existing source-grounded candidate (title/year, movie or TV,
 Provider/ID), then use 保存并重新分析 to save that file's legal choice and request its new exact
 summary. This is the only save/analyse action for a per-file decision. With no candidate selected,
