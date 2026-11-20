@@ -1,6 +1,6 @@
 # Task PATCH-20261120-1 — 修复后续季剧集匹配与逐文件元数据修正
 
-Next Action: DEVELOPER CORRECTS LATER-SEASON MATCH THRESHOLDS IN PATCH-20261120-1
+Next Action: B PERFORMS T4 ACCEPTANCE ON THE PATCH-20261120-1 CANDIDATE
 
 用户于 2026-11-20 授权激活独立 Task。B 已核实上一轮修正并通过真实浏览器发现任务中心表单阻塞。依据为 `REQ-META-005/008`、`REQ-RECOVERY-005`、`V2-OPS-007/016`。
 [独立缺陷流程](docs/development-workflow.md#31-independent-minor-bugs) · [现有逐项恢复流程](docs/product-experience.md#tasks-results-and-per-item-recovery) · [上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/c8039f1f3d7bdfdb7fd927c75f99df0cb8a9e523/TASK.md#patch-20261119-2--b-验收-pass)
@@ -376,3 +376,74 @@ Next: SAME TASK FIX LOOP
 - Python 和 Web 静态检查、Web 构建、wheel 安装验收和 Docker 发布安全验收通过。
 - 验收在临时 SQLite、本地 Storage 和模拟 Provider 上运行。证据保存于 `.git/validation-evidence/307752c4/b-review/`。
   跨入口结果见 `native.log`，阈值复现结果见 `files-season-threshold-confirmed.log`。
+
+## Developer Completion Report — 后续季得分计入策略阈值
+
+```text
+Task Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
+Reviewed Fix Target: 3fb1a35bccd27ba38ec4b14f4b13b36e37e0f7ca
+Implementation Candidate: 8e38dd42350723e428ef842609d909fa518f3b39
+Branch: main
+Status: READY FOR B REVIEW
+```
+
+**起点**
+
+本轮从 `main`／`3fb1a35b`（B 的返工指导检查点）开始，工作区与暂存区干净，无既存未提交文件。
+实现提交为 `8e38dd42`，本报告与 TASK.md 交接单独提交。
+
+**修正结果**
+
+1. **季集验证计入有界评分。** 共享后续季识别在唯一候选通过所需季全部集数验证后，为该候选追加
+   `season_episodes` 评分证据（固定 15 分，总分上限 100，组件分数等于实际加成）。最终的
+   `verified_score.total_score` 同时用于匹配理由、候选记录和 `MediaIdentity.confidence`：
+   达到固定策略 `automatic_threshold` 时自动采用并说明「已完成自动阈值」；达到人工确认阈值但低于
+   自动阈值时返回 `NEED_CONFIRM`，通过既有候选确认入口等待用户选择并说明最终分数低于自动阈值。
+   多部候选通过、预算内未验证完的候选仍继续交给用户；季不存在/缺集、技术故障和电影/首季搜索规则未改。
+   全量验证前的可比候选筛选仍只按标题等既有证据，年份继续保持证据语义。
+2. **两套已发布策略的 Files/Worker 回归。** `tests.test_manual_task_engine` 用真实 Files 受理、
+   资源库、Worker、SQLite 与 Local Storage，加同一批 8 个 `黑袍纠察队.2024.S04E01–E08`
+   （`电视剧/` 下经既有规则引擎解析为 TV 类型）：
+   默认 `90/70` 策略下两部同名剧都进入有界判定，2024 作品季 404，八项以 2019 作品、95 分、
+   「Season 4 episodes N verified」与「达到自动阈值 90」生成待确认摘要，`matchedBy=candidate_matcher`，
+   每项目标路径含 `S04E0N`；改为 `100/70` 策略后同一批文件先停在既有逐项候选确认，候选记录显示
+   `total_score=95` 与 `season_episodes=15` 及验证理由，保存选择并继续后同一文件才生成摘要。
+   两条路径的搜索、保存、重新分析均零源/目标变更、无结果行和执行。
+3. **单测与保留用例。** `tests.test_metadata` 覆盖自动采用、抬高自动阈值后的 `NEED_CONFIRM`、
+   同一候选顺序互换以及多部候选均带季集评分；测试解析输入补上真实解析器必有的文件名标题证据。
+   B 上轮通过的电影两请求用例与 Files→任务中心原生用例未改，本轮复跑通过。
+
+**实际验证（cwd `/Users/songzhidong/mediaflow`，候选工作树）**
+
+```text
+python3 scripts/check_governance.py                                   -> PASS
+git diff --check                                                      -> clean
+.venv/bin/ruff format --check / check <4 changed files>               -> OK
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest
+    tests.test_metadata tests.test_manual_task_engine
+    tests.test_task_item_metadata_search
+    tests.test_automation_entrance_recovery                           -> 115 tests OK (5.83s)
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest
+    tests.test_media_discovery tests.test_metadata_review
+    tests.test_metadata_resolution tests.test_metadata_correction
+    tests.test_configuration_objects tests.test_operations_task_center
+    tests.test_file_media_detail                                      -> 134 tests OK (2.82s)
+web: npm run test -- run TaskItemRecoveryPanel.test.tsx
+     ManualOrganizeDialog.test.tsx RunDetailTabs.test.tsx              -> 3 files, 72 tests OK (19.8s)
+web: npx playwright test --config=playwright.python.config.ts
+     tests/e2e/metadata-search-year.python.spec.ts                     -> 3 tests OK (23.7s)
+```
+
+新增/修改的 Python 用例位于 `tests.test_metadata` 与 `tests.test_manual_task_engine`，后者复用
+`tests.test_media_discovery._DiscoveryFixture.journey`（仅增加可选 `recognition_rules`、
+`automatic_threshold`、`confirmation_threshold` 夹具参数）。Provider、Files 受理、Worker、恢复 API、
+SQLite 与 Local Storage 均为仓库既有入口或测试夹具，未构造不存在的入口。
+
+**剩余与风险**
+
+- B 仍需在冻结候选上执行本 Task 的 T4 全量 Python/Web/E2E、构建与封装门禁；Developer 未运行
+  全量套件、真实浏览器新增阈值用例或生产产物验证。
+- 15 分上限让真实八集候选最终为 95，因此把自动阈值设为 100 时进入候选确认；若真实 Provider 返回的
+  标题证据只能通过译名命中（文件名标题不等于候选主标题），基础分为 70、最终 85，在默认 90 下会
+  进入候选确认而不是自动采用。这是阈值策略的直接结果，B 可在真实 Provider 形态下核对是否符合预期。
+- 本轮未连接真实 TMDB；同名剧、季集缺失与阈值场景均由本地模拟 Provider 覆盖。
