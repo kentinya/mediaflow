@@ -3582,12 +3582,14 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
         return admitted["organizeTaskId"]
 
     def test_files_later_season_batch_auto_adopts_the_verified_work_within_threshold(self):
-        """The published default threshold still adopts the verified 2019 work.
+        """The published 90/85 policy adopts the verified 2019 work.
 
-        Both same-title works enter the bounded later-season judgement.  The
-        2024 work has no fourth season, so only the 2019 work passes the full
+        Both same-title works enter the bounded later-season judgement even
+        though their 80-point title evidence is below the 85 confirmation
+        threshold, because the bounded season evidence could reach it.  The 2024
+        work has no fourth season, so only the 2019 work passes the full
         season/episode verification.  That verification is real evidence in the
-        final score, the default automatic threshold accepts it, and the eight
+        final score, the published automatic threshold accepts it, and the eight
         files reach the pending summary with the season evidence persisted.
         """
 
@@ -3596,6 +3598,8 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             provider=provider,
             task_scheduling=True,
             recognition_rules=[LATER_SEASON_TV_RULE],
+            automatic_threshold=90,
+            confirmation_threshold=85,
         ) as value:
             task_id = self._later_season_batch(value)
             discovery = self._drive(value, task_id)
@@ -3604,6 +3608,8 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             for item in items:
                 self.assertIs(item.status, TaskItemStatus.WAITING_CONFIRM, item.error)
             self.assertEqual([None] * 8, provider.search_years)
+            # Both comparable works were checked for their fourth season.
+            self.assertEqual({("2019", 4), ("2024", 4)}, set(provider.season_calls))
             status, preview = self.request(
                 value, f"/api/operations/organize/previews/{discovery.preview_id}"
             )
@@ -3652,9 +3658,9 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
     def test_files_later_season_raised_automatic_threshold_waits_for_selection(self):
         """Above the same final score the verified work needs the operator.
 
-        The same eight files run under one published policy whose automatic
-        threshold is 100 while the verified work's final score is 95.  Every
-        item first waits on the existing candidate confirmation with that
+        The same eight files run under one published 100/85 policy whose
+        automatic threshold is 100 while the verified work's final score is 95.
+        Every item first waits on the existing candidate confirmation with that
         candidate and its season evidence; only the saved selection produces the
         item's pending summary.  Searching, selecting and re-analysis stay
         zero-mutation until an explicit execution confirmation.
@@ -3666,6 +3672,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             task_scheduling=True,
             recognition_rules=[LATER_SEASON_TV_RULE],
             automatic_threshold=100,
+            confirmation_threshold=85,
         ) as value:
             task_id = self._later_season_batch(value)
             self._drive(value, task_id)
@@ -3730,6 +3737,49 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual((), value.repository.list_results(task_id))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
+            self.assertFalse(any(path.is_file() for path in self.target_root.rglob("*")))
+
+    def test_files_later_season_high_confirmation_threshold_keeps_the_search_correction(self):
+        """A ceiling below confirmation stays in the existing search correction.
+
+        Under one published 100/96 policy the 80-point title evidence plus the
+        bounded 15-point season evidence can reach at most 95, below the
+        confirmation threshold.  Every one of the eight files therefore keeps
+        the existing per-file metadata search correction without spending a
+        Provider season request, and the batch stays zero-mutation.
+        """
+
+        provider = LaterSeasonProvider()
+        with self.journey(
+            provider=provider,
+            task_scheduling=True,
+            recognition_rules=[LATER_SEASON_TV_RULE],
+            automatic_threshold=100,
+            confirmation_threshold=96,
+        ) as value:
+            task_id = self._later_season_batch(value)
+            self._drive(value, task_id)
+            items = value.repository.list_items(task_id)
+            self.assertEqual(8, len(items))
+            for item in items:
+                self.assertIs(item.status, TaskItemStatus.WAITING_METADATA_CORRECTION, item.error)
+                status, detail = self.request(
+                    value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
+                )
+                self.assertEqual(200, status, detail)
+                self.assertEqual("metadata_correction", detail["decision"]["kind"], detail)
+                self.assertEqual("黑袍纠察队", detail["decision"]["query"], detail)
+                self.assertEqual(2024, detail["decision"]["year"], detail)
+                self.assertEqual("tv", detail["decision"]["media_type"], detail)
+                self.assertIn("confirmation threshold 96.0", detail["decision"]["reason"], detail)
+                self.assertTrue(detail["decision"]["can_search"], detail)
+            # No work could reach confirmation, so no fourth season was read.
+            self.assertEqual([], provider.season_calls)
+            self.assertEqual([None] * 8, provider.search_years)
+            self.assertEqual((), value.repository.list_results(task_id))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual(8, len(list(self.source_root.rglob("*.mkv"))))
             self.assertFalse(any(path.is_file() for path in self.target_root.rglob("*")))
 
     def test_ignore_keeps_the_task_waiting_while_a_sibling_is_undecided(self) -> None:

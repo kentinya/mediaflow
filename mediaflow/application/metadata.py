@@ -507,9 +507,12 @@ class MetadataIdentificationService:
         """Identify an explicit S02+ TV file by its required season and episodes.
 
         The parsed year stays in scoring evidence only for an automatic analysis.
-        Comparable candidates are verified through the Provider's season boundary;
-        one fully verified work may match automatically, while ambiguity or an
-        exhausted request budget stays an operator candidate decision.
+        A candidate is comparable when its title evidence plus the bounded
+        season/episode evidence can reach the confirmation threshold; comparable
+        candidates are verified through the Provider's season boundary.  The
+        actual final score of a single fully verified work decides between
+        automatic adoption and an operator candidate selection, while ambiguity
+        or an exhausted request budget stays an operator candidate decision.
         """
 
         match = self._matcher.match(
@@ -542,7 +545,7 @@ class MetadataIdentificationService:
         comparable = tuple(
             score
             for score in match.candidate_scores
-            if score.total_score >= policy.confirmation_threshold
+            if _season_verified_ceiling(score) >= policy.confirmation_threshold
         )
         if not comparable:
             return MetadataIdentificationResult(
@@ -551,7 +554,11 @@ class MetadataIdentificationService:
                 match=replace(
                     match,
                     reasons=tuple(match.reasons)
-                    + ("No candidate had enough title evidence for a bounded season check",),
+                    + (
+                        "No candidate reaches the confirmation threshold "
+                        f"{policy.confirmation_threshold:.1f} with the bounded "
+                        "season/episode evidence",
+                    ),
                 ),
                 query=parsed.title_candidate,
             )
@@ -964,9 +971,19 @@ def _below_automatic_threshold_reason(score: float, automatic_threshold: float) 
     )
 
 
+def _season_verified_ceiling(score: CandidateScore) -> float:
+    """The best final score the bounded season/episode evidence can produce.
+
+    A candidate whose base title score is below the confirmation threshold is
+    still worth the season check when the bounded season evidence could reach
+    it; the final score then decides between adoption and operator selection.
+    """
+    return round(min(100.0, score.total_score + SEASON_VERIFICATION_SCORE), 3)
+
+
 def _season_verified_score(score: CandidateScore, reason: str) -> CandidateScore:
     """The bounded final score once the required season/episodes are verified."""
-    total = round(min(100.0, score.total_score + SEASON_VERIFICATION_SCORE), 3)
+    total = _season_verified_ceiling(score)
     return replace(
         score,
         total_score=total,

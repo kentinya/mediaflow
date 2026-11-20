@@ -1115,6 +1115,59 @@ class TVSeasonIdentificationTests(unittest.TestCase):
         self.assertIn("below the automatic threshold 100.0", result.match.reasons[1])
         self.assertEqual([None], provider.search_years)
 
+    def test_confirmation_threshold_admits_the_bounded_season_evidence(self):
+        """A candidate is season-checked when the evidence could reach the threshold.
+
+        The exact-title score of both same-title works is 80, below a published
+        85 confirmation threshold.  The bounded season evidence could take
+        either work to 95, so both are checked; the verified 2019 work then
+        reaches the published 90 automatic threshold and is adopted.
+        """
+
+        provider = SeasonRecordingProvider(self.candidates(), {"2019": tuple(range(1, 9))})
+        result = MetadataIdentificationService(MetadataProviderRegistry((provider,))).identify(
+            self.recognition,
+            self.parsed,
+            replace(self.policy, automatic_threshold=90, confirmation_threshold=85),
+        )
+
+        self.assertEqual(result.status, MetadataIdentificationStatus.MATCHED)
+        self.assertEqual("2019", result.identity.provider_id)
+        self.assertEqual(95.0, result.match.score)
+        self.assertIn("reached the automatic threshold 90.0", result.match.reasons[1])
+        self.assertEqual(
+            {"get_season:2019:4", "get_season:2024:4"},
+            {call for call in provider.calls if call.startswith("get_season:")},
+        )
+
+    def test_candidate_below_the_season_evidence_ceiling_is_not_season_checked(self):
+        """A work that cannot reach confirmation is not given a season request.
+
+        The same 80-point title evidence can reach at most 95 with the bounded
+        season evidence, so a published 96 confirmation threshold leaves the
+        file in the existing metadata search correction without a Provider
+        season read.
+        """
+
+        provider = SeasonRecordingProvider(self.candidates(), {"2019": tuple(range(1, 9))})
+        result = MetadataIdentificationService(MetadataProviderRegistry((provider,))).identify(
+            self.recognition,
+            self.parsed,
+            replace(self.policy, automatic_threshold=100, confirmation_threshold=96),
+        )
+
+        self.assertEqual(result.status, MetadataIdentificationStatus.NOT_FOUND)
+        self.assertFalse(
+            [call for call in provider.calls if call.startswith("get_season:")], provider.calls
+        )
+        self.assertTrue(
+            any(
+                "confirmation threshold 96.0" in reason and "season/episode evidence" in reason
+                for reason in result.match.reasons
+            ),
+            result.match.reasons,
+        )
+
     def test_candidate_order_does_not_change_the_single_verified_work(self):
         outcomes = []
         for candidates in (self.candidates(), tuple(reversed(self.candidates()))):
