@@ -17,7 +17,7 @@ Detailed superseded delivery notes are retained at
 刷新、重连或从设置返回时，恢复当前权限允许的原位置。切换后从任务中心打开原任务，查看
 进度和逐项结果。整理最终确认丢响应时，系统自动按原摘要、原选择和原效果选项查询受理结果。
 同一浏览器以原账号重连后可接着查。需要继续时，依照当前任务和条目状态显式操作。失效或旧地址
-使用通用未知路由，用户可从根入口重新导航。见 [Slice 56 A 终审](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed)。
+使用通用未知路由，用户可从根入口重新导航。[正式入口验收](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed)
 
 ## CURRENT — Complete V1 and migration residue retirement (Slice55 PASS / CLOSED)
 
@@ -1235,10 +1235,12 @@ Saving a legal decision starts its permitted zero-mutation analysis as part of t
 a current plan is ready, inspect its summary/remaining steps and confirm the eligible subset.
 The page offers that summary or its preparation step without a second analysis button; queued or
 running analysis likewise needs no additional submission. If capacity refuses analysis after the
-decision was saved, the page keeps the decision and offers an explicit analysis-only retry. A lost
-response leads to rereading the original item before continuing. A plan that needs fresh analysis
-retains the backend-permitted update action. Admission/running is not resolution; repeated failure
-supplies its new cause. Original pin unavailable means refusal/recovery guidance,
+decision was saved, the page keeps the decision and offers an explicit analysis-only retry. If a
+decision or analysis response is lost, reread the original item before continuing. If the final
+confirmation response is lost, the system checks the original submission automatically. A plan that
+needs fresh analysis retains the backend-permitted update action. Successful recovery requires a
+completed Task and verified file effects. Repeated failure shows its new cause. Original pin
+unavailable means refusal/recovery guidance,
 not silent repinning or arbitrary historical Reprocess. Unknown effects offer evidence/source-target
 inspection/log-export only, never retry/force-replay/automatic rollback.
 

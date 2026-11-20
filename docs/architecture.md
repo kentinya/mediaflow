@@ -1602,10 +1602,19 @@ Unchanged polling leaves it still. File/step changes reset body scroll before th
 replaced focused controls return focus to that boundary. Reduced-motion removes the animation.
 The primary decision form uses organizer-scoped styling; Task Center's other recovery forms retain
 their own presentation. These are presentation states, not new durable workflow or admission states.
-One immutable submission identity (previewId, copied itemIds, intentVersion, allowOverwrite and
-allowSourceCleanup) is captured at confirmation and used by Execute and every unknown-request
-read. It is independent of the editable current summary and survives its replacement during sibling
-reanalysis; failed reads retain that identity and the existing submission restriction.
+The browser saves the immutable submission identity (previewId, copied itemIds, intentVersion,
+allowOverwrite and allowSourceCleanup) before sending the final Execute request. Browser storage
+binds this record to the verified principal and exact Files preparation or recovery item. Credentials
+and execution authority stay outside the record. Sibling reanalysis can replace the editable summary
+while the saved submission remains available for the admission read.
+
+The organizer, Task detail and per-item recovery use the existing read-only admission endpoint for
+automatic reconciliation. The browser limits retries with backoff, deduplicates concurrent checks for
+the same principal and submission, and resumes pending checks after reconnect or reopening the same
+work. An absent record after a lost response leaves the original confirmation pending. When the same
+batch is still eligible, the operator can explicitly confirm it and the backend atomic admission check
+deduplicates a racing request. Task detail displays progress and durable file results and shows the
+related admission check as a status line.
 
 Both normal execution admission and reconciliation-proven admission use the returned exact taskId
 with the existing Task Center selected-run/detail route, closing the organizer. Missing association

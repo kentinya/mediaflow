@@ -24,7 +24,7 @@ Web 从 `/` 进入，API 使用 `/api/*`。换址后可在任务中心查看原�
 | [路线图](roadmap.md) · [验收账本](progress.md) | 大版本优先级、已接受范围及固定验收记录。 |
 | [当前 Slice](../SLICE.md) · [当前 Task](../TASK.md) · [Task 模板](../Task/TEMPLATE.md) | 开发范围和当前状态。 |
 
-近期整理修复的验收记录可通过固定提交查阅。[主文件超限后的任务收尾](https://github.com/kentinya/mediaflow/blob/e5fd939f17bf43fcff55d0fed66ec13d644868a6/TASK.md#patch-20261120-2--b-验收-pass) · [后续季匹配及修正](https://github.com/kentinya/mediaflow/blob/66e1e799b5bc5ada7b8ea81bd15052969c40b38a/TASK.md#patch-20261120-1--b-验收-pass)
+近期整理修复的验收记录可通过固定提交查阅。[整理确认自动核对](https://github.com/kentinya/mediaflow/blob/455ad4f70c645b1a2e65f4af61378101a25435d8/TASK.md#patch-20261120-3--b-验收-pass) · [主文件超限后的任务收尾](https://github.com/kentinya/mediaflow/blob/e5fd939f17bf43fcff55d0fed66ec13d644868a6/TASK.md#patch-20261120-2--b-验收-pass) · [后续季匹配及修正](https://github.com/kentinya/mediaflow/blob/66e1e799b5bc5ada7b8ea81bd15052969c40b38a/TASK.md#patch-20261120-1--b-验收-pass)
 
 此前的顶栏修复也有固定验收记录。[删除顶栏搜索框](https://github.com/kentinya/mediaflow/blob/c8039f1f3d7bdfdb7fd927c75f99df0cb8a9e523/TASK.md#patch-20261119-2--b-验收-pass) · [删除顶栏占位铃铛](https://github.com/kentinya/mediaflow/blob/ace169f4ee14feb4a101b7b2da2e917fe1c7c145/TASK.md#patch-20261119-1--b-验收-pass)
 

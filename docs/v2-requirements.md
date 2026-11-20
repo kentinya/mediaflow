@@ -581,6 +581,14 @@ reconciliation engine; it adds no backend state, schema, permission or execution
 exact canonical address is refresh/re-authentication safe and the closed marker never carries a
 preparation or library identity.
 
+The accepted PATCH-20261120-3 refines final confirmation under `V2-OPS-019` across Files,
+Task Center continuation and per-item recovery. The system checks the exact original confirmation
+automatically after a lost response, including after the same account reconnects in the same browser.
+Task detail shows progress and independent file results. A related pending or newly resolved check
+appears as one status line. If the service has no admission record and the original batch remains
+eligible, an explicit confirmation of that same batch uses the existing atomic admission check.
+[B acceptance](https://github.com/kentinya/mediaflow/blob/455ad4f70c645b1a2e65f4af61378101a25435d8/TASK.md#patch-20261120-3--b-验收-pass).
+
 ## CURRENT — Organizing rules dialogs and readability (Slice54 PASS / CLOSED)
 
 [Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) passed independent A Final Review on 2026-11-11, from fixed Base
