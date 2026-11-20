@@ -25,6 +25,12 @@ const ADMIN_TOKEN = "harness-admin-token";
 const DIALOG_FILE = (index: number) =>
   `Dialog${String(index).padStart(2, "0")}.2011.mkv`;
 const UNKNOWN_FILE = "DialogUnknown.2021.mkv";
+const PRIMARY_LIMIT_DIRECTORY = "PrimaryLimit";
+const PRIMARY_LIMIT_FILE = "DialogLimit.2032.mkv";
+const PRIMARY_LIMIT_MESSAGE =
+  "本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。";
+const PRIMARY_LIMIT_WAITING =
+  "检查已在主文件数量上限处停止；正在结束关联任务，结束后请缩小选择范围重新发起。";
 
 interface RecordedCommand {
   readonly method: string;
@@ -1599,6 +1605,210 @@ test("an unknown original submission is reconciled under a newer sibling summary
     destinationTargets: moved.destinationTargets,
   });
   expect(await stateFor(siblingFile)).toEqual({
+    sourceExists: true,
+    destinationTargets: [],
+  });
+});
+
+test("a 101-file directory settles as a failed preparation and the same source re-enters a small batch", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  const authHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+
+  // The ResourceLibrary directory itself is the admitted scope.  Its real walk
+  // stops at the durable 100-primary bound.
+  await page.getByRole("link", { name: "Files", exact: true }).click();
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
+  await page
+    .getByRole("button", { name: /source/ })
+    .first()
+    .click();
+  await expect(page.getByRole("table")).toBeVisible();
+  await page
+    .getByRole("checkbox", { name: `选择 ${PRIMARY_LIMIT_DIRECTORY}` })
+    .check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+
+  // Hold the real settlement after the walk's own durable refusal is
+  // published, so the browser observes exactly the separate-commit window that
+  // must keep polling instead of stopping on the truncated intermediate state.
+  const armed = await request.post(
+    `${BASE}/__harness__/arm-primary-limit-settlement`,
+  );
+  expect(armed.ok()).toBe(true);
+  const settlement = request.post(
+    `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
+      discoveryId as string,
+    )}`,
+  );
+  await expect(
+    card.getByText(PRIMARY_LIMIT_WAITING, { exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  const gate = await request.get(
+    `${BASE}/__harness__/primary-limit-settlement-state`,
+  );
+  expect(await gate.json()).toMatchObject({ armed: true, reached: true });
+  const released = await request.post(
+    `${BASE}/__harness__/release-primary-limit-settlement`,
+  );
+  expect(released.ok()).toBe(true);
+  const advanced = await settlement;
+  expect(advanced.ok()).toBe(true);
+  expect(await advanced.json()).toMatchObject({
+    advanced: true,
+    discoveryId,
+    status: "partial_success",
+  });
+
+  // The same mounted card continues reading the same preparation until the
+  // linked Task's settlement lands, then presents the factual failed end.
+  await expect(card.getByText("本次整理工作已结束")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(
+    card.getByText(PRIMARY_LIMIT_MESSAGE, { exact: true }),
+  ).toBeVisible();
+  await expect(card.getByText(/原计划摘要保留为只读历史/)).toHaveCount(0);
+  await expect(card.getByText(/本次整理从未生成过计划摘要/)).toHaveCount(0);
+  await expect(card.getByRole("button", { name: /确认整理/ })).toHaveCount(0);
+  await expect(
+    card.getByRole("button", { name: "保存并重新分析" }),
+  ).toHaveCount(0);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+
+  // Read the retained preparation and Task identity directly from the real
+  // API: the truncated manifest stays readable, with no plan or execution.
+  const discoveryRead = await request.get(
+    `${BASE}/api/operations/organize/discoveries/${encodeURIComponent(
+      discoveryId as string,
+    )}`,
+    { headers: authHeaders },
+  );
+  expect(discoveryRead.ok()).toBe(true);
+  const discovery = (await discoveryRead.json()) as {
+    readonly status: string;
+    readonly primarySourceCount: number;
+    readonly previewId: string | null;
+    readonly intentId: string | null;
+    readonly frozen: boolean;
+    readonly organizeTaskId: string;
+    readonly organizeFlow: {
+      readonly status: string;
+      readonly continuable: boolean;
+    };
+    readonly progress: {
+      readonly incompleteReason: string | null;
+      readonly materialRefusal: string | null;
+      readonly refusalReasons: readonly string[];
+    };
+  };
+  expect(discovery.status).toBe("partial_success");
+  expect(discovery.primarySourceCount).toBe(100);
+  expect(discovery.previewId).toBeNull();
+  expect(discovery.intentId).toBeNull();
+  expect(discovery.frozen).toBe(false);
+  expect(discovery.organizeFlow).toMatchObject({
+    status: "failed",
+    continuable: false,
+  });
+  expect(discovery.progress.incompleteReason).toBe("primary_limit");
+  expect(discovery.progress.materialRefusal).toBe("primary_limit");
+  expect(discovery.progress.refusalReasons).toContain("primary_limit");
+  const taskId = discovery.organizeTaskId;
+  expect(taskId).toBeTruthy();
+
+  // The Task Center keeps the same ended flow status and next action, but no
+  // new preparation section and no continuation entry.
+  await page.goto(`${BASE}/operations?run=${taskId}`);
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible({ timeout: 30_000 });
+  await expect(detail.getByText("失败／准备阶段超限")).toBeVisible();
+  await expect(
+    detail.getByText(/准备阶段超限：本次未执行整理。最多支持 100 个主文件/),
+  ).toBeVisible();
+  await expect(
+    detail.getByRole("region", { name: "文件整理准备" }),
+  ).toHaveCount(0);
+  await expect(detail.getByRole("link", { name: "继续整理" })).toHaveCount(0);
+
+  // The old hosted preparation address now opens only the read-only ended
+  // facts; it neither claims a saved summary nor offers any command.
+  await page.goto(`${BASE}/operations?run=${taskId}&dialog=organize`);
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  const historical = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(historical).toBeVisible({ timeout: 30_000 });
+  await expect(
+    historical.getByText(PRIMARY_LIMIT_MESSAGE, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    historical.getByRole("button", { name: /确认整理/ }),
+  ).toHaveCount(0);
+
+  const stateFor = async (name: string) => {
+    const response = await request.get(
+      `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(
+        `${PRIMARY_LIMIT_DIRECTORY}/${name}`,
+      )}`,
+    );
+    expect(response.ok()).toBe(true);
+    return (await response.json()) as {
+      readonly sourceExists: boolean;
+      readonly destinationTargets: readonly string[];
+    };
+  };
+  expect(await stateFor(PRIMARY_LIMIT_FILE)).toEqual({
+    sourceExists: true,
+    destinationTargets: [],
+  });
+
+  // Back to the original directory, the very same retained file is admitted
+  // into one new small batch without cancelling the failed Task.
+  await page.goto(
+    `${BASE}/resourcelib/files?resourceLibraryId=source&path=${PRIMARY_LIMIT_DIRECTORY}`,
+  );
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByRole("table")).toBeVisible({ timeout: 30_000 });
+  // The real directory holds 101 entries and the Files page is bounded to 50,
+  // so the named source is on the final page.
+  for (const expectedPage of ["2", "3"]) {
+    await page.getByRole("button", { name: "下一页" }).click();
+    await expect(page.locator(".mf-page-number")).toHaveText(expectedPage);
+  }
+  await page
+    .getByRole("checkbox", { name: `选择 ${PRIMARY_LIMIT_FILE}` })
+    .check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const freshCard = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(freshCard).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  await driveDiscovery(request, true);
+  await expect(
+    freshCard.getByRole("heading", { name: /第 1 \/ 1 个/ }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(freshCard.getByText("纳入本次整理").first()).toBeVisible();
+  await freshCard.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  expect(await stateFor(PRIMARY_LIMIT_FILE)).toEqual({
     sourceExists: true,
     destinationTargets: [],
   });

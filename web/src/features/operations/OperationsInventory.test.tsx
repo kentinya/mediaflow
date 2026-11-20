@@ -983,6 +983,9 @@ describe("Operations run inventory landing", () => {
         /准备阶段超限：本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。/,
       ),
     ).toBeVisible();
+    expect(
+      within(detail).queryByRole("region", { name: "文件整理准备" }),
+    ).toBeNull();
     expect(within(detail).queryByRole("link", { name: "继续整理" })).toBeNull();
   });
 

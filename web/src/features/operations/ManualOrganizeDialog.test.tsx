@@ -73,6 +73,9 @@ function makeBackend() {
     endedFlowKeepsPreview: false as boolean,
     // The exact durable primary-bound refusal a truncated preparation records.
     primaryLimit: false as boolean,
+    // Leading primary-limit reads whose linked Task has not settled yet.  The
+    // walk's refusal and the Task's terminal status are separate commits.
+    primaryLimitSettlementReads: 0 as number,
     // The number of leading discovery reads that still report an unchanged
     // waiting state before the plan links.
     waitingReads: 0 as number,
@@ -198,12 +201,14 @@ function makeBackend() {
       continuable: !state.endedFlow,
     },
     admissionRequestId: null,
-    autoPrepare: true,
-    prepared: true,
+    autoPrepare: !state.primaryLimit,
+    prepared: !state.primaryLimit,
     previewId:
-      state.endedFlow && !state.endedFlowKeepsPreview ? null : state.previewId,
-    intentId: INTENT_ID,
-    frozen: true,
+      state.primaryLimit || (state.endedFlow && !state.endedFlowKeepsPreview)
+        ? null
+        : state.previewId,
+    intentId: state.primaryLimit ? null : INTENT_ID,
+    frozen: !state.primaryLimit,
     freezeRequestedAt: null,
     pauseRequested: false,
     cancelRequested: false,
@@ -672,6 +677,10 @@ function makeBackend() {
         method === "GET"
       ) {
         state.discoveryReads += 1;
+        if (state.primaryLimit && state.primaryLimitSettlementReads > 0) {
+          state.primaryLimitSettlementReads -= 1;
+          if (state.primaryLimitSettlementReads === 0) state.endedFlow = true;
+        }
         if (state.queuedReads > 0) {
           state.queuedReads -= 1;
           const queued = discoveryDocument();
@@ -2119,10 +2128,47 @@ describe("ManualOrganizeDialog", () => {
         "本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。",
       ),
     ).toBeVisible();
+    // This exact refusal never produced a plan summary, so the card must not
+    // claim that a saved summary is retained as read-only history.
+    expect(screen.queryByText(/原计划摘要保留为只读历史/)).toBeNull();
+    expect(screen.queryByText(/本次整理从未生成过计划摘要/)).toBeNull();
+    expect(screen.queryByRole("region", { name: "只读原计划摘要" })).toBeNull();
     expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "保存并重新分析" })).toBeNull();
     expect(backend.calls.executePosts).toHaveLength(0);
     expect(backend.calls.analyzePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("keeps polling a primary-limit preparation until its Task settles", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.primaryLimit = true;
+      value.state.primaryLimitSettlementReads = 3;
+    });
+
+    // The walk's refusal is durable while settlement is still pending.  The
+    // card says so honestly and keeps reading the same preparation instead of
+    // settling on the truncated intermediate state.
+    await screen.findByText(
+      "检查已在主文件数量上限处停止；正在结束关联任务，结束后请缩小选择范围重新发起。",
+      {},
+      { timeout: 15_000 },
+    );
+    expect(screen.queryByText("本次整理工作已结束")).toBeNull();
+
+    // The settlement commits on a later read; the same mounted card follows
+    // it to the factual failed end with no second submission.
+    await screen.findByText("本次整理工作已结束", {}, { timeout: 15_000 });
+    expect(
+      screen.getByText(
+        "本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/原计划摘要保留为只读历史/)).toBeNull();
+    expect(backend.calls.discoveryPosts).toHaveLength(1);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(backend.state.discoveryReads).toBeGreaterThanOrEqual(3);
   }, 30_000);
 
   it("renders the linked plan as read-only history when an ended flow kept it", async () => {

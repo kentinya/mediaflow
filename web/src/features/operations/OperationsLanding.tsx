@@ -1834,6 +1834,12 @@ function RunFlowSummary({ run }: { readonly run: RunSummary }) {
           <span className="mf-run-flow-note">（证据不足）</span>
         )}
       </p>
+      {run.status === "failed" && run.filesPreparationPrimaryLimit && (
+        <p className="mf-run-flow-line" role="status">
+          准备阶段超限：本次未执行整理。最多支持 100
+          个主文件，请缩小选择范围后重新发起。
+        </p>
+      )}
       {run.currentStage !== null && (
         <p className="mf-run-flow-line">
           <span className="mf-run-flow-label">当前阶段</span>
@@ -1903,20 +1909,6 @@ function RunDetailFacts({
           </div>
         </section>
       )}
-      {run.filesPreparation !== null &&
-        !run.filesPreparation.continuable &&
-        run.filesPreparationPrimaryLimit && (
-          <section
-            className="mf-run-fact-preparation"
-            aria-label="文件整理准备"
-          >
-            <h4>文件整理准备</h4>
-            <p role="status">
-              准备阶段超限：本次未执行整理。最多支持 100
-              个主文件，请缩小选择范围后重新发起。
-            </p>
-          </section>
-        )}
       {run.manualOrganizeSubmissions.length > 0 && run.taskId !== null && (
         <OrganizeSubmissionVerification
           taskId={run.taskId}

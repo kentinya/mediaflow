@@ -58,6 +58,13 @@ infrastructure, not product endpoints, and never touch product documents):
   reports that a pause was reached and ``POST /__harness__/release-preparation-freeze``
   resumes the same real pass.  This only widens a real freeze→analysis window
   for the browser proof; it writes no product state and fabricates no stage;
+- ``POST /__harness__/arm-primary-limit-settlement`` holds the real Task
+  settlement *after* the durable 101st-source walk is published;
+  ``GET /__harness__/primary-limit-settlement-state`` reports that the real
+  settlement was reached and ``POST /__harness__/release-primary-limit-settlement``
+  resumes the same production settlement.  This only widens a real
+  walk→settlement window for the browser proof; it writes no product state and
+  fabricates no stage;
 - ``POST /__harness__/restart`` closes and reopens the runtime database and
   API object over the same file, which is exactly what a process restart does
   to durable state;
@@ -652,6 +659,19 @@ def build_managed_fixture(
     os.utime(dialog_root / "DialogReopen.2029.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSubsetFirst.2030.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSubsetSecond.2031.mkv", (conflict_time, conflict_time))
+    # PATCH-20261120-2 browser fixture: one dedicated directory with exactly
+    # 101 eligible primaries.  Its walk stops at the durable primary bound; one
+    # of them is the unambiguous source re-selected for the new small batch.
+    primary_limit_root = source_root / "PrimaryLimit"
+    primary_limit_root.mkdir(parents=True, exist_ok=True)
+    for index in range(100):
+        bulk = primary_limit_root / f"Bulk{index:03d}.2011.mkv"
+        bulk.write_bytes(b"primary limit bulk synthetic media")
+        old_time = time.time() - 86400
+        os.utime(bulk, (old_time, old_time))
+    limit_file = primary_limit_root / "DialogLimit.2032.mkv"
+    limit_file.write_bytes(b"primary limit named synthetic media")
+    os.utime(limit_file, (conflict_time, conflict_time))
     # The managed definition's own reviewed scope.  It stays empty: the
     # Scheduler only *admits* the occurrence, so the fixture needs a real
     # ResourceLibrary-relative directory and no media of its own.  Adding a file
@@ -912,6 +932,32 @@ def build_managed_fixture(
                             r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025|Reconcile\.2027|Unselected\.2028|Reopen\.2029|SubsetFirst\.2030|SubsetSecond\.2031)\.mkv$"
                         ),
                     },
+                ],
+            },
+            "outputRecognitionType": "A",
+        }
+    )
+    document["recognitionRules"].append(
+        {
+            "id": "primary-limit-video",
+            "name": "PATCH-20261120-2 primary limit fixtures",
+            "priority": 123,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {
+                        "field": "resource_library_id",
+                        "operator": "equals",
+                        "value": "source",
+                    },
+                    {
+                        "field": "path",
+                        "operator": "contains",
+                        "value": "/PrimaryLimit/",
+                    },
+                    {"field": "extension", "operator": "in", "value": ["mkv"]},
                 ],
             },
             "outputRecognitionType": "A",
@@ -1456,6 +1502,17 @@ def build_managed_fixture(
                         genres=("Animation",),
                         countries=("JP",),
                     ),
+                    # PATCH-20261120-2: the retained source re-selected in the
+                    # new small batch resolves to one unambiguous identity.
+                    MediaCandidate(
+                        "tmdb",
+                        "714",
+                        MediaType.MOVIE,
+                        "DialogLimit",
+                        year=2032,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
                 )
             ),
         )
@@ -1522,6 +1579,12 @@ class AppState:
         #: browser journey has observed that durable stage. Test infrastructure
         #: only; it never writes or invents product state.
         self.preparation_freeze_gate: dict[str, threading.Event] | None = None
+        #: One-shot synchronization for the primary-limit preparation's
+        #: durable walk publication and its Task settlement.  The walk and the
+        #: Task's terminal pair are separate commits; holding the real
+        #: settlement here lets the browser observe both through ordinary
+        #: reads. Test infrastructure only; it writes no product state.
+        self.primary_limit_settlement_gate: dict[str, threading.Event] | None = None
 
     @property
     def database(self) -> Path:
@@ -2452,6 +2515,17 @@ def _run_manual_task_once(state: AppState, *, task_id: str | None = None):
         def claim(**kwargs):
             return scheduling.claim(task_id, **kwargs)
 
+    settlement_gate = state.primary_limit_settlement_gate
+    if settlement_gate is not None:
+        settle_primary_limit = worker._fail_primary_limit
+
+        def observed_fail_primary_limit(claim):
+            settlement_gate["reached"].set()
+            settlement_gate["release"].wait(timeout=120)
+            return settle_primary_limit(claim)
+
+        worker._fail_primary_limit = observed_fail_primary_limit
+
     with (
         patch.object(scheduling, "claim_next", claim),
         patch(
@@ -2488,6 +2562,35 @@ def release_preparation_freeze_gate(state: AppState) -> dict[str, object]:
         return {"released": False}
     gate["release"].set()
     state.preparation_freeze_gate = None
+    return {"released": True}
+
+
+def arm_primary_limit_settlement_gate(state: AppState) -> dict[str, object]:
+    """Arm the one-shot walk-publication → Task-settlement boundary."""
+
+    gate = {"reached": threading.Event(), "release": threading.Event()}
+    state.primary_limit_settlement_gate = gate
+    return {"armed": True}
+
+
+def primary_limit_settlement_gate_state(state: AppState) -> dict[str, object]:
+    """Whether the real Worker reached the primary-limit settlement."""
+
+    gate = state.primary_limit_settlement_gate
+    return {
+        "armed": gate is not None,
+        "reached": gate is not None and gate["reached"].is_set(),
+    }
+
+
+def release_primary_limit_settlement_gate(state: AppState) -> dict[str, object]:
+    """Release the Task settlement paused after the durable truncated walk."""
+
+    gate = state.primary_limit_settlement_gate
+    if gate is None:
+        return {"released": False}
+    gate["release"].set()
+    state.primary_limit_settlement_gate = None
     return {"released": True}
 
 
@@ -4092,6 +4195,7 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Dialog/DialogReopen.2029.mkv",
         "Dialog/DialogSubsetFirst.2030.mkv",
         "Dialog/DialogSubsetSecond.2031.mkv",
+        "PrimaryLimit/DialogLimit.2032.mkv",
         "YearProbe/DialogYear.2025.mkv",
         f"SeasonProbe/{_SEASON_PROBE_TITLE}.2024.S04E01.mkv",
     )
@@ -5933,6 +6037,12 @@ def application(environ, start_response):
             document = preparation_freeze_gate_state(STATE)
         elif path == "/__harness__/release-preparation-freeze" and method == "POST":
             document = release_preparation_freeze_gate(STATE)
+        elif path == "/__harness__/arm-primary-limit-settlement" and method == "POST":
+            document = arm_primary_limit_settlement_gate(STATE)
+        elif path == "/__harness__/primary-limit-settlement-state" and method == "GET":
+            document = primary_limit_settlement_gate_state(STATE)
+        elif path == "/__harness__/release-primary-limit-settlement" and method == "POST":
+            document = release_primary_limit_settlement_gate(STATE)
         elif path == "/__harness__/seed-task-center-problems" and method == "POST":
             document = seed_task_center_problem_journey(STATE)
         elif path == "/__harness__/seed-task-center-problem-page" and method == "POST":

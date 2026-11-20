@@ -214,6 +214,12 @@ export function ManualOrganizeDialog({
     (preparation.progress.incompleteReason === "primary_limit" ||
       preparation.progress.materialRefusal === "primary_limit" ||
       preparation.progress.refusalReasons.includes("primary_limit"));
+  // The walk's durable refusal and the linked Task's settlement are published
+  // by separate commits.  While that exact flow is still continuable, the card
+  // keeps reading the same preparation so the operator sees the real failed
+  // end instead of stopping on a truncated intermediate state.
+  const primaryLimitAwaitingSettlement =
+    primaryLimitStopped && preparation?.organizeFlow?.continuable === true;
   const preparationUnavailable =
     session.phase === "admitted" &&
     (preparationQuery.isError || preparationQuery.data?.ok === false);
@@ -942,7 +948,8 @@ export function ManualOrganizeDialog({
     (["queued", "running", "waiting_stability", "analyzing"].includes(
       preparationStatus,
     ) ||
-      preparationPlanExpected);
+      preparationPlanExpected ||
+      primaryLimitAwaitingSettlement);
   useEffect(() => {
     if (!preparationPolling) return;
     // An interval, not a self-rescheduling timeout: a poll whose response is
@@ -1179,7 +1186,9 @@ export function ManualOrganizeDialog({
           ? "范围检查已完成，正在生成并关联计划摘要；无需重新提交。"
           : "准备已完成。";
       case "partial_success":
-        return "范围检查已达到限制，只保留了已确认的子集；这不是完整遍历。请按下方原因缩小范围后重新准备。";
+        return primaryLimitStopped
+          ? "检查已在主文件数量上限处停止；正在结束关联任务，结束后请缩小选择范围重新发起。"
+          : "范围检查已达到限制，只保留了已确认的子集；这不是完整遍历。请按下方原因缩小范围后重新准备。";
       case "failed":
         return "准备失败；已保存的受理记录与已知状态保留，没有修改任何文件。请核对下方原因后再决定重新读取或重新发起。";
       case "cancelled":
@@ -1262,26 +1271,41 @@ export function ManualOrganizeDialog({
         <>
           <StatusBanner variant="warning" title="本次整理工作已结束">
             {primaryLimitStopped ? (
-              <p role="status">
-                本次未执行整理。最多支持 100
-                个主文件，请缩小选择范围后重新发起。
-              </p>
-            ) : null}
-            <p role="status">
-              关联的整理流程(任务状态:
-              {preparation.organizeFlow?.status ?? "unknown"})已结束;
-              不再运行分析,也不再提供选择、修正、重新分析或确认。
-            </p>
-            {preparation.failure !== null ? (
-              <p role="status">{preparation.failure}</p>
-            ) : null}
-            <p>
-              原计划摘要保留为只读历史,可在下方核对当时的条目与方案;
-              需要再次整理时,请关闭后从资源库文件页重新选择发起。
-            </p>
+              <>
+                <p role="status">
+                  本次未执行整理。最多支持 100
+                  个主文件，请缩小选择范围后重新发起。
+                </p>
+                <p role="status">
+                  准备阶段在检查到第 101 个合格主文件时停止
+                  {summaryPreviewId === ""
+                    ? "；本次没有生成整理方案，也没有受理执行"
+                    : "；已保存的原计划摘要保留为只读历史，本次没有受理执行"}
+                  。已记录的扫描范围、配置与诊断仍可核对。
+                </p>
+                <p>
+                  请关闭本弹窗返回原文件页，缩小选择的目录或文件范围后重新发起整理。
+                </p>
+              </>
+            ) : (
+              <>
+                <p role="status">
+                  关联的整理流程(任务状态:
+                  {preparation.organizeFlow?.status ?? "unknown"})已结束;
+                  不再运行分析,也不再提供选择、修正、重新分析或确认。
+                </p>
+                {preparation.failure !== null ? (
+                  <p role="status">{preparation.failure}</p>
+                ) : null}
+                <p>
+                  原计划摘要保留为只读历史,可在下方核对当时的条目与方案;
+                  需要再次整理时,请关闭后从资源库文件页重新选择发起。
+                </p>
+              </>
+            )}
           </StatusBanner>
           {summaryPreviewId === "" ? (
-            historyPlanPending ? (
+            primaryLimitStopped ? null : historyPlanPending ? (
               <div
                 className="mf-modal-card-status"
                 role="status"
