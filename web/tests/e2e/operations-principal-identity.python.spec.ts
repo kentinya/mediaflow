@@ -68,6 +68,14 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
     { timeout: 30_000 },
   );
   const recognition = card.locator('select[aria-label^="识别类型 "]');
+  if (
+    !(await recognition
+      .first()
+      .isVisible()
+      .catch(() => false))
+  ) {
+    await card.getByText("修正识别或作品", { exact: true }).click();
+  }
   await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
   await recognition.first().selectOption("C");
   await card.getByRole("button", { name: "保存并重新分析" }).click();
@@ -100,27 +108,28 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   );
   await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(
-    page.getByRole("heading", { name: "执行结果未知" }),
-  ).toBeVisible();
-  expect(executePosts()).toHaveLength(1);
-  expect(
-    await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
-  ).toEqual({ sourceExists: true, destinationTargets: [] });
-
-  await page.getByRole("button", { name: "核对提交结果" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  // The retained request is reconciled automatically under the same
+  // backend-authenticated principal; there is no manual query button.
+  await expect(page).toHaveURL(/\/operations\?.*run=/, {
+    timeout: 30_000,
+  });
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /核对提交结果/ })).toHaveCount(
+    0,
+  );
   expect(executePosts()).toHaveLength(1);
   expect(
     api.filter(
       (entry) =>
         entry.method === "GET" &&
         /\/operations\/organize\/previews\/[^/]+\/admission$/.test(entry.path),
-    ),
-  ).toHaveLength(1);
+    ).length,
+  ).toBeGreaterThanOrEqual(1);
+  expect(
+    await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
+  ).toEqual({ sourceExists: true, destinationTargets: [] });
 
   // A reload and reconnect retain the same Chinese principal and the exact
   // selected run. The token stays memory-only and the admission is not

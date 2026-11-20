@@ -22,6 +22,7 @@ import {
 
 const BASE = "http://127.0.0.1:4183";
 const ADMIN_TOKEN = "harness-admin-token";
+type Json = Record<string, unknown>;
 const DIALOG_FILE = (index: number) =>
   `Dialog${String(index).padStart(2, "0")}.2011.mkv`;
 const UNKNOWN_FILE = "DialogUnknown.2021.mkv";
@@ -397,12 +398,17 @@ test("an unknown Execute response is reconciled into the exact Task without a re
     },
   );
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(
-    page.getByRole("heading", { name: "执行结果未知" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: /核对提交结果/ }),
-  ).toBeVisible();
+  // The saved original request is read automatically and hands off the exact
+  // Task; there is no manual reconciliation button.
+  await expect(page).toHaveURL(/\/operations\?.*run=/, {
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("button", { name: /核对提交结果/ })).toHaveCount(
+    0,
+  );
 
   const executePosts = () =>
     commands.filter(
@@ -414,22 +420,12 @@ test("an unknown Execute response is reconciled into the exact Task without a re
   // The unknown response did not trigger a second submission.
   await page.waitForTimeout(500);
   expect(executePosts()).toHaveLength(1);
-
-  await page.getByRole("button", { name: /核对提交结果/ }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
-  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
-    timeout: 30_000,
-  });
-  expect(executePosts()).toHaveLength(1);
-  expect(
-    commands.filter(
-      (command) =>
-        command.method === "GET" &&
-        /\/operations\/organize\/previews\/[^/]+\/admission$/.test(
-          command.path,
-        ),
-    ),
-  ).toHaveLength(1);
+  const admissionGets = commands.filter(
+    (command) =>
+      command.method === "GET" &&
+      /\/operations\/organize\/previews\/[^/]+\/admission$/.test(command.path),
+  );
+  expect(admissionGets.length).toBeGreaterThanOrEqual(1);
 
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
@@ -468,9 +464,11 @@ test("a Task reopened after a lost Execute reconciles its original accepted subm
 
   await card.getByRole("button", { name: /整批复核/ }).click();
   // The production API commits the exact admission, then the browser loses
-  // only the response. The original card's state is deliberately discarded by
-  // the reload below, as it is when the operator reopens a later session.
+  // only the response. Admission reads stay blocked so the retained request
+  // survives the deliberate reload, exactly like a later session that has not
+  // yet read the durable outcome.
   let dropped = false;
+  let blockAdmission = true;
   await page.route(
     /\/api\/operations\/organize\/previews\/[^/]+\/execute$/,
     async (route) => {
@@ -483,10 +481,20 @@ test("a Task reopened after a lost Execute reconciles its original accepted subm
       await route.abort("connectionreset");
     },
   );
+  await page.route(
+    /\/api\/operations\/organize\/previews\/[^/]+\/admission(\?|$)/,
+    async (route) => {
+      if (blockAdmission) {
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    },
+  );
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(
-    page.getByRole("heading", { name: "执行结果未知" }),
-  ).toBeVisible();
+    card.getByText(/原整理提交暂未确认|正在自动核对原整理提交/),
+  ).toBeVisible({ timeout: 30_000 });
   const executePosts = () =>
     commands.filter(
       (command) =>
@@ -499,6 +507,7 @@ test("a Task reopened after a lost Execute reconciles its original accepted subm
     /previews\/([^/]+)\/execute$/,
   ) ?? [])[1];
   expect(executePreviewId).toBeTruthy();
+  const commandMark = commands.length;
 
   // The real Worker finishes the durable original Task before the operator
   // reopens the Task Center.
@@ -516,63 +525,58 @@ test("a Task reopened after a lost Execute reconciles its original accepted subm
     itemCount: 1,
   });
 
+  // Reopen the exact Task in a later session. Once the read surface recovers,
+  // the retained original request is reconciled automatically and one line
+  // names the admitted Task; the removed card and manual button never return.
+  blockAdmission = false;
   await page.goto(`${BASE}/operations?run=${workerBody.taskId}`);
-  // Bearer material is memory-only: reconnecting stays on the exact Task
-  // Center deep link and proves the later-session entry.
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible({ timeout: 30_000 });
-  const submission = detail.getByRole("region", { name: "原整理提交" });
-  await expect(submission).toBeVisible();
-  await expect(submission).toContainText(reopenFile);
-  await expect(submission).toContainText("摘要版本");
-  await expect(submission).toContainText(
-    "不允许覆盖现有目标；不允许清理来源目录",
-  );
-  await expect(submission).toContainText("成功");
-  // The original in-page unknown state is gone; only the durable acceptance
-  // record and the Task's current result remain.
-  await expect(page.getByRole("heading", { name: "执行结果未知" })).toHaveCount(
+  await expect(detail.getByText(/已受理/)).toBeVisible({ timeout: 30_000 });
+  await expect(detail.getByRole("region", { name: "原整理提交" })).toHaveCount(
     0,
   );
-
-  const commandMark = commands.length;
-  await submission.getByRole("button", { name: "核对提交结果" }).click();
   await expect(
-    submission.getByRole("heading", { name: "核对结果" }),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(submission).toContainText("并指向本任务");
-  await expect(submission).toContainText("成功 1 项，失败 0 项");
+    detail.getByRole("button", { name: /核对提交结果/ }),
+  ).toHaveCount(0);
 
   const admissionGets = commands.filter(
     (command) =>
       command.method === "GET" &&
       /\/operations\/organize\/previews\/[^/]+\/admission$/.test(command.path),
   );
-  expect(admissionGets).toHaveLength(1);
-  expect(admissionGets[0]?.path).toBe(
-    `/api/operations/organize/previews/${executePreviewId}/admission`,
-  );
-  const admissionParams = new URLSearchParams(admissionGets[0]?.search ?? "");
-  expect(admissionParams.get("itemIds")).toBe(
-    (executeBody["itemIds"] as string[]).join(","),
-  );
-  expect(admissionParams.get("expectedIntentVersion")).toBe(
-    String(executeBody["expectedIntentVersion"]),
-  );
-  expect(admissionParams.get("allowOverwrite")).toBe(
-    String(executeBody["allowOverwrite"] === true),
-  );
-  expect(admissionParams.get("allowSourceCleanup")).toBe(
-    String(executeBody["allowSourceCleanup"] === true),
-  );
+  expect(admissionGets.length).toBeGreaterThanOrEqual(1);
+  for (const read of admissionGets) {
+    expect(read.path).toBe(
+      `/api/operations/organize/previews/${executePreviewId}/admission`,
+    );
+    const admissionParams = new URLSearchParams(read.search ?? "");
+    expect(admissionParams.get("itemIds")).toBe(
+      (executeBody["itemIds"] as string[]).join(","),
+    );
+    expect(admissionParams.get("expectedIntentVersion")).toBe(
+      String(executeBody["expectedIntentVersion"]),
+    );
+    expect(admissionParams.get("allowOverwrite")).toBe(
+      String(executeBody["allowOverwrite"] === true),
+    );
+    expect(admissionParams.get("allowSourceCleanup")).toBe(
+      String(executeBody["allowSourceCleanup"] === true),
+    );
+  }
 
   // The verification is a bounded read: the original Task is still the same,
   // no second Execute exists, and the later-session read issues no write.
   expect(executePosts()).toHaveLength(1);
   expect(
-    commands.slice(commandMark).filter((command) => command.method !== "GET"),
+    commands
+      .slice(commandMark)
+      .filter(
+        (command) =>
+          command.method !== "GET" && !/\/admission(\?|$)/.test(command.path),
+      ),
   ).toEqual([]);
 });
 
@@ -688,7 +692,9 @@ test("a second confirmation on the same Task is reconciled from its own durable 
   });
 
   // Drop only the second Execute's browser-visible response after the
-  // production API committed its durable admission.
+  // production API committed its durable admission. The saved B identity is
+  // read automatically; the removed Task card is never required.
+  const commandMark = commands.length;
   let dropped = false;
   await page.route(
     /\/api\/operations\/organize\/previews\/[^/]+\/execute$/,
@@ -705,7 +711,10 @@ test("a second confirmation on the same Task is reconciled from its own durable 
   await reopened.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByText(/将整理 1 项/)).toBeVisible();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page.getByText("执行结果未知")).toBeVisible({
+  await expect(page).toHaveURL(/\/operations\?.*run=/, {
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
   expect(executePosts()).toHaveLength(2);
@@ -718,78 +727,94 @@ test("a second confirmation on the same Task is reconciled from its own durable 
   expect(secondPreviewId).not.toBe(
     (executePosts()[0]?.path.match(/previews\/([^/]+)\/execute$/) ?? [])[1],
   );
-
-  // The real Worker completes the second admitted subset on the same Task.
-  const secondWorker = await request.post(
-    `${BASE}/__harness__/run-manual-worker`,
-  );
-  expect(secondWorker.ok()).toBe(true);
-  expect(await secondWorker.json()).toMatchObject({
-    completed: true,
-    taskId,
-    status: "completed",
-    itemCount: 1,
-  });
-  expect((await fileState(secondFile)).sourceExists).toBe(false);
-
-  // A full reload and reconnect reopen the exact Task; both durable
-  // confirmations remain separately visible with their own results.
-  await page.goto(`${BASE}/operations?run=${taskId}`);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
-  const reopenedDetail = page.getByRole("dialog", { name: "运行详情" });
-  await expect(reopenedDetail).toBeVisible({ timeout: 30_000 });
-  const submissions = reopenedDetail.getByRole("region", {
-    name: "原整理提交",
-  });
-  await expect(submissions).toBeVisible();
-  await expect(submissions).toContainText("2 次已受理的精确整理提交");
-  const firstRecord = submissions.getByRole("article", {
-    name: "第 1 次提交",
-  });
-  const secondRecord = submissions.getByRole("article", {
-    name: "第 2 次提交",
-  });
-  await expect(firstRecord).toContainText(firstFile);
-  await expect(secondRecord).toContainText(secondFile);
-  await expect(firstRecord).toContainText("成功");
-  await expect(secondRecord).toContainText("成功");
-
-  const commandMark = commands.length;
-  await secondRecord.getByRole("button", { name: "核对提交结果" }).click();
-  await expect(
-    secondRecord.getByRole("heading", { name: "核对结果" }),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(secondRecord).toContainText("并指向本任务");
-  await expect(secondRecord).toContainText("成功 1 项，失败 0 项");
-
   const admissionGets = commands.filter(
     (command) =>
       command.method === "GET" &&
       /\/operations\/organize\/previews\/[^/]+\/admission$/.test(command.path),
   );
-  expect(admissionGets).toHaveLength(1);
-  expect(admissionGets[0]?.path).toBe(
-    `/api/operations/organize/previews/${secondPreviewId}/admission`,
-  );
-  const admissionParams = new URLSearchParams(admissionGets[0]?.search ?? "");
-  expect(admissionParams.get("itemIds")).toBe(
-    (secondPost?.body?.["itemIds"] as string[]).join(","),
-  );
-  expect(admissionParams.get("expectedIntentVersion")).toBe(
-    String(secondPost?.body?.["expectedIntentVersion"]),
-  );
-  expect(admissionParams.get("allowOverwrite")).toBe(
-    String(secondPost?.body?.["allowOverwrite"] === true),
-  );
-  expect(admissionParams.get("allowSourceCleanup")).toBe(
-    String(secondPost?.body?.["allowSourceCleanup"] === true),
-  );
+  expect(admissionGets.length).toBeGreaterThanOrEqual(1);
+  // Each retained batch reads only its own original identity. The first
+  // batch's automatic pre-submit read and the second batch's lost-response
+  // read are both legitimate and must not cross.
+  const postByPreview = new Map<string, Json | undefined>();
+  for (const post of executePosts()) {
+    const previewId = (post.path.match(/previews\/([^/]+)\/execute$/) ?? [])[1];
+    if (previewId !== undefined) {
+      postByPreview.set(previewId, post.body ?? undefined);
+    }
+  }
+  for (const read of admissionGets) {
+    const previewId =
+      read.path.match(/previews\/([^/]+)\/admission$/)?.[1] ?? "";
+    const post = postByPreview.get(previewId);
+    expect(post).toBeDefined();
+    const admissionParams = new URLSearchParams(read.search ?? "");
+    expect(admissionParams.get("itemIds")).toBe(
+      (post?.["itemIds"] as string[]).join(","),
+    );
+    expect(admissionParams.get("expectedIntentVersion")).toBe(
+      String(post?.["expectedIntentVersion"]),
+    );
+    expect(admissionParams.get("allowOverwrite")).toBe(
+      String(post?.["allowOverwrite"] === true),
+    );
+    expect(admissionParams.get("allowSourceCleanup")).toBe(
+      String(post?.["allowSourceCleanup"] === true),
+    );
+  }
+
+  // The real Worker completes the second admitted subset on the same Task.
+  // The harness may advance a multi-item Task through its production named
+  // fallback instead of the single-execution claim, so the durable file effect
+  // and the API records are the proof, not the harness's completion flag.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (!(await fileState(secondFile)).sourceExists) break;
+    const secondWorker = await request.post(
+      `${BASE}/__harness__/run-manual-worker`,
+    );
+    expect(secondWorker.ok()).toBe(true);
+  }
+  const secondState = await fileState(secondFile);
+  expect(secondState.sourceExists).toBe(false);
+  expect(secondState.destinationTargets).toHaveLength(1);
+
+  // A full reload and reconnect reopen the exact Task. Both durable
+  // confirmations remain readable through the API, while the Task detail
+  // keeps its progress/results and no submission card or manual button.
+  await page.goto(`${BASE}/operations?run=${taskId}`);
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  const reopenedDetail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(reopenedDetail).toBeVisible({ timeout: 30_000 });
+  await expect(reopenedDetail).toContainText("已完成");
+  await expect(
+    reopenedDetail.getByRole("region", { name: "原整理提交" }),
+  ).toHaveCount(0);
+  await expect(
+    reopenedDetail.getByRole("button", { name: /核对提交结果/ }),
+  ).toHaveCount(0);
+
+  const runRead = await request.get(`${BASE}/api/operations/runs/${taskId}`, {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
+  expect(runRead.ok()).toBe(true);
+  const runDocument = (await runRead.json()) as {
+    readonly manualOrganizeSubmissions: readonly unknown[];
+  };
+  expect(runDocument.manualOrganizeSubmissions).toHaveLength(2);
 
   // The read-only reconciliation did not replay or add a third execution.
   expect(executePosts()).toHaveLength(2);
   expect(
-    commands.slice(commandMark).filter((command) => command.method !== "GET"),
+    commands
+      .slice(commandMark)
+      .filter(
+        (command) =>
+          command.method !== "GET" &&
+          !/\/operations\/organize\/previews\/[^/]+\/execute$/.test(
+            command.path,
+          ),
+      ),
   ).toEqual([]);
 });
 
@@ -1458,8 +1483,12 @@ test("an unknown original submission is reconciled under a newer sibling summary
   expect(executePosts()).toHaveLength(0);
 
   // Let the production API commit its durable admission, then drop only the
-  // browser-visible response: the operator cannot know the outcome.
+  // browser-visible response. Admission reads stay blocked until the newer
+  // sibling summary exists, so the automatic check exercises the original
+  // retained identity across a plan change.
   let dropped = false;
+  let blockAdmission = true;
+  let admittedTaskId = "";
   await page.route(
     /\/api\/operations\/organize\/previews\/[^/]+\/execute$/,
     async (route) => {
@@ -1468,15 +1497,32 @@ test("an unknown original submission is reconciled under a newer sibling summary
         return;
       }
       dropped = true;
-      await route.fetch();
+      const admitted = await route.fetch();
+      const admittedBody = (await admitted.json().catch(() => null)) as {
+        readonly taskId?: unknown;
+      } | null;
+      admittedTaskId =
+        typeof admittedBody?.taskId === "string" ? admittedBody.taskId : "";
       await route.abort("connectionreset");
     },
   );
+  await page.route(
+    /\/api\/operations\/organize\/previews\/[^/]+\/admission(\?|$)/,
+    async (route) => {
+      if (blockAdmission) {
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    },
+  );
   await card.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(card.getByText("执行结果未知")).toBeVisible({ timeout: 30_000 });
   await expect(
-    card.getByRole("button", { name: /核对提交结果/ }),
-  ).toBeVisible();
+    card.getByText(/原整理提交暂未确认|正在自动核对原整理提交/),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByRole("button", { name: /核对提交结果/ })).toHaveCount(
+    0,
+  );
   await page.waitForTimeout(500);
   expect(executePosts()).toHaveLength(1);
   const executeBody = executePosts()[0]?.body ?? {};
@@ -1488,18 +1534,37 @@ test("an unknown original submission is reconciled under a newer sibling summary
   expect(executeBody["confirmation"]).toBe(true);
 
   // The real Worker completes the admitted MOVE first: the confirmed file is
-  // gone from the source and its exact target exists.
-  const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
-  expect(worker.ok()).toBe(true);
-  const workerBody = (await worker.json()) as {
+  // gone from the source and its exact target exists. The shared harness can
+  // have another fixture Task ahead of this one, so repeat until the exact
+  // admitted Task is the one that completed.
+  expect(admittedTaskId).toBeTruthy();
+  let workerBody: {
     readonly completed: boolean;
     readonly status: string;
     readonly taskId: string;
     readonly itemCount: number;
-  };
+  } | null = null;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
+    expect(worker.ok()).toBe(true);
+    const body = (await worker.json()) as {
+      readonly completed: boolean;
+      readonly status: string;
+      readonly taskId: string;
+      readonly itemCount: number;
+    };
+    if (body.taskId === admittedTaskId) {
+      workerBody = body;
+      break;
+    }
+  }
+  if (workerBody === null) {
+    throw new Error("the real Worker did not complete the admitted Task");
+  }
   expect(workerBody).toMatchObject({
     completed: true,
     status: "completed",
+    taskId: admittedTaskId,
     itemCount: 1,
   });
   const moved = await stateFor(runFile);
@@ -1553,46 +1618,47 @@ test("an unknown original submission is reconciled under a newer sibling summary
   await expect(card.getByText(`方案 ${newerPreviewId}`)).toBeVisible({
     timeout: 30_000,
   });
-  await expect(card.getByText("执行结果未知")).toBeVisible();
+  await expect(
+    card.getByText(/原整理提交暂未确认|读取暂时失败|正在自动核对/),
+  ).toBeVisible();
   expect(executePosts()).toHaveLength(1);
 
-  // One bounded read of the original request proves `known` and opens the
-  // exact original Task; the newer summary is never the lookup target.
-  await card.getByRole("button", { name: "核对提交结果" }).click();
+  // Restore the read surface. The automatic check proves the original
+  // request and opens the exact original Task; the newer summary is never the
+  // lookup target.
+  blockAdmission = false;
   await expect(page).toHaveURL(/\/operations\?.*run=/, {
     timeout: 30_000,
   });
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
-  const admissionGets = () =>
-    commands.filter(
-      (command) =>
-        command.method === "GET" &&
-        /\/operations\/organize\/previews\/[^/]+\/admission$/.test(
-          command.path,
-        ),
+  const admissionGets = commands.filter(
+    (command) =>
+      command.method === "GET" &&
+      /\/operations\/organize\/previews\/[^/]+\/admission$/.test(command.path),
+  );
+  expect(admissionGets.length).toBeGreaterThanOrEqual(1);
+  for (const read of admissionGets) {
+    expect(read.path).toBe(
+      `/api/operations/organize/previews/${executePreviewId}/admission`,
     );
-  expect(admissionGets()).toHaveLength(1);
-  expect(admissionGets()[0]?.path).toBe(
-    `/api/operations/organize/previews/${executePreviewId}/admission`,
-  );
-
-  // Item-by-item identity: every admission parameter equals the original
-  // Execute request, whatever the newer summary says.
-  const admissionParams = new URLSearchParams(admissionGets()[0]?.search ?? "");
-  expect(admissionParams.get("itemIds")).toBe(
-    (executeBody["itemIds"] as string[]).join(","),
-  );
-  expect(admissionParams.get("expectedIntentVersion")).toBe(
-    String(executeBody["expectedIntentVersion"]),
-  );
-  expect(admissionParams.get("allowOverwrite")).toBe(
-    String(executeBody["allowOverwrite"] === true),
-  );
-  expect(admissionParams.get("allowSourceCleanup")).toBe(
-    String(executeBody["allowSourceCleanup"] === true),
-  );
+    // Item-by-item identity: every admission parameter equals the original
+    // Execute request, whatever the newer summary says.
+    const admissionParams = new URLSearchParams(read.search ?? "");
+    expect(admissionParams.get("itemIds")).toBe(
+      (executeBody["itemIds"] as string[]).join(","),
+    );
+    expect(admissionParams.get("expectedIntentVersion")).toBe(
+      String(executeBody["expectedIntentVersion"]),
+    );
+    expect(admissionParams.get("allowOverwrite")).toBe(
+      String(executeBody["allowOverwrite"] === true),
+    );
+    expect(admissionParams.get("allowSourceCleanup")).toBe(
+      String(executeBody["allowSourceCleanup"] === true),
+    );
+  }
 
   // The handoff carries the exact original Task the Worker completed, never a
   // guessed or newest run, and the total is still one Execute.

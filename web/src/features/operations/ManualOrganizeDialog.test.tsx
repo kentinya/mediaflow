@@ -110,9 +110,9 @@ function makeBackend() {
     // exactly those files, so a two-file journey is a two-item plan.
     selectedPaths: [] as string[],
     // The A53-01 journey: an overwrite the operator must authorize on every
-    // exact summary, and one bounded admission-read failure.
+    // exact summary, and bounded admission-read failures.
     requireOverwrite: false as boolean,
-    failAdmissionOnce: false as boolean,
+    failAdmissionReads: 0 as number,
     // Previews whose Execute the backend durably admitted. A lost response
     // changes nothing about this record.
     admittedPreviewIds: [] as string[],
@@ -559,6 +559,10 @@ function makeBackend() {
       const url = String(input);
       const method = init?.method ?? "GET";
 
+      if (url === "/api/auth/principal" && method === "GET") {
+        return jsonResponse({ principal_id: "dialog-operator" });
+      }
+
       if (url === "/api/system/status") {
         return jsonResponse({
           system: {
@@ -946,8 +950,8 @@ function makeBackend() {
           previewId,
           params: Object.fromEntries(new URLSearchParams(rawQuery)),
         });
-        if (state.failAdmissionOnce) {
-          state.failAdmissionOnce = false;
+        if (state.failAdmissionReads > 0) {
+          state.failAdmissionReads -= 1;
           return jsonResponse({ error: { code: "unavailable" } }, 503);
         }
         if (!state.admittedPreviewIds.includes(previewId)) {
@@ -1142,12 +1146,16 @@ function makeBackend() {
 type Backend = ReturnType<typeof makeBackend>;
 
 beforeEach(() => {
+  window.localStorage.clear();
+  window.sessionStorage.clear();
   window.history.replaceState(null, "", "/");
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
   authStore.clearToken();
+  window.localStorage.clear();
+  window.sessionStorage.clear();
   document.body.innerHTML = "";
 });
 
@@ -1876,18 +1884,13 @@ describe("ManualOrganizeDialog", () => {
     await screen.findByRole("region", { name: "整批复核" });
     await user.click(screen.getByRole("button", { name: "确认整理 10 项" }));
 
-    await screen.findByText(/执行结果未知/);
     expect(backend.calls.executePosts).toHaveLength(1);
-    // Escape / close stay locked: the unknown outcome must be reconciled, not
-    // abandoned.
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.getByRole("dialog", { name: "整理所选文件" })).toBeVisible();
-    fireEvent.keyDown(document.body, { key: "Escape" });
-    expect(screen.getByRole("dialog", { name: "整理所选文件" })).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "核对提交结果" }));
-
-    await waitFor(() => expect(backend.calls.admissionReads).toBe(1));
+    // The saved request is read automatically; no manual reconciliation
+    // button and no second Execute exist.
+    expect(screen.queryByRole("button", { name: /核对提交结果/ })).toBeNull();
+    await waitFor(() =>
+      expect(backend.calls.admissionReads).toBeGreaterThanOrEqual(1),
+    );
     expect(backend.calls.executePosts).toHaveLength(1); // never re-submitted
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
@@ -1900,7 +1903,7 @@ describe("ManualOrganizeDialog", () => {
       run: "task-handoff-1",
     });
     expect(backend.calls.executePosts).toHaveLength(1);
-    expect(backend.calls.admissionReads).toBe(1);
+    expect(backend.calls.admissionReads).toBeGreaterThanOrEqual(1);
   }, 30_000);
 
   it("keeps unknown batches independent: unready and past-admitted siblings stay outside the fresh confirmation", async () => {
@@ -2251,7 +2254,7 @@ describe("ManualOrganizeDialog", () => {
       (value) => {
         value.state.flipPreviewOnAnalyze = true;
         value.state.requireOverwrite = true;
-        value.state.failAdmissionOnce = true;
+        value.state.failAdmissionReads = Number.MAX_SAFE_INTEGER;
       },
       [filename(0), filename(1)],
     );
@@ -2295,7 +2298,7 @@ describe("ManualOrganizeDialog", () => {
     const confirm = screen.getByRole("button", { name: "确认整理 1 项" });
     await waitFor(() => expect(confirm).toBeEnabled());
     await user.click(confirm);
-    await screen.findByText(/执行结果未知/);
+    await screen.findByText(/原整理提交暂未确认|正在自动核对原整理提交/);
     expect(backend.calls.executePosts).toHaveLength(1);
     expect(backend.calls.executePreviewIds).toEqual([PREVIEW_ID]);
     expect(backend.calls.executePosts[0]).toMatchObject({
@@ -2305,12 +2308,24 @@ describe("ManualOrganizeDialog", () => {
       allowOverwrite: true,
       allowSourceCleanup: false,
     });
-    expect(backend.calls.admissionRequests).toHaveLength(0);
 
-    // Still unknown: no second Execute, no guessed handoff.
+    // The saved original request is read automatically; there is no manual
+    // reconciliation control and no second Execute.
+    expect(screen.queryByRole("button", { name: /核对提交结果/ })).toBeNull();
     expect(
       screen.getByRole("button", { name: "确认整理 1 项" }),
     ).toBeDisabled();
+
+    // The first bounded read fails. The original unknown restriction stays,
+    // and no denial from another summary is invented.
+    await waitFor(() =>
+      expect(backend.calls.admissionRequests.length).toBeGreaterThanOrEqual(1),
+    );
+    await screen.findByText(/读取暂时失败|暂未确认/);
+    expect(screen.queryByText(/没有被受理/)).toBeNull();
+    expect(screen.queryByText(/没有发生整理变更/)).toBeNull();
+    expect(backend.calls.admissionRequests[0]?.previewId).toBe(PREVIEW_ID);
+    expect(backend.calls.executePosts).toHaveLength(1);
 
     // The untouched sibling is corrected (RecognitionType C) and re-analyzed:
     // a newer exact summary appears while the original request stays unknown.
@@ -2337,33 +2352,20 @@ describe("ManualOrganizeDialog", () => {
       name: "我确认允许按已审阅方案替换现有目标文件",
     });
     expect(freshOverwrite).not.toBeChecked();
-    expect(screen.getByText(/执行结果未知/)).toBeVisible();
     expect(
       screen.getByRole("button", { name: "确认整理 1 项" }),
     ).toBeDisabled();
     expect(backend.calls.executePosts).toHaveLength(1);
 
-    // First bounded read fails: the original unknown restriction stays and no
-    // denial from another summary is invented.
-    await user.click(screen.getByRole("button", { name: "核对提交结果" }));
-    await waitFor(() =>
-      expect(backend.calls.admissionRequests).toHaveLength(1),
-    );
-    await screen.findByText(/Operations unavailable/);
-    expect(screen.getByText(/执行结果未知/)).toBeVisible();
-    expect(screen.queryByText(/没有被受理/)).toBeNull();
-    expect(screen.queryByText(/没有发生整理变更/)).toBeNull();
-    expect(backend.calls.admissionRequests[0]?.previewId).toBe(PREVIEW_ID);
-    expect(backend.calls.executePosts).toHaveLength(1);
-
-    // One explicit re-read of the same original request proves `known` and
-    // hands off the exact original Task.
-    await user.click(screen.getByRole("button", { name: "重新核对提交结果" }));
-    await waitFor(() =>
-      expect(backend.calls.admissionRequests).toHaveLength(2),
-    );
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    // Restore the read surface: the automatic check now proves the original
+    // request and hands off the exact original Task without any manual click.
+    backend.state.failAdmissionReads = 0;
+    await waitFor(
+      () =>
+        expect(
+          screen.queryByRole("dialog", { name: "整理所选文件" }),
+        ).toBeNull(),
+      { timeout: 15_000 },
     );
     await waitFor(() =>
       expect(backend.router.state.location.pathname).toBe("/operations"),
@@ -2372,11 +2374,12 @@ describe("ManualOrganizeDialog", () => {
       run: "task-handoff-1",
     });
 
-    // Exactly one Execute; every reconciliation request carries exactly the
-    // original identity, item by item, and never the newer summary.
+    // Exactly one Execute; every automatic reconciliation request carries
+    // exactly the original identity, item by item, and never the newer
+    // summary.
     expect(backend.calls.executePosts).toHaveLength(1);
     const executed = backend.calls.executePosts[0]!;
-    expect(backend.calls.admissionRequests).toHaveLength(2);
+    expect(backend.calls.admissionRequests.length).toBeGreaterThanOrEqual(2);
     for (const read of backend.calls.admissionRequests) {
       expect(read.previewId).toBe(PREVIEW_ID);
       expect(read.params["itemIds"]).toBe(
@@ -2393,5 +2396,143 @@ describe("ManualOrganizeDialog", () => {
         (read) => read.previewId === "preview-2",
       ),
     ).toBe(false);
+  }, 30_000);
+
+  it("shows one pending line before the original POST commits, then converges automatically", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, undefined, [filename(0)]);
+    await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    await screen.findByRole("region", { name: "整批复核" });
+
+    const original = backend.fetchMock.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    const releaseExecute: { current: (() => void) | null } = { current: null };
+    let executeAttempts = 0;
+    let held: Promise<void> | null = null;
+    backend.fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/execute") && held === null) {
+        executeAttempts += 1;
+        held = new Promise<void>((resolve) => {
+          releaseExecute.current = resolve;
+        });
+        await held;
+        await original(input, init);
+        return jsonResponse({ error: { code: "unavailable" } }, 503);
+      }
+      return original(input, init);
+    });
+
+    await user.click(screen.getByRole("button", { name: "确认整理 1 项" }));
+    // The first bounded read runs while the original POST is still in flight
+    // and honestly reports no durable record yet.
+    await waitFor(() =>
+      expect(backend.calls.admissionReads).toBeGreaterThanOrEqual(1),
+    );
+    await screen.findByText(/暂未确认/);
+    expect(screen.queryByRole("button", { name: /核对提交结果/ })).toBeNull();
+    expect(executeAttempts).toBe(1);
+
+    // The delayed original request now commits. The next automatic read finds
+    // the same durable admission and hands off the exact Task.
+    releaseExecute.current?.();
+    await waitFor(
+      () =>
+        expect(
+          screen.queryByRole("dialog", { name: "整理所选文件" }),
+        ).toBeNull(),
+      { timeout: 15_000 },
+    );
+    await waitFor(() =>
+      expect(backend.router.state.location.pathname).toBe("/operations"),
+    );
+    expect(backend.router.state.location.search).toMatchObject({
+      run: "task-handoff-1",
+    });
+    expect(executeAttempts).toBe(1);
+    expect(backend.calls.admissionRequests[0]?.previewId).toBe(PREVIEW_ID);
+  }, 30_000);
+
+  it("offers one explicit confirmation of the exact retained batch after a proven no-record read", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, undefined, [filename(0)]);
+    await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    await screen.findByRole("region", { name: "整批复核" });
+
+    const original = backend.fetchMock.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    let executeAttempts = 0;
+    backend.fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/execute")) {
+        executeAttempts += 1;
+        if (executeAttempts === 1) {
+          // The first request never reaches the backend.
+          return jsonResponse({ error: { code: "unavailable" } }, 503);
+        }
+      }
+      return original(input, init);
+    });
+
+    await user.click(screen.getByRole("button", { name: "确认整理 1 项" }));
+    const retry = await screen.findByRole(
+      "button",
+      { name: "确认同一批（1 项）" },
+      { timeout: 10_000 },
+    );
+    expect(screen.getByText(/暂未确认/)).toBeVisible();
+    expect(backend.calls.admissionRequests.length).toBeGreaterThanOrEqual(2);
+    expect(executeAttempts).toBe(1);
+
+    await user.click(retry);
+    await waitFor(
+      () =>
+        expect(
+          screen.queryByRole("dialog", { name: "整理所选文件" }),
+        ).toBeNull(),
+      { timeout: 15_000 },
+    );
+    expect(executeAttempts).toBe(2);
+    expect(backend.calls.executePosts).toHaveLength(1);
+    expect(backend.calls.executePosts[0]).toMatchObject({
+      itemIds: ["item-1"],
+      expectedIntentVersion: 7,
+      allowOverwrite: false,
+      allowSourceCleanup: false,
+    });
+    // The durable admission is still one exact batch; the first request never
+    // reached the server.
+    expect(backend.router.state.location.search).toMatchObject({
+      run: "task-handoff-1",
+    });
+  }, 30_000);
+
+  it("does not send a confirmation when its exact identity cannot be retained", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, undefined, [filename(0)]);
+    await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    await screen.findByRole("region", { name: "整批复核" });
+    const confirm = screen.getByRole("button", { name: "确认整理 1 项" });
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("quota");
+      });
+    try {
+      await user.click(confirm);
+    } finally {
+      setItem.mockRestore();
+    }
+    expect(await screen.findByText(/无法保存可核对的请求身份/)).toBeVisible();
+    expect(backend.calls.executePosts).toHaveLength(0);
+    // The reviewed selection is still present for the operator to retry.
+    expect(screen.getByRole("button", { name: "确认整理 1 项" })).toBeEnabled();
   }, 30_000);
 });

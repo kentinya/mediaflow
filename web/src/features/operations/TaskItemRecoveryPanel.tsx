@@ -6,6 +6,7 @@ import {
   executeOrganizePreview,
   fetchOrganizeAdmissionOutcome,
   ignoreTaskItemReview,
+  type OrganizeAdmissionOutcomeRead,
   prepareTaskItemRecoverySummary,
   searchTaskItemMetadata,
   submitTaskItemRecoveryDecision,
@@ -38,6 +39,15 @@ import {
   clearTaskItemRecoveryConfirmation,
   readTaskItemRecoveryConfirmation,
 } from "./task-item-recovery-confirmation-session";
+import {
+  useOrganizeAdmissionWatchGroup,
+  type OrganizeAdmissionWatchEntry,
+} from "./organize-admission-watch";
+import {
+  organizeConfirmationKey,
+  type OrganizeConfirmationSubmission,
+  type OrganizeConfirmationWork,
+} from "./organize-confirmation-session";
 
 const DECISION_LABELS: Readonly<Record<TaskItemDecisionKind, string>> = {
   recognition: "识别",
@@ -585,6 +595,21 @@ export function TaskItemRecoveryPanel({
     });
   };
 
+  const admissionOutcomeMessage = (
+    model: OrganizeAdmissionOutcomeModel,
+  ): string => {
+    if (model.executionId === null || model.taskId === null) {
+      return "已读取持久状态：本次确认已经受理。 ";
+    }
+    return (
+      "已读取持久状态：本次确认已经受理。 " +
+      `原执行 ${model.executionId} 已归属 Task ${model.taskId}` +
+      `（${model.status ?? "未知"}，选中 ${model.selectedItemIds.length} 项，` +
+      `已完成 ${model.completedItemCount} 项、失败 ${model.failedItemCount} 项）。 ` +
+      "没有重发请求；当前文件按自己的持久状态继续处理。 "
+    );
+  };
+
   // After a reload or re-auth the in-memory session store is empty, but the
   // exact submitted confirmation stays retained under the same principal,
   // run, Task and item. Restoring it brings back the read-only
@@ -619,7 +644,7 @@ export function TaskItemRecoveryPanel({
       repeatLocked: true,
       submittedConfirmation: retained,
       message:
-        "此前的确认响应未送达；已恢复本次提交的原请求身份。点击“重新读取条目后再继续”读取原受理结果；读取是只读的，不会重发确认。",
+        "此前的确认响应未送达；已恢复本次提交的原请求身份，正在自动只读核对原受理结果，不会重发确认。",
     });
   }, [
     principalIdentity,
@@ -632,6 +657,118 @@ export function TaskItemRecoveryPanel({
     repeatLocked,
     updateRecoverySession,
   ]);
+
+  const confirmationWork: OrganizeConfirmationWork = {
+    kind: "recovery",
+    runId,
+    taskId,
+    itemId,
+  };
+  const confirmationSubmission: OrganizeConfirmationSubmission | null =
+    submittedConfirmation === null
+      ? null
+      : {
+          previewId: submittedConfirmation.previewId,
+          itemIds: [...submittedConfirmation.itemIds],
+          expectedIntentVersion: submittedConfirmation.expectedIntentVersion,
+          allowOverwrite: submittedConfirmation.allowOverwrite,
+          allowSourceCleanup: submittedConfirmation.allowSourceCleanup,
+        };
+  const confirmationWatchEntries: readonly OrganizeAdmissionWatchEntry[] =
+    submittedConfirmation === null || confirmationSubmission === null
+      ? []
+      : [
+          {
+            key: organizeConfirmationKey(
+              confirmationWork,
+              confirmationSubmission,
+            ),
+            submission: confirmationSubmission,
+            workId: taskId,
+          },
+        ];
+  const handleConfirmationOutcome = (
+    _entry: OrganizeAdmissionWatchEntry,
+    outcome: OrganizeAdmissionOutcomeRead,
+    attempt: number,
+  ) => {
+    if (principalIdentity.resolved !== true) return;
+    const confirmed = submittedConfirmation;
+    if (confirmed === null || !outcome.ok) return;
+    const principal = principalIdentity.principalId;
+    const model = outcome.model;
+    if (model.outcome === "known") {
+      clearTaskItemRecoveryConfirmation(
+        principal,
+        { runId, taskId, itemId },
+        confirmed,
+      );
+      updateRecoverySession({
+        repeatLocked: false,
+        submittedConfirmation: null,
+        message: admissionOutcomeMessage(model),
+      });
+      refreshLinkedReads();
+      return;
+    }
+    if (model.outcome === "not_admitted" && attempt >= 2) {
+      // The first no-record answer may precede the original POST's commit.
+      // Two successful reads, after the submit itself settled, are the
+      // bounded absence evidence that makes an explicit confirmation safe;
+      // the backend's atomic admission still deduplicates any race.
+      clearTaskItemRecoveryConfirmation(
+        principal,
+        { runId, taskId, itemId },
+        confirmed,
+      );
+      const samePreparedSummary =
+        durablePreparation?.preparationId === confirmed.preparationId &&
+        durablePreparation.status === "prepared";
+      updateRecoverySession({
+        repeatLocked: false,
+        submittedConfirmation: null,
+        message: samePreparedSummary
+          ? "本次确认未获受理；已读回同一计划摘要，可重新检查后再次确认。 "
+          : "本次确认未获受理；当前计划摘要已变化，请按当前状态继续。 ",
+      });
+      return;
+    }
+    if (model.outcome === "not_equivalent") {
+      updateRecoverySession({
+        repeatLocked: true,
+        message:
+          "同一预览下存在其他受理记录，但没有证明本次提交；保持提交锁定，请核对原 Task 与当前摘要。 ",
+      });
+    }
+  };
+  const confirmationWatch = useOrganizeAdmissionWatchGroup({
+    enabled:
+      submittedConfirmation !== null &&
+      principalIdentity.resolved === true &&
+      !(busy && pendingAction === "confirm"),
+    token,
+    principalId:
+      principalIdentity.resolved === true
+        ? principalIdentity.principalId
+        : null,
+    entries: confirmationWatchEntries,
+    onOutcome: handleConfirmationOutcome,
+  });
+  const confirmationWatchState =
+    submittedConfirmation === null
+      ? null
+      : (confirmationWatch.states.get(
+          organizeConfirmationKey(
+            confirmationWork,
+            confirmationSubmission as OrganizeConfirmationSubmission,
+          ),
+        ) ?? null);
+  const confirmationWatchActive =
+    submittedConfirmation !== null &&
+    !(busy && pendingAction === "confirm") &&
+    (confirmationWatchState === null ||
+      (!confirmationWatchState.exhausted &&
+        confirmationWatchState.phase !== "not_equivalent"));
 
   const continueAt = async (
     expectedCheckpointVersion: string,
@@ -1016,21 +1153,6 @@ export function TaskItemRecoveryPanel({
         projection.machineStage === "analysis",
       status: projection.machineStage,
     };
-  };
-
-  const admissionOutcomeMessage = (
-    model: OrganizeAdmissionOutcomeModel,
-  ): string => {
-    if (model.executionId === null || model.taskId === null) {
-      return "已读取持久状态：本次确认已经受理。 ";
-    }
-    return (
-      "已读取持久状态：本次确认已经受理。 " +
-      `原执行 ${model.executionId} 已归属 Task ${model.taskId}` +
-      `（${model.status ?? "未知"}，选中 ${model.selectedItemIds.length} 项，` +
-      `已完成 ${model.completedItemCount} 项、失败 ${model.failedItemCount} 项）。 ` +
-      "没有重发请求；当前文件按自己的持久状态继续处理。 "
-    );
   };
 
   const reconcile = async () => {
@@ -1598,7 +1720,7 @@ export function TaskItemRecoveryPanel({
               这里不会重新提交整理，也不会执行任何文件操作。
             </p>
           ))}
-        {repeatLocked && (
+        {repeatLocked && !confirmationWatchActive && (
           <div className="mf-actions">
             <button
               type="button"

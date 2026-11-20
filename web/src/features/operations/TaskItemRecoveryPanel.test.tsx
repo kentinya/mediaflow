@@ -207,6 +207,7 @@ function recognitionRecovery(resolved = false): Record<string, unknown> {
 afterEach(() => {
   cleanup();
   authStore.clearToken();
+  window.localStorage.clear();
   window.sessionStorage.clear();
   vi.unstubAllGlobals();
 });
@@ -1562,15 +1563,9 @@ describe("TaskItemRecoveryPanel", () => {
         name: /确认继续整理 1 项/,
       }),
     );
-    // The unknown response is never reported as a proven zero effect.
-    expect(await within(panel).findByText(/请求响应未送达/)).toBeVisible();
-    expect(confirmAttempts).toBe(1);
-
-    // An explicit re-read reveals the admitted execution; the confirm action is
-    // no longer offered and no automatic retry POST is issued.
-    await user.click(
-      within(panel).getByRole("button", { name: /重新读取条目后再继续/ }),
-    );
+    // The unknown response is never reported as a proven zero effect; the
+    // retained request is read automatically, and no retry POST is issued.
+    await waitFor(() => expect(confirmAttempts).toBe(1));
     expect(
       await within(panel).findByText(/已读取持久状态：本次确认已经受理/),
     ).toBeVisible();
@@ -1694,9 +1689,9 @@ describe("TaskItemRecoveryPanel", () => {
         name: "确认继续整理 1 项",
       }),
     );
-    // The lost response is never reported as a proven refusal.
-    expect(await within(panel).findByText(/请求响应未送达/)).toBeVisible();
-    expect(confirmAttempts).toBe(1);
+    // The lost response is never reported as a proven refusal; the retained
+    // request is read automatically.
+    await waitFor(() => expect(confirmAttempts).toBe(1));
     expect(submittedBody).toMatchObject({
       preparationId: "preparation-1",
       itemIds: ["item-2"],
@@ -1705,18 +1700,15 @@ describe("TaskItemRecoveryPanel", () => {
       allowSourceCleanup: false,
     });
 
-    // The admission read proves the exact submitted sibling was admitted,
-    // even though the opened file's own summary is still prepared.
-    await user.click(
-      within(panel).getByRole("button", { name: /重新读取条目后再继续/ }),
-    );
+    // The automatic admission read proves the exact submitted sibling was
+    // admitted, even though the opened file's own summary is still prepared.
     expect(
       await within(panel).findByText(/原执行 execution-2 已归属 Task task-1/),
     ).toBeVisible();
     expect(
       within(panel).getByText(/已读取持久状态：本次确认已经受理/),
     ).toBeVisible();
-    expect(admissionReads).toBe(1);
+    expect(admissionReads).toBeGreaterThanOrEqual(1);
     expect(confirmAttempts).toBe(1);
     // The lock is gone and the opened file keeps its own legitimate state.
     expect(
@@ -1757,6 +1749,7 @@ describe("TaskItemRecoveryPanel", () => {
       next_action: "review the current plan summary and confirm",
     });
     let confirmAttempts = 0;
+    let allowAdmission = false;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1789,6 +1782,12 @@ describe("TaskItemRecoveryPanel", () => {
             "/api/operations/organize/previews/preview-1/admission?",
           )
         ) {
+          if (!allowAdmission) {
+            return new Response(
+              JSON.stringify({ error: { code: "unavailable" } }),
+              { status: 503 },
+            );
+          }
           const params = new URL(url, "http://localhost").searchParams;
           // The restored identity reads exactly the originally submitted
           // sibling subset and its intent version.
@@ -1834,8 +1833,7 @@ describe("TaskItemRecoveryPanel", () => {
         name: "确认继续整理 1 项",
       }),
     );
-    expect(await within(panel).findByText(/请求响应未送达/)).toBeVisible();
-    expect(confirmAttempts).toBe(1);
+    await waitFor(() => expect(confirmAttempts).toBe(1));
 
     // A provider rebuild: everything unmounts and mounts again, exactly like
     // the landing rebuilds after a reload or re-auth.  The in-memory session
@@ -1843,25 +1841,13 @@ describe("TaskItemRecoveryPanel", () => {
     // (The token transition itself is memory-only and is covered end-to-end
     // by the real reload journey in operations-inventory.python.spec.ts.)
     cleanup();
+    allowAdmission = true;
     renderWithProviders(<ReauthRecoveryHarness />);
     const restored = await screen.findByRole("region", {
       name: "条目审核与恢复",
     });
-    const reconcile = await within(restored).findByRole("button", {
-      name: /重新读取条目后再继续/,
-    });
-    expect(reconcile).toBeEnabled();
-    // The original submission stays locked: the durable summary's confirm
-    // action cannot be used to send a second Execute.
-    expect(
-      await within(restored).findByRole("button", {
-        name: /确认继续整理 1 项|正在受理/,
-      }),
-    ).toBeDisabled();
-    expect(confirmAttempts).toBe(1);
-
-    // The restored entry reconciles the exact submitted sibling admission.
-    await user.click(reconcile);
+    // The restored entry automatically reconciles the exact submitted
+    // sibling admission; no second Execute is sent.
     expect(
       await within(restored).findByText(
         /原执行 execution-2 已归属 Task task-1/,
@@ -2008,19 +1994,9 @@ describe("TaskItemRecoveryPanel", () => {
     expect(confirmAttempts).toBe(1);
 
     // The unknown outcome keeps the exact submitted preparation's lock and
-    // reconciliation entry after the late response.
+    // automatically reconciles the original admission after the late response.
     releaseConfirm?.();
     expect(await within(reopened).findByText(/请求响应未送达/)).toBeVisible();
-    expect(
-      within(reopened).getByRole("button", {
-        name: /重新读取条目后再继续/,
-      }),
-    ).toBeEnabled();
-    await user.click(
-      within(reopened).getByRole("button", {
-        name: /重新读取条目后再继续/,
-      }),
-    );
     expect(
       await within(reopened).findByText(/已读取持久状态：本次确认已经受理/),
     ).toBeVisible();

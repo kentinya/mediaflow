@@ -2,12 +2,16 @@
  * Principal-scoped retention of one Task-item recovery confirmation.
  *
  * The browser saves the exact submitted Execute identity BEFORE the POST. If
- * the response is lost and the panel is rebuilt by a reload or re-auth, the
- * original request stays readable from that identity instead of offering a
- * fresh confirmation that may duplicate admitted work. Only the submitted
- * selection, intent version, effect permissions and the exact run/Task/item
- * are retained; no token, checkpoint digest or reusable execution authority
- * is stored here.
+ * the response is lost and the panel is rebuilt by a reload, a reopen of the
+ * original Task or a re-auth, the original request stays readable from that
+ * identity instead of offering a fresh confirmation that may duplicate
+ * admitted work. Only the submitted selection, intent version, effect
+ * permissions and the exact run/Task/item are retained; no token, checkpoint
+ * digest or reusable execution authority is stored here.
+ *
+ * The entry lives in local storage so the same browser profile can reopen the
+ * Task after its tab was closed. The shared principal-session cleaner removes
+ * every entry when the credential or active account changes.
  *
  * The retained entry is consumed only by the read-only admission
  * reconciliation. It is cleared when the outcome is proven (accepted response,
@@ -105,7 +109,7 @@ function safeSubmission(
 function storage(): Storage | null {
   if (typeof window === "undefined") return null;
   try {
-    return window.sessionStorage;
+    return window.localStorage;
   } catch {
     return null;
   }
@@ -167,9 +171,13 @@ export function readTaskItemRecoveryConfirmation(
   if (session === null || segment === null || !safeIdentity(identity)) {
     return null;
   }
-  return readStoredConfirmation(
-    session.getItem(confirmationKey(segment, identity)),
-  );
+  try {
+    return readStoredConfirmation(
+      session.getItem(confirmationKey(segment, identity)),
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -193,24 +201,24 @@ export function beginTaskItemRecoveryConfirmationRetention(
   if (!safeIdentity(identity) || !safeSubmission(submission)) {
     return { ok: false, reason: "invalid-request" };
   }
-  const key = confirmationKey(segment, identity);
-  if (session.getItem(key) !== null) {
-    return { ok: false, reason: "already-pending" };
-  }
-  if (countRetained(session, segment) >= MAX_PENDING) {
-    return { ok: false, reason: "capacity" };
-  }
-  const stored = {
-    version: 1,
-    ...submission,
-    itemIds: [...submission.itemIds],
-  };
   try {
+    const key = confirmationKey(segment, identity);
+    if (session.getItem(key) !== null) {
+      return { ok: false, reason: "already-pending" };
+    }
+    if (countRetained(session, segment) >= MAX_PENDING) {
+      return { ok: false, reason: "capacity" };
+    }
+    const stored = {
+      version: 1,
+      ...submission,
+      itemIds: [...submission.itemIds],
+    };
     session.setItem(key, JSON.stringify(stored));
+    return { ok: true };
   } catch {
     return { ok: false, reason: "storage-unavailable" };
   }
-  return { ok: true };
 }
 
 function countRetained(session: Storage, segment: string): number {
@@ -278,11 +286,15 @@ registerPrincipalSessionDataCleaner(() => {
   const session = storage();
   if (session === null) return;
   const keys: string[] = [];
-  for (let index = 0; index < session.length; index += 1) {
-    const key = session.key(index);
-    if (key !== null && key.startsWith(CONFIRMATION_PREFIX)) {
-      keys.push(key);
+  try {
+    for (let index = 0; index < session.length; index += 1) {
+      const key = session.key(index);
+      if (key !== null && key.startsWith(CONFIRMATION_PREFIX)) {
+        keys.push(key);
+      }
     }
+  } catch {
+    return;
   }
   for (const key of keys) {
     try {

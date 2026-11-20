@@ -25,6 +25,7 @@
  */
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -37,9 +38,9 @@ import { useBlocker } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   executeOrganizePreview,
-  fetchOrganizeAdmissionOutcome,
   requestOrganizeDiscoveryAnalysis,
   updateOrganizeChoice,
+  type OrganizeAdmissionOutcomeRead,
 } from "../../shared/api/api-client";
 import type {
   OrganizeIntentItemModel,
@@ -53,6 +54,20 @@ import {
   useModalLayer,
 } from "../../shared/ui/modal-card";
 import { organizeDiscoveryQueryOptions } from "./discovery-query";
+import {
+  useOrganizeAdmissionWatchGroup,
+  type OrganizeAdmissionWatchEntry,
+  type OrganizeAdmissionWatchState,
+} from "./organize-admission-watch";
+import {
+  beginOrganizeConfirmationRetention,
+  clearOrganizeConfirmation,
+  organizeConfirmationKey,
+  readOrganizeConfirmations,
+  type OrganizeConfirmationSubmission,
+  type OrganizeConfirmationWork,
+  type RetainedOrganizeConfirmation,
+} from "./organize-confirmation-session";
 import {
   organizeExecutionListQueryKey,
   organizeExecutionListQueryOptions,
@@ -71,6 +86,7 @@ import {
   destructiveStatement,
   displayEnum,
 } from "./organize-summary";
+import { usePrincipalIdentity } from "./principal-identity-query";
 import {
   TaskItemRecoveryPanel,
   type TaskItemDecisionDraft,
@@ -124,13 +140,7 @@ interface SaveNotice {
  * later reconciliation ever read. A newer summary, a changed selection or a
  * re-read cannot rewrite any of its values.
  */
-interface OrganizeSubmissionIdentity {
-  readonly previewId: string;
-  readonly itemIds: readonly string[];
-  readonly intentVersion: number;
-  readonly allowOverwrite: boolean;
-  readonly allowSourceCleanup: boolean;
-}
+type OrganizeSubmissionIdentity = OrganizeConfirmationSubmission;
 
 const metadataKey = (value: {
   readonly provider: string | null;
@@ -189,7 +199,14 @@ export function ManualOrganizeDialog({
 }: ManualOrganizeDialogProps) {
   const token = useAuthToken();
   const queryClient = useQueryClient();
+  const principalIdentity = usePrincipalIdentity();
+  const principalId =
+    principalIdentity.resolved === true ? principalIdentity.principalId : null;
   const discoveryId = session.phase === "admitted" ? session.discoveryId : "";
+  const confirmationWork: OrganizeConfirmationWork = {
+    kind: "files",
+    discoveryId,
+  };
 
   // ---- durable reads -------------------------------------------------
   const preparationQuery = useQuery(
@@ -324,23 +341,109 @@ export function ManualOrganizeDialog({
   const [confirmationSelectionKey, setConfirmationSelectionKey] = useState<
     string | null
   >(null);
-  const [unknownSubmission, setUnknownSubmission] = useState<{
+  /**
+   * The exact confirmations saved before their POST. Reading them here is
+   * what makes a refresh, a reopen of the same preparation or a same-principal
+   * re-authentication resume the bounded, read-only admission check instead of
+   * offering a fresh confirmation that could duplicate admitted work.
+   */
+  const [retained, setRetained] = useState<
+    readonly RetainedOrganizeConfirmation[]
+  >([]);
+  /**
+   * One explicit refusal that may still coincide with an earlier admission
+   * (duplicate/concurrent/stale). The exact retained request stays readable
+   * until the admission query proves whether it was admitted.
+   */
+  const [ambiguousRefusal, setAmbiguousRefusal] = useState<{
+    readonly key: string;
     readonly message: string;
-    /** The original request's full identity, fixed when it was submitted. */
-    readonly submission: OrganizeSubmissionIdentity;
-  } | null>(null);
-  const [reconciliation, setReconciliation] = useState<{
-    readonly kind: "unknown" | "known" | "not_equivalent" | "not_admitted";
-    readonly message: string;
-    readonly executionId: string | null;
-    readonly taskId: string | null;
-    /** A `known` outcome whose durable task identity could not be proven. */
-    readonly identityMissing: boolean;
   } | null>(null);
   const [discardArmed, setDiscardArmed] = useState(false);
   /** Releasing the route blocker for the one deliberate task-center handoff. */
   const handoffBypassRef = useRef(false);
+  const handoffDoneRef = useRef(false);
+  /** Keys whose admission evidence already settled in this mount. */
+  const settledRetainedRef = useRef<Set<string>>(new Set());
 
+  const refreshRetained = useCallback(() => {
+    if (principalId === null || discoveryId === "") {
+      setRetained([]);
+      return;
+    }
+    setRetained(
+      readOrganizeConfirmations(principalId, { kind: "files", discoveryId }),
+    );
+  }, [principalId, discoveryId]);
+  useEffect(() => {
+    // Reading the browser-retained request is synchronizing this component
+    // with external storage after the exact principal/work context changed.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    refreshRetained();
+  }, [refreshRetained]);
+
+  const watchEntries: readonly OrganizeAdmissionWatchEntry[] = useMemo(
+    () =>
+      retained.map((entry) => ({
+        key: organizeConfirmationKey(entry.work, entry.submission),
+        submission: entry.submission,
+        workId: discoveryId,
+      })),
+    [retained, discoveryId],
+  );
+  const handleRetainedOutcome = (
+    entry: OrganizeAdmissionWatchEntry,
+    outcome: OrganizeAdmissionOutcomeRead,
+    attempt: number,
+  ) => {
+    if (principalId === null || discoveryId === "") return;
+    if (!outcome.ok) return;
+    const model = outcome.model;
+    if (model.outcome === "known" || model.outcome === "not_equivalent") {
+      settledRetainedRef.current.add(entry.key);
+    }
+    if (model.outcome === "known") {
+      if (model.taskId === null || model.taskId === "") {
+        // The durable admission is proven but this answer cannot name the
+        // exact Task. Keep the retained request and never guess a run.
+        return;
+      }
+      clearOrganizeConfirmation(
+        principalId,
+        confirmationWork,
+        entry.submission,
+      );
+      refreshRetained();
+      handleHandoff(model.taskId);
+      return;
+    }
+    if (model.outcome === "not_admitted") {
+      if (ambiguousRefusal?.key === entry.key && attempt >= 2) {
+        // A second successful no-record read, after the submit itself
+        // settled, proves the refused request admitted nothing. The original
+        // input stays available in the reviewed plan; no second request is
+        // sent automatically.
+        clearOrganizeConfirmation(
+          principalId,
+          confirmationWork,
+          entry.submission,
+        );
+        refreshRetained();
+        setResult(ambiguousRefusal.message);
+        setAmbiguousRefusal(null);
+      }
+      return;
+    }
+    // not_equivalent keeps the retained request and the request lock. The
+    // operator must inspect the durable records; no action is offered.
+  };
+  const watch = useOrganizeAdmissionWatchGroup({
+    enabled: principalId !== null && watchEntries.length > 0,
+    token,
+    principalId,
+    entries: watchEntries,
+    onOutcome: handleRetainedOutcome,
+  });
   const executableIds = useMemo(
     () => (preview ? [...preview.executionCandidateItemIds] : []),
     [preview],
@@ -633,7 +736,7 @@ export function ManualOrganizeDialog({
         const value = await executeOrganizePreview(token, {
           previewId: submission.previewId,
           itemIds: submission.itemIds,
-          expectedIntentVersion: submission.intentVersion,
+          expectedIntentVersion: submission.expectedIntentVersion,
           allowOverwrite: submission.allowOverwrite,
           allowSourceCleanup: submission.allowSourceCleanup,
         });
@@ -645,8 +748,7 @@ export function ManualOrganizeDialog({
     retry: false,
     onMutate: () => {
       setResult(null);
-      setUnknownSubmission(null);
-      setReconciliation(null);
+      setAmbiguousRefusal(null);
     },
     onSuccess: (outcome, submission) => {
       if (outcome.kind === "duplicate") return;
@@ -657,145 +759,174 @@ export function ManualOrganizeDialog({
         });
         const taskId = value.model.taskId;
         if (taskId !== "") {
+          if (principalId !== null) {
+            clearOrganizeConfirmation(
+              principalId,
+              confirmationWork,
+              submission,
+            );
+            refreshRetained();
+          }
           handleHandoff(taskId);
           return;
         }
         // The execution was admitted but its task identity is not provable
-        // from this response: keep the exact submission context instead of
-        // guessing a run in the task center.
-        setReconciliation({
-          kind: "known",
-          message:
-            "后端已受理这次整理,但本次响应没有携带可核对的任务身份;未跳转任务中心,也未选择任何其他任务。请在任务中心按本次整理的源文件核对对应任务后继续查看。",
-          executionId: value.model.executionId,
-          taskId: null,
-          identityMissing: true,
-        });
+        // from this response. Keep the exact submission and let the bounded
+        // admission read supply the Task instead of guessing a run.
+        if (
+          !settledRetainedRef.current.has(
+            organizeConfirmationKey(confirmationWork, submission),
+          )
+        ) {
+          watch.retry();
+        }
         return;
       }
-      const outcomeUnknown =
+      const requestKey = organizeConfirmationKey(confirmationWork, submission);
+      const transportUnknown =
         value.status === 0 ||
         value.status >= 500 ||
         value.code === "malformed_response";
-      if (outcomeUnknown) {
-        setUnknownSubmission({
-          message:
-            value.status === 0
-              ? "整理请求的响应未能送达浏览器。无法确定后端是否已经受理这次执行——已受理的工作是持久的,不会因这次响应丢失而撤销。"
-              : value.code === "malformed_response"
-                ? "后端对这次整理请求返回了无法解读的响应。无法确定这次执行是否已受理。"
-                : `后端对这次整理请求返回了 ${value.status}。无法确定这次执行是否已受理。`,
-          submission,
+      if (isAmbiguousAdmissionFailure(value.status, value.code)) {
+        // A duplicate/concurrent/stale answer can mean the earlier request is
+        // already admitted. Re-read the exact durable evidence instead of
+        // claiming a refusal; the retained request stays locked meanwhile.
+        setAmbiguousRefusal({
+          key: requestKey,
+          message: `服务端拒绝了本次请求(${value.code})。原请求是否已被受理仍不确定;系统会按原摘要、版本、选择和效果设置继续只读核对,不会自动重发。`,
         });
+        if (!settledRetainedRef.current.has(requestKey)) watch.retry();
         return;
+      }
+      if (transportUnknown) {
+        // A transport failure is not a refusal. Keep the exact retained
+        // request and let the automatic admission read resolve it.
+        if (!settledRetainedRef.current.has(requestKey)) watch.retry();
+        return;
+      }
+      if (principalId !== null) {
+        clearOrganizeConfirmation(principalId, confirmationWork, submission);
+        refreshRetained();
       }
       setResult(
         `这次执行被明确拒绝(${value.code})。拒绝发生在受理之前:没有创建执行,Storage 未被修改。请核对原因后重新确认——不会自动重试。`,
       );
     },
-    onError: (error) => {
-      setResult(
-        error instanceof Error
-          ? `提交未完成(${error.message})。`
-          : "提交未完成。",
-      );
-    },
-  });
-
-  const reconcileMutation = useMutation({
-    // The original request's identity is the only lookup input: a replaced,
-    // cleared or still-loading current summary never changes what is read.
-    mutationFn: async (unknown: NonNullable<typeof unknownSubmission>) =>
-      fetchOrganizeAdmissionOutcome(token, {
-        previewId: unknown.submission.previewId,
-        itemIds: unknown.submission.itemIds,
-        expectedIntentVersion: unknown.submission.intentVersion,
-        allowOverwrite: unknown.submission.allowOverwrite,
-        allowSourceCleanup: unknown.submission.allowSourceCleanup,
-      }),
-    retry: false,
-    onSuccess: (value) => {
-      if (!value.ok) {
-        setReconciliation({
-          kind: "unknown",
-          message: `${value.failure.title};${value.failure.nextAction}`,
-          executionId: null,
-          taskId: null,
-          identityMissing: false,
-        });
-        return;
+    onError: (_error, submission) => {
+      // An unexpected client-side failure is still an unknown outcome: the
+      // request may have reached the server. Keep the exact retained request
+      // and resume the read-only admission check.
+      if (
+        !settledRetainedRef.current.has(
+          organizeConfirmationKey(confirmationWork, submission),
+        )
+      ) {
+        watch.retry();
       }
-      const model = value.model;
-      if (model.outcome === "known") {
-        void queryClient.invalidateQueries({
-          queryKey: [organizeExecutionListQueryKey],
-        });
-        if (model.taskId !== null && model.taskId !== "") {
-          // A proved `known` answer carries the exact durable task identity,
-          // so the handoff never has to guess which run was admitted.
-          handleHandoff(model.taskId);
-          return;
-        }
-        // Admitted, but this answer carries no provable task: keep the exact
-        // submission context and never fall back to “the latest task”.
-        setReconciliation({
-          kind: "known",
-          message:
-            "核对证明这次提交已被受理,但本次读取没有携带可核对的任务身份;未跳转任务中心,也未选择任何其他任务。请稍后重新核对,或在任务中心按本次整理的源文件核对对应任务。",
-          executionId: model.executionId,
-          taskId: model.taskId,
-          identityMissing: true,
-        });
-        return;
-      }
-      if (model.outcome === "not_admitted") {
-        setUnknownSubmission(null);
-        setReconciliation({
-          kind: "not_admitted",
-          message:
-            "持久受理记录证明这次审阅选择没有被受理,没有发生整理变更。请先刷新摘要,确认同一选择仍然有效后,才可明确重新提交。",
-          executionId: null,
-          taskId: null,
-          identityMissing: false,
-        });
-        return;
-      }
-      setReconciliation({
-        kind: "not_equivalent",
-        message:
-          "该摘要下存在不属于这次提交选择的持久受理记录,无法确认这次提交的结果。请勿盲目重提;先核对已有执行后再决定。",
-        executionId: model.executionId,
-        taskId: model.taskId,
-        identityMissing: false,
-      });
-    },
-    onError: () => {
-      setReconciliation({
-        kind: "unknown",
-        message: "核对读取未完成。提交结果仍未知;未创建、未重放任何执行。",
-        executionId: null,
-        taskId: null,
-        identityMissing: false,
-      });
     },
   });
 
   /** One deliberate handoff: releases the route block, then navigates. */
   const handleHandoff = (taskId: string) => {
+    if (handoffDoneRef.current) return;
+    handoffDoneRef.current = true;
     handoffBypassRef.current = true;
     onHandoff(taskId);
   };
 
-  // A deliberate refresh of the current summary after a proven
-  // not-admitted outcome (bounded read only; no Execute is replayed).
-  const refreshPlan = () => {
-    void previewQuery.refetch();
-    void intentQuery.refetch();
-    void preparationQuery.refetch();
-    setReconciliation(null);
-    setResult(null);
-    setConfirmationSelectionKey(null);
+  const latestRetained =
+    retained.length === 0 ? null : (retained[retained.length - 1] ?? null);
+  const latestWatchState: OrganizeAdmissionWatchState | null =
+    latestRetained === null
+      ? null
+      : (watch.states.get(
+          organizeConfirmationKey(
+            latestRetained.work,
+            latestRetained.submission,
+          ),
+        ) ?? null);
+  const retainedSummaryPreviewMatches =
+    latestRetained !== null &&
+    preview !== undefined &&
+    preview.current &&
+    preview.previewId === latestRetained.submission.previewId &&
+    preview.intentVersion === latestRetained.submission.expectedIntentVersion &&
+    latestRetained.submission.itemIds.every((itemId) =>
+      preview.executionCandidateItemIds.includes(itemId),
+    );
+  const canResubmitRetained =
+    latestRetained !== null &&
+    latestWatchState !== null &&
+    latestWatchState.phase === "not_admitted" &&
+    latestWatchState.attempt >= 2 &&
+    !executeMutation.isPending &&
+    retainedSummaryPreviewMatches;
+
+  /**
+   * One explicit confirmation of the exact retained batch. It is offered only
+   * after a successful no-record read and only while the original summary and
+   * selection are still current; the backend's atomic admission still owns
+   * deduplication if the delayed original POST and this confirmation race.
+   */
+  const resubmitRetained = () => {
+    if (!canResubmitRetained || latestRetained === null) return;
+    if (principalId === null) {
+      setResult(
+        "当前账号身份尚未读取完成，本次确认没有提交；已保存的原请求仍会继续只读核对。",
+      );
+      return;
+    }
+    const retention = beginOrganizeConfirmationRetention(
+      principalId,
+      confirmationWork,
+      latestRetained.submission,
+    );
+    if (!retention.ok) {
+      setResult(
+        "本次确认无法保存可核对的请求身份，已取消提交；没有发出整理请求，也没有修改任何文件。请重新打开本次整理后再试。",
+      );
+      return;
+    }
+    refreshRetained();
+    executeMutation.mutate(latestRetained.submission);
   };
+
+  const retainedStatusText = (() => {
+    if (latestRetained === null) return null;
+    if (principalId === null) {
+      return "正在重新验证账号身份；已验证后继续只读核对原整理提交，不会重发。";
+    }
+    if (latestWatchState === null) {
+      return executeMutation.isPending
+        ? "正在提交本次确认；若响应不确定，系统会继续按原请求核对受理结果。"
+        : "正在自动核对原整理提交是否受理…";
+    }
+    switch (latestWatchState.phase) {
+      case "checking":
+        return executeMutation.isPending
+          ? "正在提交本次确认；若响应不确定，系统会继续按原请求核对受理结果。"
+          : "正在自动核对原整理提交是否受理…";
+      case "known":
+        return latestWatchState.model?.taskId
+          ? "原整理提交已受理，正在打开对应任务…"
+          : "原整理提交已受理，但任务身份暂不可用；请稍后在任务中心核对。";
+      case "not_equivalent":
+        return "原整理提交的受理证据不一致；已保持请求锁定，不会重发。请核对任务中心的持久记录。";
+      case "not_admitted":
+        if (latestWatchState.exhausted) {
+          return canResubmitRetained
+            ? "原整理提交暂未确认；原摘要和选择仍有效，可明确确认同一批。"
+            : "原整理提交暂未确认；恢复连接或重新打开本次整理后会继续只读核对。";
+        }
+        return canResubmitRetained
+          ? "原整理提交暂未确认；系统会继续只读核对，也可明确确认同一批。"
+          : "原整理提交暂未确认；系统会继续只读核对，不会重发。";
+      case "failed":
+        return latestWatchState.exhausted
+          ? "原整理提交暂未确认；读取未完成，恢复连接或重新打开本次整理后会继续核对。"
+          : "原整理提交暂未确认；读取暂时失败，系统会继续只读核对。";
+    }
+  })();
 
   // ---- confirmation binding -----------------------------------------
   /** A durable Worker stage of this preparation is still running. */
@@ -848,8 +979,7 @@ export function ManualOrganizeDialog({
     confirmationBlockedByHistory ||
     executionHistoryQuery.isFetching ||
     executeMutation.isPending ||
-    unknownSubmission !== null ||
-    reconciliation?.identityMissing === true ||
+    retained.length > 0 ||
     activeSelection.length === 0 ||
     (requiresOverwrite && !effectiveAllowOverwrite) ||
     (requiresCleanup && !effectiveAllowSourceCleanup);
@@ -858,9 +988,7 @@ export function ManualOrganizeDialog({
   const closeLocked =
     session.phase === "submitting" ||
     saveMutation.isPending ||
-    executeMutation.isPending ||
-    unknownSubmission !== null ||
-    reconcileMutation.isPending;
+    executeMutation.isPending;
   const hasUnsavedDecisionDrafts = Object.values(decisionDrafts).some(
     (draft) => draft.dirty,
   );
@@ -2379,63 +2507,24 @@ export function ManualOrganizeDialog({
             <p role="status">{result}</p>
           </StatusBanner>
         ) : null}
-        {unknownSubmission !== null ? (
-          <StatusBanner variant="warning" title="执行结果未知">
-            <p role="status">{unknownSubmission.message}</p>
-            <p className="mf-dashboard-meta">
-              不会自动重新提交,也不会重放任何已受理的工作。可先执行一次有界核对读取:
-              它只读取持久受理记录,不创建执行、不签发任何权限;核对成功后直接进入任务中心对应任务。
+        {retainedStatusText !== null ? (
+          <div className="mf-organize-retained-status">
+            <p className="mf-dashboard-meta" role="status">
+              {retainedStatusText}
             </p>
-            <div className="mf-actions">
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={reconcileMutation.isPending}
-                onClick={() => reconcileMutation.mutate(unknownSubmission)}
-              >
-                {reconcileMutation.isPending ? "核对中…" : "核对提交结果"}
-              </Button>
-            </div>
-          </StatusBanner>
-        ) : null}
-        {reconciliation !== null ? (
-          <StatusBanner
-            variant={
-              reconciliation.kind === "not_admitted" ||
-              reconciliation.identityMissing
-                ? "info"
-                : "warning"
-            }
-            title={
-              reconciliation.identityMissing
-                ? "受理成功,任务身份待核对"
-                : "核对结果"
-            }
-          >
-            <p role="status">{reconciliation.message}</p>
-            {reconciliation.kind === "not_admitted" ? (
-              <div className="mf-actions">
-                <Button type="button" variant="secondary" onClick={refreshPlan}>
-                  刷新计划后再决定
-                </Button>
-              </div>
-            ) : null}
-            {reconciliation.kind === "unknown" ? (
+            {canResubmitRetained && latestRetained !== null ? (
               <div className="mf-actions">
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={reconcileMutation.isPending}
-                  onClick={() =>
-                    unknownSubmission !== null &&
-                    reconcileMutation.mutate(unknownSubmission)
-                  }
+                  disabled={executeMutation.isPending}
+                  onClick={resubmitRetained}
                 >
-                  重新核对提交结果
+                  确认同一批（{latestRetained.submission.itemIds.length} 项）
                 </Button>
               </div>
             ) : null}
-          </StatusBanner>
+          </div>
         ) : null}
       </>
     );
@@ -2579,16 +2668,41 @@ export function ManualOrganizeDialog({
           aria-busy={executeMutation.isPending}
           onClick={() => {
             if (preview === undefined) return;
+            if (preview.intentVersion === null) {
+              setResult(
+                "当前方案缺少可核对的版本，本次确认没有提交；没有修改任何文件。请重新读取摘要后再确认。",
+              );
+              return;
+            }
+            if (principalId === null) {
+              setResult(
+                "当前账号身份尚未读取完成，本次确认没有提交；也没有修改任何文件。身份读取完成后再确认，响应丢失时才能核对原请求。",
+              );
+              return;
+            }
             // One identity captured here serves both the request and any later
             // reconciliation of this exact confirmation.
-            executeMutation.mutate({
+            const submission: OrganizeSubmissionIdentity = {
               previewId: preview.previewId,
               itemIds: [...activeSelection],
-              intentVersion: preview.intentVersion ?? 0,
+              expectedIntentVersion: preview.intentVersion,
               allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
               allowSourceCleanup:
                 requiresCleanup && effectiveAllowSourceCleanup,
-            });
+            };
+            const retention = beginOrganizeConfirmationRetention(
+              principalId,
+              confirmationWork,
+              submission,
+            );
+            if (!retention.ok) {
+              setResult(
+                "本次确认无法保存可核对的请求身份，已取消提交；没有发出整理请求，也没有修改任何文件。请重新打开本次整理后再试。",
+              );
+              return;
+            }
+            refreshRetained();
+            executeMutation.mutate(submission);
           }}
         >
           {executeMutation.isPending
@@ -2657,6 +2771,23 @@ export function ManualOrganizeDialog({
       </div>
     </ModalCardShell>
   );
+}
+
+/** A refusal that can still coincide with an earlier durable admission. */
+const AMBIGUOUS_ADMISSION_FAILURE_CODES = new Set([
+  "admission_changed",
+  "concurrent_execution",
+  "duplicate_execution",
+  "item_stale",
+  "intent_stale",
+  "scope_changed",
+  "source_superseded",
+]);
+
+function isAmbiguousAdmissionFailure(_status: number, code: string): boolean {
+  // Only a semantic refusal can coincide with an earlier admission. A
+  // transport/5xx/malformed answer is an unknown outcome handled separately.
+  return AMBIGUOUS_ADMISSION_FAILURE_CODES.has(code);
 }
 
 function isSaveStageError(

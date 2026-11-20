@@ -46,10 +46,12 @@ function storedKey(
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
   window.sessionStorage.clear();
 });
 
 afterEach(() => {
+  window.localStorage.clear();
   window.sessionStorage.clear();
 });
 
@@ -168,9 +170,9 @@ describe("task item recovery confirmation session", () => {
   });
 
   it("treats unreadable retained text as no readable request", () => {
-    window.sessionStorage.setItem(storedKey(PRINCIPAL, IDENTITY), "{broken");
+    window.localStorage.setItem(storedKey(PRINCIPAL, IDENTITY), "{broken");
     expect(readTaskItemRecoveryConfirmation(PRINCIPAL, IDENTITY)).toBeNull();
-    window.sessionStorage.setItem(
+    window.localStorage.setItem(
       storedKey(PRINCIPAL, IDENTITY),
       JSON.stringify({ previewId: "preview-1" }),
     );

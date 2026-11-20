@@ -1409,9 +1409,17 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   );
   await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(
-    page.getByRole("heading", { name: "执行结果未知" }),
-  ).toBeVisible();
+  // The retained original request is read automatically and hands off the
+  // exact Task; no manual reconciliation button exists.
+  await expect(page).toHaveURL(/\/operations\?.*run=/, {
+    timeout: 30_000,
+  });
+  const runId = new URL(page.url()).searchParams.get("run");
+  expect(runId).toBeTruthy();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /核对提交结果/ })).toHaveCount(
+    0,
+  );
   const exactExecutePosts = () =>
     api.filter(
       (entry) =>
@@ -1419,28 +1427,16 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
         entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
     );
   expect(exactExecutePosts()).toHaveLength(1);
-  // The unknown admission blocks a second submission until the bounded
-  // reconciliation read proves the durable outcome.
-  await expect(
-    page.getByRole("button", { name: "确认整理 1 项" }),
-  ).toBeDisabled();
-  expect(
-    await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
-  ).toEqual({ sourceExists: true, destinationTargets: [] });
-
-  await page.getByRole("button", { name: "核对提交结果" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
-  const runId = new URL(page.url()).searchParams.get("run");
-  expect(runId).toBeTruthy();
-  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
-  expect(exactExecutePosts()).toHaveLength(1);
   expect(
     api.filter(
       (entry) =>
         entry.method === "GET" &&
         entry.path.match(/\/operations\/organize\/previews\/[^/]+\/admission$/),
-    ),
-  ).toHaveLength(1);
+    ).length,
+  ).toBeGreaterThanOrEqual(1);
+  expect(
+    await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
+  ).toEqual({ sourceExists: true, destinationTargets: [] });
 
   // An auth continuation after a full reload returns to the same bounded
   // Operations context and exact selected run without replaying Execute.

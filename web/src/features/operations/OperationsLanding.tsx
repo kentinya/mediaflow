@@ -58,7 +58,7 @@ import {
   runOverviewQueryOptions,
 } from "./run-query";
 import { RunDetailTabs } from "./RunDetailTabs";
-import { OrganizeSubmissionVerification } from "./OrganizeSubmissionVerification";
+import { RunRetainedSubmissionNotice } from "./RunRetainedSubmissionNotice";
 import { ProblemFilePanel } from "./ProblemFilePanel";
 import { TaskItemRecoverySessionProvider } from "./task-item-recovery-session";
 import {
@@ -1909,12 +1909,7 @@ function RunDetailFacts({
           </div>
         </section>
       )}
-      {run.manualOrganizeSubmissions.length > 0 && run.taskId !== null && (
-        <OrganizeSubmissionVerification
-          taskId={run.taskId}
-          submissions={run.manualOrganizeSubmissions}
-        />
-      )}
+      <RunRetainedSubmissionNotice run={run} />
       {hasDiagnostics && (
         <details className="mf-run-fact-diagnostics">
           <summary>技术诊断</summary>

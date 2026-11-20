@@ -15,6 +15,7 @@ import {
 import { renderApp } from "../../../tests/utils";
 import manualOperationsFixture from "../../entities/operations/__fixtures__/manual-operations.json";
 import { localDayEndIso, localDayStartIso } from "./run-time";
+import { beginOrganizeConfirmationRetention } from "./organize-confirmation-session";
 
 const TOKEN = "operations-inventory-token";
 
@@ -40,6 +41,8 @@ afterEach(() => {
   cleanup();
   authStore.clearToken();
   authStore.clearIntendedPath();
+  window.localStorage.clear();
+  window.sessionStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -2874,6 +2877,8 @@ interface OrganizeHostBackend {
     overviewUnavailable: boolean;
     /** The next Execute request's response is lost after a 503. */
     executeResponseLost: boolean;
+    /** Bounded admission reads answer 503 while this stays true. */
+    admissionUnavailable: boolean;
   };
 }
 
@@ -2902,12 +2907,16 @@ function stubOrganizeHost(
       executeTaskId: "task-001",
       overviewUnavailable: false,
       executeResponseLost: false,
+      admissionUnavailable: false,
     },
   };
   stubFetch(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (method !== "GET") backend.calls.posts.push(url);
+    if (url === "/api/auth/principal" && method === "GET") {
+      return jsonResponse({ principal_id: "task-center-operator" });
+    }
     if (
       url.startsWith("/api/operations/runs?") ||
       url === "/api/operations/runs"
@@ -2987,6 +2996,9 @@ function stubOrganizeHost(
       method === "GET"
     ) {
       backend.calls.admissionReads += 1;
+      if (backend.state.admissionUnavailable) {
+        return jsonResponse({ error: { code: "unavailable" } }, 503);
+      }
       return jsonResponse({
         outcome: "known",
         reason: null,
@@ -3305,6 +3317,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     const user = userEvent.setup();
     const backend = stubOrganizeHost();
     backend.state.executeResponseLost = true;
+    backend.state.admissionUnavailable = true;
     authStore.setToken(TOKEN);
     const { router } = renderApp("/operations?run=task-001&dialog=organize");
 
@@ -3314,7 +3327,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     await user.click(
       await within(dialog).findByRole("button", { name: "确认整理 1 项" }),
     );
-    await screen.findByText(/执行结果未知/);
+    await screen.findByText(/原整理提交暂未确认|正在自动核对原整理提交/);
     expect(backend.calls.posts).toHaveLength(1);
     const submittedPreview = backend.calls.posts[0];
     expect(submittedPreview).toContain("/previews/preview-1/execute");
@@ -3323,9 +3336,11 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     await screen.findByText("任务详情暂时无法读取", undefined, {
       timeout: 9_000,
     });
-    // The unknown command identity is not cleared by the unrelated
-    // background read failure, and the card cannot be dismissed around it.
-    expect(screen.getByText(/执行结果未知/)).toBeVisible();
+    // The retained command identity is not cleared by the unrelated background
+    // read failure; the dialog keeps its automatic reconciliation.
+    expect(
+      within(dialog).getByText(/原整理提交暂未确认|正在自动核对/),
+    ).toBeVisible();
     expect(
       within(dialog).getByRole("button", { name: "确认整理 1 项" }),
     ).toBeDisabled();
@@ -3338,16 +3353,17 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     await waitFor(() =>
       expect(within(dialog).queryByText("任务详情暂时无法读取")).toBeNull(),
     );
-    expect(screen.getByText(/执行结果未知/)).toBeVisible();
 
-    // The explicit reconciliation still reads the first submission's exact
-    // preview and never submits a second Execute.
-    await user.click(
-      within(dialog).getByRole("button", { name: "核对提交结果" }),
-    );
-    await waitFor(() => expect(backend.calls.admissionReads).toBe(1));
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    // Once the read surface recovers, the exact original request is checked
+    // automatically and hands off; no manual reconciliation or second Execute
+    // exists.
+    backend.state.admissionUnavailable = false;
+    await waitFor(
+      () =>
+        expect(
+          screen.queryByRole("dialog", { name: "整理所选文件" }),
+        ).toBeNull(),
+      { timeout: 15_000 },
     );
     expect(router.state.location.pathname).toBe("/operations");
     expect(new URLSearchParams(router.history.location.search).get("run")).toBe(
@@ -3357,6 +3373,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
       new URLSearchParams(router.history.location.search).get("dialog"),
     ).toBeNull();
     expect(backend.calls.posts).toEqual([submittedPreview]);
+    expect(backend.calls.admissionReads).toBeGreaterThanOrEqual(1);
   }, 20_000);
 
   it("protects unsaved drafts against leaving the task center without losing the card", async () => {
@@ -3425,5 +3442,42 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     expect(
       await screen.findByRole("dialog", { name: "运行详情" }),
     ).toBeVisible();
+  });
+
+  it("shows one retained admission line instead of the removed submission card", async () => {
+    const backend = stubOrganizeHost();
+    authStore.setToken(TOKEN);
+    beginOrganizeConfirmationRetention(
+      "task-center-operator",
+      { kind: "files", discoveryId: HOST_DISCOVERY_ID },
+      {
+        previewId: "preview-1",
+        itemIds: ["item-1"],
+        expectedIntentVersion: 1,
+        allowOverwrite: false,
+        allowSourceCleanup: false,
+      },
+    );
+    renderApp("/operations?run=task-001");
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const link = await within(detail).findByRole("link", {
+      name: "查看任务",
+    });
+    expect(link).toBeVisible();
+    expect(
+      within(detail).queryByRole("region", { name: "原整理提交" }),
+    ).toBeNull();
+    expect(
+      within(detail).queryByRole("button", { name: /核对提交结果/ }),
+    ).toBeNull();
+    expect(backend.calls.admissionReads).toBeGreaterThanOrEqual(1);
+  });
+
+  it("performs no per-submission admission read for an ordinary task", async () => {
+    const backend = stubOrganizeHost();
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+    await screen.findByRole("dialog", { name: "运行详情" });
+    expect(backend.calls.admissionReads).toBe(0);
   });
 });
