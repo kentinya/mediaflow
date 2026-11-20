@@ -332,6 +332,13 @@ in Running/All with exact summary/confirmation readback after refresh/restart, o
 pending-task counts. Necessary human confirmation within four-type recovery retains its lineage.
 For other Task Center failures, this explicit user amendment replaces generic repair guidance with
 factual read-only history, without removing durable evidence or administrative recovery capabilities.
+
+When Files preparation crosses the 100-primary limit, the Task ends as failed under V2-TASK-013.
+Its truncated findings remain history and cannot authorize any subset. Once the Task settles,
+the same source can enter a new smaller request. Supported waiting records with durable evidence
+of this stop before planning or execution admission also settle automatically, preserving their
+original identity and history. See the [Files recovery journey](product-experience.md#current--manual-organize-dialog-slice53-pass--closed).
+
 `V2-FILES-007` changes ordinary recovery ownership without weakening
 `V2-FILES-002/003`, `REQ-TASK-009/010`, RBAC, immutable pins, fences or durable results.
 

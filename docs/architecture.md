@@ -1479,12 +1479,19 @@ admission marker proves center membership; it is not permission to mutate. Manua
 requires the exact reviewed summary and selected confirmation. Discovery owns bounded read-only
 work, TaskItems own their real findings/decisions, and only OrganizerExecutor mutates after all checks.
 
-Task state follows discovery/stability/analysis and controls. A completed/partial walk stays unfinished
-while decisions or initial confirmation remain; failed/cancelled work retains its cause. Later
+Task state follows discovery/stability/analysis and controls. A walk with remaining decisions or
+initial confirmation stays unfinished. Failed/cancelled work retains its cause. Later
 progress never reopens a terminal execution. One accepted manual work is counted once across its
 linked discovery/analysis/execution records. Exact verified per-item recovery may project Completed
 without rewriting original failed attempts; ignored/skipped/cancelled/technical/uncertain siblings
 never prove all-success.
+
+When Files discovery stops at the primary-source limit, the Worker publishes the preparation
+failure and settled scheduling state together. The recorded discoveries remain readable, and the
+Task's terminal state releases its source ownership. The resident Worker also settles waiting
+records in a supported database when the linked preparation proves the same stop before planning
+or execution admission. The settlement transaction checks the association, versions, claims,
+controls and file/effect history.
 
 Each caller request has its own durable `media_discovery_admission_outcomes` row: submitted scope,
 newly admitted/existing/refused items and reasons. Shared progress cannot overwrite another

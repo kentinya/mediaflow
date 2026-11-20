@@ -1142,7 +1142,12 @@ and the Tasks/recovery journey below remain.
    evidence proves execution admission, close the organizer and navigate to Task Center, opening
    that exact returned Task with the existing detail UI. Queued/running admission does not mean
    files succeeded. Existing Task detail owns progress, independent results and later recovery.
-6. **Failure/recovery:** lost responses keep the original submitted summary, exact items, version
+6. **Failure and recovery.** If discovery finds a 101st primary file, preparation stops for the whole
+   batch without producing a plan or changing any files. After the Task settles, the dialog tells
+   the operator to close it, narrow the selection in the original directory and start again. The
+   new batch can include the same files. Task Center shows「失败／准备阶段超限」and offers read-only
+   details. Exactly 100 primaries can proceed to normal review.
+   Lost responses keep the original submitted summary, exact items, version
    and effect scope for reconciliation. The operator may correct/reanalyze an unselected sibling;
    that newer review cannot change the original request being checked. Proven admission uses the
    same handoff. Preserve exact known Task/request context if association/detail reading fails,
