@@ -209,6 +209,11 @@ export function ManualOrganizeDialog({
   const intent =
     intentQuery.data?.ok === true ? intentQuery.data.model : undefined;
   const organizeFlowEnded = preparation?.organizeFlow?.continuable === false;
+  const primaryLimitStopped =
+    preparation !== undefined &&
+    (preparation.progress.incompleteReason === "primary_limit" ||
+      preparation.progress.materialRefusal === "primary_limit" ||
+      preparation.progress.refusalReasons.includes("primary_limit"));
   const preparationUnavailable =
     session.phase === "admitted" &&
     (preparationQuery.isError || preparationQuery.data?.ok === false);
@@ -1256,6 +1261,12 @@ export function ManualOrganizeDialog({
       return (
         <>
           <StatusBanner variant="warning" title="本次整理工作已结束">
+            {primaryLimitStopped ? (
+              <p role="status">
+                本次未执行整理。最多支持 100
+                个主文件，请缩小选择范围后重新发起。
+              </p>
+            ) : null}
             <p role="status">
               关联的整理流程(任务状态:
               {preparation.organizeFlow?.status ?? "unknown"})已结束;

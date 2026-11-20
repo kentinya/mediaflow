@@ -324,6 +324,28 @@ def discovery_budget_limited(reason: DiscoveryIncompleteReason | str) -> bool:
     return value in {item.value for item in BUDGET_LIMITED_REASONS}
 
 
+#: The bounded Task error recorded when a Files preparation stopped at the
+#: primary-source bound.  It is a machine-readable code, never a Storage path,
+#: exception text or secret.
+PRIMARY_LIMIT_TASK_ERROR = "preparation_primary_limit"
+
+
+def discovery_primary_limit_stopped(progress: DiscoveryProgress) -> bool:
+    """Whether one walk durably stopped at the primary-source bound.
+
+    The durable refusal list is the current evidence; an older record written
+    before that list existed still keeps its own ``incomplete_reason``.  Both
+    spellings are the same material fact, so a restart, a later pass or an
+    ordinary read failure can never hide a preparation that already crossed
+    the bound.
+    """
+
+    return (
+        progress.incomplete_reason is DiscoveryIncompleteReason.PRIMARY_LIMIT
+        or DiscoveryIncompleteReason.PRIMARY_LIMIT in progress.refusal_reasons
+    )
+
+
 def discovery_material_refusal(progress: DiscoveryProgress) -> DiscoveryIncompleteReason | None:
     """The durable, monotonic material refusal of one discovery, if any.
 

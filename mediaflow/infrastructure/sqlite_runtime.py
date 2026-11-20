@@ -83,6 +83,7 @@ from mediaflow.domain.manual_safety import (
     searchable_identity_text,
 )
 from mediaflow.domain.media_discovery import (
+    PRIMARY_LIMIT_TASK_ERROR,
     DiscoveryAdmissionOutcome,
     DiscoveryConflict,
     DiscoveryEntryKind,
@@ -96,6 +97,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryUnavailable,
     MediaDiscovery,
     discovery_admission_identity,
+    discovery_primary_limit_stopped,
     discovery_scope_signature,
     reserved_refusals,
 )
@@ -180,6 +182,7 @@ from mediaflow.domain.task_persistence import (
     HISTORY_EXCLUDED_ITEM_STAGE,
     HISTORY_UNAVAILABLE_ITEM_REASON,
     HISTORY_UNAVAILABLE_ITEM_STAGE,
+    MANUAL_ORGANIZE_TASK_COMMAND,
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
     NON_ORGANIZING_ITEM_STAGES,
     SETTLED_ITEM_STATUSES,
@@ -2039,6 +2042,204 @@ class SQLiteTaskRepository:
             WHERE task_id=?""",
             (TaskQueueState.SETTLED.value, now.isoformat(), task_id),
         )
+
+    def settle_stuck_primary_limit_preparations(
+        self, now: datetime, *, limit: int = 20
+    ) -> tuple[str, ...]:
+        """Settle bounded legacy Files preparations stopped at the primary bound.
+
+        A pre-change Worker left a 101st-source preparation in ``waiting_human``
+        even though its manifest was a truncated prefix, no plan existed and no
+        file was ever accepted.  This bounded, idempotent reconciliation reads
+        only current-store rows and publishes the same terminal Task/scheduling
+        pair the new Worker writes for the same durable fact.
+
+        Every candidate is re-read inside one ``BEGIN IMMEDIATE`` transaction:
+        the exact discovery→Task association, the Task version (``updated_at``),
+        the discovery version, the primary-limit evidence, the absence of a
+        frozen/intent/Preview plan, and the absence of any claim, control
+        request, mutation marker, TaskItem, Result, manual execution, transfer
+        or initial-execution history.  A record that does not prove all of them
+        is left to the ordinary lifecycle and keeps its source protection.  A
+        repeat or a concurrent Worker therefore converges on the same terminal
+        row and writes nothing new.
+        """
+
+        if now.tzinfo is None:
+            raise ValueError("Task release timestamp needs timezone")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("stuck preparation sweep limit must be between 1 and 100")
+        settled: list[str] = []
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = self._connection.execute(
+                    """
+                    SELECT d.discovery_id, d.organize_task_id,
+                           d.version AS discovery_version,
+                           t.updated_at AS task_updated_at
+                    FROM media_discoveries d
+                    JOIN tasks t ON t.task_id = d.organize_task_id
+                    JOIN task_scheduling s ON s.task_id = t.task_id
+                    WHERE t.command = ?
+                      AND t.status = ?
+                      AND s.queue_state = ?
+                      AND s.claim_token IS NULL
+                      AND s.control_request IS NULL
+                      AND s.mutation_state IS NULL
+                      AND d.status = ?
+                      AND d.organize_task_id IS NOT NULL
+                      AND d.frozen_at IS NULL
+                      AND d.intent_id IS NULL
+                      AND d.preview_id IS NULL
+                      AND d.progress_json LIKE '%primary_limit%'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM task_items i WHERE i.task_id = t.task_id
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM task_results r WHERE r.task_id = t.task_id
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM manual_executions e WHERE e.task_id = t.task_id
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM files_transfers f WHERE f.task_id = t.task_id
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM task_initial_executions x
+                          WHERE x.task_id = t.task_id
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM file_locks l WHERE l.task_id = t.task_id
+                      )
+                    ORDER BY d.updated_at, d.discovery_id
+                    LIMIT ?
+                    """,
+                    (
+                        MANUAL_ORGANIZE_TASK_COMMAND,
+                        PersistentTaskStatus.RUNNING.value,
+                        TaskQueueState.WAITING_HUMAN.value,
+                        DiscoveryStatus.PARTIAL_SUCCESS.value,
+                        limit,
+                    ),
+                ).fetchall()
+                for row in rows:
+                    task_id = row["organize_task_id"]
+                    if self._settle_stuck_primary_limit_locked(
+                        row["discovery_id"],
+                        task_id,
+                        expected_discovery_version=int(row["discovery_version"]),
+                        expected_task_updated_at=str(row["task_updated_at"]),
+                        now=now,
+                    ):
+                        settled.append(task_id)
+            except BaseException:
+                self._connection.rollback()
+                raise
+            self._connection.commit()
+        for task_id in settled:
+            self._publish_settled_task(task_id)
+        return tuple(settled)
+
+    def _settle_stuck_primary_limit_locked(
+        self,
+        discovery_id: str,
+        task_id: str,
+        *,
+        expected_discovery_version: int,
+        expected_task_updated_at: str,
+        now: datetime,
+    ) -> bool:
+        """Re-check one candidate and publish its terminal pair in this transaction."""
+
+        try:
+            discovery = self._load_media_discovery_locked(discovery_id)
+        except (TypeError, ValueError):
+            # Unreadable progress is insufficient evidence, not a reason to
+            # abort every other candidate: the record keeps its ordinary path.
+            return False
+        if (
+            discovery is None
+            or discovery.organize_task_id != task_id
+            or discovery.version != expected_discovery_version
+            or discovery.status is not DiscoveryStatus.PARTIAL_SUCCESS
+            or discovery.frozen
+            or discovery.intent_id is not None
+            or discovery.preview_id is not None
+            or discovery.definition_origin is not None
+            or not discovery_primary_limit_stopped(discovery.progress)
+        ):
+            return False
+        state = self._scheduled_state_locked(task_id)
+        if (
+            state is None
+            or state.queue_state is not TaskQueueState.WAITING_HUMAN
+            or state.claim_token is not None
+            or state.control_request is not None
+            or state.mutation_in_flight
+        ):
+            return False
+        task_row = self._connection.execute(
+            "SELECT * FROM tasks WHERE task_id=?", (task_id,)
+        ).fetchone()
+        if task_row is None:
+            return False
+        task = self._task(task_row)
+        if (
+            task.command != MANUAL_ORGANIZE_TASK_COMMAND
+            or task.status is not PersistentTaskStatus.RUNNING
+            or task.updated_at != datetime.fromisoformat(expected_task_updated_at)
+        ):
+            return False
+        # If any durable file/effect evidence exists, this is not the bounded
+        # no-execution shape the sweep may end; keep it for the ordinary path.
+        for table in (
+            "task_items",
+            "task_results",
+            "manual_executions",
+            "files_transfers",
+            "task_initial_executions",
+            "file_locks",
+        ):
+            if (
+                self._connection.execute(
+                    f"SELECT 1 FROM {table} WHERE task_id=? LIMIT 1", (task_id,)
+                ).fetchone()
+                is not None
+            ):
+                return False
+        updated = replace(
+            task,
+            status=PersistentTaskStatus.FAILED,
+            updated_at=now,
+            completed_at=now,
+            error=PRIMARY_LIMIT_TASK_ERROR,
+        )
+        self._require_scheduled_authority_locked(updated)
+        self._connection.execute(
+            _TASK_SCHEDULED_PUBLICATION_UPDATE,
+            self._scheduled_publication_values(updated),
+        )
+        cursor = self._connection.execute(
+            """UPDATE task_scheduling
+            SET queue_state=?, machine_stage=NULL, claim_token=NULL,
+                claim_worker_id=NULL, claimed_at=NULL, claim_expires_at=NULL,
+                heartbeat_at=NULL, updated_at=?
+            WHERE task_id=? AND queue_state=? AND claim_token IS NULL
+              AND control_request IS NULL AND mutation_state IS NULL""",
+            (
+                TaskQueueState.SETTLED.value,
+                now.isoformat(),
+                task_id,
+                TaskQueueState.WAITING_HUMAN.value,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise TaskSchedulingError(
+                "the stuck preparation changed during its settlement transaction"
+            )
+        self._connection.execute("DELETE FROM file_locks WHERE task_id=?", (task_id,))
+        return True
 
     def create_manual_recovery_preparation(self, preparation: ManualRecoveryPreparation) -> None:
         if preparation.status is not ManualRecoveryPreparationStatus.PREPARED:

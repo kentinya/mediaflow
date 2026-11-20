@@ -357,6 +357,14 @@ function resolveOrganizeContinuation(
   return { kind: "ready", discoveryId: preparation.discoveryId };
 }
 
+/** The durable status label, including the bounded preparation refusal fact. */
+function runStatusLabel(run: RunSummary): string {
+  if (run.status === "failed" && run.filesPreparationPrimaryLimit) {
+    return "失败／准备阶段超限";
+  }
+  return RUN_STATUS_LABELS[run.status];
+}
+
 /** Chinese business label of one run's operation kind. */
 function commandLabelOf(run: RunSummary): string {
   if (run.commandLabel !== null) {
@@ -1454,7 +1462,7 @@ function RunTable({
                     >
                       {run.recoveredCompletion
                         ? "已完成（恢复成功）"
-                        : RUN_STATUS_LABELS[run.status]}
+                        : runStatusLabel(run)}
                     </span>
                     {run.status === "unknown" && "（证据不足）"}
                     {!running &&
@@ -1815,9 +1823,7 @@ function RunFlowSummary({ run }: { readonly run: RunSummary }) {
               : "mf-run-flow-value"
           }
         >
-          {run.recoveredCompletion
-            ? "已完成（恢复成功）"
-            : RUN_STATUS_LABELS[run.status]}
+          {run.recoveredCompletion ? "已完成（恢复成功）" : runStatusLabel(run)}
         </span>
         {run.recoveredCompletion && (
           <span className="mf-run-flow-note">
@@ -1897,6 +1903,20 @@ function RunDetailFacts({
           </div>
         </section>
       )}
+      {run.filesPreparation !== null &&
+        !run.filesPreparation.continuable &&
+        run.filesPreparationPrimaryLimit && (
+          <section
+            className="mf-run-fact-preparation"
+            aria-label="文件整理准备"
+          >
+            <h4>文件整理准备</h4>
+            <p role="status">
+              准备阶段超限：本次未执行整理。最多支持 100
+              个主文件，请缩小选择范围后重新发起。
+            </p>
+          </section>
+        )}
       {run.manualOrganizeSubmissions.length > 0 && run.taskId !== null && (
         <OrganizeSubmissionVerification
           taskId={run.taskId}

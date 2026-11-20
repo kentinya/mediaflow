@@ -35,7 +35,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     TaskItemStatus,
 )
-from mediaflow.domain.task_scheduling import TaskQueueState
+from mediaflow.domain.task_scheduling import TaskMachineStage, TaskQueueState
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from tests.test_media_discovery import _DiscoveryFixture
 
@@ -3816,6 +3816,203 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertIs(state.queue_state, TaskQueueState.WAITING_HUMAN)
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             self.assertEqual([], value.source.mutations)
+
+    def _seed_legacy_primary_limit_preparation(self, value, task_id):
+        """Persist the pre-change waiting shape through production services.
+
+        A Worker drives the real bounded walk to its durable 101st-source
+        refusal, then the old human-waiting settlement is published for the same
+        claim.  This produces exactly the record a pre-change process left
+        behind: partial_success discovery, no plan/intent/items, and a running
+        Task in waiting_human.
+        """
+
+        claim = value.task_engine._scheduling.claim(
+            task_id,
+            worker_id=value.task_engine.worker_id,
+            now=value.clock(),
+        )
+        self.assertIsNotNone(claim)
+        claim = value.task_engine._scheduling.begin_work(
+            claim, stage=TaskMachineStage.DISCOVERY, now=value.clock()
+        )
+        discovery = value.repository.get_media_discovery_for_task(task_id)
+        self.assertIsNotNone(discovery)
+        claimed = value.repository.claim_media_discovery(
+            discovery.discovery_id,
+            value.clock(),
+            worker_id=value.task_engine.worker_id,
+            claim_token=claim.claim_token,
+            lease_seconds=value.task_engine.lease_seconds,
+        )
+        self.assertIsNotNone(claimed)
+        walked = value.discovery.run_claimed(
+            claimed.discovery_id,
+            worker_id=value.task_engine.worker_id,
+            claim_token=claim.claim_token,
+        )
+        self.assertIs(walked.status, DiscoveryStatus.PARTIAL_SUCCESS)
+        self.assertIn("primary_limit", [item.value for item in walked.progress.refusal_reasons])
+        value.task_engine._wait_for_human(claim, walked)
+        state = value.repository.get_task_scheduling(task_id)
+        self.assertIs(state.queue_state, TaskQueueState.WAITING_HUMAN)
+        self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.RUNNING)
+        return walked
+
+    def test_restarted_worker_settles_a_legacy_primary_limit_preparation_once(self) -> None:
+        """A pre-change stuck preparation is settled on restart without replay."""
+
+        source_path = "Movies/AA One.2001.mkv"
+        self.media(source_path)
+        for index in range(100):
+            self.media(f"Movies/Bulk.{index:03d}.mkv")
+        with self.journey(task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            walked = self._seed_legacy_primary_limit_preparation(value, task_id)
+            # Rewrite the durable progress in the pre-refusal-list shape: only
+            # ``incompleteReason`` carries the primary-limit stop.  A current
+            # store may still contain exactly this older record.
+            from mediaflow.domain.media_discovery import DiscoveryIncompleteReason
+
+            walked = value.repository.update_media_discovery(
+                replace(
+                    walked,
+                    version=walked.version + 1,
+                    updated_at=value.clock(),
+                    progress=replace(
+                        walked.progress,
+                        incomplete_reason=DiscoveryIncompleteReason.PRIMARY_LIMIT,
+                        refusal_reasons=(),
+                    ),
+                ),
+                expected_version=walked.version,
+            )
+            original_version = walked.version
+            original_sources = list(walked.sources)
+
+        # The process is gone; a fresh service composition reads the same store.
+        with self.journey(task_scheduling=True) as restarted:
+            settings = restarted.task_engine
+
+            def poll() -> None:
+                restarted.repository.heartbeat_worker(settings.worker_id, restarted.clock())
+                settings.run_next()
+
+            with mock.patch.object(
+                restarted.repository,
+                "settle_stuck_primary_limit_preparations",
+                side_effect=RuntimeError("synthetic settlement publication failure"),
+            ):
+                poll()
+            # A failed settlement preserves the record and source protection; a
+            # later poll retries the same bounded reconciliation.
+            self.assertIs(
+                restarted.repository.get_task(task_id).status,
+                PersistentTaskStatus.RUNNING,
+            )
+            self.assertIs(
+                restarted.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
+
+            poll()
+            failed_task = restarted.repository.get_task(task_id)
+            self.assertIs(failed_task.status, PersistentTaskStatus.FAILED)
+            self.assertEqual("preparation_primary_limit", failed_task.error)
+            self.assertIsNotNone(failed_task.completed_at)
+            self.assertIs(
+                restarted.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.SETTLED,
+            )
+            self.assertEqual(0, restarted.repository.count_scheduled_capacity_use())
+            retained = restarted.repository.get_media_discovery_for_task(task_id)
+            self.assertEqual(original_version, retained.version)
+            self.assertEqual(original_sources, list(retained.sources))
+            self.assertIs(retained.status, DiscoveryStatus.PARTIAL_SUCCESS)
+            self.assertIsNone(retained.preview_id)
+            self.assertIsNone(retained.intent_id)
+            self.assertEqual((), restarted.repository.list_items(task_id))
+
+            # Repeated startup/polling reads the now-terminal row and writes
+            # nothing: the exact same Task identity and history stay in place.
+            first_updated = failed_task.updated_at
+            restarted.clock.advance(30)
+            poll()
+            self.assertEqual(first_updated, restarted.repository.get_task(task_id).updated_at)
+            self.assertEqual(
+                TaskQueueState.SETTLED,
+                restarted.repository.get_task_scheduling(task_id).queue_state,
+            )
+            self.assertEqual(
+                admitted["configurationSnapshotId"],
+                failed_task.configuration_snapshot_id,
+            )
+            self.assertIsNotNone(failed_task.configuration_snapshot_digest)
+
+            # The original request identity still reconciles on the same Task
+            # rather than minting a second work for the already-known request.
+            status, repeated = self._admit(restarted, ["Movies"])
+            self.assertEqual(202, status, repeated)
+            self.assertEqual(task_id, repeated["organizeTaskId"])
+
+            # The failed flow no longer owns the retained source, so the same
+            # file joins a new small batch without cancelling the old Task.
+            status, fresh = self._admit(
+                restarted,
+                [source_path],
+                request_id="22222222-2222-4222-8222-222222222222",
+            )
+            self.assertEqual(202, status, fresh)
+            self.assertNotEqual(task_id, fresh["organizeTaskId"])
+            status, detail = self.request(restarted, f"/api/operations/runs/{task_id}")
+            self.assertEqual(200, status, detail)
+            self.assertFalse(detail["filesPreparation"]["continuable"])
+            self.assertTrue(detail["filesPreparationPrimaryLimit"])
+            self.assertEqual([], restarted.source.mutations)
+            self.assertEqual([], restarted.target.mutations)
+
+    def test_primary_limit_sweep_leaves_an_accepted_cancel_untouched(self) -> None:
+        """An operator's accepted cancel is never reopened by the sweep."""
+
+        self.media("Movies/AA One.2001.mkv")
+        for index in range(100):
+            self.media(f"Movies/Bulk.{index:03d}.mkv")
+        with self.journey(task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            self._seed_legacy_primary_limit_preparation(value, task_id)
+            status, cancelled = self.request(
+                value,
+                f"/api/tasks/{task_id}/cancel",
+                "POST",
+                {"expectedUpdatedAt": value.repository.get_task(task_id).updated_at.isoformat()},
+            )
+            self.assertEqual(200, status, cancelled)
+            self.assertIs(
+                value.repository.get_task(task_id).status,
+                PersistentTaskStatus.CANCELLED,
+            )
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.SETTLED,
+            )
+
+        with self.journey(task_scheduling=True) as restarted:
+            restarted.repository.heartbeat_worker(
+                restarted.task_engine.worker_id, restarted.clock()
+            )
+            restarted.task_engine.run_next()
+            self.assertIs(
+                restarted.repository.get_task(task_id).status,
+                PersistentTaskStatus.CANCELLED,
+            )
+            self.assertIs(
+                restarted.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.SETTLED,
+            )
 
 
 if __name__ == "__main__":

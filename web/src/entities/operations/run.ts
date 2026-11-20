@@ -258,6 +258,13 @@ export interface RunSummary {
    * read publishes it; inventory rows carry `null`. */
   readonly filesPreparation: RunFilesPreparation | null;
   /**
+   * Whether this run's exact Files preparation durably stopped at the primary
+   * source bound.  The backend publishes the discovery's own material refusal,
+   * so Task Center labels the ended flow without parsing a raw Task error.
+   * Inventory rows legitimately omit it and normalize to `false`.
+   */
+  readonly filesPreparationPrimaryLimit: boolean;
+  /**
    * The manual Organize acceptances this run's Task durably records, when the
    * reading principal submitted them.  A Task can hold several explicit
    * confirmations; each carries exactly the Preview, summary version, selected
@@ -671,6 +678,10 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     source["manualOrganizeSubmissions"],
     taskId,
   );
+  const filesPreparationPrimaryLimit =
+    source["filesPreparationPrimaryLimit"] === undefined
+      ? false
+      : flag(source, "filesPreparationPrimaryLimit");
   return {
     runId: text(source, "run_id"),
     runKind: text(source, "run_kind"),
@@ -709,6 +720,7 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
         : normalizeRunProgress(source["progress"]),
     lifecycle,
     filesPreparation,
+    filesPreparationPrimaryLimit,
     manualOrganizeSubmissions,
     recoveredCompletion:
       // A48-01: the durable flow status is authoritative in the browser too.

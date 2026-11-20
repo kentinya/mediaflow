@@ -948,6 +948,44 @@ describe("Operations run inventory landing", () => {
     },
   );
 
+  it("labels a failed primary-limit preparation and keeps it read-only", async () => {
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
+      ) {
+        return jsonResponse(pageDocument());
+      }
+      if (url === "/api/operations/runs/task-001") {
+        return jsonResponse(
+          runDocument({
+            status: "failed",
+            current_stage: null,
+            filesPreparation: {
+              discoveryId: "discovery-1",
+              resourceLibraryId: "source",
+              continuable: false,
+            },
+            filesPreparationPrimaryLimit: true,
+          }),
+        );
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    expect(await within(detail).findByText("失败／准备阶段超限")).toBeVisible();
+    expect(
+      within(detail).getByText(
+        /准备阶段超限：本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。/,
+      ),
+    ).toBeVisible();
+    expect(within(detail).queryByRole("link", { name: "继续整理" })).toBeNull();
+  });
+
   it("PATCH-20261111-5 drops the continuable preparation area when the selected flow's own poll turns terminal", async () => {
     const requested: { url: string; method: string }[] = [];
     let overview = runDocument({

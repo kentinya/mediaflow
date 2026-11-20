@@ -71,6 +71,8 @@ function makeBackend() {
     // One ended flow projects its original saved plan as read-only history.
     endedFlow: false as boolean,
     endedFlowKeepsPreview: false as boolean,
+    // The exact durable primary-bound refusal a truncated preparation records.
+    primaryLimit: false as boolean,
     // The number of leading discovery reads that still report an unchanged
     // waiting state before the plan links.
     waitingReads: 0 as number,
@@ -155,7 +157,7 @@ function makeBackend() {
     resourceLibraryId: "library",
     storageId: "source",
     configurationSnapshotId: "active-1",
-    status: "completed",
+    status: state.primaryLimit ? "partial_success" : "completed",
     version: 5,
     createdAt: "2026-01-01T00:00:00+00:00",
     updatedAt: "2026-01-01T00:00:00+00:00",
@@ -176,10 +178,10 @@ function makeBackend() {
       unstableEntries: 0,
       errorEntries: 0,
       activeSeconds: 0.1,
-      incomplete: false,
-      incompleteReason: null,
-      refusalReasons: [],
-      materialRefusal: null,
+      incomplete: state.primaryLimit,
+      incompleteReason: state.primaryLimit ? "primary_limit" : null,
+      refusalReasons: state.primaryLimit ? ["primary_limit"] : [],
+      materialRefusal: state.primaryLimit ? "primary_limit" : null,
       findings: [],
       reasons: [],
       message: "the exact zero-mutation plan summary is ready",
@@ -188,7 +190,11 @@ function makeBackend() {
     organizeTaskId: state.endedFlow ? null : "organize-task-1",
     organizeFlow: {
       taskId: "organize-task-1",
-      status: state.endedFlow ? "completed" : "running",
+      status: state.endedFlow
+        ? state.primaryLimit
+          ? "failed"
+          : "completed"
+        : "running",
       continuable: !state.endedFlow,
     },
     admissionRequestId: null,
@@ -2094,6 +2100,25 @@ describe("ManualOrganizeDialog", () => {
     expect(
       within(history).getAllByText(/Movie\.10\.mkv/).length,
     ).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存并重新分析" })).toBeNull();
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("shows the bounded primary-limit message for a truncated ended flow", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.endedFlow = true;
+      value.state.primaryLimit = true;
+    });
+
+    await screen.findByText("本次整理工作已结束");
+    expect(
+      await screen.findByText(
+        "本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。",
+      ),
+    ).toBeVisible();
     expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "保存并重新分析" })).toBeNull();
     expect(backend.calls.executePosts).toHaveLength(0);

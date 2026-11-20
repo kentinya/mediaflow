@@ -27,7 +27,12 @@ from mediaflow.domain.manual_execution import (
     ManualExecution,
     ManualExecutionStatus,
 )
-from mediaflow.domain.media_discovery import DiscoveryStatus, MediaDiscovery
+from mediaflow.domain.media_discovery import (
+    PRIMARY_LIMIT_TASK_ERROR,
+    DiscoveryStatus,
+    MediaDiscovery,
+    discovery_primary_limit_stopped,
+)
 from mediaflow.domain.task_persistence import (
     NON_ORGANIZING_ITEM_STAGES,
     SETTLED_ITEM_STATUSES,
@@ -135,6 +140,11 @@ class ManualTaskEngineWorker:
     def run_next(self) -> PersistentTask | None:
         """Claim and advance at most one kernel-admitted manual Task."""
 
+        # A pre-change Worker left a Files preparation stopped at the primary
+        # bound in ``waiting_human`` even though no plan exists and no file was
+        # ever accepted.  Settle that bounded, idempotent legacy shape before
+        # claiming new work, so a restart needs no operator cancellation.
+        self._sweep_primary_limit_preparations()
         claim = self._scheduling.claim_next(
             worker_id=self._worker_id,
             now=self._clock(),
@@ -283,6 +293,22 @@ class ManualTaskEngineWorker:
             except TaskControlRejected:
                 pass
             return self._task(claim.task_id)
+        if (
+            discovery.status is DiscoveryStatus.PARTIAL_SUCCESS
+            and discovery.definition_origin is None
+            and discovery.intent_id is None
+            and discovery.frozen_at is None
+            and discovery.preview_id is None
+            and discovery_primary_limit_stopped(discovery.progress)
+        ):
+            # The durable walk crossed the primary-source bound.  Its recorded
+            # manifest is a truncated prefix, never an executable list, so this
+            # Task ends as a preparation failure instead of waiting for a human
+            # decision that cannot exist.  The discovery, its scope, pin and
+            # diagnostics stay untouched; the terminal Task status releases the
+            # source ownership through the same durable fact every admission
+            # reads.
+            return self._fail_primary_limit(claim)
         if discovery.status is DiscoveryStatus.FAILED:
             updated_task = self._task_for_discovery(task, discovery, now)
             items = self._terminal_items(task.task_id, TaskItemStatus.FAILED, now)
@@ -1091,6 +1117,55 @@ class ManualTaskEngineWorker:
         except TaskControlRejected:
             pass
         return self._task(claim.task_id)
+
+    def _fail_primary_limit(self, claim) -> PersistentTask:
+        """Publish one honest preparation failure for a truncated manifest."""
+
+        task = self._task(claim.task_id)
+        if task.status is PersistentTaskStatus.PENDING:
+            claim = self._scheduling.begin_work(
+                claim, stage=TaskMachineStage.DISCOVERY, now=self._clock()
+            )
+            task = claim.task
+        now = self._clock()
+        updated = self._with_status(
+            task, PersistentTaskStatus.FAILED, now, PRIMARY_LIMIT_TASK_ERROR
+        )
+        items = self._terminal_items(task.task_id, TaskItemStatus.FAILED, now)
+        updated = self._with_counts(updated, overrides=items)
+        try:
+            self._scheduling.settle(claim, task=updated, items=items, now=now)
+        except TaskControlRejected:
+            # An accepted control keeps priority at its own safe boundary.
+            pass
+        return self._task(claim.task_id)
+
+    def _sweep_primary_limit_preparations(self) -> None:
+        """Boundedly settle legacy stuck primary-limit preparations.
+
+        The repository transaction re-reads the exact Task/discovery
+        association, Task version, execution history and control conditions
+        before it publishes the terminal pair.  A live claim, a competing
+        control request, an accepted execution or any file/effect evidence is
+        left exactly where it is; a repeat run reads no still-eligible row and
+        therefore writes nothing.
+        """
+
+        sweeper = getattr(self._repository, "settle_stuck_primary_limit_preparations", None)
+        if not callable(sweeper):
+            return
+        try:
+            sweeper(self._clock(), limit=20)
+        except Exception as error:  # noqa: BLE001 - a Worker must never crash the loop
+            code = getattr(error, "code", None)
+            if not isinstance(code, str) or not code.strip():
+                code = type(error).__name__
+            bounded = "".join(
+                character for character in code if character.isalnum() or character in "_-"
+            )
+            self._notice(
+                f"stuck primary-limit preparation sweep failed ({bounded[:48]}); state preserved\n"
+            )
 
     def _record_failure(
         self, claim, error: BaseException, initial_execution_stage: str | None = None

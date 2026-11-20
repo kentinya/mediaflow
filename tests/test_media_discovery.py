@@ -792,11 +792,29 @@ class RetainedTaskKernelFilesJourneyTests(_DiscoveryFixture):
             self.assertEqual([], value.target.mutations)
 
     def test_one_hundred_and_one_primary_items_cannot_yield_a_prefix(self) -> None:
-        """101 eligible files refuse a truncated executable prefix."""
+        """101 eligible files end the preparation and free the same source."""
 
-        for index in range(101):
+        from mediaflow.domain.task_persistence import PersistentTaskStatus
+        from mediaflow.domain.task_scheduling import TaskQueueState
+
+        source_path = "Movies/AA One.2001.mkv"
+        self.media(source_path)
+        for index in range(100):
             self.media(f"Movies/Bulk.{index:03d}.mkv")
-        with self.journey(task_scheduling=True) as value:
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "AA One",
+                    year=2001,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with self.journey(task_scheduling=True, provider=provider) as value:
             status, admitted = self._admit(value, ["Movies"])
             self.assertEqual(202, status, admitted)
             task_id = admitted["organizeTaskId"]
@@ -809,7 +827,24 @@ class RetainedTaskKernelFilesJourneyTests(_DiscoveryFixture):
             self.assertTrue(settled["progress"]["incomplete"])
             self.assertFalse(settled["actions"]["finalize"]["available"])
             self.assertEqual("discovery_budget_limited", settled["actions"]["finalize"]["refusal"])
-            self.assertIn("narrow", settled["nextAction"])
+            self.assertIn("fresh organize", settled["nextAction"])
+
+            # The Task itself records the honest preparation failure and its
+            # scheduling slot is settled; the discovery, its truncated scope
+            # and its diagnostics remain readable.
+            failed_task = value.repository.get_task(task_id)
+            self.assertIs(failed_task.status, PersistentTaskStatus.FAILED)
+            self.assertEqual("preparation_primary_limit", failed_task.error)
+            self.assertIsNotNone(failed_task.completed_at)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertIs(state.queue_state, TaskQueueState.SETTLED)
+            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            retained = value.repository.get_media_discovery(discovery.discovery_id)
+            self.assertEqual(100, len(retained.sources))
+            self.assertIn(
+                "primary_limit",
+                [item.value for item in retained.progress.refusal_reasons],
+            )
 
             status, refused = self.request(
                 value,
@@ -822,6 +857,62 @@ class RetainedTaskKernelFilesJourneyTests(_DiscoveryFixture):
             self.assertIsNone(refused.get("intentId"))
             # No items were frozen and no Storage effect happened.
             self.assertEqual((), value.repository.list_items(task_id))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # The same retained file can enter one new small batch without
+            # cancelling the failed Task; that batch reaches its own exact plan.
+            status, fresh = self._admit(value, [source_path])
+            self.assertEqual(202, status, fresh)
+            fresh_task_id = fresh["organizeTaskId"]
+            self.assertNotEqual(task_id, fresh_task_id)
+            fresh_discovery = self._drive(value, fresh_task_id)
+            self.assertIsNotNone(fresh_discovery)
+            fresh_document = self._projection(value, fresh_discovery.discovery_id)
+            self.assertEqual("completed", fresh_document["status"], fresh_document)
+            self.assertIsNotNone(fresh_document["previewId"], fresh_document)
+            self.assertEqual(1, fresh_document["primarySourceCount"], fresh_document)
+            self.assertIs(
+                value.repository.get_task(fresh_task_id).status,
+                PersistentTaskStatus.RUNNING,
+            )
+            self.assertIs(
+                value.repository.get_task_scheduling(fresh_task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_exactly_one_hundred_primary_items_reach_a_confirmable_plan(self) -> None:
+        """The exact bound is a complete preparation, not a refused prefix."""
+
+        from mediaflow.domain.task_persistence import PersistentTaskStatus
+        from mediaflow.domain.task_scheduling import TaskQueueState
+
+        for index in range(100):
+            self.media(f"Movies/Bulk.{index:03d}.mkv")
+        with self.journey(task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            self.assertIsNotNone(discovery)
+            settled = self._projection(value, discovery.discovery_id)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(100, settled["progress"]["primarySources"])
+            self.assertFalse(settled["progress"]["incomplete"])
+            self.assertIsNotNone(settled["previewId"], settled)
+            preview = value.repository.get_manual_preview(settled["previewId"])
+            self.assertIsNotNone(preview)
+            self.assertEqual(100, len(preview.items))
+            self.assertIs(
+                value.repository.get_task(task_id).status,
+                PersistentTaskStatus.RUNNING,
+            )
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 

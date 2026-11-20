@@ -154,6 +154,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryIncompleteReason,
     DiscoveryStatus,
     discovery_material_refusal,
+    discovery_primary_limit_stopped,
 )
 from mediaflow.domain.notification import (
     NotificationDeliveryConflict,
@@ -11470,6 +11471,14 @@ class MediaFlowApi:
         # one.  The bounded identity lets Task Center reopen the same existing
         # summary/preparation instead of keeping a second record list.
         document["filesPreparation"] = self._operations_run_files_preparation(overview)
+        # The selected run's own durable primary-limit fact, when its Files
+        # preparation crossed the bound.  It is a bounded boolean beside the
+        # preparation identity, so Task Center can label "失败／准备阶段超限"
+        # and keep the ended flow read-only without exposing the discovery
+        # payload or inventing a reason from the Task's free-text error.
+        document["filesPreparationPrimaryLimit"] = (
+            self._operations_run_files_preparation_primary_limit(overview)
+        )
         # The selected run's own manual Organize acceptances, when the reading
         # principal admitted them.  A Task can receive several explicit
         # confirmations (for example one ready subset, then the remaining
@@ -11575,6 +11584,21 @@ class MediaFlowApi:
             "resourceLibraryId": discovery.resource_library_id,
             "continuable": self._organize_flow_continuable(discovery.organize_task_id),
         }
+
+    def _operations_run_files_preparation_primary_limit(self, overview) -> bool:
+        """Whether this exact Task's Files preparation stopped at the bound."""
+
+        repository = self._repository
+        task_id = getattr(overview, "task_id", None)
+        if not isinstance(task_id, str) or not task_id:
+            return False
+        reader = getattr(repository, "get_media_discovery_for_task", None)
+        if not callable(reader):
+            return False
+        discovery = reader(task_id)
+        if discovery is None or discovery.organize_task_id != task_id:
+            return False
+        return discovery_primary_limit_stopped(discovery.progress)
 
     def _organize_flow_continuable(self, task_id: str) -> bool:
         """Whether the linked organizing Task's flow can still be continued.
