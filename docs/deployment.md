@@ -24,8 +24,8 @@ installation, health, restart, backup, restore and failure-recovery procedures.
 - **No media mount is required to install or start MediaFlow.** The default
   `compose.yaml` declares only the application configuration file, the
   deployment environment file and `/data`. A fresh installation can therefore
-  start all four services, open V2 Settings, create the first Draft and activate
-  a valid empty baseline without any host media directory.
+  start all four services, open V2 Settings and initialize a valid empty
+  baseline without any host media directory.
 - Local Storage is the one capability that needs real media. Adding it is an
   explicit deployment step: apply the committed `compose.media-mounts.yaml`
   overlay, which adds the two confined mounts at `/media/incoming` (read-only)
@@ -69,19 +69,17 @@ This renders the **management-only** bootstrap: the durable database locator and
 one environment reference for the API credential, with no Storage, library,
 policy, schedule or Webhook. It is deliberately the default, because it is the
 shape a fresh installation needs and it starts every service without any media
-mount. Open `/configuration`, create the first Draft, and activate a valid
-empty baseline; Storage and libraries are configured afterwards through the
-business pages.
+mount. Open `/configuration` and initialize a valid empty baseline; Storage and
+libraries are configured afterwards through the business pages.
 
 In `系统设置` (`/configuration`), the compact `配置状态摘要` shows whether setup is required.
-Use `创建首个草稿`, reload the page and use `恢复草稿（编辑版本 N）` to prove the same Draft is
-recovered. In `高级配置`, `验证草稿` validates that exact edit version. The `发布前检查` panel
-lists only checks applicable to that revision; an empty baseline reports `该草稿没有适用检查`.
-`激活配置` is the explicit checked activation of the validated edit version. The page then shows
-`空配置已生效`, the actual Active identity under `诊断`, and no Task, delivery or media mutation.
-For a populated configuration, run each listed Storage check, offline recognition strategy test and
-destination precheck in the same panel before activation. A failed check keeps the Draft and the
-previous Active intact and offers the named correction/rerun action.
+Use `初始化为空配置` to publish a valid empty baseline. The `高级配置` groups read the exact
+Active values; `应用更改` validates the current form, runs applicable in-place checks and
+atomically publishes a new Active snapshot. An unknown response is verified automatically by the
+same request identity, and the previous Active stays authoritative until that publication commits.
+The page then shows `空配置已生效`, the actual Active identity under `诊断`, and no Task, delivery
+or media mutation. A failed check or stale baseline preserves the previous Active and the input;
+there is no resumable Draft.
 
 If you already have a Local Storage layout, also render the canonical example as a
 managed configuration *input*:
@@ -103,32 +101,27 @@ configuration input adds `/data/history.jsonl`. `config/mediaflow.json` and the
 activation input are Git-ignored.
 
 After `docker compose up -d` has started the project (with the media overlay when
-the deployment uses Local Storage), import the generated input into that
-project's `/data` volume through the image entrypoint and the same Compose file
-set:
+the deployment uses Local Storage), publish the generated input directly through
+the image entrypoint and the same Compose file set:
 
 ```bash
 docker compose -f compose.yaml -f compose.media-mounts.yaml run --rm --no-deps -T api \
-  config draft-import --file /dev/stdin < config/mediaflow.activation.json
+  config publish --file /dev/stdin < config/mediaflow.activation.json
 ```
 
 `-T` keeps stdin available, and the generated file is streamed into the
 container, so it never needs to be mounted. The image entrypoint dispatches the
-`mediaflow` command, so the arguments start at `config`. The command writes an
-inactive Draft through the same bootstrap database the four services use: it
-creates no Active configuration, Task, delivery or media mutation, and the
-running services need no restart. Without `--file`, `config draft-import` falls
-back to `--config` and imports the management-only bootstrap (zero Storage), so
-always name the generated input. Repeat `-p` or `COMPOSE_PROJECT_NAME` here when
-the deployment uses a non-default Compose project.
+`mediaflow` command, so the arguments start at `config`. The command validates
+the document and atomically publishes it as the new Active configuration; it
+creates no Task, delivery or media mutation, and the running services adopt the
+snapshot without a restart. Without `--file`, `config publish` republishes the
+current Active (or requires `config initialize` on a fresh instance).
 
-Then select that Draft in `系统设置` → `高级配置` → `查看配置`, run `验证草稿`,
-complete the `发布前检查` listed for that exact version (the read-only Storage
-checks, the offline recognition strategy test and the destination precheck),
-and click `激活配置`. The
+The same input can be reviewed and published from `系统设置` → `高级配置` by
+opening the on-demand configuration JSON, replacing it with the complete
+document and applying it explicitly. The
 [configuration guide](configuration.md) uses the same page names and describes
-failed-check recovery. Publication is adopted by the running services without a
-restart.
+failed-check recovery.
 
 - A deployment-owned environment file. Copy
   [deploy/mediaflow.env.example](../deploy/mediaflow.env.example) to
@@ -596,10 +589,9 @@ It runs two isolated stacks. The first uses the **default** topology: all four
 services start with only the bootstrap file, the environment file and `/data`;
 the resident services register and heartbeat; Scheduler and Notification Worker
 report themselves waiting with a bounded reason; the real Python-served
-`系统设置` page creates the first Draft, reloads and recovers that same Draft,
-validates it, confirms the empty baseline has no applicable publish checks and
-activates the exact checked version. The page then shows the empty Active
-identity and creates no Task, delivery or mutation. An eligible Local Storage,
+`系统设置` page initializes the empty baseline, reloads and reads back the same
+Active identity. The page then shows the empty Active identity and creates no
+Task, delivery or mutation. An eligible Local Storage,
 ResourceLibrary, schedule and Webhook are published against a container-local
 isolated root; the **same** container identities produce an eligible occurrence
 and a signed delivery to a controlled local HTTPS receiver. The harness runs the

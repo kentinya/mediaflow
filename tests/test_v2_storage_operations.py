@@ -15,6 +15,7 @@ Provider, creates Jobs/Tasks or mutates Storage content.
 
 from __future__ import annotations
 
+import copy
 import io
 import json
 import os
@@ -256,6 +257,8 @@ class StorageOperationsJourney(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         (self.root / "local").mkdir()
+        (self.root / "local" / "Archive").mkdir()
+        (self.root / "local" / "Movies").mkdir()
         self.nas = FakeStorage("nas")
         self.adapters = {"nas": self.nas}
         self.environment = patch.dict(os.environ, _environment(), clear=False)
@@ -914,50 +917,24 @@ class StorageOperationsJourney(unittest.TestCase):
         self,
     ) -> None:
         # Add a disabled MediaLibrary referencing the local Storage through the
-        # exact Active successor; the breakdown must still count it.
-        active_id = self.active_identity()["revisionId"]
-        _status, draft = _request(
-            self.api,
-            f"/api/configuration/revisions/{active_id}/successor",
-            method="POST",
-            body={},
+        # exact Active direct-publication route; the breakdown must still count it.
+        active = self.configuration.active()
+        document = copy.deepcopy(active.document)
+        document["mediaLibraries"].append(
+            {
+                "id": "archived-movies",
+                "name": "Archived movies",
+                "storageId": "local-source",
+                "rootPath": "Archive",
+                "enabled": False,
+            }
         )
-        revision_id = draft["revisionId"]
-        _status, versioned = _request(
-            self.api,
-            f"/api/configuration/revisions/{revision_id}/objects",
-            token=ADMIN_TOKEN,
-        )
-        version = versioned["version"]
-        _status, response = _request(
-            self.api,
-            f"/api/configuration/revisions/{revision_id}/objects/mediaLibraries",
-            method="POST",
-            body={
-                "object": {
-                    "id": "archived-movies",
-                    "name": "Archived movies",
-                    "storageId": "local-source",
-                    "rootPath": "Archive",
-                    "enabled": False,
-                },
-                "expectedVersion": version,
-            },
-        )
-        self.assertIn("version", response, response)
-        # Activate the successor so the disabled dependent becomes part of the
-        # exact Active configuration the detail projection reads.
-        _status, _activated = _request(
-            self.api,
-            f"/api/configuration/revisions/{revision_id}/validate",
-            method="POST",
-            body={},
-        )
-        _status, _activated = _request(
-            self.api,
-            f"/api/configuration/revisions/{revision_id}/activate",
-            method="POST",
-            body={"expectedVersion": response["version"]},
+        self.configuration.publish_document(
+            document,
+            actor="admin",
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=active.version,
+            expected_active_digest=active.digest,
         )
         detail_route = DETAIL_ROUTE.format(storage_id="local-source")
         status, detail = _request(self.api, detail_route)

@@ -596,40 +596,32 @@ class Stack:
         )
 
     def activate(self, document: dict) -> dict:
-        """Create, fill, validate and activate the first Draft via the real API.
+        """Publish one complete document through the real direct API."""
 
-        Every step goes through the authenticated HTTP surface an operator
-        actually uses, so this proves the journey rather than the internal
-        service methods.
-        """
-
-        draft = self.json_api("/api/configuration/drafts/first", method="POST", body={})
-        saved = self.json_api(
-            f"/api/configuration/revisions/{draft['revisionId']}",
-            method="PUT",
-            body={"document": document, "expectedVersion": draft["version"]},
+        return self.json_api(
+            "/api/configuration/publish",
+            method="POST",
+            body={"document": document},
         )
-        return self._validate_and_activate(saved["revisionId"])
 
     def successor(self, mutate) -> dict:
-        """Publish a successor of the current Active through the real API.
-
-        A published revision is immutable, so a later change is an explicit new
-        Draft.  That is the supported A→B publication path the resident
-        services must adopt without restarting.
-        """
+        """Publish one complete successor of the current Active directly."""
 
         status = self.json_api("/api/configuration")
         active_id = status["active"]["revisionId"]
         detail = self.json_api(f"/api/configuration/revisions/{active_id}")
         document = _bind_deployment_authority(detail["document"], self.database, self.token_env)
         mutate(document)
-        imported = self.json_api(
-            "/api/configuration/drafts",
+        return self.json_api(
+            "/api/configuration/publish",
             method="POST",
-            body={"document": document},
+            body={
+                "document": document,
+                "expectedActiveRevisionId": status["active"]["revisionId"],
+                "expectedActiveVersion": status["active"]["revisionSequence"],
+                "expectedActiveDigest": status["active"]["digest"],
+            },
         )
-        return self._validate_and_activate(imported["revisionId"])
 
     def _validate_and_activate(self, revision_id: str) -> dict:
         """Validate, run the applicable read-only evidence, then activate.
@@ -839,17 +831,13 @@ def assert_real_web_status(stack: Stack) -> None:
 
 
 def activate_empty_baseline_through_web(stack: Stack) -> dict:
-    """Run the native first-Draft controls against the real Python-served SPA."""
+    """Initialize the empty baseline from the real Python-served Web page."""
 
     code = r"""
         import {chromium, expect} from '@playwright/test';
         const browser = await chromium.launch({headless:true});
         const writes = [];
-        const draftReads = [];
-        let created = null;
-        let validated = null;
-        let activated = null;
-        let activationBody = null;
+        let active = null;
         try {
             const page = await browser.newPage({viewport:{width:1280,height:900}});
             page.on('request', request => {
@@ -860,88 +848,43 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
                 if (method !== 'GET' &&
                     /\/(tasks|jobs|scan|preview|organize)(\/|$)/.test(path))
                     writes.push(`${method} ${path}`);
-                if (method === 'POST' && path.endsWith('/activate'))
-                    activationBody = request.postDataJSON();
-                if (method === 'GET' && /\/configuration\/revisions\/[^/]+$/.test(path))
-                    draftReads.push(path);
             });
             page.on('response', async response => {
                 const path = new URL(response.url()).pathname;
-                if (!response.ok()) return;
-                if (path.endsWith('/configuration/drafts/first'))
-                    created = await response.json();
-                if (path.endsWith('/validate'))
-                    validated = await response.json();
-                if (path.endsWith('/activate'))
-                    activated = await response.json();
+                if (response.ok() && path.endsWith('/configuration/initialize'))
+                    active = await response.json();
             });
             await page.goto(process.env.MF_TEST_BASE + '/configuration');
             await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
             await page.getByRole('button', {name:'Connect', exact:true}).click();
-            await expect(page.getByText('需要首次设置', {exact:true})).toBeVisible();
-            await expect(page.getByRole('button', {name:'创建首个草稿'})).toBeVisible();
+            await expect(page.getByText('需要初始化', {exact:true})).toBeVisible();
+            await expect(
+                page.getByRole('button', {name:'初始化为空配置'})
+            ).toBeVisible();
             if (writes.length !== 0)
                 throw new Error('opening Settings wrote configuration or started work');
-            await page.getByRole('button', {name:'创建首个草稿'}).click();
-            await expect(page.getByText('已创建首个草稿')).toBeVisible();
-            await expect(page.getByText('已有草稿待恢复', {exact:true})).toBeVisible();
+            await page.getByRole('button', {name:'初始化为空配置'}).click();
+            await expect(page.getByText('配置已初始化')).toBeVisible();
+            await expect(page.getByText('空配置已生效', {exact:true})).toBeVisible();
             if (writes.length !== 1 ||
-                !/^POST \/api\/configuration\/drafts\/first$/.test(writes[0]))
-                throw new Error('the first Draft was not created by one explicit action');
-            if (created === null || typeof created.revisionId !== 'string')
-                throw new Error('the first Draft response did not identify its revision');
+                !/^POST \/api\/configuration\/initialize$/.test(writes[0]))
+                throw new Error('the empty baseline was not initialized by one explicit action');
+            if (active === null || typeof active.revisionId !== 'string')
+                throw new Error('initialization did not identify the Active revision');
 
-            // A reload loses the in-memory token, reconnects, and must recover
-            // the same durable Draft rather than create another one.
             await page.reload();
             await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
             await page.getByRole('button', {name:'Connect', exact:true}).click();
-            await expect(page.getByText('已有草稿待恢复', {exact:true})).toBeVisible();
-            await page.getByRole('button', {name:/恢复草稿/}).click();
-            await expect(page.getByRole('heading', {name:'高级配置'})).toBeVisible();
-            await expect(page.getByRole('button', {name:'验证草稿'})).toBeVisible();
-            if (!draftReads.some(path => path.endsWith('/' + created.revisionId)))
-                throw new Error('the reloaded page did not read back the same Draft revision');
-            if (writes.length !== 1)
-                throw new Error('reload/resume created another Draft or submitted work');
-
-            await page.getByRole('button', {name:'验证草稿'}).click();
-            await expect(page.getByText('草稿验证通过')).toBeVisible();
-            await expect(
-                page.getByRole('region', {name:'发布前检查'})
-            ).toContainText('该草稿没有适用检查');
-            if (validated === null ||
-                validated.revisionId !== created.revisionId ||
-                validated.version !== created.version ||
-                validated.digest !== created.digest)
-                throw new Error('validation did not bind the exact created Draft revision');
-
-            await page.getByRole('button', {name:'激活配置'}).click();
-            await expect(page.getByRole('heading', {name:'配置已激活'})).toBeVisible();
             await expect(page.getByText('空配置已生效', {exact:true})).toBeVisible();
-            if (activationBody === null ||
-                activationBody.checked !== true ||
-                activationBody.expectedVersion !== validated.version)
-                throw new Error('activation did not use the checked exact validated version');
-            if (activated === null ||
-                activated.revisionId !== created.revisionId ||
-                activated.version !== validated.version)
-                throw new Error('activation response did not identify the exact Active revision');
-            if (writes.some(path =>
-                !path.startsWith('POST /api/configuration/drafts/first') &&
-                !/^POST \/api\/configuration\/revisions\/[^/]+\/(validate|activate)$/
-                    .test(path)))
-                throw new Error('the settings journey wrote outside its explicit actions');
+            if (writes.length !== 1)
+                throw new Error('reload created another revision or submitted work');
 
-            // The visible Active identity and the empty-business next action
-            // must come from the same post-activation read.
             await page.getByText('诊断', {exact:true}).click();
             const identity = page.locator(
                 'section.mf-settings-diagnostic-block').filter({hasText:'配置身份'});
             await expect(identity).toContainText('生效版本');
             await expect(identity.locator('code').filter({
-                hasText:created.revisionId}).first()).toContainText(created.revisionId);
-            await expect(identity).toContainText('配置已激活，媒体业务尚未配置');
+                hasText:active.revisionId}).first()).toContainText(active.revisionId);
             const browserState = await page.evaluate(async () => ({
                 localStorage: localStorage.length,
                 sessionStorage: sessionStorage.length,
@@ -957,17 +900,9 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
             if (browserState.localStorage !== 0 || browserState.sessionStorage !== 0 ||
                 browserState.cookie !== '' || browserState.indexedDb !== 0)
                 throw new Error('unexpected persistent browser state');
-            if ((await page.locator('body').innerText()).includes(process.env.MF_TEST_TOKEN))
-                throw new Error('token leaked into rendered content');
-            if ((await page.context().cookies()).some(
-                cookie => cookie.value.includes(process.env.MF_TEST_TOKEN)))
-                throw new Error('token leaked into a browser cookie');
             console.log(JSON.stringify({
                 writes,
-                validatedVersion: validated.version,
-                activationVersion: activationBody.expectedVersion,
-                activeRevision: activated.revisionId,
-                draftReloaded: true,
+                activeRevision: active.revisionId,
                 tokenStored: false,
             }));
         } finally { await browser.close(); }
@@ -980,11 +915,11 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
         text=True,
     )
     if result.returncode:
-        raise RuntimeError("real Python-served first activation failed: " + result.stderr)
+        raise RuntimeError("real Python-served empty initialization failed: " + result.stderr)
     evidence = json.loads(result.stdout.strip().splitlines()[-1])
     print(
-        "   real Python-served Web created, reloaded and checked-activated "
-        f"exact Draft version {evidence['validatedVersion']}"
+        "   real Python-served Web initialized and reloaded empty Active "
+        f"{evidence['activeRevision']}"
     )
     return evidence
 

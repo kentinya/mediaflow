@@ -838,7 +838,9 @@ class AutomationWorkspaceCommandService:
             try:
                 marker = int(latest()) + 1
                 while True:
-                    page = targeted(("draft_edit",), before_sequence=marker, limit=page_size)
+                    page = targeted(
+                        ("activate", "draft_edit"), before_sequence=marker, limit=page_size
+                    )
                     for audit in page:
                         accept(audit)
                     if len(page) < page_size:
@@ -865,7 +867,7 @@ class AutomationWorkspaceCommandService:
                 complete = False
         elif callable(recent):
             try:
-                audits = recent(("draft_edit",), limit=200)
+                audits = recent(("activate", "draft_edit"), limit=200)
             except Exception:
                 audits = ()
             for audit in audits:
@@ -1759,7 +1761,7 @@ class AutomationWorkspaceCommandService:
 
     def _successor(self, active: ManagedConfigurationRevision) -> ManagedConfigurationRevision:
         try:
-            return self._managed.create_successor_draft(
+            return self._managed.stage_successor_draft(
                 actor="automation",
                 expected_active_revision_id=active.revision_id,
                 expected_active_version=active.revision_sequence or active.version,
@@ -2039,7 +2041,7 @@ class AutomationWorkspaceCommandService:
     def _capture_active(self, action: str) -> ManagedConfigurationRevision:
         active = self._managed.active()
         if active is None:
-            self._managed.create_successor_draft(actor="automation")
+            self._managed.stage_successor_draft(actor="automation")
             raise RuntimeSnapshotUnavailable(
                 f"no Active configuration exists; Automation definition {action} is unavailable",
                 reason="active_missing",

@@ -1217,7 +1217,7 @@ class RulesWorkspaceCommandService:
             )
 
         try:
-            draft = self._managed.create_successor_draft(
+            draft = self._managed.stage_successor_draft(
                 actor=actor,
                 expected_active_revision_id=active.revision_id,
                 expected_active_version=active.revision_sequence or active.version,
@@ -1403,7 +1403,7 @@ class RulesWorkspaceCommandService:
         active = self._managed.active()
         if active is None:
             # Reuse the managed service's fail-closed missing/marker distinction.
-            self._managed.create_successor_draft(actor="system")
+            self._managed.stage_successor_draft(actor="system")
             raise RuntimeSnapshotUnavailable(
                 f"no Active configuration exists; {spec.label} {action} is unavailable",
                 reason="active_missing",

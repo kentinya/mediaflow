@@ -47,7 +47,7 @@ flowchart LR
    docker compose ps
    ```
 
-3. 打开 <http://127.0.0.1:8080/>，输入配置的令牌。在「系统设置」创建首个草稿，验证并激活空配置，再按需添加存储、资源库、媒体库和整理规则。
+3. 打开 <http://127.0.0.1:8080/>，输入配置的令牌。在「系统设置」初始化为空配置，再按需添加存储、资源库、媒体库和整理规则。
 
 默认以管理模式启动。本地媒体目录通过 Compose 覆盖文件显式挂载。挂载、日志、备份和网络设置见[部署指南](docs/deployment.md)。
 
@@ -77,7 +77,7 @@ export MEDIAFLOW_API_TOKEN="<替换为已保存的随机令牌>"
 | `config/mediaflow.json` | 指定 SQLite 路径及 API 身份使用的环境变量。 |
 | `.env.mediaflow` | Compose 使用的环境文件，存放 API 令牌和可选的服务凭据。 |
 | `TMDB_ACCESS_TOKEN` | 使用 TMDB 探索或元数据匹配时设置。 |
-| Web「系统设置」 | 创建、验证和激活配置草稿。运行服务读取已激活的配置。 |
+| Web「系统设置」 | 初始化、检查和直接应用配置。运行服务读取已发布快照。 |
 | Web「存储」「文件」「媒体库」「整理规则」 | 配置输入、目标和整理方式。首次整理时可先用少量文件复核方案。 |
 
 Web 从 `/` 进入。API 使用 `/api/*`，`GET /health` 查看进程状态。[换址说明](docs/deployment.md#v2-frontend-artifact-and-serving)
@@ -86,7 +86,7 @@ Web 从 `/` 进入。API 使用 `/api/*`，`GET /health` 查看进程状态。[�
 
 | 文档 | 内容 |
 | --- | --- |
-| [配置说明](docs/configuration.md) | 凭据、草稿发布、存储、库和规则。 |
+| [配置说明](docs/configuration.md) | 凭据、直接发布、存储、库和规则。 |
 | [部署指南](docs/deployment.md) | Compose、媒体挂载、服务状态、备份和恢复。 |
 | [用户操作](docs/product-experience.md) · [任务中心](docs/task-center-page-spec.md) | 文件管理、整理确认、逐项结果和恢复。 |
 | [架构](docs/architecture.md) · [需求](docs/requirements.md) | 模块职责、数据边界和稳定需求。 |

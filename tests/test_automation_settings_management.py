@@ -431,26 +431,34 @@ class AutomationSettingsSaveTests(unittest.TestCase):
         self.assertEqual(status, 403, data)
         self.assertEqual(self.fixture.configuration.active().revision_id, before.revision_id)
 
-    def test_failed_preparation_preserves_the_previous_active(self) -> None:
+    def test_failed_validation_preserves_the_previous_active(self) -> None:
         before = self.fixture.configuration.active()
-        original_validate = self.fixture.configuration.validate
+        original_loader = self.fixture.configuration._loader
 
-        def failing_validate(revision_id, *, actor):
-            raise RuntimeError("validation store unavailable")
+        def failing_loader(document):
+            if document.get("automation", {}).get("maximumActiveJobs") == 31:
+                raise ValueError("maximumActiveJobs is unacceptable for this deployment")
+            return original_loader(document)
 
-        self.fixture.configuration.validate = failing_validate
+        self.fixture.configuration._loader = failing_loader
         try:
             status, data = self.fixture.submit(
                 self.fixture.full(**{"automation.maximumActiveJobs": 31})
             )
         finally:
-            self.fixture.configuration.validate = original_validate
-        self.assertEqual(status, 503, data)
+            self.fixture.configuration._loader = original_loader
+        self.assertEqual(status, 422, data)
         self.assertEqual(data["error"]["details"]["durableState"], "active_preserved")
         self.assertEqual(data["error"]["details"]["stage"], "validate")
         active = self.fixture.configuration.active()
         self.assertEqual(active.revision_id, before.revision_id)
         self.assertEqual(active.document["automation"]["maximumActiveJobs"], 100)
+        self.assertFalse(
+            any(
+                revision.status.value in {"draft", "validated"}
+                for revision in self.fixture.config_repository.list_revisions()
+            )
+        )
 
     def test_failed_runtime_preparation_preserves_active_and_process_binding(self) -> None:
         """B43.4-R1: preparation happens *before* publication.
@@ -489,9 +497,15 @@ class AutomationSettingsSaveTests(unittest.TestCase):
         details = data["error"]["details"]
         self.assertEqual(details["stage"], "prepare")
         self.assertEqual(details["durableState"], "active_preserved")
-        # The successor Draft and read-only evidence stay for review; the Active
-        # pointer and the process binding do not move.
-        self.assertIn("Active pointer unchanged", details["sideEffects"])
+        # No unpublished candidate or evidence is retained; the Active pointer
+        # and the process binding do not move.
+        self.assertIn("no candidate revision", details["sideEffects"])
+        self.assertFalse(
+            any(
+                revision.status.value in {"draft", "validated"}
+                for revision in self.fixture.config_repository.list_revisions()
+            )
+        )
         # The Active pointer never advanced, so nothing published capacity 31.
         active = self.fixture.configuration.active()
         self.assertEqual(active.revision_id, before.revision_id)
@@ -530,9 +544,7 @@ class AutomationSettingsSaveTests(unittest.TestCase):
 
     def test_audit_records_bounded_before_and_after_evidence(self) -> None:
         self.fixture.submit(self.fixture.full(**{"automation.maximumActiveJobs": 61}))
-        audits = self.fixture.config_repository.list_recent_command_audits(
-            ("draft_edit",), limit=50
-        )
+        audits = self.fixture.config_repository.list_recent_command_audits(("activate",), limit=50)
         focused = [
             item
             for item in audits
@@ -654,8 +666,14 @@ class AutomationSettingsReconcileTests(unittest.TestCase):
         self.assertEqual(reconciled["state"], "not_committed")
         self.assertEqual(reconciled["committedRevisionId"], None)
         self.assertTrue(reconciled["currentValuesMatchSubmission"])
-        self.assertNotEqual(
-            reconciled["evidence"]["revisionId"], reconciled["target"]["revisionId"]
+        # The failed request never owned a persisted revision; only its terminal
+        # outcome evidence names this exact submission.
+        self.assertIsNone(reconciled["evidence"].get("revisionId"))
+        self.assertFalse(
+            any(
+                revision.status.value in {"draft", "validated"}
+                for revision in self.fixture.config_repository.list_revisions()
+            )
         )
 
     def test_superseded_submission_is_reported_as_published_then_replaced(self) -> None:

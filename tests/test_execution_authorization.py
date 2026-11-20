@@ -490,9 +490,20 @@ class RetiredRemoteExecutionConfigurationTests(unittest.TestCase):
     def _document(database: Path) -> dict:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         document["persistence"] = {"databasePath": str(database)}
+        root = database.parent
+        for path in (
+            root / "source" / "incoming",
+            root / "target" / "Movies",
+        ):
+            path.mkdir(parents=True, exist_ok=True)
+        for storage in document.get("storages", []):
+            if storage.get("id") == document["storages"][0]["id"]:
+                storage["rootPath"] = str(root / "source")
+            else:
+                storage["rootPath"] = str(root / "target")
         return document
 
-    def test_new_draft_with_ticket_setting_is_refused_and_publishes_nothing(self):
+    def test_new_document_with_ticket_setting_is_refused_and_publishes_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             document = self._document(database)
@@ -506,7 +517,8 @@ class RetiredRemoteExecutionConfigurationTests(unittest.TestCase):
 
             status, body = request(
                 api,
-                "/api/configuration/drafts",
+                "/api/configuration/publish",
+                method="POST",
                 document={"document": submitted},
             )
             self.assertEqual(400, status, body)
@@ -514,40 +526,33 @@ class RetiredRemoteExecutionConfigurationTests(unittest.TestCase):
             self.assertIsNone(service.active())
             self.assertEqual((), repository.list_tasks())
 
-            # The ordinary document without the retired field still completes
-            # the whole Draft -> validate -> activate lifecycle.
             status, imported = request(
                 api,
-                "/api/configuration/drafts",
+                "/api/configuration/publish",
+                method="POST",
                 document={"document": document},
             )
-            self.assertEqual(201, status, imported)
-            status, refused_edit = request(
-                api,
-                f"/api/configuration/revisions/{imported['revisionId']}",
-                method="PUT",
-                document={"document": submitted, "expectedVersion": imported["version"]},
+            self.assertEqual(200, status, imported)
+            self.assertEqual("active", imported["status"])
+            active = service.active()
+            self.assertIsNotNone(active)
+            self.assertEqual(
+                [item["id"] for item in active.document["resourceLibraries"]],
+                [item["id"] for item in document["resourceLibraries"]],
             )
-            self.assertEqual(400, status, refused_edit)
-            self.assertIn("retired", refused_edit["error"]["message"])
-            self.assertEqual(imported["digest"], service.require(imported["revisionId"]).digest)
-            status, validated = request(
+            # A subsequent direct publication of the retired field is refused
+            # before any new Active or Task is created.
+            status, refused = request(
                 api,
-                f"/api/configuration/revisions/{imported['revisionId']}/validate",
-                document={},
+                "/api/configuration/publish",
+                method="POST",
+                document={"document": submitted},
             )
-            self.assertEqual(200, status, validated)
-            self.assertEqual("validated", validated["status"], validated)
-            status, activated = request(
-                api,
-                f"/api/configuration/revisions/{imported['revisionId']}/activate",
-                document={"expectedVersion": validated["version"]},
-            )
-            self.assertEqual(200, status, activated)
-            self.assertEqual("active", activated["status"])
+            self.assertEqual(400, status, refused)
+            self.assertEqual(service.active().revision_id, active.revision_id)
             self.assertEqual((), repository.list_tasks())
 
-    def test_existing_draft_with_ticket_setting_cannot_validate_or_activate(self):
+    def test_existing_unpublished_revision_with_ticket_setting_is_retired(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             document = self._document(database)
@@ -568,20 +573,17 @@ class RetiredRemoteExecutionConfigurationTests(unittest.TestCase):
                     ),
                 )
 
-            status, validated = request(
-                api,
-                f"/api/configuration/revisions/{draft.revision_id}/validate",
-                document={},
-            )
-            self.assertEqual(200, status, validated)
-            self.assertEqual("draft", validated["status"], validated)
-            self.assertIn("retired", validated["validationErrors"][0])
-            status, refused = request(
-                api,
-                f"/api/configuration/revisions/{draft.revision_id}/activate",
-                document={"expectedVersion": validated["version"]},
-            )
-            self.assertEqual(409, status, refused)
+            # The draft lifecycle entry points are unknown; the unpublished
+            # historical row cannot become Active through them.
+            for action in ("validate", "activate"):
+                status, refused = request(
+                    api,
+                    f"/api/configuration/revisions/{draft.revision_id}/{action}",
+                    method="POST",
+                    document={"expectedVersion": draft.version} if action == "activate" else {},
+                )
+                self.assertEqual(404, status, refused)
+                self.assertEqual(refused["error"]["code"], "not_found")
             self.assertIsNone(service.active())
             self.assertEqual((), tasks.list_tasks())
 

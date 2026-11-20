@@ -55,6 +55,8 @@ class ManagedClassificationPolicyJourneyTests(unittest.TestCase):
         document["persistence"]["databasePath"] = str(root / "configuration.sqlite3")
         document["storages"][0]["rootPath"] = str(root / "source")
         document["storages"][1]["rootPath"] = str(root / "target")
+        (root / "source" / "incoming").mkdir(parents=True, exist_ok=True)
+        (root / "target" / "Movies").mkdir(parents=True, exist_ok=True)
         return document
 
     def test_crud_audit_reference_block_and_delete_after_repoint(self) -> None:
@@ -443,37 +445,19 @@ class ManagedClassificationPolicyJourneyTests(unittest.TestCase):
                     body={"expectedVersion": draft.version, "object": policy()},
                 )
                 self.assertEqual(status, 200)
-                status, evidence = request(
-                    api,
-                    f"/api/configuration/revisions/{draft.revision_id}/classification-preview",
-                    method="POST",
-                    body={
-                        "expectedVersion": created["version"],
-                        "expectedDigest": created["digest"],
-                        "policyId": "managed",
-                        "sample": {"title": "Example", "mediaType": "movie", "genres": ["Action"]},
-                    },
+                self.assertEqual(created["status"], "active")
+                active = managed.active()
+                self.assertTrue(
+                    any(
+                        item.get("id") == "managed"
+                        for item in active.document["classificationPolicies"]
+                    )
                 )
-                self.assertEqual(status, 200)
-                self.assertEqual(evidence["result"]["relativePath"], "Action")
-                stored = repository.get_classification_preview(draft.revision_id).document()
-                status, stale = request(
-                    api,
-                    f"/api/configuration/revisions/{draft.revision_id}/classification-preview",
-                    method="POST",
-                    body={
-                        "expectedVersion": draft.version,
-                        "expectedDigest": draft.digest,
-                        "policyId": "managed",
-                        "sample": {"title": "Example", "mediaType": "movie"},
-                    },
-                )
-                self.assertEqual(status, 409)
-                self.assertEqual(stale["error"]["code"], "configuration_version_conflict")
-                self.assertEqual(stale["error"]["details"]["currentVersion"], created["version"])
-                self.assertEqual(stale["error"]["details"]["currentDigest"], created["digest"])
-                self.assertEqual(
-                    repository.get_classification_preview(draft.revision_id).document(), stored
+                self.assertFalse(
+                    any(
+                        revision.status.value in {"draft", "validated"}
+                        for revision in repository.list_revisions()
+                    )
                 )
 
     def test_current_schema_reopen_preserves_naming_evidence(self) -> None:

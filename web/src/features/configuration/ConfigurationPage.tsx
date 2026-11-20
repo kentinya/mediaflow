@@ -7,11 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Link,
-  useBlocker,
-  useSearch,
-} from "@tanstack/react-router";
+import { Link, useBlocker, useSearch } from "@tanstack/react-router";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import { AutomationSettingsPanel } from "../operations/AutomationSettingsPanel";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -39,6 +35,8 @@ import {
   fetchRevisionObjects,
   fetchSystemSettings,
   initializeConfiguration,
+  publishConfiguration,
+  reconcileSystemSettings,
   saveSystemSettings,
   ConfigurationApiError,
   ConfigurationConflictError,
@@ -64,6 +62,118 @@ import {
 } from "./configuration-draft-session";
 
 const QUERY_KEY = ["configuration-status"] as const;
+
+const PENDING_APPLY_PREFIX = "mediaflow.configuration.apply-pending:v1:";
+
+interface PendingApply {
+  readonly submissionId: string;
+  readonly groupId: string;
+  readonly selectionId: string;
+  readonly body: Record<string, unknown>;
+  readonly startedValues: Record<string, string>;
+  readonly startedBaseline: Record<string, string>;
+  readonly submittedPaths: readonly string[];
+}
+
+interface ApplyReconciliation {
+  readonly state: string;
+  readonly committed: boolean;
+  readonly committedRevisionId: string | null;
+  readonly nextAction: string | null;
+}
+
+function newApplySubmissionId(): string | null {
+  try {
+    const cryptoApi = globalThis.crypto;
+    if (typeof cryptoApi?.randomUUID === "function")
+      return cryptoApi.randomUUID();
+    if (typeof cryptoApi?.getRandomValues === "function") {
+      const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, (value) =>
+        value.toString(16).padStart(2, "0"),
+      ).join("");
+      return `apply-${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function pendingApplyKey(principalId: string): string {
+  return `${PENDING_APPLY_PREFIX}${encodeURIComponent(principalId).slice(0, 200)}`;
+}
+
+function readPendingApply(principalId: string | null): PendingApply | null {
+  if (principalId === null || typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(pendingApplyKey(principalId));
+    if (raw === null) return null;
+    const value: unknown = JSON.parse(raw);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+    const record = value as Record<string, unknown>;
+    const submissionId = record["submissionId"];
+    const groupId = record["groupId"];
+    const selectionId = record["selectionId"];
+    const body = record["body"];
+    const startedValues = record["startedValues"];
+    const startedBaseline = record["startedBaseline"];
+    const submittedPaths = record["submittedPaths"];
+    if (
+      typeof submissionId !== "string" ||
+      submissionId === "" ||
+      typeof groupId !== "string" ||
+      typeof selectionId !== "string" ||
+      body === null ||
+      typeof body !== "object" ||
+      Array.isArray(body) ||
+      startedValues === null ||
+      typeof startedValues !== "object" ||
+      Array.isArray(startedValues) ||
+      startedBaseline === null ||
+      typeof startedBaseline !== "object" ||
+      Array.isArray(startedBaseline) ||
+      !Array.isArray(submittedPaths)
+    ) {
+      return null;
+    }
+    return {
+      submissionId,
+      groupId,
+      selectionId,
+      body: body as Record<string, unknown>,
+      startedValues: startedValues as Record<string, string>,
+      startedBaseline: startedBaseline as Record<string, string>,
+      submittedPaths: submittedPaths.filter(
+        (item): item is string => typeof item === "string",
+      ),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingApply(
+  principalId: string | null,
+  pending: PendingApply | null,
+): void {
+  if (principalId === null || typeof window === "undefined") return;
+  try {
+    const key = pendingApplyKey(principalId);
+    if (pending === null) {
+      window.sessionStorage.removeItem(key);
+    } else {
+      window.sessionStorage.setItem(key, JSON.stringify(pending));
+    }
+  } catch {
+    // The backend audit remains authoritative; unavailable browser storage
+    // cannot change what this request published or how it is verified.
+  }
+}
 
 const text = (value: unknown, fallback = "-"): string =>
   typeof value === "string" || typeof value === "number"
@@ -729,6 +839,13 @@ export function ConfigurationPage() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [readNotice, setReadNotice] = useState<string | null>(null);
   const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [pendingApply, setPendingApply] = useState<PendingApply | null>(null);
+  const [reconciliation, setReconciliation] =
+    useState<ApplyReconciliation | null>(null);
+  const verifiedSubmissionRef = useRef<string | null>(null);
+  const [showInspector, setShowInspector] = useState(false);
+  const [replacementText, setReplacementText] = useState("");
+  const [replacementError, setReplacementError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyState | null>(null);
   const busyRef = useRef<BusyState | null>(busy);
   const [inspectorTab, setInspectorTab] = useState<"json" | "package">("json");
@@ -785,7 +902,11 @@ export function ConfigurationPage() {
     if (value !== null) {
       setSelectionId(value.selectedRevisionId);
       setActiveGroup(value.activeGroup);
-      setAwaitingVerification(value.awaitingVerification);
+      const storedPending = readPendingApply(principalId);
+      setAwaitingVerification(
+        value.awaitingVerification || storedPending !== null,
+      );
+      setPendingApply(storedPending);
       const nextForms: Record<string, FormState> = {};
       for (const [revisionId, saved] of Object.entries(value.forms)) {
         nextForms[revisionId] = {
@@ -813,80 +934,11 @@ export function ConfigurationPage() {
       setSelectionId(null);
       setActiveGroup(null);
       setAwaitingVerification(false);
+      setPendingApply(null);
+      setReconciliation(null);
       setForms({});
     }
   }
-
-  const loadDetail = useCallback(
-    async (revisionId: string): Promise<boolean> => {
-      const epoch = epochRef.current[revisionId] ?? 0;
-      updateViews((previous) => ({
-        ...previous,
-        [revisionId]: {
-          ...(previous[revisionId] ?? emptyView(revisionId)),
-          detailState: "loading",
-        },
-      }));
-      const [detailResult, objectsResult] = await Promise.allSettled([
-        fetchRevision(token, revisionId),
-        fetchRevisionObjects(token, revisionId),
-      ]);
-      if ((epochRef.current[revisionId] ?? 0) !== epoch) return true;
-      const detail =
-        detailResult.status === "fulfilled" ? detailResult.value : null;
-      const objectsProjection =
-        objectsResult.status === "fulfilled" ? objectsResult.value : null;
-      if (detail === null) {
-        updateViews((previous) => {
-          const current = previous[revisionId] ?? emptyView(revisionId);
-          return {
-            ...previous,
-            [revisionId]: {
-              ...current,
-              detailState: "error",
-              checksState: "error",
-              json: null,
-            },
-          };
-        });
-        return false;
-      }
-      const document = detail.document;
-      const json =
-        document !== null &&
-        document !== undefined &&
-        typeof document === "object"
-          ? JSON.stringify(document, null, 2)
-          : null;
-      updateViews((previous) => {
-        const current = previous[revisionId] ?? emptyView(revisionId);
-        return {
-          ...previous,
-          [revisionId]: {
-            ...current,
-            detailState: json === null ? "empty" : "ready",
-            json,
-            status: text(detail.status, current.status ?? ""),
-            revisionVersion:
-              numberValue(detail.revisionSequence) ??
-              numberValue(detail.version) ??
-              current.revisionVersion,
-            digest: text(detail.digest, current.digest ?? ""),
-            draftVersion: numberValue(detail.version) ?? current.draftVersion,
-            ...(objectsProjection === null
-              ? { checksState: "error" as const }
-              : {
-                  checksState: "ready" as const,
-                  objects:
-                    asRecord(objectsProjection.objects) ?? current.objects,
-                }),
-          },
-        };
-      });
-      return true;
-    },
-    [token, updateViews],
-  );
 
   const loadRevision = useCallback(
     async (revisionId: string): Promise<boolean> => {
@@ -1001,9 +1053,28 @@ export function ConfigurationPage() {
     chosenSelectionId ?? (model.activeHealthy ? model.activeId : null);
   useEffect(() => {
     if (selectionId === null) return;
-    if (viewsRef.current[selectionId] !== undefined) return;
+    // Entry, tab return and a reconnected session all read the current Active
+    // again. A dirty form keeps its typed values because loadRevision only
+    // updates the read baseline; it never replaces form input.
     void loadRevision(selectionId);
-  }, [loadRevision, selectionId]);
+  }, [authGeneration, loadRevision, selectionId]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      void query.refetch();
+      if (selectionId !== null) void loadRevision(selectionId);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [loadRevision, query, selectionId]);
 
   useEffect(() => {
     if (principalId === null) return;
@@ -1187,13 +1258,32 @@ export function ConfigurationPage() {
     }
     const startedValues = { ...values };
     const submittedPaths = new Set(result.edits.map((edit) => edit.fieldPath));
+    const submissionId = newApplySubmissionId();
+    if (submissionId === null) {
+      setNotice({
+        tone: "error",
+        title: "无法安全标识本次应用",
+        text: "当前浏览器无法生成安全的请求标识；本次没有发送写入，请更新浏览器后重试。",
+      });
+      return;
+    }
     const body = {
       expectedActiveRevisionId: authority.revisionId,
       expectedActiveVersion: authority.revisionVersion,
       ...(authority.digest === null
         ? {}
         : { expectedActiveDigest: authority.digest }),
+      submissionId,
       edits: result.edits,
+    };
+    const pending: PendingApply = {
+      submissionId,
+      groupId: group.id,
+      selectionId,
+      body,
+      startedValues,
+      startedBaseline: { ...baseline },
+      submittedPaths: [...submittedPaths],
     };
     setBusy({ kind: "save", revisionId: selectionId, groupId: group.id });
     setNotice(null);
@@ -1266,6 +1356,11 @@ export function ConfigurationPage() {
       });
       setSelectionId(newRevisionId);
       setActiveGroup(group.id);
+      setPendingApply(null);
+      setAwaitingVerification(false);
+      setReconciliation(null);
+      verifiedSubmissionRef.current = submissionId;
+      writePendingApply(principalId, null);
       setNotice({
         tone: "success",
         title: "更改已应用",
@@ -1275,11 +1370,31 @@ export function ConfigurationPage() {
           newRevisionVersion ?? "新版本"
         }；需要重启的字段会在重启后采用。`,
       });
-      void loadDetail(newRevisionId);
+      void loadRevision(newRevisionId);
       void client.invalidateQueries({ queryKey: QUERY_KEY });
       void query.refetch();
     } catch (error) {
-      const failure = writeFailure(error, "save-settings");
+      if (error instanceof ConfigurationUnknownOutcomeError) {
+        setPendingApply(pending);
+        writePendingApply(principalId, pending);
+        setAwaitingVerification(true);
+        setReconciliation(null);
+        setNotice({
+          tone: "error",
+          title: "操作结果待核实",
+          text: "本次应用没有收到可确认的回包。系统不会重复发布；正在用同一请求身份只读核对本次结果和当前生效值。",
+        });
+      } else {
+        setPendingApply(null);
+        writePendingApply(principalId, null);
+        setAwaitingVerification(false);
+        writeFailure(error, "save-settings");
+      }
+      if (error instanceof ConfigurationUnknownOutcomeError) {
+        void client.invalidateQueries({ queryKey: QUERY_KEY });
+        return;
+      }
+      const failure = configurationMutationFailure(error, "save-settings");
       if (failure.currentVersion !== null && selectedView !== null) {
         const existing = formsRef.current[selectionId];
         const updatedAuthority = {
@@ -1357,6 +1472,7 @@ export function ConfigurationPage() {
         };
       });
       setInspectorTab("package");
+      setShowInspector(true);
       setNotice({
         tone: "success",
         title: "已生成脱敏配置包",
@@ -1385,8 +1501,90 @@ export function ConfigurationPage() {
     }
   };
 
+  const verifyApplicationOutcome = async (pending: PendingApply) => {
+    if (busy !== null) return;
+    setBusy({ kind: "verify" });
+    setReadNotice(null);
+    try {
+      const result = await reconcileSystemSettings(token, pending.submissionId);
+      const refreshed = await query.refetch();
+      const currentData = refreshed.data;
+      const currentActive = asRecord(currentData?.active);
+      const currentActiveId = revisionIdOf(currentActive);
+      if (pending.selectionId !== null) {
+        await loadRevision(pending.selectionId);
+      }
+      if (currentActiveId !== null && currentActiveId !== pending.selectionId) {
+        await loadRevision(currentActiveId);
+      }
+      setReconciliation({
+        state: typeof result.state === "string" ? result.state : "UNRESOLVED",
+        committed: result.committed === true,
+        committedRevisionId:
+          typeof result.committedRevisionId === "string"
+            ? result.committedRevisionId
+            : null,
+        nextAction:
+          typeof result.nextAction === "string" ? result.nextAction : null,
+      });
+      if (result.state === "UNRESOLVED") {
+        setReadNotice(
+          "无法证明本次请求的持久结果；写入保持阻止。当前生效值已按真实读回显示，系统没有重新发布。",
+        );
+        return;
+      }
+      setAwaitingVerification(false);
+      setPendingApply(null);
+      writePendingApply(principalId, null);
+      const committed =
+        result.state === "COMMITTED" || result.state === "SUPERSEDED";
+      if (committed) {
+        setNotice({
+          tone: result.state === "COMMITTED" ? "success" : "warning",
+          title:
+            result.state === "COMMITTED"
+              ? "本次应用已发布"
+              : "本次应用已发布，已被后续发布替换",
+          text: `本次请求身份 ${pending.submissionId.slice(0, 8)}… 的结果：${
+            result.state === "COMMITTED"
+              ? "是当前生效值"
+              : "曾发布，当前生效值已更新"
+          }。当前生效配置见上方摘要；表单中尚未提交的输入仍保留。`,
+        });
+      } else {
+        setNotice({
+          tone: "warning",
+          title: "本次应用未发布",
+          text: "已通过同一请求身份的持久证据确认本次没有发布。当前生效值保持原样；你的输入仍在表单中，可核对后再次明确应用。",
+        });
+      }
+    } catch {
+      setReadNotice(
+        "无法完成只读核实；写入保持阻止。请确认服务可用后再次核实，系统不会自动重发发布请求。",
+      );
+      verifiedSubmissionRef.current = null;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!awaitingVerification || pendingApply === null || busy !== null) return;
+    if (verifiedSubmissionRef.current === pendingApply.submissionId) return;
+    verifiedSubmissionRef.current = pendingApply.submissionId;
+    void verifyApplicationOutcome(pendingApply);
+    // The exact retained submission is verified once; the manual fallback below
+    // is the only way to retry an unreadable reconciliation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [awaitingVerification, pendingApply, busy]);
+
   const verifyConfigurationState = async () => {
     if (busy !== null) return;
+    if (pendingApply !== null) {
+      verifiedSubmissionRef.current = pendingApply.submissionId;
+      await verifyApplicationOutcome(pendingApply);
+      return;
+    }
     setBusy({ kind: "verify" });
     try {
       const result = await query.refetch();
@@ -1412,6 +1610,65 @@ export function ConfigurationPage() {
         title: "已核实当前配置状态",
         text: "系统不会自动重发上一次操作；请根据当前生效配置和未保存输入决定下一步。",
       });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const applyReplacement = async () => {
+    if (busy !== null || awaitingVerification) return;
+    let document: unknown;
+    try {
+      document = JSON.parse(replacementText);
+    } catch {
+      setReplacementError(
+        "完整配置必须是合法 JSON；本次没有发送任何发布请求。",
+      );
+      return;
+    }
+    if (
+      document === null ||
+      typeof document !== "object" ||
+      Array.isArray(document)
+    ) {
+      setReplacementError("完整配置必须是一个 JSON 对象；本次没有发布。");
+      return;
+    }
+    setBusy({ kind: "save" });
+    setReplacementError(null);
+    setNotice(null);
+    try {
+      const published = await publishConfiguration(token, {
+        document,
+        replaceActive: true,
+      });
+      setReplacementText("");
+      setNotice({
+        tone: "success",
+        title: "完整配置已发布",
+        text: `已应用并读回新的生效配置${
+          typeof published.revisionId === "string"
+            ? `（${published.revisionId}）`
+            : ""
+        }；请核对上方表单和诊断中的真实状态。`,
+      });
+      void client.invalidateQueries({ queryKey: QUERY_KEY });
+      await query.refetch();
+      const activeId = revisionIdOf(
+        asRecord((await query.refetch()).data?.active),
+      );
+      if (activeId !== null) {
+        setSelectionId(activeId);
+        await loadRevision(activeId);
+      }
+    } catch (error) {
+      const failure = configurationMutationFailure(error, "save-settings");
+      setNotice({
+        tone: "error",
+        title: "完整配置未发布",
+        text: failure.message,
+      });
+      if (failure.verifyRequired) setAwaitingVerification(true);
     } finally {
       setBusy(null);
     }
@@ -1482,8 +1739,8 @@ export function ConfigurationPage() {
             {awaitingVerification && (
               <StatusBanner variant="error" title="操作结果待核实">
                 <p>
-                  上一次写操作未收到服务器确认，可能已生效也可能未生效。系统不会自动重试；
-                  在核实完成前，写入操作保持阻止。
+                  正在用同一请求身份只读核实本次应用结果；核实期间不会再次发布。
+                  在结果可证明前，写入操作保持阻止。
                 </p>
                 <div className="mf-actions">
                   <Button
@@ -1500,6 +1757,38 @@ export function ConfigurationPage() {
             {notice !== null && (
               <StatusBanner variant={notice.tone} title={notice.title}>
                 <p>{notice.text}</p>
+              </StatusBanner>
+            )}
+            {reconciliation !== null && (
+              <StatusBanner
+                variant={
+                  reconciliation.state === "COMMITTED"
+                    ? "success"
+                    : reconciliation.state === "UNRESOLVED"
+                      ? "warning"
+                      : "info"
+                }
+                title="本次应用结果"
+              >
+                <p>
+                  {reconciliation.state === "COMMITTED"
+                    ? "已通过同一请求身份的持久证据确认：本次发布是当前生效值。"
+                    : reconciliation.state === "SUPERSEDED"
+                      ? "已确认本次请求曾发布，但之后有新的生效值替代了它。"
+                      : reconciliation.state === "NOT_COMMITTED"
+                        ? "已确认本次请求没有发布；当前生效值保持原样。"
+                        : "尚不能证明本次请求的持久结果；系统不会重新发布。"}
+                </p>
+                <p>
+                  当前生效值以页面摘要和表单基线为准；本次请求身份
+                  {reconciliation.committedRevisionId !== null
+                    ? ` 发布的配置为 ${reconciliation.committedRevisionId}`
+                    : " 没有已知的已发布修订"}
+                  。
+                </p>
+                {reconciliation.nextAction !== null && (
+                  <p>{reconciliation.nextAction}</p>
+                )}
               </StatusBanner>
             )}
             {readNotice !== null && (
@@ -1562,6 +1851,41 @@ export function ConfigurationPage() {
                   当前生效配置不可用；系统不会用旧缓存、旧修订或部署配置代替它。
                   请通过权限校验后明确发布一份完整替换内容恢复。
                 </p>
+                {showManage && (
+                  <div className="mf-settings-replacement">
+                    <label htmlFor="settings-replacement">完整配置 JSON</label>
+                    <textarea
+                      id="settings-replacement"
+                      className="mf-settings-json"
+                      aria-label="完整配置 JSON"
+                      rows={12}
+                      spellCheck={false}
+                      value={replacementText}
+                      disabled={busy !== null || awaitingVerification}
+                      onChange={(event) =>
+                        setReplacementText(event.target.value)
+                      }
+                    />
+                    {replacementError !== null && (
+                      <p className="mf-settings-field-error" role="alert">
+                        {replacementError}
+                      </p>
+                    )}
+                    <div className="mf-actions">
+                      <Button
+                        type="button"
+                        disabled={
+                          busy !== null ||
+                          awaitingVerification ||
+                          replacementText.trim() === ""
+                        }
+                        onClick={() => void applyReplacement()}
+                      >
+                        {busy !== null ? "正在发布…" : "应用完整替换"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </StatusBanner>
             )}
             <AutomationSettingsPanel />
@@ -1637,7 +1961,8 @@ export function ConfigurationPage() {
                         {selectedView.detailState === "error" && (
                           <StatusBanner variant="warning" title="修订状态未知">
                             <p>
-                              配置 JSON 读取失败，因此当前生效内容无法确认；请刷新后再应用更改。
+                              配置 JSON
+                              读取失败，因此当前生效内容无法确认；请刷新后再应用更改。
                             </p>
                           </StatusBanner>
                         )}
@@ -1969,6 +2294,14 @@ export function ConfigurationPage() {
                           type="button"
                           variant="secondary"
                           disabled={busy !== null}
+                          onClick={() => setShowInspector((value) => !value)}
+                        >
+                          {showInspector ? "收起配置内容" : "配置 JSON"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={busy !== null}
                           onClick={() => void exportPackage()}
                         >
                           {busy?.kind === "export"
@@ -1977,97 +2310,112 @@ export function ConfigurationPage() {
                         </Button>
                       </div>
                     </header>
-                    <div
-                      className="mf-settings-inspector-tabs"
-                      role="group"
-                      aria-label="配置内容种类"
-                    >
-                      <button
-                        type="button"
-                        className="mf-settings-inspector-tab"
-                        aria-pressed={inspectorTab === "json"}
-                        onClick={() => setInspectorTab("json")}
-                      >
+                    {!showInspector ? (
+                      <p className="mf-settings-loading" role="status">
                         配置 JSON
-                      </button>
-                      <button
-                        type="button"
-                        className="mf-settings-inspector-tab"
-                        aria-pressed={inspectorTab === "package"}
-                        onClick={() => setInspectorTab("package")}
-                      >
-                        脱敏配置包
-                      </button>
-                    </div>
-                    {inspectorTab === "json" ? (
-                      <>
-                        <p className="mf-settings-source">
-                          内容：完整配置文档 · 来源：
-                          生效配置（配置序号 {selectedSequence ?? "未知"}）
-                        </p>
-                        {selectedView.detailState === "loading" ? (
-                          <p className="mf-settings-loading" role="status">
-                            正在读取配置 JSON…
-                          </p>
-                        ) : selectedView.detailState === "error" ? (
-                          <p className="mf-settings-read-error" role="alert">
-                            {DETAIL_READ_FAILURE}
-                          </p>
-                        ) : selectedView.detailState === "empty" ? (
-                          <p className="mf-settings-loading" role="status">
-                            此修订没有返回可显示的配置文档；这不是空配置，也没有旧内容可替代。
-                          </p>
-                        ) : (
-                          <textarea
-                            className="mf-settings-json"
-                            aria-label="配置 JSON"
-                            readOnly
-                            value={selectedView.json ?? ""}
-                            rows={16}
-                          />
-                        )}
-                      </>
+                        与脱敏包按需打开；未打开时不会额外读取完整文档。
+                      </p>
                     ) : (
                       <>
-                        <p className="mf-settings-source">
-                          内容：脱敏配置包
-                          {selectedView.packageKind !== null
-                            ? `（${selectedView.packageKind}）`
-                            : ""}{" "}
-                          · 来源：
-                          生效配置（配置序号 {selectedSequence ?? "未知"}）
-                        </p>
-                        {selectedView.packageState === "loading" ? (
-                          <p className="mf-settings-loading" role="status">
-                            正在生成脱敏配置包…
-                          </p>
-                        ) : selectedView.packageState === "error" ? (
-                          <p className="mf-settings-read-error" role="alert">
-                            {selectedView.packageError ??
-                              "配置包导出失败；没有使用旧内容替代。"}
-                          </p>
-                        ) : selectedView.packageState === "ready" &&
-                          selectedView.packageJson !== null ? (
-                          <textarea
-                            className="mf-settings-json"
-                            aria-label="脱敏配置包"
-                            readOnly
-                            value={selectedView.packageJson}
-                            rows={16}
-                          />
+                        <div
+                          className="mf-settings-inspector-tabs"
+                          role="group"
+                          aria-label="配置内容种类"
+                        >
+                          <button
+                            type="button"
+                            className="mf-settings-inspector-tab"
+                            aria-pressed={inspectorTab === "json"}
+                            onClick={() => setInspectorTab("json")}
+                          >
+                            配置 JSON
+                          </button>
+                          <button
+                            type="button"
+                            className="mf-settings-inspector-tab"
+                            aria-pressed={inspectorTab === "package"}
+                            onClick={() => setInspectorTab("package")}
+                          >
+                            脱敏配置包
+                          </button>
+                        </div>
+                        {inspectorTab === "json" ? (
+                          <>
+                            <p className="mf-settings-source">
+                              内容：完整配置文档 · 来源： 生效配置（配置序号{" "}
+                              {selectedSequence ?? "未知"}）
+                            </p>
+                            {selectedView.detailState === "loading" ? (
+                              <p className="mf-settings-loading" role="status">
+                                正在读取配置 JSON…
+                              </p>
+                            ) : selectedView.detailState === "error" ? (
+                              <p
+                                className="mf-settings-read-error"
+                                role="alert"
+                              >
+                                {DETAIL_READ_FAILURE}
+                              </p>
+                            ) : selectedView.detailState === "empty" ? (
+                              <p className="mf-settings-loading" role="status">
+                                此修订没有返回可显示的配置文档；这不是空配置，也没有旧内容可替代。
+                              </p>
+                            ) : (
+                              <textarea
+                                className="mf-settings-json"
+                                aria-label="配置 JSON"
+                                readOnly
+                                value={selectedView.json ?? ""}
+                                rows={16}
+                              />
+                            )}
+                          </>
                         ) : (
-                          <p className="mf-settings-loading" role="status">
-                            尚未导出配置包；导出只读取并脱敏，不会改变配置。
-                          </p>
+                          <>
+                            <p className="mf-settings-source">
+                              内容：脱敏配置包
+                              {selectedView.packageKind !== null
+                                ? `（${selectedView.packageKind}）`
+                                : ""}{" "}
+                              · 来源： 生效配置（配置序号{" "}
+                              {selectedSequence ?? "未知"}）
+                            </p>
+                            {selectedView.packageState === "loading" ? (
+                              <p className="mf-settings-loading" role="status">
+                                正在生成脱敏配置包…
+                              </p>
+                            ) : selectedView.packageState === "error" ? (
+                              <p
+                                className="mf-settings-read-error"
+                                role="alert"
+                              >
+                                {selectedView.packageError ??
+                                  "配置包导出失败；没有使用旧内容替代。"}
+                              </p>
+                            ) : selectedView.packageState === "ready" &&
+                              selectedView.packageJson !== null ? (
+                              <textarea
+                                className="mf-settings-json"
+                                aria-label="脱敏配置包"
+                                readOnly
+                                value={selectedView.packageJson}
+                                rows={16}
+                              />
+                            ) : (
+                              <p className="mf-settings-loading" role="status">
+                                尚未导出配置包；导出只读取并脱敏，不会改变配置。
+                              </p>
+                            )}
+                          </>
                         )}
+                        {selectedView.readError !== null &&
+                          selectedView.detailState !== "error" && (
+                            <p className="mf-settings-read-error" role="status">
+                              {selectedView.readError}
+                            </p>
+                          )}
                       </>
                     )}
-                    {selectedView.readError !== null &&
-                      selectedView.detailState !== "error" && (
-                        <p className="mf-settings-read-error" role="status">
-                          {selectedView.readError}
-                        </p>
-                      )}
                   </section>
                 </div>
               )}
@@ -2148,9 +2496,7 @@ export function ConfigurationPage() {
                   </div>
                   <div>
                     <dt>当前查看版本</dt>
-                    <dd>
-                      配置序号 {selectedSequence ?? "未知"}
-                    </dd>
+                    <dd>配置序号 {selectedSequence ?? "未知"}</dd>
                   </div>
                   <div>
                     <dt>后端下一步</dt>
@@ -2195,17 +2541,13 @@ export function ConfigurationPage() {
             </details>
             {activeDecision !== null && (
               <SettingsDecisionDialog
-                title={
-                  busy !== null ? "操作正在进行" : "有未保存修改"
-                }
+                title={busy !== null ? "操作正在进行" : "有未保存修改"}
                 description={
                   busy !== null
                     ? "应用或初始化仍在进行；完成前不能离开，以避免重复提交或结果未知。"
                     : "当前修改尚未应用。离开会丢弃这些输入，已发布的生效配置保持不变。"
                 }
-                confirmLabel={
-                  busy !== null ? "请等待完成" : "放弃修改并离开"
-                }
+                confirmLabel={busy !== null ? "请等待完成" : "放弃修改并离开"}
                 busy={busy !== null}
                 onConfirm={proceedLeave}
                 onCancel={closeDecision}

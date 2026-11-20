@@ -198,11 +198,11 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                     environment.pop("MF_GUIDED_SMB_PASSWORD", None)
                     status, draft = request(
                         api,
-                        "/api/configuration/drafts/first",
+                        "/api/configuration/initialize",
                         method="POST",
                         body={},
                     )
-                    self.assertEqual(status, 201)
+                    self.assertEqual(status, 201, draft)
                     revision_id = draft["revisionId"]
                     version = draft["version"]
                     for value in self._storage_values(root):
@@ -216,6 +216,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                         self.assertEqual(result["storage"]["id"], value["id"])
                         self.assertEqual(result["storage"]["type"], value["type"])
                         self.assertEqual(result["storage"]["editability"], "guided")
+                        revision_id = result["revisionId"]
                         version = result["version"]
 
                     status, detail = request(
@@ -290,7 +291,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 api = self._api(repository, runtime_repository, service, bootstrap)
                 _, draft = request(
                     api,
-                    "/api/configuration/drafts/first",
+                    "/api/configuration/initialize",
                     method="POST",
                     body={},
                 )
@@ -356,7 +357,9 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 409)
                 self.assertEqual(stale["error"]["code"], "configuration_version_conflict")
-                self.assertFalse(service.require(revision_id).document["storages"][1]["enabled"])
+                self.assertFalse(
+                    service.require(disabled["revisionId"]).document["storages"][1]["enabled"]
+                )
 
     def test_validation_unknown_fields_and_persistence_failure_leave_draft_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -374,7 +377,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 api = self._api(repository, runtime_repository, service, bootstrap)
                 _, draft = request(
                     api,
-                    "/api/configuration/drafts/first",
+                    "/api/configuration/initialize",
                     method="POST",
                     body={},
                 )
@@ -430,6 +433,8 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
     def test_reference_protection_and_unreferenced_delete(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            (root / "local" / "incoming").mkdir(parents=True)
+            (root / "local" / "Movies").mkdir(parents=True)
             bootstrap = minimal_bootstrap(root)
             with (
                 SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository,
@@ -443,7 +448,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 api = self._api(repository, runtime_repository, service, bootstrap)
                 _, draft = request(
                     api,
-                    "/api/configuration/drafts/first",
+                    "/api/configuration/initialize",
                     method="POST",
                     body={},
                 )
@@ -485,7 +490,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 status, blocked = request(
                     api,
-                    f"/api/configuration/revisions/{revision_id}/objects/storages/referenced",
+                    f"/api/configuration/revisions/{media_result['revisionId']}/objects/storages/referenced",
                     method="DELETE",
                     body={"expectedVersion": media_result["version"]},
                 )
@@ -496,7 +501,7 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 self.assertTrue(details["retrySafe"])
                 self.assertIn("resourceLibraries", json.dumps(details))
                 self.assertIn("mediaLibraries", json.dumps(details))
-                unchanged = service.require(revision_id)
+                unchanged = service.require(media_result["revisionId"])
                 self.assertTrue(
                     any(item["id"] == "referenced" for item in unchanged.document["storages"])
                 )
@@ -505,14 +510,14 @@ class GuidedStorageLifecycleTests(unittest.TestCase):
                 unreferenced["id"] = "unreferenced"
                 status, extra = request(
                     api,
-                    f"/api/configuration/revisions/{revision_id}/objects/storages",
+                    f"/api/configuration/revisions/{unchanged.revision_id}/objects/storages",
                     method="POST",
                     body={"expectedVersion": unchanged.version, "object": unreferenced},
                 )
                 self.assertEqual(status, 200)
                 status, deleted = request(
                     api,
-                    f"/api/configuration/revisions/{revision_id}/objects/storages/unreferenced",
+                    f"/api/configuration/revisions/{extra['revisionId']}/objects/storages/unreferenced",
                     method="DELETE",
                     body={"expectedVersion": extra["version"]},
                 )

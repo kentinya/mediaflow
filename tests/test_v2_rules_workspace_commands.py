@@ -1374,7 +1374,13 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
         for sentinel in SECRET_SENTINELS.values():
             self.assertNotIn(sentinel.lower(), encoded)
         self.assertTrue(any("activate" in audit.action for audit in audits))
-        self.assertTrue(any("draft_edit" in audit.action for audit in audits))
+        self.assertTrue(
+            any(
+                isinstance(audit.safe_after().get("objectChange"), dict)
+                for audit in audits
+                if audit.action == "activate"
+            )
+        )
 
     def test_no_read_or_failure_document_ever_carries_a_secret_value(self) -> None:
         for path in (INVENTORY, FORM_AUTHORITY, f"{BASE}/objects/metadataPolicies/A"):

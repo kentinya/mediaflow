@@ -259,6 +259,18 @@ export const saveSystemSettings = (
     fetchImpl,
   );
 
+export const reconcileSystemSettings = (
+  token: string | null,
+  submissionId: string,
+  fetchImpl?: FetchLike,
+) =>
+  request<Record<string, unknown>>(
+    token,
+    `/api/system/settings/reconcile?submissionId=${encodeURIComponent(submissionId)}`,
+    {},
+    fetchImpl,
+  );
+
 export const exportConfigurationPackage = (
   token: string | null,
   revisionId?: string,

@@ -2707,6 +2707,7 @@ class MediaFlowApi:
                 expected_version=expected,
                 actor=principal.principal_id,
                 action="save",
+                source_revision_id=revision_id,
             )
             self._refresh_configuration_binding()
             values = revision.document.get("automationTaskDefinitions", [])
@@ -2749,6 +2750,7 @@ class MediaFlowApi:
                 expected_version=expected,
                 actor=principal.principal_id,
                 action="save",
+                source_revision_id=revision_id,
             )
             self._refresh_configuration_binding()
             definition = next(
@@ -2795,13 +2797,16 @@ class MediaFlowApi:
                     raise ValueError("Automation Task Definition copied id must be a string")
                 if new_name is not None and not isinstance(new_name, str):
                     raise ValueError("Automation Task Definition copied name must be a string")
-                revision = self._configuration_objects.copy_definition(
-                    revision_id,
+                revision = self._configuration_objects.publish_object(
+                    ConfigurationObjectKind.SCHEDULE,
                     object_id=parts[3],
-                    new_object_id=new_id,
-                    new_name=new_name,
+                    value=None,
                     expected_version=expected,
                     actor=principal.principal_id,
+                    action="copy",
+                    new_object_id=new_id,
+                    new_name=new_name,
+                    source_revision_id=revision_id,
                 )
             else:
                 if set(document) != {"revisionId", "expectedVersion"}:
@@ -2809,12 +2814,14 @@ class MediaFlowApi:
                         "Automation Task Definition enable/disable requires revisionId "
                         "and expectedVersion"
                     )
-                revision = self._configuration_objects.set_definition_enabled(
-                    revision_id,
+                revision = self._configuration_objects.publish_object(
+                    ConfigurationObjectKind.SCHEDULE,
                     object_id=parts[3],
-                    enabled=action == "enable",
+                    value=None,
                     expected_version=expected,
                     actor=principal.principal_id,
+                    action=action,
+                    source_revision_id=revision_id,
                 )
             definitions = revision.document.get("automationTaskDefinitions", [])
             target_id = parts[3] if action != "copy" else None
@@ -2974,10 +2981,21 @@ class MediaFlowApi:
             starter = build_first_setup_starter_document(
                 load_minimal_management_bootstrap(self._bootstrap_document)
             )
-            revision = self._configuration_objects.publish_document(
-                starter, actor=principal.principal_id
-            )
-            self._refresh_configuration_binding()
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                revision = self._configuration_objects.publish_document(
+                    starter,
+                    actor=principal.principal_id,
+                    before_publish=lambda candidate: prepared.append(
+                        self._prepare_runtime_binding_for_revision(candidate)
+                    ),
+                )
+                if len(prepared) != 1:
+                    raise RuntimeSnapshotUnavailable(
+                        "the initialized runtime binding was not prepared; no Active was published",
+                        reason="runtime_unavailable",
+                    )
+                self._publish_runtime_binding(prepared[0])
             response = revision.summary()
             response["initialized"] = True
             response["businessState"] = "EMPTY_ACTIVE"
@@ -3022,15 +3040,25 @@ class MediaFlowApi:
             replace_active = document.get("replaceActive", False)
             if not isinstance(replace_active, bool):
                 raise ValueError("replaceActive must be boolean")
-            revision = self._configuration_objects.publish_document(
-                document["document"],
-                actor=principal.principal_id,
-                expected_active_revision_id=expected_revision_id,
-                expected_active_version=expected_version,
-                expected_active_digest=expected_digest,
-                replace_active=replace_active,
-            )
-            self._refresh_configuration_binding()
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                revision = self._configuration_objects.publish_document(
+                    document["document"],
+                    actor=principal.principal_id,
+                    expected_active_revision_id=expected_revision_id,
+                    expected_active_version=expected_version,
+                    expected_active_digest=expected_digest,
+                    replace_active=replace_active,
+                    before_publish=lambda candidate: prepared.append(
+                        self._prepare_runtime_binding_for_revision(candidate)
+                    ),
+                )
+                if len(prepared) != 1:
+                    raise RuntimeSnapshotUnavailable(
+                        "the replacement runtime binding was not prepared; no Active was published",
+                        reason="runtime_unavailable",
+                    )
+                self._publish_runtime_binding(prepared[0])
             response = revision.summary()
             response["published"] = True
             response["nextAction"] = "当前运行时已按新 Active 重新绑定"
@@ -3789,6 +3817,7 @@ class MediaFlowApi:
                 expected_version=expected,
                 actor=principal.principal_id,
                 action="save",
+                source_revision_id=parts[3],
             )
             self._refresh_configuration_binding()
             response = revision.summary()
@@ -3854,6 +3883,7 @@ class MediaFlowApi:
                     action="copy",
                     new_object_id=new_id,
                     new_name=new_name,
+                    source_revision_id=parts[3],
                 )
             else:
                 if set(document) != {"expectedVersion"}:
@@ -3865,6 +3895,7 @@ class MediaFlowApi:
                     expected_version=expected,
                     actor=principal.principal_id,
                     action=action,
+                    source_revision_id=parts[3],
                 )
             self._refresh_configuration_binding()
             response = revision.summary()
@@ -3937,6 +3968,7 @@ class MediaFlowApi:
                 expected_version=expected,
                 actor=principal.principal_id,
                 action="save",
+                source_revision_id=parts[3],
             )
             self._refresh_configuration_binding()
             response = revision.summary()
@@ -4000,6 +4032,7 @@ class MediaFlowApi:
                 actor=principal.principal_id,
                 action="remove",
                 delete=True,
+                source_revision_id=parts[3],
             )
             self._refresh_configuration_binding()
             return self._response(start_response, 200, revision.summary())
@@ -5095,6 +5128,30 @@ class MediaFlowApi:
             projection["consumption"] = evidence
             return self._response(start_response, 200, projection)
 
+        # GET /api/system/settings/reconcile?submissionId=...
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "system", "settings"]
+            and parts[3] == "reconcile"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._system_settings is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "system settings service is unavailable",
+                )
+            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(values) != {"submissionId"} or len(values["submissionId"]) != 1:
+                raise ValueError("settings reconciliation requires one submissionId")
+            result = self._system_settings.reconcile(
+                actor=principal.principal_id,
+                submission_id=values["submissionId"][0],
+            )
+            return self._response(start_response, 200, result)
+
         # PUT /api/system/settings
         if (
             len(parts) == 3
@@ -5119,6 +5176,15 @@ class MediaFlowApi:
                 )
             if not document:
                 raise ValueError("system settings apply requires at least one setting")
+            submission_id = document.get("submissionId")
+            if submission_id is not None and (
+                not isinstance(submission_id, str) or not submission_id.strip()
+            ):
+                raise ValueError("submissionId must be a non-empty string")
+            if "reconcile" in document:
+                raise ValueError(
+                    "settings reconciliation is a read-only GET; it is not a publish request"
+                )
             expected_revision_id = document.get("expectedActiveRevisionId")
             if expected_revision_id is not None and not isinstance(expected_revision_id, str):
                 raise ValueError("expectedActiveRevisionId must be a string")
@@ -5131,14 +5197,34 @@ class MediaFlowApi:
             if expected_digest is not None and not isinstance(expected_digest, str):
                 raise ValueError("expectedActiveDigest must be a string")
             edits = self._extract_system_settings_edits(document)
-            updated = self._system_settings.publish(
-                edits=edits,
-                actor=principal.principal_id,
-                expected_active_revision_id=expected_revision_id,
-                expected_active_version=expected_version,
-                expected_active_digest=expected_digest,
-            )
-            self._refresh_configuration_binding()
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                try:
+                    updated = self._system_settings.publish(
+                        edits=edits,
+                        actor=principal.principal_id,
+                        expected_active_revision_id=expected_revision_id,
+                        expected_active_version=expected_version,
+                        expected_active_digest=expected_digest,
+                        submission_id=submission_id,
+                        before_publish=lambda revision: prepared.append(
+                            self._prepare_runtime_binding_for_revision(revision)
+                        ),
+                    )
+                except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                    self._refresh_configuration_binding_locked()
+                    raise
+                if len(prepared) != 1:
+                    raise ResourceLibrarySaveError(
+                        "resource_library_runtime_failed",
+                        "the successor runtime binding was not prepared; the previous Active "
+                        "remains in use",
+                        status=503,
+                        durable_state="active_preserved",
+                        side_effects="none; no candidate revision was persisted",
+                        next_action="correct the runtime configuration, then apply again",
+                    )
+                self._publish_runtime_binding(prepared[0])
             response = updated.as_projection()
             response["authority"] = "MANAGED"
             response["published"] = True
@@ -9370,6 +9456,8 @@ class MediaFlowApi:
             "revisionId",
             "fromActive",
             "settings",
+            "submissionId",
+            "reconcile",
         }
 
         edits = []
@@ -12360,10 +12448,8 @@ class MediaFlowApi:
         server-side so the browser never handles a revision digest.
         """
 
-        if len(parts) == 6 and parts[5] == "activate-draft" and method == "POST":
-            return self._automation_definition_activate_checked_draft(
-                parts[4], environ, start_response, principal
-            )
+        if len(parts) == 6 and parts[5] in {"draft", "activate-draft"}:
+            return self._error(start_response, 404, "not_found", "route was not found")
         if method != "GET":
             return self._error(start_response, 405, "method_not_allowed", "GET required")
         if (
@@ -12397,9 +12483,6 @@ class MediaFlowApi:
         if len(parts) == 5:
             self._require_empty_query(environ, "operations automation definition")
             return self._automation_definition_operator_detail(parts[4], start_response, principal)
-        if len(parts) == 6 and parts[5] == "draft":
-            self._require_empty_query(environ, "operations automation definition draft")
-            return self._automation_definition_operator_draft(parts[4], start_response, principal)
         if len(parts) == 6 and parts[5] == "occurrences":
             return self._automation_definition_operator_occurrences(
                 parts[4], environ, start_response, principal
@@ -14805,9 +14888,9 @@ class MediaFlowApi:
                     page, has_next, CursorDirection.NEXT, scope, query["sort"]
                 ),
                 "draftState": self._automation_draft_state(
-                    drafts[0] if drafts else None,
+                    None,
                     empty_reason=(
-                        "no open successor Draft exists; create one to add or edit definitions"
+                        "definitions are published directly; no recoverable draft exists"
                     ),
                 ),
                 "resourceLibraryOptions": self._automation_resource_library_options(
@@ -14825,30 +14908,18 @@ class MediaFlowApi:
                         "path": "/api/automation/task-definitions",
                         "sideEffects": "none",
                         "durableOutcome": (
-                            "the bounded definition is stored inside the open successor Draft"
+                            "the bounded definition is validated and published as the new Active"
                         ),
-                        "nextAction": (
-                            "start or open a successor Draft, then create the definition inside it"
-                        ),
+                        "nextAction": "apply the definition; it becomes effective immediately",
                     },
                     "createDraft": {
-                        "available": manage,
-                        "reason": self._organize_unavailable_reason(
-                            manage,
-                            ApiPermission.MANAGE_CONFIGURATION,
-                            "the connected API principal cannot create a successor Draft",
-                        ),
+                        "available": False,
+                        "reason": "definitions are published directly; no draft exists",
                         "method": "POST",
-                        "path": (f"/api/configuration/revisions/{active.revision_id}/successor"),
+                        "path": None,
                         "sideEffects": "none",
-                        "durableOutcome": (
-                            "a successor Draft seeded from the immutable Active "
-                            "configuration is stored"
-                        ),
-                        "nextAction": (
-                            "create or open the successor Draft, then add or edit "
-                            "definitions inside it"
-                        ),
+                        "durableOutcome": "none",
+                        "nextAction": "apply the definition from its form",
                     },
                 },
             },
@@ -16785,6 +16856,10 @@ class MediaFlowApi:
             return self._notification_webhook_operator_test(
                 parts[4], environ, start_response, principal
             )
+        if len(parts) == 6:
+            # Retired draft/activate-draft commands are unknown entries, not
+            # method variants of a supported route.
+            return self._error(start_response, 404, "not_found", "route was not found")
         if method != "GET":
             return self._error(start_response, 405, "method_not_allowed", "GET required")
         self._require(principal, ApiPermission.READ)
@@ -17287,8 +17362,20 @@ class MediaFlowApi:
             )
         self._require_empty_query(environ, "operations notification Webhook test")
         document = self._document(environ)
+        if set(document) == {"webhook"}:
+            webhook = document["webhook"]
+            if not isinstance(webhook, dict):
+                raise ValueError("Webhook test form must be an object")
+            result = self._webhook_tests.test_definition(
+                webhook,
+                webhook_id=webhook_id,
+                actor=principal.principal_id,
+            )
+            return self._response(start_response, 200, result)
         if set(document) != {"expectedRevisionId", "expectedVersion"}:
-            raise ValueError("Webhook test requires expectedRevisionId and expectedVersion only")
+            raise ValueError(
+                "Webhook test requires the current form or expectedRevisionId and expectedVersion"
+            )
         expected_revision_id = document["expectedRevisionId"]
         if not isinstance(expected_revision_id, str) or not expected_revision_id.strip():
             raise ValueError("Webhook test expectedRevisionId must be a non-empty string")

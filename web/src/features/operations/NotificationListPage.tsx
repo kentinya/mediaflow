@@ -159,9 +159,7 @@ export function NotificationListPage() {
               {page.items.length === 0 ? (
                 <div className="mf-notification-empty">
                   <p>还没有 Webhook 定义。</p>
-                  <p>
-                    应用后会直接发布为新的生效配置。
-                  </p>
+                  <p>应用后会直接发布为新的生效配置。</p>
                 </div>
               ) : (
                 <ul className="mf-notification-cards">

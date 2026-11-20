@@ -198,10 +198,11 @@ describe("V2 configuration direct publication", () => {
     authStore.setToken("admin-token");
     renderApp("/configuration");
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: "日志" }),
+    await userEvent.click(await screen.findByRole("button", { name: "日志" }));
+    await userEvent.selectOptions(
+      screen.getByLabelText("启用操作日志"),
+      "true",
     );
-    await userEvent.selectOptions(screen.getByLabelText("启用操作日志"), "true");
     await userEvent.click(screen.getByRole("button", { name: "应用更改" }));
 
     expect(await screen.findByText("更改已应用")).toBeVisible();
@@ -221,7 +222,9 @@ describe("V2 configuration direct publication", () => {
     expect(body.expectedVersion).toBeUndefined();
     expect(
       calls.some((call) =>
-        /\/revisions\/.*\/(validate|activate)|drafts|successor/.test(call.input),
+        /\/revisions\/.*\/(validate|activate)|drafts|successor/.test(
+          call.input,
+        ),
       ),
     ).toBe(false);
   });
@@ -234,7 +237,10 @@ describe("V2 configuration direct publication", () => {
       if (input.includes("/operations/automation/settings"))
         return automationUnavailable();
       if (input.endsWith("/auth/principal")) return principal();
-      if (input === "/api/configuration/initialize" && init?.method === "POST") {
+      if (
+        input === "/api/configuration/initialize" &&
+        init?.method === "POST"
+      ) {
         initialized = true;
         return response(
           {
@@ -283,7 +289,8 @@ describe("V2 configuration direct publication", () => {
               details: {
                 currentVersion: 5,
                 durableState: "active_preserved",
-                nextAction: "reload the current Active settings, then apply again",
+                nextAction:
+                  "reload the current Active settings, then apply again",
               },
             },
           },
@@ -296,10 +303,11 @@ describe("V2 configuration direct publication", () => {
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
     renderApp("/configuration");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "日志" }),
+    await userEvent.click(await screen.findByRole("button", { name: "日志" }));
+    await userEvent.selectOptions(
+      screen.getByLabelText("启用操作日志"),
+      "true",
     );
-    await userEvent.selectOptions(screen.getByLabelText("启用操作日志"), "true");
     await userEvent.click(screen.getByRole("button", { name: "应用更改" }));
 
     expect(await screen.findByText("设置未保存")).toBeVisible();
@@ -307,18 +315,30 @@ describe("V2 configuration direct publication", () => {
     expect(screen.getByText("配置已生效")).toBeVisible();
   });
 
-  it("treats a lost apply answer as unknown and verifies before another write", async () => {
+  it("automatically verifies the exact lost request without a second publish", async () => {
     let statusReads = 0;
-    let failWrite = true;
+    let reconcileReads = 0;
     const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
       if (input.includes("/operations/automation/settings"))
         return automationUnavailable();
       if (input.endsWith("/auth/principal")) return principal();
       if (input.includes("/objects")) return objectsProjection();
       if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (
+        input.startsWith("/api/system/settings/reconcile") &&
+        init?.method === undefined
+      ) {
+        reconcileReads += 1;
+        return response({
+          state: "NOT_COMMITTED",
+          committed: false,
+          submissionId: "submission",
+          current: null,
+          nextAction: "review the current values and apply again deliberately",
+        });
+      }
       if (input.includes("/system/settings") && init?.method === "PUT") {
-        if (failWrite) throw new TypeError("network lost");
-        return response(activeSettings({ revisionId: "active-2" }));
+        throw new TypeError("network lost");
       }
       if (input.includes("/system/settings")) return response(activeSettings());
       if (input.includes("/configuration/status")) statusReads += 1;
@@ -327,19 +347,24 @@ describe("V2 configuration direct publication", () => {
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
     renderApp("/configuration");
-    await userEvent.click(
-      await screen.findByRole("button", { name: "日志" }),
+    await userEvent.click(await screen.findByRole("button", { name: "日志" }));
+    await userEvent.selectOptions(
+      screen.getByLabelText("启用操作日志"),
+      "true",
     );
-    await userEvent.selectOptions(screen.getByLabelText("启用操作日志"), "true");
     await userEvent.click(screen.getByRole("button", { name: "应用更改" }));
 
-    expect(await screen.findByText("操作结果未知")).toBeVisible();
-    const verify = screen.getByRole("button", { name: "核实当前状态" });
-    expect(screen.getByRole("button", { name: "应用更改" })).toBeDisabled();
-    failWrite = false;
-    await userEvent.click(verify);
-    expect(await screen.findByText("已核实当前配置状态")).toBeVisible();
+    expect(await screen.findByText("本次应用未发布")).toBeVisible();
+    expect(reconcileReads).toBe(1);
     expect(statusReads).toBeGreaterThanOrEqual(2);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([path, init]) =>
+          String(path) === "/api/system/settings" &&
+          (init as RequestInit | undefined)?.method === "PUT",
+      ),
+    ).toHaveLength(1);
+    expect(screen.getByLabelText("启用操作日志")).toHaveValue("true");
     expect(screen.getByRole("button", { name: "应用更改" })).toBeEnabled();
   });
 
@@ -365,6 +390,8 @@ describe("V2 configuration direct publication", () => {
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: /恢复草稿/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /创建.*草稿/ })).toBeNull();
+    expect(screen.getByLabelText("完整配置 JSON")).toBeVisible();
+    expect(screen.getByRole("button", { name: "应用完整替换" })).toBeDisabled();
     expect(
       fetchMock.mock.calls.some(([path]) => String(path).includes("/drafts")),
     ).toBe(false);
@@ -389,11 +416,16 @@ describe("V2 configuration direct publication", () => {
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
     renderApp("/configuration");
-    const activeJson = await screen.findByLabelText("配置 JSON");
-    expect((activeJson as HTMLTextAreaElement).value).toContain("zh-CN");
+    expect(
+      await screen.findByRole("button", { name: "配置 JSON" }),
+    ).toBeVisible();
+    expect(screen.queryByLabelText("配置 JSON")).toBeNull();
     expect(screen.queryByRole("button", { name: "刷新" })).toBeNull();
     expect(screen.queryByRole("button", { name: "重新读取" })).toBeNull();
     expect(screen.queryByRole("button", { name: /草稿/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "配置 JSON" }));
+    const activeJson = await screen.findByLabelText("配置 JSON");
+    expect((activeJson as HTMLTextAreaElement).value).toContain("zh-CN");
     await userEvent.click(
       screen.getByRole("button", { name: "导出脱敏配置包" }),
     );
@@ -401,10 +433,6 @@ describe("V2 configuration direct publication", () => {
     expect((packageJson as HTMLTextAreaElement).value).toContain(
       "mediaflow.configuration.v1",
     );
-    await userEvent.click(screen.getByRole("button", { name: "配置 JSON" }));
-    expect(
-      (screen.getByLabelText("配置 JSON") as HTMLTextAreaElement).value,
-    ).toContain("zh-CN");
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining(

@@ -58,7 +58,6 @@ from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
     ConfigurationVersionConflict,
     ManagedConfigurationRevision,
-    RuntimeSnapshotUnavailable,
 )
 from mediaflow.domain.resident_services import (
     ResidentServiceRegistration,
@@ -144,7 +143,11 @@ SUBMISSION_OUTCOME_BY_STAGE: dict[str, str] = {
 }
 
 #: Which audit actions one submission's durable trail can consist of.
-SUBMISSION_TRAIL_ACTIONS: tuple[str, ...] = ("draft_edit", SUBMISSION_OUTCOME_ACTION)
+SUBMISSION_TRAIL_ACTIONS: tuple[str, ...] = (
+    "activate",
+    "draft_edit",
+    SUBMISSION_OUTCOME_ACTION,
+)
 
 #: The recorded outcomes that prove this submission will never publish.
 TERMINAL_NON_PUBLICATION_OUTCOMES: frozenset[str] = frozenset(
@@ -521,33 +524,25 @@ class AutomationSettingsService:
         before: dict[str, float | int],
         before_publish: Callable[[ManagedConfigurationRevision], object] | None,
     ) -> dict[str, object]:
-        """Compose, validate and publish one focused successor.
+        """Compose, validate and publish one focused successor directly.
 
-        Splitting this out of :meth:`save` keeps the terminal-outcome recording
-        in one place for every bounded failure stage while the success path stays
-        the single shared checked publication.
+        The candidate is never written as a Draft or a validated staging
+        revision.  Validation, the runtime-binding preparation and the single
+        publication transaction each see the exact same in-memory document; a
+        failure before that transaction leaves no revision behind.
         """
 
-        try:
-            draft = self._config.create_successor_draft(
-                actor=actor,
-                expected_active_revision_id=target.revision_id,
-                expected_active_version=target.revision_version,
-                expected_active_digest=target.digest,
-            )
-        except (ConfigurationVersionConflict, RuntimeSnapshotUnavailable):
-            raise
-        except Exception as error:
+        active = self._config.active()
+        if active is None or active.revision_id != target.revision_id:
             raise AutomationSettingsPublicationError(
-                "automation_settings_persistence_failed",
-                "the settings successor could not be created; the previous Active remains in use",
-                status=503,
-                stage="persist",
+                "automation_settings_stale",
+                "the published settings changed while this save was composing; "
+                "nothing was published",
+                stage="compose",
                 durable_state="active_preserved",
-                next_action="check configuration persistence health, then save again",
-            ) from error
-
-        document = copy.deepcopy(dict(draft.document))
+                next_action="refresh the published values and save again",
+            )
+        document = copy.deepcopy(dict(active.document))
         automation = document.get("automation")
         if not isinstance(automation, dict):
             automation = {}
@@ -555,12 +550,22 @@ class AutomationSettingsService:
         for path in ENGINE_FIELD_PATHS:
             automation[path.split(".", 1)[1]] = normalized[path]
         _reject_literal_secrets(document)
+        self._assert_focused_document(active, document)
+
+        def prepare(revision: ManagedConfigurationRevision) -> object:
+            try:
+                return before_publish(revision) if before_publish is not None else None
+            except BaseException as error:  # noqa: BLE001 - mapped to a prepare marker
+                raise _RuntimePreparationFailure from error
+
         try:
-            edited = self._config.edit_draft(
-                draft.revision_id,
+            published = self._config.publish_document(
                 document,
-                expected_version=draft.version,
                 actor=actor,
+                expected_active_revision_id=target.revision_id,
+                expected_active_version=target.revision_version,
+                expected_active_digest=target.digest,
+                before_publish=prepare if before_publish is not None else None,
                 audit_context={
                     "kind": "system_settings",
                     "objectId": "automation_engine_settings",
@@ -568,30 +573,52 @@ class AutomationSettingsService:
                     "routeObjectId": None,
                     "sourceObjectId": None,
                     "publishedFromRevisionId": target.revision_id,
-                    # The submission identity is the reconciliation fence: only
-                    # this request's own revision may certify it, so an older
-                    # equal submission or a failed Draft never does.
                     "submissionId": identity,
                     "before": before,
                     "candidate": {path: normalized[path] for path in ENGINE_FIELD_PATHS},
                 },
             )
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict):
+            raise
+        except _RuntimePreparationFailure as error:
+            raise AutomationSettingsPublicationError(
+                "automation_settings_runtime_failed",
+                "the successor configuration could not be bound to the runtime; the previous "
+                "Active remains in use",
+                status=503,
+                stage="prepare",
+                durable_state="active_preserved",
+                side_effects=(
+                    "none; no candidate revision or evidence was persisted; "
+                    "Active pointer and process binding unchanged"
+                ),
+                next_action=(
+                    "correct the runtime configuration, refresh the published values and save again"
+                ),
+            ) from error
+        except ValueError as error:
+            raise AutomationSettingsPublicationError(
+                "automation_settings_validation_failed",
+                "the whole candidate configuration failed validation; the previous Active "
+                "remains in use",
+                status=422,
+                stage="validate",
+                durable_state="active_preserved",
+                next_action=(
+                    f"correct the blocking configuration ({str(error)[:240]}), then save again"
+                ),
+            ) from error
+        except AutomationSettingsPublicationError:
+            raise
         except Exception as error:
             raise AutomationSettingsPublicationError(
-                "automation_settings_persistence_failed",
-                "the settings successor could not be edited; the previous Active remains in use",
+                "automation_settings_activation_failed",
+                "the settings successor could not be published; the previous Active remains in use",
                 status=503,
-                stage="persist",
+                stage="activate",
                 durable_state="active_preserved",
-                revision_id=draft.revision_id,
                 next_action="check configuration persistence health, then save again",
             ) from error
-
-        self._assert_focused_change(target, edited)
-        validated = self._validate(edited)
-        published = self._activate(
-            validated, actor=actor, before_publish=before_publish, submission_id=identity
-        )
         return {
             "published": True,
             "unchanged": False,
@@ -607,6 +634,51 @@ class AutomationSettingsService:
                 "next safe loop boundary and reports its own adopted values independently"
             ),
         }
+
+    def _assert_focused_change(
+        self,
+        target: PublishedEngineTarget,
+        edited: ManagedConfigurationRevision,
+    ) -> None:
+        """Fail closed unless only the three runtime fields changed."""
+
+        active = self._config.active()
+        if active is None or active.revision_id != target.revision_id:
+            raise AutomationSettingsPublicationError(
+                "automation_settings_stale",
+                "the published settings changed while this save was composing; "
+                "nothing was published",
+                stage="compose",
+                durable_state="active_preserved",
+                next_action="refresh the published values and save again",
+            )
+        self._assert_focused_document(active, edited.document)
+
+    def _assert_focused_document(
+        self,
+        active: ManagedConfigurationRevision,
+        candidate: Mapping[str, object],
+    ) -> None:
+        before_document = copy.deepcopy(dict(active.document))
+        after_document = copy.deepcopy(dict(candidate))
+        before_automation = before_document.get("automation")
+        after_automation = after_document.get("automation")
+        if isinstance(before_automation, dict) and isinstance(after_automation, dict):
+            for path in ENGINE_FIELD_PATHS:
+                key = path.split(".", 1)[1]
+                before_automation[key] = after_automation.get(key)
+        if _canonical(before_document) != _canonical(after_document):
+            raise AutomationSettingsPublicationError(
+                "automation_settings_out_of_scope",
+                "the successor changes configuration outside the three runtime settings; "
+                "nothing was published",
+                stage="compose",
+                durable_state="active_preserved",
+                next_action=(
+                    "save only the three system runtime settings; other settings keep their "
+                    "own configuration journey"
+                ),
+            )
 
     def _assert_focused_change(
         self,

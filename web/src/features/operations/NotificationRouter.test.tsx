@@ -48,8 +48,7 @@ function recordingFetch(
       }
       if (
         call.method === "GET" &&
-        call.url ===
-          `/api/operations/notifications/webhooks/${WEBHOOK_ID}`
+        call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}`
       ) {
         return jsonResponse({
           webhook: definitionPayload(),
@@ -292,6 +291,24 @@ describe("V2 Notification direct publication", () => {
     const { calls } = recordingFetch((call) => {
       if (
         call.method === "POST" &&
+        call.url === `/api/operations/notifications/webhooks/new-webhook/test`
+      ) {
+        return jsonResponse({
+          testId: "test-new",
+          webhook: webhookDocument({ id: "new-webhook" }),
+          revision: null,
+          outcome: "success",
+          category: "http_204",
+          responseStatus: 204,
+          message: "delivered",
+          durableState: "no_delivery_created_no_configuration_change",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "apply the tested form",
+        });
+      }
+      if (
+        call.method === "POST" &&
         call.url ===
           `/api/configuration/revisions/${ACTIVE_REVISION}/objects/webhooks`
       ) {
@@ -320,6 +337,8 @@ describe("V2 Notification direct publication", () => {
     );
     const eventOptions = view.getAllByRole("checkbox");
     await userEvent.click(eventOptions[0]);
+    await userEvent.click(view.getByRole("button", { name: "发送签名测试" }));
+    expect(await view.findByText(/签名测试成功/)).toBeVisible();
     await userEvent.click(view.getByRole("button", { name: "应用更改" }));
     await waitFor(() => {
       const write = calls.find(
@@ -331,13 +350,31 @@ describe("V2 Notification direct publication", () => {
       expect(write).toBeDefined();
       expect(write?.body).toMatchObject({ expectedVersion: 3 });
     });
-    expect(
-      calls.some((call) => call.url.includes("/successor")),
-    ).toBe(false);
+    expect(calls.some((call) => call.url.includes("/successor"))).toBe(false);
   });
 
   it("applies the Active form and never posts draft or activation routes", async () => {
     const { calls } = recordingFetch((call) => {
+      if (
+        call.method === "POST" &&
+        call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}/test`
+      ) {
+        return jsonResponse({
+          testId: "test-edit",
+          webhook: webhookDocument({
+            url: "https://example.invalid/hooks/updated",
+          }),
+          revision: null,
+          outcome: "success",
+          category: "http_204",
+          responseStatus: 204,
+          message: "delivered",
+          durableState: "no_delivery_created_no_configuration_change",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "apply the tested form",
+        });
+      }
       if (
         call.method === "PUT" &&
         call.url ===
@@ -360,6 +397,8 @@ describe("V2 Notification direct publication", () => {
     const url = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.clear(url);
     await userEvent.type(url, "https://example.invalid/hooks/updated");
+    await userEvent.click(view.getByRole("button", { name: "发送签名测试" }));
+    expect(await view.findByText(/签名测试成功/)).toBeVisible();
     await userEvent.click(view.getByRole("button", { name: "应用更改" }));
     await waitFor(() => {
       const write = calls.find(
@@ -387,8 +426,7 @@ describe("V2 Notification direct publication", () => {
     const { calls } = recordingFetch((call) => {
       if (
         call.method === "POST" &&
-        call.url ===
-          `/api/operations/notifications/webhooks/${WEBHOOK_ID}/test`
+        call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}/test`
       ) {
         return jsonResponse({
           testId: "test-1",
@@ -465,8 +503,7 @@ describe("V2 Notification direct publication", () => {
       }
       if (
         call.method === "GET" &&
-        call.url ===
-          `/api/operations/notifications/webhooks/${WEBHOOK_ID}`
+        call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}`
       ) {
         return jsonResponse({ error: { code: "not_found" } }, 404);
       }
@@ -474,9 +511,7 @@ describe("V2 Notification direct publication", () => {
     });
     authStore.setToken(TOKEN);
     renderApp("/operations/notifications");
-    expect(
-      await screen.findByText("还没有 Webhook 定义。"),
-    ).toBeVisible();
+    expect(await screen.findByText("还没有 Webhook 定义。")).toBeVisible();
     expect(screen.queryByRole("link", { name: "新建 Webhook" })).toBeNull();
     expect(screen.queryByRole("button", { name: /草稿/ })).toBeNull();
   });

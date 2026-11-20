@@ -30,6 +30,8 @@ class ManagedNamingPolicyJourneyTests(unittest.TestCase):
         document["persistence"]["databasePath"] = str(root / "configuration.sqlite3")
         document["storages"][0]["rootPath"] = str(root / "source")
         document["storages"][1]["rootPath"] = str(root / "target")
+        (root / "source" / "incoming").mkdir(parents=True, exist_ok=True)
+        (root / "target" / "Movies").mkdir(parents=True, exist_ok=True)
         return document
 
     def test_crud_reference_block_copy_and_exact_revision_staleness(self) -> None:
@@ -485,32 +487,19 @@ class ManagedNamingPolicyJourneyTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(status, 200)
-                status, evidence = request(
-                    api,
-                    f"/api/configuration/revisions/{draft.revision_id}/naming-preview",
-                    method="POST",
-                    body={
-                        "expectedVersion": created["version"],
-                        "expectedDigest": created["digest"],
-                        "policyId": "managed-movie",
-                        "sample": {
-                            "title": "The Matrix",
-                            "mediaType": "movie",
-                            "year": 1999,
-                            "extension": "mkv",
-                        },
-                    },
+                self.assertEqual(created["status"], "active")
+                active = managed.active()
+                self.assertTrue(
+                    any(
+                        item.get("id") == "managed-movie"
+                        for item in active.document["namingPolicies"]
+                    )
                 )
-                self.assertEqual(status, 200)
-                self.assertEqual(evidence["status"], "completed")
-                status, detail = request(
-                    api,
-                    f"/api/configuration/revisions/{draft.revision_id}/objects",
-                )
-                self.assertEqual(status, 200)
-                self.assertFalse(detail["namingPreview"]["stale"])
-                self.assertEqual(
-                    detail["namingPreview"]["result"]["filename"], "The Matrix (1999).mkv"
+                self.assertFalse(
+                    any(
+                        revision.status.value in {"draft", "validated"}
+                        for revision in repository.list_revisions()
+                    )
                 )
 
 

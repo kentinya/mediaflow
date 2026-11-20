@@ -1,5 +1,5 @@
 /**
- * V2 Webhook successor-draft editor card.
+ * V2 Webhook definition editor card.
  *
  * The card reads the exact open draft with its optimistic version and keeps
  * three states visibly separate:
@@ -20,12 +20,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
-  createNotificationSuccessorDraft,
   saveWebhookDefinitionDraft,
-  testWebhookDefinition,
+  testWebhookDefinitionForm,
 } from "../../shared/api/api-client";
 import {
-  notificationDefinitionQueryKey,
   notificationDraftQueryKey,
   notificationDraftQueryOptions,
   notificationListQueryKey,
@@ -96,6 +94,7 @@ export function NotificationEditorPage() {
   const [savePermissionDenied, setSavePermissionDenied] = useState(false);
   const [testResult, setTestResult] = useState<{
     readonly context: string;
+    readonly success: boolean;
     readonly message: string;
   } | null>(null);
 
@@ -123,20 +122,15 @@ export function NotificationEditorPage() {
   const saveAvailable = loadedDraft?.actions.save.available === true;
   const readOnlyDraft =
     draft !== null && (!saveAvailable || savePermissionDenied);
-  const displayedContext =
-    baseline === null ? "" : `${baseline.revisionId}:${baseline.version}`;
+  const testContext =
+    currentForm === null
+      ? ""
+      : `${currentForm.url}\u0000${currentForm.secretEnv}`;
   const dirty =
     currentForm !== null &&
     baseline !== null &&
     !sameWebhookForm(currentForm, baseline.values);
   const clean = currentForm !== null && baseline !== null && !dirty;
-  const canUseSavedVersion =
-    clean &&
-    remote === null &&
-    draft !== null &&
-    baseline !== null &&
-    !readDegraded;
-
   const clearEvidence = () => {
     setTestResult(null);
   };
@@ -235,7 +229,7 @@ export function NotificationEditorPage() {
       setRemote(null);
       if (versionChanged) {
         setTestResult(null);
-          }
+      }
       return;
     }
     setTestResult(null);
@@ -267,37 +261,6 @@ export function NotificationEditorPage() {
     savePermissionDenied,
   ]);
   /* eslint-enable react-hooks/set-state-in-effect */
-
-  const draftMutation = useMutation({
-    mutationFn: (activeRevisionId: string) =>
-      createNotificationSuccessorDraft(token, { activeRevisionId }),
-    retry: false,
-    onMutate: () => setError(null),
-    onSuccess: (result) => {
-      if (result.ok) {
-        void queryClient.invalidateQueries({
-          queryKey: [notificationDraftQueryKey],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [notificationDefinitionQueryKey],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [notificationListQueryKey],
-        });
-        setSavedNotice(null);
-        return;
-      }
-      if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("后继当前定义可能已经创建"));
-        return;
-      }
-      setError(
-        result.status === 409
-          ? "后继当前定义没有创建：已生效配置在读取后已经变化。重新读取后再试。"
-          : `后继当前定义没有创建（${result.code}）。重新读取后再试。`,
-      );
-    },
-  });
 
   const saveMutation = useMutation({
     mutationFn: (input: {
@@ -372,13 +335,11 @@ export function NotificationEditorPage() {
   const testMutation = useMutation({
     mutationFn: (input: {
       context: string;
-      expectedRevisionId: string;
-      expectedVersion: number;
+      webhook: Record<string, unknown>;
     }) =>
-      testWebhookDefinition(token, {
+      testWebhookDefinitionForm(token, {
         webhookId,
-        expectedRevisionId: input.expectedRevisionId,
-        expectedVersion: input.expectedVersion,
+        webhook: input.webhook,
       }),
     retry: false,
     onMutate: () => {
@@ -387,14 +348,15 @@ export function NotificationEditorPage() {
     },
     onSuccess: (result, input) => {
       if (result.ok) {
-        if (input.context !== displayedContext) return;
+        if (input.context !== testContext) return;
         const model = result.model;
         setTestResult({
           context: input.context,
+          success: model.outcome === "success",
           message:
             model.outcome === "success"
-              ? `测试成功。${model.message} 下一步：${model.nextAction}`
-              : `测试失败。${model.message} 下一步：${model.nextAction}`,
+              ? `签名测试成功。${model.message} 下一步：${model.nextAction}`
+              : `签名测试失败。${model.message} 下一步：${model.nextAction}`,
         });
         return;
       }
@@ -410,10 +372,7 @@ export function NotificationEditorPage() {
     },
   });
 
-  const busy =
-    draftMutation.isPending ||
-    saveMutation.isPending ||
-    testMutation.isPending;
+  const busy = saveMutation.isPending || testMutation.isPending;
   const activateInFlight = saveMutation.isPending;
 
   const closeCard = () => {
@@ -495,7 +454,13 @@ export function NotificationEditorPage() {
   };
 
   const canTest =
-    canUseSavedVersion && loadedDraft?.actions.test.available === true;
+    currentForm !== null &&
+    webhookFormIssues(currentForm).length === 0 &&
+    loadedDraft?.actions.test.available === true;
+  const testedForCurrentForm =
+    testResult !== null &&
+    testResult.success &&
+    testResult.context === testContext;
   const title =
     draft === null
       ? "编辑 Webhook 定义"
@@ -527,6 +492,7 @@ export function NotificationEditorPage() {
     readOnlyDraft ||
     !saveAvailable ||
     !dirty ||
+    !testedForCurrentForm ||
     issues.length > 0;
 
   return (
@@ -622,32 +588,11 @@ export function NotificationEditorPage() {
         <div className="mf-notification-card-scroll">
           <StatusBanner variant="info" title="没有可编辑的定义">
             <p>
-              {notificationReasonLabel(
-                loadedDraft.actions.createDraft.reason,
-                "需要一个打开的后继当前定义，才能保存这个 Webhook 定义。",
-              )}
-            </p>
-            <p>
-              当前没有渲染可填写的表单；直接打开此地址不会写入配置，也不会发送测试。
+              当前生效配置不包含这个 Webhook
+              定义；没有渲染可填写的表单，也不会发送测试。
             </p>
           </StatusBanner>
           <div className="mf-notification-actions">
-            <Button
-              type="button"
-              disabled={
-                !loadedDraft.actions.createDraft.available ||
-                draftMutation.isPending
-              }
-              onClick={() => {
-                if (loadedDraft.activeConfiguration !== null) {
-                  draftMutation.mutate(
-                    loadedDraft.activeConfiguration.revisionId,
-                  );
-                }
-              }}
-            >
-              {draftMutation.isPending ? "正在准备…" : "重新读取定义"}
-            </Button>
             <Button type="button" variant="secondary" onClick={closeCard}>
               返回通知列表
             </Button>
@@ -657,7 +602,7 @@ export function NotificationEditorPage() {
               disabled={busy || draftQuery.isFetching}
               onClick={() => void draftQuery.refetch()}
             >
-              {draftQuery.isFetching ? "正在读取…" : "读取最新当前定义"}
+              {draftQuery.isFetching ? "正在读取…" : "读取当前定义"}
             </Button>
           </div>
           {error !== null && (
@@ -841,23 +786,15 @@ export function NotificationEditorPage() {
                 你尚未保存的输入仍显示在下方；系统没有写入服务端，也没有把本地输入静默绑定到新的当前定义修订。
               </p>
               <p>
-                已生效配置可能已经变化。创建后继当前定义后，再明确选择保留本地输入或采用服务端值；也可以直接放弃本地输入。
+                已生效配置可能已经变化。重新读取当前定义后，再明确选择保留本地输入或采用服务端值；也可以直接放弃本地输入。
               </p>
               <div className="mf-actions">
                 <Button
                   type="button"
-                  disabled={!loadedDraft?.actions.createDraft.available || busy}
-                  onClick={() => {
-                    if (loadedDraft?.activeConfiguration != null) {
-                      draftMutation.mutate(
-                        loadedDraft.activeConfiguration.revisionId,
-                      );
-                    }
-                  }}
+                  disabled={busy || draftQuery.isFetching}
+                  onClick={() => void draftQuery.refetch()}
                 >
-                  {draftMutation.isPending
-                    ? "正在创建后继当前定义…"
-                    : "创建后继当前定义"}
+                  {draftQuery.isFetching ? "正在读取…" : "重新读取当前定义"}
                 </Button>
                 <Button
                   type="button"
@@ -1173,19 +1110,12 @@ export function NotificationEditorPage() {
             </div>
           </section>
 
-          {draft !== null && (
+          {currentForm !== null && baseline !== null && (
             <section className="mf-notification-form-section">
               <h3>签名测试</h3>
               <p className="mf-notification-field-help">
-                测试针对当前生效定义发送一次带签名的请求；不会创建投递、不会自动重试，也不会改变配置。
+                针对当前表单中的接收地址和签名密钥引用发送一次带签名的请求；不会创建投递、不会自动重试，也不会改变配置。修改地址或密钥引用后需重新测试。
               </p>
-              {!canUseSavedVersion && (
-                <p className="mf-notification-inline-reason">
-                  {remote !== null
-                    ? "先处理上面的并发变更。"
-                    : "有未保存的修改：先应用，或放弃修改后再测试已保存定义。"}
-                </p>
-              )}
               <div className="mf-notification-actions">
                 <Button
                   type="button"
@@ -1196,26 +1126,34 @@ export function NotificationEditorPage() {
                     "当前不能发送签名测试",
                   )}
                   onClick={() => {
-                    if (baseline !== null) {
-                      testMutation.mutate({
-                        context: displayedContext,
-                        expectedRevisionId: baseline.revisionId,
-                        expectedVersion: baseline.version,
-                      });
-                    }
+                    if (currentForm === null) return;
+                    testMutation.mutate({
+                      context: testContext,
+                      webhook: buildWebhookObject(webhookId, currentForm),
+                    });
                   }}
                 >
-                  {testMutation.isPending ? "正在发送签名测试…" : "发送签名测试"}
+                  {testMutation.isPending
+                    ? "正在发送签名测试…"
+                    : "发送签名测试"}
                 </Button>
               </div>
-              {testResult !== null &&
-                testResult.context === displayedContext &&
-                canUseSavedVersion && (
-                  <StatusBanner variant="info" title="签名测试结果">
-                    <p>{testResult.message}</p>
-                    <p>结论只对发送时已发布的对象版本有效。</p>
-                  </StatusBanner>
-                )}
+              {testResult !== null && testResult.context === testContext && (
+                <StatusBanner
+                  variant={testResult.success ? "success" : "error"}
+                  title="签名测试结果"
+                >
+                  <p>{testResult.message}</p>
+                  <p>
+                    结论只对当前地址和签名引用有效；修改后需重新测试才能应用。
+                  </p>
+                </StatusBanner>
+              )}
+              {!testedForCurrentForm && (
+                <p className="mf-notification-inline-reason">
+                  应用前必须对当前表单成功完成一次签名测试。
+                </p>
+              )}
             </section>
           )}
         </form>

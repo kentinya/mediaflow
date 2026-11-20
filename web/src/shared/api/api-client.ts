@@ -1657,7 +1657,6 @@ import {
 } from "../../entities/operations/run-once";
 import {
   NOTIFICATION_URI_SAFE_SEGMENT,
-  normalizeNotificationActivation,
   normalizeNotificationDeliveriesPage,
   normalizeNotificationDeliveryDetail,
   normalizeNotificationDefinitionsPage,
@@ -1666,7 +1665,6 @@ import {
   normalizeWebhookDefinition,
   normalizeWebhookDefinitionMutation,
   normalizeWebhookTestResult,
-  type NotificationActivationModel,
   type NotificationDeliveriesPage,
   type NotificationDeliveryDetailModel,
   type NotificationDefinitionsPage,
@@ -5740,7 +5738,10 @@ export async function fetchNotificationDefinitionDraft(
   }
   try {
     const definition = readRecord(payload, "notification_definition");
-    const active = readRecord(definition["activeConfiguration"], "activeConfiguration");
+    const active = readRecord(
+      definition["activeConfiguration"],
+      "activeConfiguration",
+    );
     const webhook = readRecord(definition["webhook"], "webhook");
     const revisionId = String(active["revisionId"] ?? "");
     const revisionVersion = Number(active["version"] ?? 0);
@@ -5777,7 +5778,10 @@ export async function fetchNotificationDefinitionDraft(
         },
         save: {
           available: editAction["available"] === true,
-          reason: typeof editAction["reason"] === "string" ? editAction["reason"] : null,
+          reason:
+            typeof editAction["reason"] === "string"
+              ? editAction["reason"]
+              : null,
           method: "PUT",
           path: `/api/configuration/revisions/${encodeURIComponent(revisionId)}/objects/webhooks/${encodeURIComponent(webhookId)}`,
           requiresConfirmation: false,
@@ -5797,7 +5801,8 @@ export async function fetchNotificationDefinitionDraft(
         },
         activate: {
           available: false,
-          reason: "the definition is already Active; saving publishes a successor",
+          reason:
+            "the definition is already Active; saving publishes a successor",
           method: "POST",
           path: null,
           requiresConfirmation: true,
@@ -6117,36 +6122,29 @@ export async function testWebhookDefinition(
   );
 }
 
-export interface ActivateWebhookDraftOptions {
+export interface TestWebhookDefinitionFormOptions {
   readonly webhookId: string;
-  readonly expectedRevisionId: string;
-  readonly expectedVersion: number;
+  readonly webhook: Record<string, unknown>;
 }
 
-export async function activateWebhookDraft(
+export async function testWebhookDefinitionForm(
   token: string | null,
-  options: ActivateWebhookDraftOptions,
+  options: TestWebhookDefinitionFormOptions,
   fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<NotificationActivationModel>> {
-  if (
-    !isSafeIdentifier(options.webhookId) ||
-    !isSafeIdentifier(options.expectedRevisionId)
-  ) {
+): Promise<AutomationMutationResult<WebhookTestResultModel>> {
+  if (!isSafeIdentifier(options.webhookId)) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/operations/notifications/webhooks/${encodeURIComponent(options.webhookId)}/activate-draft`,
-    {
-      expectedRevisionId: options.expectedRevisionId,
-      expectedVersion: options.expectedVersion,
-    },
+    `/api/operations/notifications/webhooks/${encodeURIComponent(options.webhookId)}/test`,
+    { webhook: options.webhook },
     (payload) =>
-      normalizeNotificationActivation(payload, {
+      normalizeWebhookTestResult(payload, {
         webhookId: options.webhookId,
-        revisionId: options.expectedRevisionId,
-        version: options.expectedVersion,
+        revisionId: null,
+        version: null,
       }),
     fetchImpl,
   );
@@ -6206,31 +6204,6 @@ export async function resolveStaleDelivery(
         action: "resolve-stale",
         previousStatus: "delivering",
       }),
-    fetchImpl,
-  );
-}
-
-export interface CreateNotificationSuccessorDraftOptions {
-  readonly activeRevisionId: string;
-}
-
-export async function createNotificationSuccessorDraft(
-  token: string | null,
-  options: CreateNotificationSuccessorDraftOptions,
-  fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<{ readonly revisionId: string }>> {
-  if (!isSafeIdentifier(options.activeRevisionId)) {
-    return { ok: false, status: 400, code: "invalid_request" };
-  }
-  return submitAutomationMutation(
-    token,
-    "POST",
-    `/api/configuration/revisions/${encodeURIComponent(options.activeRevisionId)}/successor`,
-    { expectedActiveRevisionId: options.activeRevisionId },
-    (payload) => {
-      const source = readRecord(payload, "notification_successor_draft");
-      return { revisionId: String(source["revisionId"] ?? "") };
-    },
     fetchImpl,
   );
 }

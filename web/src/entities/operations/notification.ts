@@ -644,6 +644,8 @@ export function normalizeWebhookDefinition(
     `${field}.activeConfiguration`,
   );
   const actions = readRecord(source["actions"], `${field}.actions`);
+  const revisionIdentity =
+    draftState.revisionId ?? activeConfiguration?.revisionId ?? null;
   const identity = document.id;
   return {
     document,
@@ -671,28 +673,28 @@ export function normalizeWebhookDefinition(
         actions["edit"],
         `${field}.actions.edit`,
         "webhook-edit",
-        draftState.revisionId,
+        revisionIdentity,
         identity,
       ),
       copy: normalizeNotificationAction(
         actions["copy"],
         `${field}.actions.copy`,
         "webhook-copy",
-        draftState.revisionId,
+        revisionIdentity,
         identity,
       ),
       enable: normalizeNotificationAction(
         actions["enable"],
         `${field}.actions.enable`,
         "webhook-enable",
-        draftState.revisionId,
+        revisionIdentity,
         identity,
       ),
       disable: normalizeNotificationAction(
         actions["disable"],
         `${field}.actions.disable`,
         "webhook-disable",
-        draftState.revisionId,
+        revisionIdentity,
         identity,
       ),
       draftCreate: normalizeNotificationAction(
@@ -749,7 +751,7 @@ export function normalizeNotificationDefinitionsPage(
         actions["create"],
         "actions.create",
         "list-create",
-        draftState.revisionId,
+        activeConfiguration?.revisionId ?? null,
       ),
       createDraft: normalizeNotificationAction(
         actions["createDraft"],
@@ -872,9 +874,9 @@ export function normalizeNotificationDraftDocument(
 export interface WebhookTestResultModel {
   readonly testId: string | null;
   readonly webhookId: string;
-  readonly revisionId: string;
-  readonly revisionVersion: number;
-  readonly revisionStatus: string;
+  readonly revisionId: string | null;
+  readonly revisionVersion: number | null;
+  readonly revisionStatus: string | null;
   readonly outcome: (typeof WEBHOOK_TEST_OUTCOMES)[number];
   readonly category: string;
   readonly responseStatus: number | null;
@@ -887,8 +889,8 @@ export interface WebhookTestResultModel {
 /** The exact mutation identity a success document must answer for. */
 export interface WebhookTestRequestBinding {
   readonly webhookId: string;
-  readonly revisionId: string;
-  readonly version: number;
+  readonly revisionId: string | null;
+  readonly version: number | null;
 }
 
 export function normalizeWebhookTestResult(
@@ -896,8 +898,12 @@ export function normalizeWebhookTestResult(
   requested: WebhookTestRequestBinding,
 ): WebhookTestResultModel {
   const source = readRecord(payload, "webhook_test_result");
-  const revision = readRecord(source["revision"], "revision");
-  if ("digest" in revision) {
+  const rawRevision = source["revision"];
+  const revision =
+    rawRevision === null || rawRevision === undefined
+      ? null
+      : readRecord(rawRevision, "revision");
+  if (revision !== null && "digest" in revision) {
     // The digest is server-side binding evidence; an operator test outcome
     // that carries one is malformed contract data, never rendered.
     return fail("revision.digest");
@@ -920,9 +926,9 @@ export function normalizeWebhookTestResult(
   const model = {
     testId: optionalText(source, "testId", 128),
     webhookId: uriSafeSegment(webhook, "id", 64),
-    revisionId: text(revision, "revisionId", 128),
-    revisionVersion: count(revision, "version"),
-    revisionStatus: text(revision, "status", 32),
+    revisionId: revision === null ? null : text(revision, "revisionId", 128),
+    revisionVersion: revision === null ? null : count(revision, "version"),
+    revisionStatus: revision === null ? null : text(revision, "status", 32),
     outcome: enumOrFail(source["outcome"], "outcome", WEBHOOK_TEST_OUTCOMES),
     category,
     responseStatus,
@@ -933,8 +939,9 @@ export function normalizeWebhookTestResult(
   };
   if (
     model.webhookId !== requested.webhookId ||
-    model.revisionId !== requested.revisionId ||
-    model.revisionVersion !== requested.version
+    (requested.revisionId !== null &&
+      model.revisionId !== requested.revisionId) ||
+    (requested.version !== null && model.revisionVersion !== requested.version)
   ) {
     // A response about another Webhook or another revision never renders as
     // the outcome of this explicit test.

@@ -289,6 +289,35 @@ class SystemSettingsManagementTests(unittest.TestCase):
             statuses = {revision.status.value for revision in repo.list_revisions(limit=100)}
             self.assertEqual(statuses, {"active", "superseded"})
 
+    def test_api_exact_submission_reconciles_without_a_second_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api, service, active, repo = setup_test_api(directory)
+            submission_id = "settings-apply-e2e-1"
+            body = json.dumps(
+                {
+                    "submissionId": submission_id,
+                    "expectedActiveRevisionId": active.revision_id,
+                    "expectedActiveVersion": active.revision_sequence,
+                    "expectedActiveDigest": active.digest,
+                    "edits": [{"fieldPath": "automation.maximumActiveJobs", "value": 77}],
+                }
+            ).encode("utf-8")
+            status, applied = request(api, "/api/system/settings", method="PUT", body=body)
+            self.assertEqual(status, 200, applied)
+            published_revision = applied["revisionId"]
+            before = len(repo.list_revisions(limit=100))
+            status, reconciled = request(
+                api,
+                f"/api/system/settings/reconcile?submissionId={submission_id}",
+            )
+            self.assertEqual(status, 200, reconciled)
+            self.assertEqual(reconciled["state"], "COMMITTED")
+            self.assertTrue(reconciled["committed"])
+            self.assertEqual(reconciled["committedRevisionId"], published_revision)
+            self.assertEqual(reconciled["sideEffects"], "none")
+            self.assertEqual(len(repo.list_revisions(limit=100)), before)
+            self.assertEqual(service.active().revision_id, published_revision)
+
     def test_api_stale_active_apply_returns_conflict_without_publication(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             api, service, active, repo = setup_test_api(directory)

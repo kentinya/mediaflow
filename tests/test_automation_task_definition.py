@@ -24,8 +24,13 @@ from mediaflow.interfaces.service_api import MediaFlowApi
 def _document(root: Path) -> dict:
     value = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
     value["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
+    value["api"]["principals"] = [
+        {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": True}
+    ]
     value["storages"][0]["rootPath"] = str(root / "source")
     value["storages"][1]["rootPath"] = str(root / "target")
+    (root / "source" / "incoming").mkdir(parents=True, exist_ok=True)
+    (root / "target" / "Movies").mkdir(parents=True, exist_ok=True)
     return value
 
 
@@ -534,7 +539,10 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 SQLiteConfigurationRepository(root / "configuration.sqlite3") as configuration,
                 SQLiteTaskRepository(root / "runtime.sqlite3") as runtime,
             ):
-                managed = ManagedConfigurationService(configuration)
+                managed = ManagedConfigurationService(
+                    configuration,
+                    bootstrap_database_path=str(root / "runtime.sqlite3"),
+                )
                 api = MediaFlowApi(
                     runtime,
                     principals=(
@@ -565,18 +573,23 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(body["automationTaskDefinition"]["id"], "api-task")
+                revision_id = body["revisionId"]
                 stale, _ = _request(
                     api,
                     "/api/automation/task-definitions/api-task/enable",
                     method="POST",
-                    body={"revisionId": draft.revision_id, "expectedVersion": draft.version},
+                    body={"revisionId": revision_id, "expectedVersion": draft.version},
                 )
                 self.assertEqual(stale, 409)
                 viewer_status, _ = _request(
                     api,
                     "/api/automation/task-definitions",
                     method="POST",
-                    body={"revisionId": draft.revision_id, "expectedVersion": 2, "definition": {}},
+                    body={
+                        "revisionId": revision_id,
+                        "expectedVersion": body["version"],
+                        "definition": {},
+                    },
                     token="viewer-token",
                 )
                 self.assertEqual(viewer_status, 403)
@@ -616,9 +629,10 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(status, 200)
-                self.assertEqual(body["configurationRevisionId"], revision_id)
+                self.assertEqual(body["configurationRevisionId"], body["revisionId"])
                 self.assertEqual(body["automationTaskDefinition"]["id"], "api-task")
                 self.assertFalse(body["automationTaskDefinition"]["enabled"])
+                revision_id = body["revisionId"]
 
                 draft = managed.require(revision_id)
                 status, body = _request(
@@ -642,6 +656,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(body["automationTaskDefinition"]["name"], "API Task edited")
                 self.assertEqual(body["version"], draft.version + 1)
+                revision_id = body["revisionId"]
 
                 draft = managed.require(revision_id)
                 status, body = _request(
@@ -653,6 +668,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(body["automationTaskDefinition"]["id"], "api-task-copy")
                 self.assertFalse(body["automationTaskDefinition"]["enabled"])
+                revision_id = body["revisionId"]
 
                 draft = managed.require(revision_id)
                 status, body = _request(
@@ -663,6 +679,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertTrue(body["automationTaskDefinition"]["enabled"])
+                revision_id = body["revisionId"]
 
                 draft = managed.require(revision_id)
                 status, body = _request(
@@ -673,134 +690,6 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertFalse(body["automationTaskDefinition"]["enabled"])
-
-                # Operator Web uses the versioned configuration-object routes for
-                # create/copy/enable/disable; they must share the same contract.
-                draft = managed.require(revision_id)
-                status, body = _request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}/objects/automationTaskDefinitions",
-                    method="POST",
-                    body={
-                        "object": {
-                            "id": "cfg-task",
-                            "name": "Config Task",
-                            "resourceLibraryId": "source",
-                            "mode": "automatic-organization",
-                            "intervalSeconds": 45,
-                        },
-                        "expectedVersion": draft.version,
-                    },
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(body["automationTaskDefinition"]["id"], "cfg-task")
-
-                draft = managed.require(revision_id)
-                status, body = _request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}"
-                    "/objects/automationTaskDefinitions/cfg-task",
-                    method="PUT",
-                    body={
-                        "object": {
-                            "id": "cfg-task",
-                            "name": "Config Task edited",
-                            "resourceLibraryId": "source",
-                            "mode": "automatic-organization",
-                            "intervalSeconds": 90,
-                        },
-                        "expectedVersion": draft.version,
-                    },
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(body["automationTaskDefinition"]["name"], "Config Task edited")
-
-                draft = managed.require(revision_id)
-                status, body = _request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}"
-                    "/objects/automationTaskDefinitions/cfg-task/copy",
-                    method="POST",
-                    body={"expectedVersion": draft.version},
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(body["automationTaskDefinition"]["id"], "cfg-task-copy")
-                self.assertFalse(body["automationTaskDefinition"]["enabled"])
-
-                draft = managed.require(revision_id)
-                status, body = _request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}"
-                    "/objects/automationTaskDefinitions/cfg-task/enable",
-                    method="POST",
-                    body={"expectedVersion": draft.version},
-                )
-                self.assertEqual(status, 200)
-                self.assertTrue(body["automationTaskDefinition"]["enabled"])
-
-                draft = managed.require(revision_id)
-                status, body = _request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}"
-                    "/objects/automationTaskDefinitions/cfg-task/disable",
-                    method="POST",
-                    body={"expectedVersion": draft.version},
-                )
-                self.assertEqual(status, 200)
-                self.assertFalse(body["automationTaskDefinition"]["enabled"])
-
-                # List and detail projections are bounded and truthful for the Draft.
-                draft = managed.require(revision_id)
-                status, body = _request(
-                    api,
-                    "/api/automation/task-definitions",
-                    query=f"revisionId={revision_id}",
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(body["configuration"]["revisionId"], revision_id)
-                self.assertEqual(body["configuration"]["digest"], draft.digest)
-                self.assertEqual(body["total"], 4)
-                self.assertEqual(
-                    {item["id"] for item in body["items"]},
-                    {"api-task", "api-task-copy", "cfg-task", "cfg-task-copy"},
-                )
-                status, body = _request(
-                    api,
-                    "/api/automation/task-definitions/api-task",
-                    query=f"revisionId={revision_id}",
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(body["definition"]["name"], "API Task edited")
-                self.assertEqual(body["configuration"]["revisionId"], revision_id)
-                self.assertEqual(body["configuration"]["digest"], draft.digest)
-
-                # Viewer may read but not mutate through either route family.
-                status, _ = _request(
-                    api,
-                    "/api/automation/task-definitions",
-                    query=f"revisionId={revision_id}",
-                    token="viewer-token",
-                )
-                self.assertEqual(status, 200)
-                status, body = _request(
-                    api,
-                    "/api/automation/task-definitions/api-task/disable",
-                    method="POST",
-                    body={"revisionId": revision_id, "expectedVersion": draft.version},
-                    token="viewer-token",
-                )
-                self.assertEqual(status, 403)
-                self.assertEqual(body["error"]["code"], "forbidden")
-                status, body = _request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}"
-                    "/objects/automationTaskDefinitions/cfg-task/enable",
-                    method="POST",
-                    body={"expectedVersion": draft.version},
-                    token="viewer-token",
-                )
-                self.assertEqual(status, 403)
-                self.assertEqual(body["error"]["code"], "forbidden")
 
     def test_api_rejects_malformed_references_and_stale_versions_with_bounded_errors(
         self,
@@ -900,9 +789,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 status, body = create({**valid, "id": "stale"}, current.version - 1)
                 self.assertEqual(status, 409)
                 self.assertEqual(body["error"]["code"], "configuration_version_conflict")
-                self.assertEqual(body["error"]["details"]["durableState"], "draft_preserved")
-                self.assertEqual(body["error"]["details"]["currentVersion"], current.version)
-                self.assertEqual(body["error"]["details"]["currentDigest"], current.digest)
+                self.assertEqual(body["error"]["details"]["durableState"], "active_preserved")
                 self.assertEqual(body["error"]["details"]["sideEffects"], "none")
                 self.assertTrue(body["error"]["details"]["retrySafe"])
                 self.assertNotIn(
@@ -914,29 +801,6 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                         )
                     },
                 )
-
-                # An Active revision is immutable through the API: the bounded
-                # error must not hide a durable Draft/Active unchanged state.
-                validated = managed.validate(revision_id, actor="tester")
-                active = managed.activate(
-                    validated.revision_id,
-                    expected_version=validated.version,
-                    actor="tester",
-                )
-                status, body = _request(
-                    api,
-                    "/api/automation/task-definitions/api-task",
-                    method="PUT",
-                    body={
-                        "revisionId": active.revision_id,
-                        "expectedVersion": active.version,
-                        "definition": valid,
-                    },
-                )
-                self.assertEqual(status, 409)
-                self.assertEqual(body["error"]["code"], "configuration_version_conflict")
-                self.assertEqual(body["error"]["details"]["durableState"], "draft_preserved")
-                self.assertEqual(body["error"]["details"]["sideEffects"], "none")
 
     def test_api_list_and_detail_are_read_only_and_truthful_after_reload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -971,13 +835,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(body["automationTaskDefinition"]["id"], "task")
-                draft = managed.require(draft.revision_id)
-                validated = managed.validate(draft.revision_id, actor="tester")
-                active = managed.activate(
-                    validated.revision_id,
-                    expected_version=validated.version,
-                    actor="tester",
-                )
+                active = managed.active()
                 revisions_before = len(configuration.list_revisions())
                 expected = {
                     "revisionId": active.revision_id,

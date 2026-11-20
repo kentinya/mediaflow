@@ -771,6 +771,231 @@ class SQLiteConfigurationRepository:
             return None
         return bytes(row["key_material"])
 
+    def publish_revision_with_audit(
+        self,
+        revision: ManagedConfigurationRevision,
+        audit: ConfigurationChangeAudit,
+        evidence: tuple[object, ...] = (),
+    ) -> ManagedConfigurationRevision:
+        """Publish one complete Active snapshot in a single transaction.
+
+        The revision, its bound read-only evidence, the superseded predecessor,
+        the activation audit and the authority marker are written together.  A
+        failure rolls every one of them back, so no unpublished revision or
+        orphan evidence survives the command.
+        """
+
+        self._validate_revision(revision)
+        if revision.status is not ManagedConfigurationStatus.ACTIVE:
+            raise ValueError("only a completed Active candidate can be published")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                active_rows = self._connection.execute(
+                    "SELECT * FROM managed_configuration_revisions WHERE status=? "
+                    "ORDER BY version DESC",
+                    (ManagedConfigurationStatus.ACTIVE.value,),
+                ).fetchall()
+                if len(active_rows) > 1:
+                    raise RuntimeError("managed configuration has more than one Active revision")
+                current_active = active_rows[0] if active_rows else None
+                current_id = current_active["revision_id"] if current_active else None
+                if revision.base_active_revision_id != current_id:
+                    raise ConfigurationActivationConflict(
+                        "configuration candidate was based on a different Active revision; "
+                        "refresh and apply again",
+                        revision_id=revision.revision_id,
+                        current_revision_id=current_id,
+                        current_version=int(current_active["version"]) if current_active else None,
+                        current_digest=current_active["digest"] if current_active else None,
+                    )
+                if self.get_revision(revision.revision_id) is not None:
+                    raise ConfigurationVersionConflict(
+                        "configuration revision already exists; apply again from current Active",
+                        revision_id=revision.revision_id,
+                    )
+                created = self._insert_revision(revision)
+                for item in evidence:
+                    self._insert_published_evidence(item)
+                if current_active is not None:
+                    self._connection.execute(
+                        "UPDATE managed_configuration_revisions SET status=?, updated_at=? "
+                        "WHERE revision_id=? AND status=?",
+                        (
+                            ManagedConfigurationStatus.SUPERSEDED.value,
+                            audit.occurred_at.isoformat(),
+                            current_active["revision_id"],
+                            ManagedConfigurationStatus.ACTIVE.value,
+                        ),
+                    )
+                normalized_audit = self._normalize_audit(
+                    audit,
+                    ConfigurationObjectKind.SYSTEM_SETTINGS,
+                    created.revision_id,
+                    audit.before,
+                    {
+                        **audit.after,
+                        "revisionId": created.revision_id,
+                        "revisionSequence": created.revision_sequence,
+                        "status": ManagedConfigurationStatus.ACTIVE.value,
+                    },
+                )
+                self._insert_audit(normalized_audit)
+                self._connection.execute(
+                    """
+                    INSERT INTO managed_configuration_authority
+                    (singleton, last_active_revision_id, last_active_version,
+                     last_active_digest, updated_at)
+                    VALUES (1, ?, ?, ?, ?)
+                    ON CONFLICT(singleton) DO UPDATE SET
+                        last_active_revision_id=excluded.last_active_revision_id,
+                        last_active_version=excluded.last_active_version,
+                        last_active_digest=excluded.last_active_digest,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        created.revision_id,
+                        int(created.revision_sequence or created.version),
+                        created.digest,
+                        audit.occurred_at.isoformat(),
+                    ),
+                )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return self._revision(
+            self._connection.execute(
+                "SELECT * FROM managed_configuration_revisions WHERE revision_id=?",
+                (revision.revision_id,),
+            ).fetchone()
+        )
+
+    def _insert_published_evidence(self, evidence: object) -> None:
+        """Insert one already-computed read-only evidence row in this transaction."""
+
+        if isinstance(evidence, LocalSetupCheckEvidence):
+            self._insert_local_setup_check(evidence)
+        elif isinstance(evidence, StorageSetupCheckEvidence):
+            self._insert_storage_setup_check(evidence)
+        elif isinstance(evidence, RecognitionStrategyTestEvidence):
+            self._insert_recognition_strategy_test(evidence)
+        elif isinstance(evidence, DestinationPrecheckEvidence):
+            self._insert_destination_precheck(evidence)
+        else:
+            raise ValueError("published evidence has an unsupported type")
+
+    def _insert_local_setup_check(self, evidence: LocalSetupCheckEvidence) -> None:
+        payload = evidence.document()
+        self._connection.execute(
+            """
+            INSERT INTO managed_local_setup_checks
+            (revision_id, revision_version, revision_digest, status, checked_at, actor,
+             storage_ids, resource_library_id, media_library_id, operations, duration_ms,
+             source_path, destination_path, failure_category, message, next_action)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evidence.revision_id,
+                evidence.revision_version,
+                evidence.revision_digest,
+                evidence.status.value,
+                evidence.checked_at.isoformat(),
+                evidence.actor,
+                self._json(payload["storageIds"]),
+                evidence.resource_library_id,
+                evidence.media_library_id,
+                self._json(payload["operations"]),
+                evidence.duration_ms,
+                evidence.source_path,
+                evidence.destination_path,
+                evidence.failure_category,
+                evidence.message,
+                evidence.next_action,
+            ),
+        )
+
+    def _insert_storage_setup_check(self, evidence: StorageSetupCheckEvidence) -> None:
+        payload = evidence.document()
+        self._connection.execute(
+            """
+            INSERT INTO managed_storage_setup_checks
+            (revision_id, storage_id, revision_version, revision_digest, status,
+             checked_at, actor, storage_type, read_only, capabilities_json,
+             operations_json, attempted_operations_json, secret_readiness_json, duration_ms,
+             failure_category, message, next_action)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evidence.revision_id,
+                evidence.storage_id,
+                evidence.revision_version,
+                evidence.revision_digest,
+                evidence.status.value,
+                evidence.checked_at.isoformat(),
+                evidence.actor,
+                evidence.storage_type,
+                int(evidence.read_only),
+                self._json(payload["capabilities"]),
+                self._json(payload["operations"]),
+                self._json(payload["attemptedOperations"]),
+                self._json(payload["secretReadiness"]),
+                evidence.duration_ms,
+                evidence.failure_category,
+                evidence.message,
+                evidence.next_action,
+            ),
+        )
+
+    def _insert_recognition_strategy_test(self, evidence: RecognitionStrategyTestEvidence) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO managed_recognition_strategy_tests
+            (revision_id, revision_version, revision_digest, status, tested_at, actor,
+             resource_library_id, synthetic_path, result_json, failure_category, message,
+             next_action)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evidence.revision_id,
+                evidence.revision_version,
+                evidence.revision_digest,
+                evidence.status.value,
+                evidence.tested_at.isoformat(),
+                evidence.actor,
+                evidence.resource_library_id,
+                evidence.synthetic_path,
+                self._json(evidence.result) if evidence.result is not None else None,
+                evidence.failure_category,
+                evidence.message,
+                evidence.next_action,
+            ),
+        )
+
+    def _insert_destination_precheck(self, evidence: DestinationPrecheckEvidence) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO managed_destination_prechecks
+            (revision_id, revision_version, revision_digest, status, prechecked_at, actor,
+             recognition_type, input_json, result_json, failure_category, message, next_action)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evidence.revision_id,
+                evidence.revision_version,
+                evidence.revision_digest,
+                evidence.status.value,
+                evidence.prechecked_at.isoformat(),
+                evidence.actor,
+                evidence.recognition_type,
+                self._json(evidence.input),
+                self._json(evidence.result) if evidence.result is not None else None,
+                evidence.failure_category,
+                evidence.message,
+                evidence.next_action,
+            ),
+        )
+
     def activate_revision(
         self,
         revision_id: str,

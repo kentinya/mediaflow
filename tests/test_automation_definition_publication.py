@@ -116,6 +116,10 @@ class MutationAuditRepository(SQLiteConfigurationRepository):
         self.activations += 1
         return super().activate_revision(revision_id, expected_version, audit)
 
+    def publish_revision_with_audit(self, revision, audit, evidence=()):
+        self.activations += 1
+        return super().publish_revision_with_audit(revision, audit, evidence)
+
 
 def example_document(root: Path) -> dict:
     value = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))

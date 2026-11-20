@@ -221,23 +221,11 @@ class ManagementSetupTests(unittest.TestCase):
                 self.configuration = request(self.app, "/api/configuration")
                 _, created = request(
                     self.app,
-                    "/api/configuration/drafts/first",
+                    "/api/configuration/initialize",
                     method="POST",
                     body={},
                 )
-                revision_id = created["revisionId"]
-                _, validated = request(
-                    self.app,
-                    f"/api/configuration/revisions/{revision_id}/validate",
-                    method="POST",
-                    body={},
-                )
-                self.activated = request(
-                    self.app,
-                    f"/api/configuration/revisions/{revision_id}/activate",
-                    method="POST",
-                    body={"expectedVersion": validated["version"], "checked": True},
-                )
+                self.activated = (201, created)
                 self.scan_service_ready = False
 
         with tempfile.TemporaryDirectory() as directory:
@@ -279,7 +267,7 @@ class ManagementSetupTests(unittest.TestCase):
         # discovery or per-file catalog is constructed before an Active exists.
         self.assertFalse(hasattr(server.app, "_file_catalog"))
         self.assertFalse(hasattr(server.app, "_file_index"))
-        self.assertEqual(server.activated[0], 200)
+        self.assertEqual(server.activated[0], 201)
         self.assertFalse(server.scan_service_ready)
         self.assertEqual(server.health, (200, {"processAlive": True, "status": "ok"}))
         self.assertEqual(server.readiness[0], 200)
@@ -287,15 +275,7 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertTrue(server.readiness[1]["setupRequired"])
         self.assertIsNone(server.configuration[1]["active"])
 
-    def test_storage_workspace_reports_a_resumable_setup_draft(self) -> None:
-        """An unfinished setup is resumable, and Storage reports it honestly.
-
-        The V2 Storage empty state needs to distinguish "no setup Draft yet"
-        from "a setup Draft exists to resume", so a return visit or reconnect
-        never invites a second initialization that would conflict with the one
-        already in flight.
-        """
-
+    def test_storage_workspace_reports_the_published_empty_baseline(self) -> None:
         route = "/api/operations/storage-management/inventory"
         status, before = request(self.api, route, token="admin-token")
         self.assertEqual(status, 200)
@@ -305,36 +285,37 @@ class ManagementSetupTests(unittest.TestCase):
 
         status, created = request(
             self.api,
-            "/api/configuration/drafts/first",
+            "/api/configuration/initialize",
             method="POST",
             body=None,
         )
-        self.assertEqual(status, 201)
+        self.assertEqual(status, 201, created)
+        self.assertEqual(created["status"], "active")
 
-        # The existing setup Draft is advertised for resumption rather than
-        # replaced, and nothing was activated or started by reading.
         status, after = request(self.api, route, token="admin-token")
         self.assertEqual(status, 200)
-        self.assertTrue(after["setup"]["setupRequired"])
-        self.assertTrue(after["setup"]["setupDraftExists"])
-        self.assertIsNone(after["active"])
+        self.assertFalse(after["setup"]["setupRequired"])
+        self.assertFalse(after["setup"]["setupDraftExists"])
+        self.assertIsNotNone(after["active"])
+        self.assertEqual(after["active"]["revisionId"], created["revisionId"])
         self.assertEqual(after["items"], [])
-        # The Draft identity stays in the configuration authority that owns it;
-        # the Storage projection carries only the presence fact.
-        self.assertNotIn(created["revisionId"], json.dumps(after, ensure_ascii=False))
 
-        # Navigating or reading again is idempotent: it does not create a
-        # competing first Draft.
         status, replay = request(
             self.api,
-            "/api/configuration/drafts/first",
+            "/api/configuration/initialize",
             method="POST",
             body={},
         )
         self.assertEqual(status, 409)
-        self.assertEqual(replay["error"]["details"]["durableState"], "setup_draft_preserved")
-        status, again = request(self.api, route, token="admin-token")
-        self.assertEqual(again["setup"]["setupDraftExists"], True)
+        self.assertEqual(
+            replay["error"]["details"]["durableState"], "active_configuration_preserved"
+        )
+        self.assertFalse(
+            any(
+                revision.status.value in {"draft", "validated"}
+                for revision in self.configuration_repository.list_revisions()
+            )
+        )
 
     def test_a_read_only_principal_is_told_to_ask_an_administrator(self) -> None:
         """A viewer can read the setup state but never start it.
@@ -347,7 +328,7 @@ class ManagementSetupTests(unittest.TestCase):
         route = "/api/operations/storage-management/inventory"
         status, denied = request(
             self.api,
-            "/api/configuration/drafts/first",
+            "/api/configuration/initialize",
             method="POST",
             body=None,
             token="viewer-token",
@@ -364,13 +345,12 @@ class ManagementSetupTests(unittest.TestCase):
     def test_first_draft_preserves_only_bootstrap_refs_and_is_resumable(self) -> None:
         status, created = request(
             self.api,
-            "/api/configuration/drafts/first",
+            "/api/configuration/initialize",
             method="POST",
             body=None,
         )
         self.assertEqual(status, 201)
-        self.assertEqual(created["status"], "draft")
-        self.assertEqual(created["version"], 1)
+        self.assertEqual(created["status"], "active")
         self.assertEqual(created["schemaVersion"], 1)
         revision = self.service.require(created["revisionId"])
         document = revision.document
@@ -391,23 +371,24 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertNotIn("https://", json.dumps(document))
         self.assertNotIn("must-not-persist", json.dumps(document))
         audits = self.configuration_repository.list_revision_audits(revision.revision_id)
-        self.assertEqual([item.action for item in audits], ["first_draft_create"])
+        self.assertTrue(any(item.action == "activate" for item in audits))
 
         status, configuration = request(self.api, "/api/configuration/status")
         self.assertEqual(status, 200)
-        self.assertEqual(configuration["setupDraft"]["revisionId"], revision.revision_id)
-        self.assertTrue(configuration["setupRequired"])
+        self.assertIsNone(configuration["setupDraft"])
+        self.assertFalse(configuration["setupRequired"])
+        self.assertEqual(configuration["active"]["revisionId"], revision.revision_id)
 
         status, conflict = request(
             self.api,
-            "/api/configuration/drafts/first",
+            "/api/configuration/initialize",
             method="POST",
             body={},
         )
         self.assertEqual(status, 409)
-        self.assertEqual(conflict["error"]["details"]["revisionId"], revision.revision_id)
-        self.assertEqual(conflict["error"]["details"]["durableState"], "setup_draft_preserved")
-        self.assertEqual(conflict["error"]["details"]["resumeAction"]["method"], "GET")
+        self.assertEqual(
+            conflict["error"]["details"]["durableState"], "active_configuration_preserved"
+        )
         self.assertEqual(len(self.configuration_repository.list_revisions()), 1)
 
     def test_settings_json_excludes_deployment_authority_for_draft_and_active(self) -> None:
@@ -421,7 +402,7 @@ class ManagementSetupTests(unittest.TestCase):
         """
 
         status, created = request(
-            self.api, "/api/configuration/drafts/first", method="POST", body=None
+            self.api, "/api/configuration/initialize", method="POST", body=None
         )
         self.assertEqual(status, 201)
         revision_id = created["revisionId"]
@@ -449,31 +430,14 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertEqual(draft_document["automationTaskDefinitions"], [])
         self.assertNotIn("remoteExecution", draft_document.get("api", {}))
 
-        status, validated = request(
-            self.api,
-            f"/api/configuration/revisions/{revision_id}/validate",
-            method="POST",
-            body={},
-        )
-        self.assertEqual(status, 200)
-        status, activated = request(
-            self.api,
-            f"/api/configuration/revisions/{revision_id}/activate",
-            method="POST",
-            body={"expectedVersion": validated["version"], "checked": True},
-        )
-        self.assertEqual(status, 200)
-
-        status, active_detail = request(
-            self.api, f"/api/configuration/revisions/{activated['revisionId']}"
-        )
+        status, active_detail = request(self.api, f"/api/configuration/revisions/{revision_id}")
         self.assertEqual(status, 200)
         active_document = active_detail["document"]
         self.assertNotIn("persistence", active_document)
         self.assertNotIn("principals", active_document.get("api", {}))
         self.assertNotIn(self.database, json.dumps(active_detail, ensure_ascii=False))
         self.assertEqual(active_detail["status"], "active")
-        self.assertEqual(active_detail["revisionId"], activated["revisionId"])
+        self.assertEqual(active_detail["revisionId"], revision_id)
 
     def test_supplied_deployment_authority_is_validated_and_conflicts_rejected(self) -> None:
         """The shared boundary validates supplied authority instead of normalizing it.
@@ -487,7 +451,7 @@ class ManagementSetupTests(unittest.TestCase):
         """
 
         status, created = request(
-            self.api, "/api/configuration/drafts/first", method="POST", body=None
+            self.api, "/api/configuration/initialize", method="POST", body=None
         )
         self.assertEqual(status, 201)
         revision_id = created["revisionId"]
@@ -499,9 +463,9 @@ class ManagementSetupTests(unittest.TestCase):
         # this deployment and stays validatable.
         status, saved = request(
             self.api,
-            f"/api/configuration/revisions/{revision_id}",
-            method="PUT",
-            body={"document": projected, "expectedVersion": detail["version"]},
+            "/api/configuration/publish",
+            method="POST",
+            body={"document": projected},
         )
         self.assertEqual(status, 200)
         stored = self.service.require(revision_id).document
@@ -512,7 +476,6 @@ class ManagementSetupTests(unittest.TestCase):
 
         # Authority that repeats this deployment's own identity verbatim is
         # accepted, so a whole-document round trip keeps working.
-        version = saved["version"]
         status, detail = request(self.api, f"/api/configuration/revisions/{revision_id}")
         self.assertEqual(status, 200)
         matching = json.loads(json.dumps(detail["document"]))
@@ -521,13 +484,11 @@ class ManagementSetupTests(unittest.TestCase):
         )
         status, saved = request(
             self.api,
-            f"/api/configuration/revisions/{revision_id}",
-            method="PUT",
-            body={"document": matching, "expectedVersion": detail["version"]},
+            "/api/configuration/publish",
+            method="POST",
+            body={"document": matching},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(saved["version"], detail["version"] + 1)
-        self.assertEqual(version + 1, saved["version"])
 
         # Conflicting principal/role/token authority is rejected: a Viewer
         # token environment must not be able to claim the admin role.
@@ -605,9 +566,9 @@ class ManagementSetupTests(unittest.TestCase):
                 attempt.update(json.loads(json.dumps(conflicting)))
                 status, rejected = request(
                     self.api,
-                    f"/api/configuration/revisions/{revision_id}",
-                    method="PUT",
-                    body={"document": attempt, "expectedVersion": detail["version"]},
+                    "/api/configuration/publish",
+                    method="POST",
+                    body={"document": attempt},
                 )
                 self.assertEqual(status, 400, rejected)
                 self.assertEqual(rejected["error"]["code"], "invalid_request")
@@ -640,7 +601,7 @@ class ManagementSetupTests(unittest.TestCase):
         """
 
         status, created = request(
-            self.api, "/api/configuration/drafts/first", method="POST", body=None
+            self.api, "/api/configuration/initialize", method="POST", body=None
         )
         self.assertEqual(status, 201)
         revision_id = created["revisionId"]
@@ -655,38 +616,22 @@ class ManagementSetupTests(unittest.TestCase):
         ]
         status, rejected = request(
             self.api,
-            f"/api/configuration/revisions/{revision_id}",
-            method="PUT",
-            body={"document": escalated, "expectedVersion": detail["version"]},
+            "/api/configuration/publish",
+            method="POST",
+            body={"document": escalated},
         )
         self.assertEqual(status, 400, rejected)
         self.assertEqual(rejected["error"]["code"], "invalid_request")
         # A whole-document import of the same escalation fails closed too.
         status, rejected_import = request(
             self.api,
-            "/api/configuration/drafts",
+            "/api/configuration/publish",
             method="POST",
             body={"document": escalated},
         )
         self.assertEqual(status, 400, rejected_import)
         self.assertEqual(rejected_import["error"]["code"], "invalid_request")
         self.assertEqual(len(self.configuration_repository.list_revisions()), 1)
-
-        status, validated = request(
-            self.api,
-            f"/api/configuration/revisions/{revision_id}/validate",
-            method="POST",
-            body={},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(validated["validationErrors"], [])
-        status, _activated = request(
-            self.api,
-            f"/api/configuration/revisions/{revision_id}/activate",
-            method="POST",
-            body={"expectedVersion": validated["version"], "checked": True},
-        )
-        self.assertEqual(status, 200)
 
         class Server:
             app = None
@@ -792,25 +737,10 @@ class ManagementSetupTests(unittest.TestCase):
         """
 
         status, created = request(
-            self.api, "/api/configuration/drafts/first", method="POST", body=None
+            self.api, "/api/configuration/initialize", method="POST", body=None
         )
         self.assertEqual(status, 201)
         revision_id = created["revisionId"]
-        status, validated = request(
-            self.api,
-            f"/api/configuration/revisions/{revision_id}/validate",
-            method="POST",
-            body={},
-        )
-        self.assertEqual(status, 200)
-        status, _active = request(
-            self.api,
-            f"/api/configuration/revisions/{revision_id}/activate",
-            method="POST",
-            body={"expectedVersion": validated["version"], "checked": True},
-        )
-        self.assertEqual(status, 200)
-
         status, package = request(
             self.api,
             f"/api/configuration/packages/export/configuration?revisionId={revision_id}",
@@ -829,7 +759,7 @@ class ManagementSetupTests(unittest.TestCase):
             method="POST",
             body={"package": package},
         )
-        self.assertEqual(status, 201)
+        self.assertIn(status, (200, 201))
         imported_id = imported["revision"]["revisionId"]
         bound = self.service.require(imported_id).document
         self.assertEqual(bound["persistence"]["databasePath"], self.database)
@@ -838,23 +768,15 @@ class ManagementSetupTests(unittest.TestCase):
             ["MF_ADMIN_TOKEN", "MF_VIEWER_TOKEN"],
         )
 
-        # The round trip stays validatable and activatable on this deployment.
-        status, revalidated = request(
-            self.api,
-            f"/api/configuration/revisions/{imported_id}/validate",
-            method="POST",
-            body={},
+        # The round trip published a complete Active snapshot directly.
+        published = self.service.require(imported_id)
+        self.assertEqual(published.status.value, "active")
+        self.assertFalse(
+            any(
+                revision.status.value in {"draft", "validated"}
+                for revision in self.configuration_repository.list_revisions()
+            )
         )
-        self.assertEqual(status, 200)
-        self.assertEqual(revalidated["validationErrors"], [])
-        status, reactivated = request(
-            self.api,
-            f"/api/configuration/revisions/{imported_id}/activate",
-            method="POST",
-            body={"expectedVersion": revalidated["version"], "checked": True},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(reactivated["status"], "active")
 
     def test_advanced_document_round_trip_rebinds_deployment_authority(self) -> None:
         """The advanced whole-document editor round-trips the projected JSON.
@@ -865,7 +787,7 @@ class ManagementSetupTests(unittest.TestCase):
         """
 
         status, created = request(
-            self.api, "/api/configuration/drafts/first", method="POST", body=None
+            self.api, "/api/configuration/initialize", method="POST", body=None
         )
         self.assertEqual(status, 201)
         revision_id = created["revisionId"]
@@ -877,32 +799,22 @@ class ManagementSetupTests(unittest.TestCase):
 
         status, saved = request(
             self.api,
-            f"/api/configuration/revisions/{revision_id}",
-            method="PUT",
-            body={"document": edited, "expectedVersion": detail["version"]},
+            "/api/configuration/publish",
+            method="POST",
+            body={"document": edited},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(saved["version"], detail["version"] + 1)
         stored = self.service.require(revision_id).document
         self.assertEqual(stored["persistence"]["databasePath"], self.database)
         self.assertEqual(
             [item["tokenEnv"] for item in stored["api"]["principals"]],
             ["MF_ADMIN_TOKEN", "MF_VIEWER_TOKEN"],
         )
-        # Bound authority keeps the edited Draft validatable and activatable.
-        status, validated = request(
-            self.api,
-            f"/api/configuration/revisions/{revision_id}/validate",
-            method="POST",
-            body={},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(validated["validationErrors"], [])
 
     def test_read_only_and_workflow_admission_are_safe(self) -> None:
         status, denied = request(
             self.api,
-            "/api/configuration/drafts/first",
+            "/api/configuration/initialize",
             method="POST",
             token="viewer-token",
             body={},
@@ -990,8 +902,11 @@ class ManagementSetupTests(unittest.TestCase):
         created = self.service.create_first_draft(actor="tester")
         self.assertEqual(created.version, 1)
 
-    def test_restart_preserves_setup_draft_and_does_not_fall_back_to_setup_again(self) -> None:
-        created = self.service.create_first_draft(actor="tester")
+    def test_restart_preserves_published_baseline_and_does_not_fall_back_to_setup(self) -> None:
+        starter = build_first_setup_starter_document(
+            load_minimal_management_bootstrap(self.bootstrap)
+        )
+        created = self.service.publish_document(starter, actor="tester")
         self.task_repository.close()
         self.configuration_repository.close()
         self.task_repository = SQLiteTaskRepository(self.database)
@@ -1003,9 +918,15 @@ class ManagementSetupTests(unittest.TestCase):
             management_only=True,
         )
         status = self.service.status_document()
-        self.assertEqual(status["setupDraft"]["revisionId"], created.revision_id)
-        with self.assertRaisesRegex(Exception, "first setup Draft already exists"):
-            self.service.create_first_draft(actor="tester")
+        self.assertIsNone(status["setupDraft"])
+        self.assertFalse(status["setupRequired"])
+        self.assertEqual(status["active"]["revisionId"], created.revision_id)
+        self.assertFalse(
+            any(
+                revision.status.value in {"draft", "validated"}
+                for revision in self.configuration_repository.list_revisions()
+            )
+        )
 
     def test_accepted_first_setup_draft_from_a_previous_version_still_activates(self) -> None:
         """A server-owned first Draft accepted earlier keeps its setup journey.
@@ -1037,28 +958,17 @@ class ManagementSetupTests(unittest.TestCase):
         )
         self.assertIsNone(accepted.base_active_revision_id)
 
-        status, validated = request(
+        # The former draft endpoint is an unknown entry and never publishes the
+        # previously accepted starter.
+        status, retired = request(
             self.api,
             f"/api/configuration/revisions/{accepted.revision_id}/validate",
             method="POST",
             body={},
         )
-        self.assertEqual(status, 200, validated)
-        self.assertEqual(validated["status"], "validated")
-        self.assertEqual(validated["digest"], accepted.digest)
-        status, active = request(
-            self.api,
-            f"/api/configuration/revisions/{accepted.revision_id}/activate",
-            method="POST",
-            body={"expectedVersion": validated["version"], "checked": True},
-        )
-        self.assertEqual(status, 200, active)
-        self.assertEqual(active["status"], "active")
-        self.assertEqual(active["revisionId"], accepted.revision_id)
-        published = self.service.require(accepted.revision_id)
-        self.assertEqual(published.document, starter)
-        self.assertEqual(published.digest, accepted.digest)
-        self.assertEqual(published.revision_sequence, accepted.revision_sequence)
+        self.assertEqual(status, 404)
+        self.assertEqual(retired["error"]["code"], "not_found")
+        self.assertIsNone(self.service.active())
 
         with self.assertRaises(ValueError):
             self.service.import_draft(

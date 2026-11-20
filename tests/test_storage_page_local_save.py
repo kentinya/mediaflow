@@ -1178,7 +1178,7 @@ class StoragePageLocalSaveTests(unittest.TestCase):
         # A successor-create persistence failure.
         with patch.object(
             self.configuration_repository,
-            "create_revision_with_audit",
+            "publish_revision_with_audit",
             side_effect=RuntimeError("simulated successor persistence failure"),
         ):
             status, response = request(

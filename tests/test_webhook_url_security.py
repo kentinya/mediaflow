@@ -19,6 +19,7 @@ from mediaflow.application.configuration_snapshot import (
 )
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.domain.configuration_management import (
+    ConfigurationChangeAudit,
     ConfigurationObjectKind,
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
@@ -114,6 +115,13 @@ class WebhookSecurityHarness:
         document = example_document()
         runtime_database = str(self.directory / "runtime.sqlite3")
         document["persistence"]["databasePath"] = runtime_database
+        source_root = self.directory / "source"
+        target_root = self.directory / "target"
+        (source_root / "incoming").mkdir(parents=True, exist_ok=True)
+        (target_root / "Movies").mkdir(parents=True, exist_ok=True)
+        if len(document.get("storages", [])) >= 2:
+            document["storages"][0]["rootPath"] = str(source_root)
+            document["storages"][1]["rootPath"] = str(target_root)
         self.runtime_database = runtime_database
         self.config_repository = SQLiteConfigurationRepository(
             self.directory / "configuration.sqlite3"
@@ -145,6 +153,9 @@ class WebhookSecurityHarness:
 
         document = example_document()
         document["persistence"]["databasePath"] = self.runtime_database
+        if len(document.get("storages", [])) >= 2:
+            document["storages"][0]["rootPath"] = str(self.directory / "source")
+            document["storages"][1]["rootPath"] = str(self.directory / "target")
         webhooks = []
         for index, url in enumerate(webhook_urls):
             webhooks.append(
@@ -167,6 +178,34 @@ class WebhookSecurityHarness:
             NOW,
             activated_at=activated_at,
         )
+        if status is ManagedConfigurationStatus.ACTIVE:
+            validated = self.config_repository.create_revision(
+                ManagedConfigurationRevision(
+                    revision.revision_id,
+                    revision.version,
+                    ManagedConfigurationStatus.VALIDATED,
+                    revision.schema_version,
+                    revision.digest,
+                    revision.document,
+                    revision.created_at,
+                    revision.updated_at,
+                    activated_at=activated_at,
+                )
+            )
+            return self.config_repository.activate_revision(
+                validated.revision_id,
+                validated.version,
+                ConfigurationChangeAudit(
+                    str(uuid4()),
+                    ConfigurationObjectKind.SYSTEM_SETTINGS,
+                    validated.revision_id,
+                    "activate",
+                    {},
+                    {"status": "active"},
+                    NOW,
+                    "bootstrap",
+                ),
+            )
         return self.config_repository.create_revision(revision)
 
     def close(self):
@@ -312,9 +351,9 @@ class WebhookUrlManagedApiTests(unittest.TestCase):
                 )
                 status, response = request(
                     harness.api,
-                    f"/api/configuration/revisions/{revision_id}",
-                    method="PUT",
-                    body=json.dumps({"document": incoming, "expectedVersion": 1}).encode(),
+                    "/api/configuration/publish",
+                    method="POST",
+                    body=json.dumps({"document": incoming}).encode(),
                 )
                 self.assertEqual(status, 400)
                 encoded = json.dumps(response)
@@ -363,7 +402,11 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
             harness = WebhookSecurityHarness(directory)
             unsafe = f"https://example.invalid/hooks?access_token={SENTINEL}"
             try:
-                legacy = harness.seed_revision(webhook_urls=(unsafe,))
+                legacy = harness.seed_revision(
+                    webhook_urls=(unsafe,),
+                    status=ManagedConfigurationStatus.ACTIVE,
+                    activated_at=NOW,
+                )
                 revision_id = legacy.revision_id
                 status, detail = request(
                     harness.api,
@@ -423,7 +466,11 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
             unsafe_a = f"https://example.invalid/hooks?token={SENTINEL}A"
             unsafe_b = f"https://example.invalid/hooks?password={SENTINEL}B"
             try:
-                legacy = harness.seed_revision(webhook_urls=(unsafe_a, unsafe_b))
+                legacy = harness.seed_revision(
+                    webhook_urls=(unsafe_a, unsafe_b),
+                    status=ManagedConfigurationStatus.ACTIVE,
+                    activated_at=NOW,
+                )
                 revision_id = legacy.revision_id
 
                 # Correct only webhook A; the unchanged legacy unsafe webhook B
@@ -433,71 +480,47 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                     url="https://example.invalid/hooks/legacy-a",
                     events=["task.completed"],
                 )
-                status, corrected = request(
+                status, blocked = request(
                     harness.api,
                     f"/api/configuration/revisions/{revision_id}/objects/webhooks/legacy-webhook-1",
                     method="PUT",
                     body=json.dumps({"object": safe_a, "expectedVersion": legacy.version}).encode(),
                 )
-                self.assertEqual(status, 200)
+                # The runtime contract refuses a snapshot that still carries a
+                # credential-bearing legacy URL; the Active stays unchanged.
+                self.assertEqual(status, 400, blocked)
+                self.assertNotIn(SENTINEL, json.dumps(blocked))
+                self.assertEqual(harness.configuration.active().revision_id, revision_id)
+
+                document = copy.deepcopy(legacy.document)
+                document["webhooks"] = [
+                    webhook_document(
+                        id="legacy-webhook-1",
+                        url="https://example.invalid/hooks/legacy-a",
+                        events=["task.completed"],
+                    ),
+                    webhook_document(
+                        id="legacy-webhook-2",
+                        url="https://example.invalid/hooks/legacy-b",
+                        events=["task.completed"],
+                    ),
+                ]
+                status, corrected = request(
+                    harness.api,
+                    "/api/configuration/publish",
+                    method="POST",
+                    body=json.dumps({"document": document}).encode(),
+                )
+                self.assertEqual(status, 200, corrected)
                 self.assertNotIn(SENTINEL, json.dumps(corrected))
-                updated = harness.configuration.require(revision_id)
-                self.assertEqual(updated.version, 2)
-                root_hooks = updated.document["webhooks"]
-                self.assertEqual(root_hooks[0]["url"], "https://example.invalid/hooks/legacy-a")
-                # B moved to the canonical root spelling and remains unsafe but
-                # unchanged; its URL is never exposed by projections.
-                status, objects = request(
-                    harness.api,
-                    f"/api/configuration/revisions/{revision_id}/objects",
-                )
-                self.assertNotIn(SENTINEL, json.dumps(objects))
-                projected_b = next(
-                    item
-                    for item in objects["objects"]["webhooks"]
-                    if item["id"] == "legacy-webhook-2"
-                )
-                self.assertEqual(projected_b["url"], REDACTED)
-                projected_a = next(
-                    item
-                    for item in objects["objects"]["webhooks"]
-                    if item["id"] == "legacy-webhook-1"
-                )
-                self.assertEqual(projected_a["url"], "https://example.invalid/hooks/legacy-a")
-
-                # Audit records for the correction never contain the legacy URL.
-                status, detail = request(
-                    harness.api,
-                    f"/api/configuration/revisions/{revision_id}",
-                )
-                self.assertNotIn(SENTINEL, json.dumps(detail))
-                self.assertNotIn(unsafe_a, json.dumps(detail))
-
-                # Correct webhook B too; the Draft is now fully safe.
-                safe_b = webhook_document(
-                    id="legacy-webhook-2",
-                    url="https://example.invalid/hooks/legacy-b",
-                    events=["task.completed"],
-                )
-                status, _ = request(
-                    harness.api,
-                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/legacy-webhook-2",
-                    method="PUT",
-                    body=json.dumps(
-                        {"object": safe_b, "expectedVersion": updated.version}
-                    ).encode(),
-                )
-                self.assertEqual(status, 200)
-                status, objects = request(
-                    harness.api,
-                    f"/api/configuration/revisions/{revision_id}/objects",
-                )
-                self.assertEqual(status, 200)
-                self.assertTrue(
-                    all(
-                        item["structuralValid"] is True and item["url"] != REDACTED
-                        for item in objects["objects"]["webhooks"]
-                    )
+                updated = harness.configuration.require(corrected["revisionId"])
+                self.assertNotEqual(updated.revision_id, revision_id)
+                self.assertEqual(
+                    [item["url"] for item in updated.document["webhooks"]],
+                    [
+                        "https://example.invalid/hooks/legacy-a",
+                        "https://example.invalid/hooks/legacy-b",
+                    ],
                 )
             finally:
                 harness.close()
@@ -609,13 +632,8 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
                     self.assertEqual(exported["url"], safe_url)
                     self.assertEqual(exported["secretEnv"], "MEDIAFLOW_WEBHOOK_SECRET")
 
-                    # Activate the safe Draft and run the explicit definition test.
-                    validated = harness.configuration.validate(revision_id, actor="bootstrap")
-                    active = harness.configuration.activate(
-                        validated.revision_id,
-                        expected_version=validated.version,
-                        actor="bootstrap",
-                    )
+                    # The safe definition was published directly.
+                    active = harness.configuration.active()
                     deliveries_before = harness.repository.list_deliveries()
                     jobs_before = ()
                     status, test_result = request(

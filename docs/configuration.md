@@ -178,17 +178,18 @@ The backend binds the exact Active baseline and runs applicable checks in place.
 stale baseline keeps the previous Active and the correctable input; there is no saved draft to
 resume. A valid empty baseline has no applicable checks to run.
 
-`配置内容` defaults to the exact Active JSON. JSON and the separately generated redacted package
-identify their source and open on demand. Reads and exports do not publish configuration. Unknown
-writes require `核实当前状态` and are never automatically replayed; leaving unsaved input requires an
-explicit decision. A setup/recovery return goes back to the allowlisted source page and reads its
-current state.
+`配置内容` is closed by default. The exact Active JSON and the separately generated redacted
+package identify their source and open on demand. Reads and exports do not publish configuration.
+An unknown write is verified automatically by the same request identity; the page keeps the
+application result and the current effective values distinct and never automatically replays the
+publish. Leaving unsaved input requires an explicit decision. A setup/recovery return goes back to
+the allowlisted source page and reads its current state.
 
 ## Native V2 organizing-rules management
 
 `/rules` reads Overview and seven family inventories from exact Active without creating drafts.
-Use the content header's `刷新` to read current configuration; a successful refresh keeps the family,
-keyword, state filter and unsaved input. Overview has no inventory search; each family has one local
+Entering, returning to the page or reconnecting reads current configuration automatically; the
+family, keyword, state filter and unsaved input are preserved. Overview has no inventory search; each family has one local
 search and its existing state filter. Changing family clears the keyword. Overview keeps real counts,
 Chinese relationship labels, conditional dependency guidance and the separate complete-flow check.
 Version/digest diagnostics remain in Settings. When the inventory reports no Active or unavailable
@@ -371,10 +372,9 @@ template. Append its `storage` object to the generated `mediaflow.activation.jso
 replace `options.baseUrl` with the real service address, and provide `OPENLIST_TOKEN` only in the
 deployment environment where the Storage is actually checked or used. Connection fields belong
 under `Storage.options`; the retired top-level spelling fails import with the correction. Import
-reuses the `config draft-import --file` command above and never contacts OpenList; publish the
-resulting Draft through the [System Settings Web](#system-settings-web) journey, and a
-ResourceLibrary that references the Storage runs its read-only check as part of that journey's
-`发布前检查`.
+reuses the `config publish --file` command above and never contacts OpenList; it validates and
+publishes the complete document directly. A ResourceLibrary that references the Storage runs its
+read-only check as part of that publication.
 
 ### OpenList metadata and content reads
 

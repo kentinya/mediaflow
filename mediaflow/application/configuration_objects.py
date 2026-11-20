@@ -270,6 +270,46 @@ class _ReadOnlyStorageCheck(ReadOnlyStorageGuard):
         return self._read("read", lambda: self._storage.read(path))
 
 
+class _TransientEvidenceCollector:
+    """Collect read-only evidence for a candidate that has no repository row."""
+
+    def __init__(self, database_path: str | None = None) -> None:
+        self.items: list[object] = []
+        self._by_name: dict[str, object] = {}
+        self.database_path = database_path
+
+    def _keep(self, name: str, evidence: object) -> object:
+        self.items.append(evidence)
+        self._by_name[name] = evidence
+        return evidence
+
+    def save_local_setup_check(self, evidence):
+        return self._keep("local", evidence)
+
+    def save_storage_setup_check(self, evidence):
+        storage = getattr(evidence, "storage_id", None)
+        self._by_name[f"storage:{storage}"] = evidence
+        return self._keep("storage", evidence)
+
+    def save_recognition_strategy_test(self, evidence):
+        return self._keep("strategy", evidence)
+
+    def save_destination_precheck(self, evidence):
+        return self._keep("destination", evidence)
+
+    def get_local_setup_check(self, revision_id):
+        return self._by_name.get("local")
+
+    def get_storage_setup_check(self, revision_id, storage_id):
+        return self._by_name.get(f"storage:{storage_id}")
+
+    def get_recognition_strategy_test(self, revision_id):
+        return self._by_name.get("strategy")
+
+    def get_destination_precheck(self, revision_id):
+        return self._by_name.get("destination")
+
+
 @dataclass(frozen=True)
 class _DestinationResolution:
     normalized_input: dict[str, object]
@@ -557,6 +597,7 @@ class ConfigurationObjectService:
             cursor_secret=storage_browser_cursor_secret,
         )
         self._strategy_test_operation_lock = RLock()
+        self._publication_operation_lock = RLock()
         self._setup_check_capacity = BoundedSemaphore(self._SETUP_CHECK_CAPACITY)
         self._setup_check_state_lock = Lock()
         self._setup_checks_in_flight = 0
@@ -639,6 +680,16 @@ class ConfigurationObjectService:
     def publish_object(
         self,
         kind: ConfigurationObjectKind,
+        **kwargs: object,
+    ) -> ManagedConfigurationRevision:
+        """Serialize one object publication against competing writers."""
+
+        with self._publication_operation_lock:
+            return self._publish_object_unlocked(kind, **kwargs)
+
+    def _publish_object_unlocked(
+        self,
+        kind: ConfigurationObjectKind,
         *,
         object_id: str | None,
         value: Mapping[str, object] | None,
@@ -649,6 +700,7 @@ class ConfigurationObjectService:
         new_object_id: str | None = None,
         new_name: str | None = None,
         before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+        source_revision_id: str | None = None,
     ) -> ManagedConfigurationRevision:
         """Apply one object command and publish the checked successor directly.
 
@@ -659,6 +711,17 @@ class ConfigurationObjectService:
 
         if not isinstance(kind, ConfigurationObjectKind):
             raise ValueError("configuration object kind is required")
+        source = None
+        if source_revision_id is not None:
+            try:
+                source = self._managed.require(source_revision_id)
+            except LookupError:
+                source = None
+        if source is not None and source.status not in {
+            ManagedConfigurationStatus.DRAFT,
+            ManagedConfigurationStatus.VALIDATED,
+        }:
+            source = None
         active = self._managed.active()
         if active is None:
             if self._managed.has_managed_activation():
@@ -670,27 +733,37 @@ class ConfigurationObjectService:
                     digest=marker.get("digest"),
                     reason="managed_active_unavailable",
                 )
-            raise RuntimeSnapshotUnavailable(
-                "no Active configuration exists; complete first setup in Settings",
-                reason="active_missing",
-            )
-        self._managed.verify_integrity(active)
-        current_version = active.revision_sequence or active.version
-        if expected_version not in {current_version, active.version}:
+            if source is None:
+                raise RuntimeSnapshotUnavailable(
+                    "no Active configuration exists; complete first setup in Settings",
+                    reason="active_missing",
+                )
+        if active is not None:
+            self._managed.verify_integrity(active)
+        base_version = (
+            source.version if source is not None else (active.version if active is not None else 1)
+        )
+        current_version = active.version if active is not None else None
+        if expected_version not in {base_version, current_version}:
             raise ConfigurationVersionConflict(
-                "the displayed Active configuration is stale; reload before saving",
-                revision_id=active.revision_id,
+                "the displayed configuration is stale; reload before saving",
+                revision_id=source.revision_id
+                if source is not None
+                else (active.revision_id if active is not None else None),
                 current_version=current_version,
-                current_digest=active.digest,
+                current_digest=active.digest if active is not None else None,
                 durable_state="active_preserved",
                 next_action="reload the current Active configuration, then apply the change again",
             )
-        draft = self._managed.create_successor_draft(
+        draft = self._managed.stage_candidate_document(
+            source.document if source is not None else active.document,
+            version=(
+                source.version
+                if source is not None
+                else (active.version if active is not None else 1)
+            ),
+            base_active_revision_id=active.revision_id if active is not None else None,
             actor=actor,
-            expected_active_revision_id=active.revision_id,
-            expected_active_version=current_version,
-            expected_active_digest=active.digest,
-            verified_active=active,
         )
         discard = getattr(self._repository, "discard_revision", None)
 
@@ -747,11 +820,20 @@ class ConfigurationObjectService:
                 self._checked_successor_evidence(validated, actor=actor)
             if before_publish is not None:
                 before_publish(validated)
-            return self._managed.activate(
+            source_audit_context = self._managed.transient_audit_context(validated.revision_id)
+            published = self._managed.activate(
                 validated.revision_id,
                 expected_version=validated.version,
                 actor=actor,
             )
+            if source is not None:
+                self._managed.finalize_source_revision(
+                    source.revision_id,
+                    published,
+                    actor=actor,
+                    audit_context=source_audit_context,
+                )
+            return published
         except Exception:
             _discard()
             raise
@@ -821,7 +903,7 @@ class ConfigurationObjectService:
         active = self._managed.active()
         if active is None:
             # Reuse the managed service's fail-closed missing/marker distinction.
-            self._managed.create_successor_draft(actor=actor)
+            self._managed.stage_successor_draft(actor=actor)
             raise RuntimeSnapshotUnavailable(
                 "no Active configuration exists; ResourceLibrary Save is unavailable",
                 reason="active_missing",
@@ -890,7 +972,7 @@ class ConfigurationObjectService:
                 {**current_resource, **normalized},
             )
         try:
-            draft = self._managed.create_successor_draft(
+            draft = self._managed.stage_successor_draft(
                 actor=actor,
                 expected_active_revision_id=active.revision_id,
                 expected_active_version=active.revision_sequence or active.version,
@@ -1003,8 +1085,49 @@ class ConfigurationObjectService:
         preferred_resource_id: str | None = None,
         code_prefix: str = "resource_library",
         additional_storage_ids: tuple[str, ...] = (),
-    ) -> None:
+    ) -> tuple[object, ...]:
         """Run the shared read-only successor evidence gates.
+
+        For a transient candidate the evidence is collected in memory and handed
+        to the single publication transaction; no repository row or evidence row
+        exists before that transaction commits.
+        """
+
+        if not self._managed.is_transient_revision(validated.revision_id):
+            self._run_checked_successor_evidence(
+                validated,
+                actor=actor,
+                preferred_resource_id=preferred_resource_id,
+                code_prefix=code_prefix,
+                additional_storage_ids=additional_storage_ids,
+            )
+            return ()
+        collector = _TransientEvidenceCollector(getattr(self._repository, "database_path", None))
+        previous = self._repository
+        self._repository = collector
+        try:
+            self._run_checked_successor_evidence(
+                validated,
+                actor=actor,
+                preferred_resource_id=preferred_resource_id,
+                code_prefix=code_prefix,
+                additional_storage_ids=additional_storage_ids,
+            )
+        finally:
+            self._repository = previous
+        self._managed.record_transient_evidence(validated.revision_id, collector.items)
+        return tuple(collector.items)
+
+    def _run_checked_successor_evidence(
+        self,
+        validated: ManagedConfigurationRevision,
+        *,
+        actor: str,
+        preferred_resource_id: str | None = None,
+        code_prefix: str = "resource_library",
+        additional_storage_ids: tuple[str, ...] = (),
+    ) -> None:
+        """Run one evidence pass against the current repository boundary.
 
         Storage checks, the recognition strategy test and the destination
         precheck are recorded against the exact validated successor version so
@@ -1165,7 +1288,7 @@ class ConfigurationObjectService:
 
         active = self._managed.active()
         if active is None:
-            self._managed.create_successor_draft(actor="system")
+            self._managed.stage_successor_draft(actor="system")
             raise RuntimeSnapshotUnavailable(
                 "no Active configuration exists; ResourceLibrary removal is unavailable",
                 reason="active_missing",
@@ -1283,7 +1406,7 @@ class ConfigurationObjectService:
 
         active = self._managed.active()
         if active is None:
-            self._managed.create_successor_draft(actor=actor)
+            self._managed.stage_successor_draft(actor=actor)
             raise RuntimeSnapshotUnavailable(
                 "no Active configuration exists; ResourceLibrary removal is unavailable",
                 reason="active_missing",
@@ -1339,7 +1462,7 @@ class ConfigurationObjectService:
             )
 
         try:
-            draft = self._managed.create_successor_draft(
+            draft = self._managed.stage_successor_draft(
                 actor=actor,
                 expected_active_revision_id=active.revision_id,
                 expected_active_version=active.revision_sequence or active.version,
@@ -1530,7 +1653,7 @@ class ConfigurationObjectService:
             raise ValueError("MediaLibrary Save id must use lowercase letters, digits, and hyphens")
         active = self._managed.active()
         if active is None:
-            self._managed.create_successor_draft(actor=actor)
+            self._managed.stage_successor_draft(actor=actor)
             raise RuntimeSnapshotUnavailable(
                 "no Active configuration exists; MediaLibrary Save is unavailable",
                 reason="active_missing",
@@ -1598,7 +1721,7 @@ class ConfigurationObjectService:
                 {**current_library, **normalized},
             )
         try:
-            draft = self._managed.create_successor_draft(
+            draft = self._managed.stage_successor_draft(
                 actor=actor,
                 expected_active_revision_id=active.revision_id,
                 expected_active_version=active.revision_sequence or active.version,
@@ -1712,7 +1835,7 @@ class ConfigurationObjectService:
 
         active = self._managed.active()
         if active is None:
-            self._managed.create_successor_draft(actor="system")
+            self._managed.stage_successor_draft(actor="system")
             raise RuntimeSnapshotUnavailable(
                 "no Active configuration exists; MediaLibrary removal is unavailable",
                 reason="active_missing",
@@ -1803,7 +1926,7 @@ class ConfigurationObjectService:
             raise ValueError("MediaLibrary removal requires the previewed Active revision identity")
         active = self._managed.active()
         if active is None:
-            self._managed.create_successor_draft(actor=actor)
+            self._managed.stage_successor_draft(actor=actor)
             raise RuntimeSnapshotUnavailable(
                 "no Active configuration exists; MediaLibrary removal is unavailable",
                 reason="active_missing",
@@ -1858,7 +1981,7 @@ class ConfigurationObjectService:
                 evidence=references,
             )
         try:
-            draft = self._managed.create_successor_draft(
+            draft = self._managed.stage_successor_draft(
                 actor=actor,
                 expected_active_revision_id=active.revision_id,
                 expected_active_version=active.revision_sequence or active.version,
@@ -2190,7 +2313,7 @@ class ConfigurationObjectService:
         active = self._managed.active()
         if active is None:
             # Reuse the managed service's fail-closed missing/marker distinction.
-            self._managed.create_successor_draft(actor=actor)
+            self._managed.stage_successor_draft(actor=actor)
             raise RuntimeSnapshotUnavailable(
                 "no Active configuration exists; Storage Save is unavailable",
                 reason="active_missing",
@@ -2255,7 +2378,7 @@ class ConfigurationObjectService:
         normalized = self._normalize(ConfigurationObjectKind.STORAGE, raw)
 
         try:
-            draft = self._managed.create_successor_draft(
+            draft = self._managed.stage_successor_draft(
                 actor=actor,
                 expected_active_revision_id=active.revision_id,
                 expected_active_version=active.revision_sequence or active.version,
@@ -2471,7 +2594,7 @@ class ConfigurationObjectService:
         )
         source = self._active_storage(active, storage_id)
         try:
-            draft = self._managed.create_successor_draft(
+            draft = self._managed.stage_successor_draft(
                 actor=actor,
                 expected_active_revision_id=active.revision_id,
                 expected_active_version=active.revision_sequence or active.version,
@@ -8364,8 +8487,18 @@ class ConfigurationObjectService:
                 )
             if storage.get("enabled", True) is False:
                 continue
-            getter = getattr(self._repository, "get_storage_setup_check", None)
-            evidence = getter(revision.revision_id, storage_id) if getter is not None else None
+            if self._managed.is_transient_revision(revision.revision_id):
+                evidence = next(
+                    (
+                        item
+                        for item in self._managed.transient_evidence(revision.revision_id)
+                        if getattr(item, "storage_id", None) == storage_id
+                    ),
+                    None,
+                )
+            else:
+                getter = getattr(self._repository, "get_storage_setup_check", None)
+                evidence = getter(revision.revision_id, storage_id) if getter is not None else None
             if evidence is None:
                 raise ConfigurationActivationConflict(
                     "a current read-only Storage check for "
@@ -8446,7 +8579,17 @@ class ConfigurationObjectService:
             # There is no executable library against which an offline strategy
             # test could be run, so this gate is not applicable in that state.
             return
-        evidence = self._repository.get_recognition_strategy_test(revision.revision_id)
+        if self._managed.is_transient_revision(revision.revision_id):
+            evidence = next(
+                (
+                    item
+                    for item in self._managed.transient_evidence(revision.revision_id)
+                    if isinstance(item, RecognitionStrategyTestEvidence)
+                ),
+                None,
+            )
+        else:
+            evidence = self._repository.get_recognition_strategy_test(revision.revision_id)
         if evidence is None or evidence.status is not ConfigurationStrategyTestStatus.COMPLETED:
             raise ConfigurationActivationConflict(
                 "a completed Recognition Strategy Test is required before checked activation",
@@ -8464,7 +8607,17 @@ class ConfigurationObjectService:
     def require_current_destination_precheck(self, revision: ManagedConfigurationRevision) -> None:
         if not self._destination_precheck_applicable(revision.document):
             return
-        evidence = self._repository.get_destination_precheck(revision.revision_id)
+        if self._managed.is_transient_revision(revision.revision_id):
+            evidence = next(
+                (
+                    item
+                    for item in self._managed.transient_evidence(revision.revision_id)
+                    if isinstance(item, DestinationPrecheckEvidence)
+                ),
+                None,
+            )
+        else:
+            evidence = self._repository.get_destination_precheck(revision.revision_id)
         if evidence is None:
             raise ConfigurationActivationConflict(
                 "a current read-only destination precheck is required before checked activation",

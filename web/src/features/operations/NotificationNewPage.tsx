@@ -18,8 +18,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
-  createNotificationSuccessorDraft,
   createWebhookDefinition,
+  testWebhookDefinitionForm,
 } from "../../shared/api/api-client";
 import {
   notificationListQueryKey,
@@ -78,6 +78,11 @@ export function NotificationNewPage() {
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
   const [showIssues, setShowIssues] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{
+    readonly context: string;
+    readonly success: boolean;
+    readonly message: string;
+  } | null>(null);
 
   const query = useQuery(notificationListQueryOptions(token));
   useAuthorizedReadAuthorityRecovery(query);
@@ -131,26 +136,36 @@ export function NotificationNewPage() {
     },
   });
 
-  const draftMutation = useMutation({
-    mutationFn: (activeRevisionId: string) =>
-      createNotificationSuccessorDraft(token, { activeRevisionId }),
+  const testMutation = useMutation({
+    mutationFn: (input: {
+      context: string;
+      webhook: Record<string, unknown>;
+    }) =>
+      testWebhookDefinitionForm(token, {
+        webhookId: webhookId.trim(),
+        webhook: input.webhook,
+      }),
     retry: false,
-    onMutate: () => setError(null),
-    onSuccess: (result) => {
+    onMutate: () => {
+      setError(null);
+      setTestResult(null);
+    },
+    onSuccess: (result, input) => {
       if (result.ok) {
-        void queryClient.invalidateQueries({
-          queryKey: [notificationListQueryKey],
+        setTestResult({
+          context: input.context,
+          success: result.model.outcome === "success",
+          message:
+            result.model.outcome === "success"
+              ? `签名测试成功。${result.model.message} 下一步：${result.model.nextAction}`
+              : `签名测试失败。${result.model.message} 下一步：${result.model.nextAction}`,
         });
-        return;
-      }
-      if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("后继配置可能已经创建"));
         return;
       }
       setError(
         result.status === 409
-          ? "后继配置没有创建：已生效配置在读取后已经变化。重新读取后重试。"
-          : `后继配置没有创建（${result.code}）。重新读取后再试。`,
+          ? "当前表单已变化，因此没有发送测试请求；请核对后重试。"
+          : `测试没有执行（${result.code}）。系统没有自动重试。`,
       );
     },
   });
@@ -160,7 +175,7 @@ export function NotificationNewPage() {
   };
   const dirty =
     webhookId.trim().length > 0 || !sameWebhookForm(form, INITIAL_FORM);
-  const busy = createMutation.isPending || draftMutation.isPending;
+  const busy = createMutation.isPending || testMutation.isPending;
   const createInFlight = createMutation.isPending;
   const guard = useNotificationCardGuard({
     busy,
@@ -178,6 +193,12 @@ export function NotificationNewPage() {
   });
 
   const issues = webhookFormIssues(form);
+  const testContext = `${form.url}\u0000${form.secretEnv}`;
+  const testedForCurrentForm =
+    testResult !== null &&
+    testResult.success &&
+    testResult.context === testContext &&
+    webhookId.trim().length > 0;
   const fieldIssue = (field: string): string | null =>
     showIssues || touched.has(field)
       ? webhookFormIssueFor(issues, field as (typeof ALL_FORM_FIELDS)[number])
@@ -190,11 +211,17 @@ export function NotificationNewPage() {
   const readDegraded = livePage === null && page !== null;
   const create = page?.actions.create ?? null;
   const draft = page?.draftState ?? null;
+  const activeConfiguration = page?.activeConfiguration ?? null;
   const draftReady =
     page !== null &&
-    draft !== null &&
-    draft.present &&
-    create?.available === true;
+    create?.available === true &&
+    (draft?.present === true || activeConfiguration !== null);
+  const revisionId = draft?.present
+    ? draft.revisionId
+    : (activeConfiguration?.revisionId ?? null);
+  const revisionVersion = draft?.present
+    ? draft.revisionVersion
+    : (activeConfiguration?.version ?? null);
 
   const title = "新建 Webhook";
   const titleId = "notification-new-title";
@@ -221,7 +248,11 @@ export function NotificationNewPage() {
             关闭
           </Button>
           {draftReady && (
-            <Button type="submit" form="notification-new-form" disabled={busy}>
+            <Button
+              type="submit"
+              form="notification-new-form"
+              disabled={busy || !testedForCurrentForm}
+            >
               {createMutation.isPending ? "正在应用…" : "应用更改"}
             </Button>
           )}
@@ -287,24 +318,6 @@ export function NotificationNewPage() {
             </p>
           </StatusBanner>
           <div className="mf-notification-actions">
-            {draft !== null &&
-              !draft.present &&
-              page.actions.createDraft.available &&
-              page.activeConfiguration !== null && (
-                <Button
-                  type="button"
-                  disabled={draftMutation.isPending}
-                  onClick={() =>
-                    draftMutation.mutate(
-                      page.activeConfiguration?.revisionId ?? "",
-                    )
-                  }
-                >
-                  {draftMutation.isPending
-                    ? "正在创建后继配置…"
-                    : "创建后继配置"}
-                </Button>
-              )}
             <Button type="button" variant="secondary" onClick={closeCard}>
               返回通知列表
             </Button>
@@ -314,15 +327,9 @@ export function NotificationNewPage() {
               disabled={busy || query.isFetching}
               onClick={() => void query.refetch()}
             >
-              {query.isFetching ? "正在读取…" : "读取最新配置状态"}
+              {query.isFetching ? "正在读取…" : "读取当前配置状态"}
             </Button>
           </div>
-          {!page.actions.createDraft.available &&
-            page.actions.createDraft.reason !== null && (
-              <p className="mf-notification-inline-reason">
-                {page.actions.createDraft.reason}
-              </p>
-            )}
           {error !== null && (
             <StatusBanner variant="error" title="操作没有完成">
               <p>{error}</p>
@@ -330,7 +337,7 @@ export function NotificationNewPage() {
           )}
         </div>
       )}
-      {draftReady && draft !== null && (
+      {draftReady && revisionId !== null && (
         <form
           id="notification-new-form"
           className="mf-notification-card-scroll"
@@ -347,18 +354,22 @@ export function NotificationNewPage() {
               setError("请修正标有说明的字段后再保存。");
               return;
             }
+            if (!testedForCurrentForm) {
+              setError("应用前必须对当前地址和签名引用成功完成一次签名测试。");
+              return;
+            }
             if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(webhookId.trim())) {
               setError("标识符必须是以字母或数字开头的 1–64 个 URI 安全字符。");
               return;
             }
-            if (draft.revisionId === null || draft.revisionVersion === null) {
+            if (revisionId === null || revisionVersion === null) {
               setError("当前配置缺少精确版本，不能安全保存。重新读取后再试。");
               return;
             }
             setError(null);
             createMutation.mutate({
-              revisionId: draft.revisionId,
-              expectedVersion: draft.revisionVersion,
+              revisionId,
+              expectedVersion: revisionVersion,
               object: buildWebhookObject(webhookId.trim(), form),
             });
           }}
@@ -383,8 +394,10 @@ export function NotificationNewPage() {
           {!readDegraded && (
             <div className="mf-notification-state-strip">
               <span className="mf-notification-badge">
-                生效配置 · 版本 {draft.revisionVersion ?? "未知"} ·{" "}
-                {draftStatusLabel(draft.revisionStatus)}
+                生效配置 · 版本 {revisionVersion ?? "未知"} ·{" "}
+                {draftStatusLabel(
+                  draft?.present ? draft.revisionStatus : "active",
+                )}
               </span>
               <span className="mf-notification-badge">已生效配置不变</span>
               <span className="mf-notification-read-action">
@@ -399,12 +412,51 @@ export function NotificationNewPage() {
               </span>
             </div>
           )}
-          <StatusBanner variant="info" title="先保存，再检查并发布">
+          <StatusBanner variant="info" title="先测试，再应用">
             <p>
-              定义将发布为新的生效快照（当前版本 {draft.revisionVersion ?? "未知"}）
+              定义将发布为新的生效快照（当前版本 {revisionVersion ?? "未知"}）
               。已生效配置在明确发布前保持不变。
             </p>
           </StatusBanner>
+          <section className="mf-notification-form-section">
+            <h3>签名测试</h3>
+            <p className="mf-notification-field-help">
+              针对当前表单中的接收地址和签名密钥引用发送一次带签名的请求；不会创建投递、不会自动重试，也不会改变配置。修改地址或密钥引用后需重新测试。
+            </p>
+            <div className="mf-notification-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={
+                  busy || issues.length > 0 || webhookId.trim().length === 0
+                }
+                onClick={() =>
+                  testMutation.mutate({
+                    context: testContext,
+                    webhook: buildWebhookObject(webhookId.trim(), form),
+                  })
+                }
+              >
+                {testMutation.isPending ? "正在发送签名测试…" : "发送签名测试"}
+              </Button>
+            </div>
+            {testResult !== null && testResult.context === testContext && (
+              <StatusBanner
+                variant={testResult.success ? "success" : "error"}
+                title="签名测试结果"
+              >
+                <p>{testResult.message}</p>
+                <p>
+                  结论只对当前地址和签名引用有效；修改后需重新测试才能应用。
+                </p>
+              </StatusBanner>
+            )}
+            {!testedForCurrentForm && (
+              <p className="mf-notification-inline-reason">
+                应用前必须对当前表单成功完成一次签名测试。
+              </p>
+            )}
+          </section>
           {error !== null && (
             <StatusBanner variant="error" title="定义没有创建">
               <p>{error}</p>
@@ -549,9 +601,7 @@ export function NotificationNewPage() {
                 />
                 <span>
                   <strong>启用这个 Webhook</strong>
-                  <small>
-                    应用后会发布到当前生效配置。
-                  </small>
+                  <small>应用后会发布到当前生效配置。</small>
                 </span>
               </label>
             </div>

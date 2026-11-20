@@ -190,6 +190,12 @@ class ManagedConfigurationService:
                 and is_minimal_management_bootstrap(bootstrap_document)
             )
         )
+        # A direct publication composes, validates and checks one candidate
+        # entirely in memory.  The exact same revision identity is handed to the
+        # single final transaction, so no unpublished revision is ever durable.
+        self._transient_revisions: dict[str, ManagedConfigurationRevision] = {}
+        self._transient_audit_contexts: dict[str, dict[str, object]] = {}
+        self._transient_evidence: dict[str, tuple[object, ...]] = {}
 
     def bind_automation_publication_authority(self, authority) -> None:
         """Bind the authenticated API's current configured permission reader."""
@@ -677,19 +683,18 @@ class ManagedConfigurationService:
         readiness: Callable[[ManagedConfigurationRevision], object] | None = None,
         before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
         replace_active: bool = False,
+        audit_context: dict[str, object] | None = None,
     ) -> ManagedConfigurationRevision:
-        """Validate and atomically publish one complete configuration document.
+        """Validate and publish one complete document in a single transaction.
 
-        The candidate exists durably only for the duration of this command: it
-        is written as a validated staging revision so revision-bound read-only
-        checks can record their exact evidence, then activated.  Any refusal or
-        failure discards the staging revision and its dedicated evidence, so no
-        recoverable configuration draft is exposed after the command.
+        The candidate and every read-only check exist only for this command.  A
+        refusal or a failure discards them with the command; no ``draft`` or
+        ``validated`` revision is ever persisted, and the final transaction
+        writes only the new Active snapshot, its evidence and its audit.
         """
 
         normalized = _canonical_document(document)
         normalized = _canonical_document(self._bind_deployment_authority(normalized))
-        normalized = _canonical_document(strip_retired_remote_execution(normalized))
         _reject_literal_secrets(normalized)
         now = self._clock()
         try:
@@ -703,6 +708,17 @@ class ManagedConfigurationService:
             (active.revision_sequence or active.version) if active is not None else None
         )
         current_digest = active.digest if active is not None else None
+        incoming_api = normalized.get("api")
+        incoming_remote = (
+            incoming_api.get("remoteExecution") if isinstance(incoming_api, dict) else None
+        )
+        baseline_api = active.document.get("api") if active is not None else None
+        baseline_remote = (
+            baseline_api.get("remoteExecution") if isinstance(baseline_api, dict) else None
+        )
+        if active is None or incoming_remote != baseline_remote:
+            reject_retired_remote_execution_input(normalized)
+        normalized = _canonical_document(strip_retired_remote_execution(normalized))
         if active is not None:
             self.verify_integrity(active)
             reject_retired_configuration_input(normalized, baseline=active.document)
@@ -767,61 +783,157 @@ class ManagedConfigurationService:
             now,
             base_active_revision_id=current_revision_id,
         )
-        audit = self._audit(
+        self._transient_revisions[revision.revision_id] = revision
+        try:
+            evidence: tuple[object, ...] = ()
+            if readiness is not None:
+                collected = readiness(revision)
+                if collected is not None:
+                    evidence = (
+                        tuple(collected) if isinstance(collected, (tuple, list)) else (collected,)
+                    )
+            if before_publish is not None:
+                before_publish(revision)
+            if audit_context is not None:
+                self._transient_audit_contexts[revision.revision_id] = copy.deepcopy(audit_context)
+            return self._publish_prepared(
+                revision,
+                actor=actor,
+                evidence=evidence,
+                audit_context=audit_context,
+            )
+        finally:
+            self._drop_transient(revision.revision_id)
+
+    def _publish_prepared(
+        self,
+        revision: ManagedConfigurationRevision,
+        *,
+        actor: str,
+        evidence: tuple[object, ...],
+        audit_context: dict[str, object] | None = None,
+        automation_intent_ids: tuple[str, ...] = (),
+    ) -> ManagedConfigurationRevision:
+        """Atomically publish one already validated in-memory candidate."""
+
+        from mediaflow.application.automation_execution_intent import publication_intents
+
+        previous = self._repository.get_active_revision()
+        intents = publication_intents(
+            self._repository,
+            previous,
             revision,
-            "publish_candidate",
             actor,
-            _document_evidence(revision),
-            before={
-                "authority": (
-                    ConfigurationAuthority.MANAGED.value
-                    if current_revision_id is not None
-                    else ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value
-                ),
-                "revisionId": current_revision_id,
-                "version": current_version,
-                "digest": current_digest,
-            },
+            getattr(self, "_automation_publication_authority", None),
+            explicit_ids=automation_intent_ids,
         )
+        after = {
+            "automationExecutionIntents": intents,
+            **_document_evidence(revision, status=ManagedConfigurationStatus.ACTIVE),
+            "automationTaskDefinitions": _automation_definition_evidence(revision.document),
+        }
+        if audit_context is not None:
+            after["objectChange"] = copy.deepcopy(audit_context)
+        before = (
+            {
+                **_document_evidence(previous),
+                "automationTaskDefinitions": _automation_definition_evidence(previous.document),
+            }
+            if previous is not None
+            else {
+                "authority": ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value,
+                "revisionId": None,
+            }
+        )
+        active_revision = ManagedConfigurationRevision(
+            revision.revision_id,
+            revision.version,
+            ManagedConfigurationStatus.ACTIVE,
+            revision.schema_version,
+            revision.digest,
+            revision.document,
+            revision.created_at,
+            self._clock(),
+            (),
+            revision.validated_at or self._clock(),
+            self._clock(),
+            revision.base_active_revision_id,
+        )
+        audit = self._audit(
+            active_revision,
+            "activate",
+            actor,
+            after,
+            before=before,
+        )
+        publish = getattr(self._repository, "publish_revision_with_audit", None)
+        if callable(publish):
+            return publish(active_revision, audit, evidence)
+        # Focused in-memory repositories keep the historical two-step API.  The
+        # production SQLite repository always takes the single-transaction path.
         create = getattr(self._repository, "create_revision_with_audit", None)
         if callable(create):
-            staged = create(revision, audit)
-        else:
-            staged = self._repository.create_revision(revision)
-            self._record_audit(audit)
-        discard = getattr(self._repository, "discard_revision", None)
-        try:
-            if readiness is not None:
-                readiness(staged)
-            if before_publish is not None:
-                before_publish(staged)
-            activation_audit = self._audit(
-                staged,
-                "activate",
-                actor,
-                _document_evidence(staged, status=ManagedConfigurationStatus.ACTIVE),
-                before=(
-                    _document_evidence(active)
-                    if active is not None
-                    else {
-                        "authority": ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value,
-                        "revisionId": None,
-                    }
+            staged = create(
+                ManagedConfigurationRevision(
+                    active_revision.revision_id,
+                    active_revision.version,
+                    ManagedConfigurationStatus.VALIDATED,
+                    active_revision.schema_version,
+                    active_revision.digest,
+                    active_revision.document,
+                    active_revision.created_at,
+                    active_revision.updated_at,
+                    (),
+                    active_revision.validated_at,
+                    base_active_revision_id=active_revision.base_active_revision_id,
                 ),
+                audit,
             )
-            return self._repository.activate_revision(
-                staged.revision_id, staged.version, activation_audit
-            )
-        except Exception:
-            if callable(discard):
-                discard_audit = self._audit(
-                    staged,
-                    "publish_candidate_discarded",
-                    actor,
-                    {"revisionId": staged.revision_id, "status": "discarded"},
-                    before=_document_evidence(staged),
+        else:
+            staged = self._repository.create_revision(
+                ManagedConfigurationRevision(
+                    active_revision.revision_id,
+                    active_revision.version,
+                    ManagedConfigurationStatus.VALIDATED,
+                    active_revision.schema_version,
+                    active_revision.digest,
+                    active_revision.document,
+                    active_revision.created_at,
+                    active_revision.updated_at,
+                    (),
+                    active_revision.validated_at,
+                    base_active_revision_id=active_revision.base_active_revision_id,
                 )
-                discard(staged.revision_id, discard_audit)
+            )
+        for item in evidence:
+            for name in (
+                "save_local_setup_check",
+                "save_storage_setup_check",
+                "save_recognition_strategy_test",
+                "save_destination_precheck",
+            ):
+                saver = getattr(self._repository, name, None)
+                if (
+                    callable(saver)
+                    and type(item).__name__.lower().find(name.split("save_", 1)[1]) >= 0
+                ):
+                    saver(item)
+                    break
+        try:
+            return self._repository.activate_revision(staged.revision_id, staged.version, audit)
+        except Exception:
+            discard = getattr(self._repository, "discard_revision", None)
+            if callable(discard):
+                discard(
+                    staged.revision_id,
+                    self._audit(
+                        staged,
+                        "publish_candidate_discarded",
+                        actor,
+                        {"revisionId": staged.revision_id, "status": "discarded"},
+                        before=_document_evidence(staged),
+                    ),
+                )
             raise
 
     def _first_setup_draft(
@@ -845,9 +957,201 @@ class ManagedConfigurationService:
         return None
 
     def require(self, revision_id: str) -> ManagedConfigurationRevision:
+        transient = self._transient_revisions.get(revision_id)
+        if transient is not None:
+            return transient
         revision = self._repository.get_revision(revision_id)
         if revision is None:
             raise LookupError(f"configuration revision {revision_id!r} was not found")
+        return revision
+
+    def is_transient_revision(self, revision_id: str) -> bool:
+        """Whether this exact candidate exists only inside the current command."""
+
+        return revision_id in self._transient_revisions
+
+    def transient_audit_context(self, revision_id: str) -> dict[str, object] | None:
+        context = self._transient_audit_contexts.get(revision_id)
+        return copy.deepcopy(context) if context is not None else None
+
+    def transient_evidence(self, revision_id: str) -> tuple[object, ...]:
+        return self._transient_evidence.get(revision_id, ())
+
+    def record_transient_evidence(
+        self, revision_id: str, evidence: object | tuple[object, ...] | list[object]
+    ) -> None:
+        if revision_id not in self._transient_revisions:
+            raise ValueError("evidence can only be collected for a transient candidate")
+        values = (evidence,) if not isinstance(evidence, (tuple, list)) else tuple(evidence)
+        existing = list(self._transient_evidence.get(revision_id, ()))
+        existing.extend(item for item in values if item is not None)
+        self._transient_evidence[revision_id] = tuple(existing)
+
+    def stage_candidate_document(
+        self,
+        document: object,
+        *,
+        version: int = 1,
+        base_active_revision_id: str | None,
+        actor: str,
+    ) -> ManagedConfigurationRevision:
+        """Stage one candidate document that was composed from a readable source."""
+
+        normalized = _canonical_document(copy.deepcopy(document))
+        _reject_literal_secrets(normalized)
+        now = self._clock()
+        revision = ManagedConfigurationRevision(
+            str(uuid4()),
+            version,
+            ManagedConfigurationStatus.DRAFT,
+            MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+            _digest(normalized),
+            normalized,
+            now,
+            now,
+            base_active_revision_id=base_active_revision_id,
+        )
+        self._transient_revisions[revision.revision_id] = revision
+        return revision
+
+    def finalize_source_revision(
+        self,
+        revision_id: str,
+        published: ManagedConfigurationRevision,
+        *,
+        actor: str,
+        audit_context: dict[str, object] | None = None,
+    ) -> None:
+        """Mark a consumed legacy source row as published history, never a Draft."""
+
+        if revision_id == published.revision_id:
+            return
+        try:
+            source = self._repository.get_revision(revision_id)
+        except Exception:
+            return
+        if source is None or source.status in {
+            ManagedConfigurationStatus.ACTIVE,
+            ManagedConfigurationStatus.SUPERSEDED,
+        }:
+            return
+        finalized = ManagedConfigurationRevision(
+            source.revision_id,
+            published.version,
+            ManagedConfigurationStatus.SUPERSEDED,
+            source.schema_version,
+            published.digest,
+            copy.deepcopy(published.document),
+            source.created_at,
+            self._clock(),
+            (),
+            self._clock(),
+            self._clock(),
+            published.base_active_revision_id,
+            source.revision_sequence,
+        )
+        after = _document_evidence(finalized)
+        if audit_context is not None:
+            after["objectChange"] = copy.deepcopy(audit_context)
+        audit = self._audit(
+            finalized,
+            "publish_source_superseded",
+            actor,
+            after,
+            before=_document_evidence(source),
+        )
+        update = getattr(self._repository, "update_revision_with_audit", None)
+        if callable(update):
+            try:
+                update(finalized, source.version, audit)
+            except Exception:
+                return
+
+    def _drop_transient(self, revision_id: str) -> None:
+        self._transient_revisions.pop(revision_id, None)
+        self._transient_audit_contexts.pop(revision_id, None)
+        self._transient_evidence.pop(revision_id, None)
+
+    def stage_successor_draft(
+        self,
+        *,
+        actor: str,
+        expected_active_revision_id: str | None = None,
+        expected_active_version: int | None = None,
+        expected_active_digest: str | None = None,
+        verified_active: ManagedConfigurationRevision | None = None,
+    ) -> ManagedConfigurationRevision:
+        """Compose one successor candidate without persisting a Draft.
+
+        Save commands call this instead of ``create_successor_draft``.  The
+        returned revision is resolvable by :meth:`require` for validation and
+        read-only evidence, but it has no repository row; the final publication
+        transaction is the only writer.
+        """
+
+        active = verified_active if verified_active is not None else self.active()
+        if active is None:
+            if self._has_managed_activation():
+                marker = self._last_known_active() or {}
+                raise RuntimeSnapshotUnavailable(
+                    "managed Active configuration is unavailable; cannot compose successor",
+                    revision_id=marker.get("revisionId"),
+                    version=marker.get("revisionSequence", marker.get("version")),
+                    digest=marker.get("digest"),
+                    reason="managed_active_unavailable",
+                )
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists; initialize configuration first",
+                reason="active_missing",
+            )
+        self.verify_integrity(active)
+        current_revision_id = active.revision_id
+        current_version = active.revision_sequence or active.version
+        current_digest = active.digest
+        if expected_active_revision_id and expected_active_revision_id != current_revision_id:
+            raise ConfigurationVersionConflict(
+                "Active revision does not match expectedActiveRevisionId; reload before saving",
+                revision_id=current_revision_id,
+                current_version=current_version,
+                current_digest=current_digest,
+                durable_state="active_preserved",
+                next_action="reload configuration status, then apply the change again",
+            )
+        if expected_active_version is not None and expected_active_version != current_version:
+            raise ConfigurationVersionConflict(
+                "Active version does not match expectedActiveVersion; reload before saving",
+                revision_id=current_revision_id,
+                current_version=current_version,
+                current_digest=current_digest,
+                durable_state="active_preserved",
+                next_action="reload configuration status, then apply the change again",
+            )
+        if expected_active_digest and expected_active_digest != current_digest:
+            raise ConfigurationVersionConflict(
+                "Active digest does not match expectedActiveDigest; reload before saving",
+                revision_id=current_revision_id,
+                current_version=current_version,
+                current_digest=current_digest,
+                durable_state="active_preserved",
+                next_action="reload configuration status, then apply the change again",
+            )
+        normalized = _canonical_document(
+            strip_retired_remote_execution(copy.deepcopy(active.document))
+        )
+        _reject_literal_secrets(normalized)
+        now = self._clock()
+        revision = ManagedConfigurationRevision(
+            str(uuid4()),
+            1,
+            ManagedConfigurationStatus.DRAFT,
+            MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+            _digest(normalized),
+            normalized,
+            now,
+            now,
+            base_active_revision_id=current_revision_id,
+        )
+        self._transient_revisions[revision.revision_id] = revision
         return revision
 
     def open_draft_revisions(self, *, limit: int = 100) -> tuple[ManagedConfigurationRevision, ...]:
@@ -929,6 +1233,9 @@ class ManagedConfigurationService:
             None,
             revision.base_active_revision_id,
         )
+        if self.is_transient_revision(revision_id):
+            self._transient_revisions[revision_id] = candidate
+            return candidate
         after_evidence = {
             **_document_evidence(candidate),
             "automationTaskDefinitions": _automation_definition_evidence(candidate.document),
@@ -1016,6 +1323,11 @@ class ManagedConfigurationService:
                 "before": context.get("before"),
                 "after": None,
             }
+        if self.is_transient_revision(revision_id):
+            self._transient_revisions[revision_id] = edited
+            if audit_context is not None:
+                self._transient_audit_contexts[revision_id] = copy.deepcopy(audit_context)
+            return edited
         audit = self._audit(
             edited,
             "draft_edit",
@@ -1078,6 +1390,33 @@ class ManagedConfigurationService:
                 f"configuration revision is no longer valid: {_bounded_error(error)}",
                 revision_id=revision_id,
             ) from error
+        if self.is_transient_revision(revision_id):
+            try:
+                if before_publish is not None:
+                    before_publish(revision)
+                return self._publish_prepared(
+                    ManagedConfigurationRevision(
+                        revision.revision_id,
+                        revision.version,
+                        ManagedConfigurationStatus.ACTIVE,
+                        revision.schema_version,
+                        revision.digest,
+                        revision.document,
+                        revision.created_at,
+                        revision.updated_at,
+                        (),
+                        revision.validated_at,
+                        self._clock(),
+                        revision.base_active_revision_id,
+                        revision.revision_sequence,
+                    ),
+                    actor=actor,
+                    evidence=self.transient_evidence(revision_id),
+                    audit_context=self.transient_audit_context(revision_id),
+                    automation_intent_ids=automation_intent_ids,
+                )
+            finally:
+                self._drop_transient(revision_id)
         from mediaflow.application.automation_execution_intent import publication_intents
 
         previous = self._repository.get_active_revision()

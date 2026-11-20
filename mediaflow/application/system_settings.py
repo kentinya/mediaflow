@@ -296,6 +296,8 @@ class SystemSettingsService:
         expected_active_revision_id: str | None = None,
         expected_active_version: int | None = None,
         expected_active_digest: str | None = None,
+        submission_id: str | None = None,
+        before_publish: Callable[[object], object] | None = None,
     ) -> SystemSettings:
         """Apply settings edits and atomically publish the exact successor.
 
@@ -351,13 +353,35 @@ class SystemSettingsService:
             )
         candidate = apply_settings_edits(dict(active.document), edits)
         _reject_literal_secrets(candidate)
-        published = self._config.publish_document(
-            candidate,
-            actor=actor,
-            expected_active_revision_id=active.revision_id,
-            expected_active_version=current_version,
-            expected_active_digest=active.digest,
-        )
+        context = {
+            "kind": "system_settings",
+            "objectId": "system_settings",
+            "action": "settings_apply",
+            "submissionId": submission_id,
+            "edits": [
+                {"field": edit.field_path, "type": type(edit.value).__name__} for edit in edits
+            ],
+        }
+        try:
+            published = self._config.publish_document(
+                candidate,
+                actor=actor,
+                expected_active_revision_id=active.revision_id,
+                expected_active_version=current_version,
+                expected_active_digest=active.digest,
+                audit_context=context,
+                before_publish=before_publish,
+            )
+        except Exception as error:
+            self._record_outcome(
+                actor=actor,
+                submission_id=submission_id,
+                outcome="not_committed",
+                stage="publish",
+                next_action="correct the reported condition, then apply the settings again",
+                extra={"code": type(error).__name__},
+            )
+            raise
         return SystemSettings.from_document(
             published.document,
             revision_id=published.revision_id,
@@ -367,6 +391,162 @@ class SystemSettingsService:
             is_active=True,
             bootstrap_database_path=self._config.bootstrap_database_path,
         )
+
+    def _record_outcome(
+        self,
+        *,
+        actor: str,
+        submission_id: str | None,
+        outcome: str,
+        stage: str,
+        next_action: str,
+        extra: dict[str, object] | None = None,
+    ) -> None:
+        if not isinstance(submission_id, str) or not submission_id.strip():
+            return
+        record = getattr(self._config.repository, "record_configuration_audit", None)
+        if not callable(record):
+            return
+        from uuid import uuid4
+
+        from mediaflow.domain.configuration_management import (
+            ConfigurationChangeAudit,
+            ConfigurationObjectKind,
+        )
+
+        try:
+            record(
+                ConfigurationChangeAudit(
+                    str(uuid4()),
+                    ConfigurationObjectKind.SYSTEM_SETTINGS,
+                    submission_id,
+                    "settings_outcome",
+                    {},
+                    {
+                        "objectChange": {
+                            "kind": "system_settings",
+                            "objectId": "system_settings",
+                            "action": "settings_apply",
+                            "submissionId": submission_id,
+                            "outcome": outcome,
+                            "stage": stage,
+                            "nextAction": next_action,
+                            **dict(extra or {}),
+                        }
+                    },
+                    self._config._clock(),
+                    actor,
+                )
+            )
+        except Exception:
+            return
+
+    def reconcile(
+        self,
+        *,
+        actor: str,
+        submission_id: str | None,
+    ) -> dict[str, object]:
+        """Resolve one identified settings publication without writing.
+
+        The exact actor/submission pair is required; equal current values from
+        another writer can never prove that this request published.
+        """
+
+        current: dict[str, object] | None = None
+        try:
+            current = self.read_active().as_projection()
+        except Exception:
+            current = None
+        if not isinstance(submission_id, str) or not submission_id.strip():
+            return {
+                "state": "UNRESOLVED",
+                "committed": False,
+                "submissionId": None,
+                "current": current,
+                "nextAction": (
+                    "this request identity is unavailable, so its outcome cannot be proven; "
+                    "inspect the current Active settings before applying again"
+                ),
+                "sideEffects": "none",
+            }
+        repository = self._config.repository
+        latest = getattr(repository, "latest_command_audit_sequence", None)
+        before = getattr(repository, "list_command_audits_before", None)
+        audits: list[object] = []
+        complete = False
+        if callable(latest) and callable(before):
+            marker = int(latest()) + 1
+            try:
+                while True:
+                    page = before(
+                        ("activate", "settings_outcome"), before_sequence=marker, limit=200
+                    )
+                    audits.extend(page)
+                    if len(page) < 200:
+                        complete = True
+                        break
+                    sequences = [int(item.sequence) for item in page if item.sequence is not None]
+                    if not sequences:
+                        break
+                    marker = min(sequences)
+            except Exception:
+                audits = []
+                complete = False
+        for audit in audits:
+            if audit.actor != actor:
+                continue
+            change = audit.after.get("objectChange")
+            if not isinstance(change, dict):
+                continue
+            if change.get("objectId") != "system_settings":
+                continue
+            if change.get("submissionId") != submission_id:
+                continue
+            if audit.action == "settings_outcome":
+                return {
+                    "state": "NOT_COMMITTED",
+                    "committed": False,
+                    "submissionId": submission_id,
+                    "failureStage": change.get("stage"),
+                    "current": current,
+                    "nextAction": str(change.get("nextAction") or ""),
+                    "sideEffects": "none",
+                    "evidenceComplete": complete,
+                }
+            revision = None
+            try:
+                revision = self._config.require(str(audit.object_id))
+            except Exception:
+                revision = None
+            if revision is not None and revision.status.value in {"active", "superseded"}:
+                return {
+                    "state": "COMMITTED" if revision.status.value == "active" else "SUPERSEDED",
+                    "committed": True,
+                    "submissionId": submission_id,
+                    "committedRevisionId": revision.revision_id,
+                    "committedRevisionVersion": revision.revision_sequence or revision.version,
+                    "current": current,
+                    "nextAction": (
+                        "this exact submission published and is the current Active settings"
+                        if revision.status.value == "active"
+                        else "this exact submission published; a later publication is current"
+                    ),
+                    "sideEffects": "none",
+                    "evidenceComplete": complete,
+                }
+        return {
+            "state": "UNRESOLVED",
+            "committed": False,
+            "submissionId": submission_id,
+            "current": current,
+            "nextAction": (
+                "no terminal durable outcome can be proven for this exact submission; "
+                "do not apply again until the current Active and its audit evidence are readable"
+            ),
+            "sideEffects": "none",
+            "evidenceComplete": complete,
+        }
 
     # ------------------------------------------------------------------
     # Consumption evidence

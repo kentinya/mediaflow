@@ -16,14 +16,12 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   copyWebhookDefinition,
-  createNotificationSuccessorDraft,
   setWebhookDefinitionEnabled,
   testWebhookDefinition,
 } from "../../shared/api/api-client";
 import {
   notificationDefinitionQueryKey,
   notificationDefinitionQueryOptions,
-  notificationDraftQueryKey,
   notificationListQueryKey,
 } from "./notification-query";
 import { useAuthorizedReadAuthorityRecovery } from "../../shared/auth/AuthorizedReadBoundary";
@@ -170,36 +168,6 @@ export function NotificationDetailPage() {
     },
   });
 
-  const createDraftMutation = useMutation({
-    mutationFn: (activeRevisionId: string) =>
-      createNotificationSuccessorDraft(token, { activeRevisionId }),
-    retry: false,
-    onMutate: () => setError(null),
-    onSuccess: (result) => {
-      if (result.ok) {
-        void queryClient.invalidateQueries({
-          queryKey: [notificationDefinitionQueryKey],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [notificationDraftQueryKey],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [notificationListQueryKey],
-        });
-        return;
-      }
-      if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("后继定义可能已经创建"));
-        return;
-      }
-      setError(
-        result.status === 409
-          ? "后继定义没有创建：已生效配置在读取后已经变化。重新读取后再试。"
-          : `后继定义没有创建（${result.code}）。重新读取后再试。`,
-      );
-    },
-  });
-
   const draftMutation = useMutation({
     mutationFn: (input: {
       kind: "copy" | "enable" | "disable";
@@ -259,10 +227,7 @@ export function NotificationDetailPage() {
     },
   });
 
-  const busy =
-    testMutation.isPending ||
-    draftMutation.isPending ||
-    createDraftMutation.isPending;
+  const busy = testMutation.isPending || draftMutation.isPending;
   const closeCard = () => {
     void navigate({ to: "/operations/notifications" });
   };
@@ -560,51 +525,17 @@ export function NotificationDetailPage() {
           <section className="mf-notification-form-section">
             <h3>定义内动作</h3>
             <p className="mf-notification-field-help">
-              {draft.present
-                ? "复制、启用和停用只会写入当前打开的定义，不会改变已生效配置，直到明确发布。"
-                : "需要打开的后继定义才能复制、启用或停用这个定义。"}
+              复制、启用和停用会直接校验并发布为新的生效配置快照；失败时当前
+              Active 保持不变。
             </p>
-            {!draft.present && (
-              <div className="mf-notification-actions">
-                <Button
-                  type="button"
-                  disabled={
-                    !definition.actions.draftCreate.available ||
-                    definition.activeConfiguration === null ||
-                    createDraftMutation.isPending ||
-                    readDegraded
-                  }
-                  onClick={() => {
-                    if (definition.activeConfiguration !== null) {
-                      createDraftMutation.mutate(
-                        definition.activeConfiguration.revisionId,
-                      );
-                    }
-                  }}
-                >
-                  {createDraftMutation.isPending
-                    ? "正在创建后继定义…"
-                    : "创建后继定义"}
-                </Button>
-                {!definition.actions.draftCreate.available &&
-                  definition.actions.draftCreate.reason !== null && (
-                    <p className="mf-notification-inline-reason">
-                      {notificationReasonLabel(
-                        definition.actions.draftCreate.reason,
-                        "当前账号不能创建后继定义。",
-                      )}
-                    </p>
-                  )}
-              </div>
-            )}
             <div className="mf-notification-actions">
               <Button
                 type="button"
                 variant="secondary"
-                disabled={!canCopy || !draft.present || busy || readDegraded}
+                disabled={!canCopy || busy || readDegraded}
                 title={notificationReasonLabel(
                   definition.actions.copy.reason,
-                  "当前不能复制到定义",
+                  "当前不能复制定义",
                 )}
                 onClick={() => {
                   if (draft.revisionVersion !== null) {
@@ -615,15 +546,15 @@ export function NotificationDetailPage() {
                   }
                 }}
               >
-                {draftMutation.isPending ? "正在执行…" : "复制到定义"}
+                {draftMutation.isPending ? "正在执行…" : "复制定义"}
               </Button>
               <Button
                 type="button"
                 variant="secondary"
-                disabled={!canEnable || !draft.present || busy || readDegraded}
+                disabled={!canEnable || busy || readDegraded}
                 title={notificationReasonLabel(
                   definition.actions.enable.reason,
-                  "当前不能在定义中启用",
+                  "当前不能启用定义",
                 )}
                 onClick={() => {
                   if (draft.revisionVersion !== null) {
@@ -634,15 +565,15 @@ export function NotificationDetailPage() {
                   }
                 }}
               >
-                在定义中启用
+                启用定义
               </Button>
               <Button
                 type="button"
                 variant="secondary"
-                disabled={!canDisable || !draft.present || busy || readDegraded}
+                disabled={!canDisable || busy || readDegraded}
                 title={notificationReasonLabel(
                   definition.actions.disable.reason,
-                  "当前不能在定义中停用",
+                  "当前不能停用定义",
                 )}
                 onClick={() => {
                   if (draft.revisionVersion !== null) {
@@ -653,7 +584,7 @@ export function NotificationDetailPage() {
                   }
                 }}
               >
-                在定义中停用
+                停用定义
               </Button>
             </div>
           </section>

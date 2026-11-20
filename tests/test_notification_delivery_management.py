@@ -748,12 +748,7 @@ class NotificationDeliveryCompatibilityTests(unittest.TestCase):
                     body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
                 )
                 self.assertEqual(status, 200)
-                validated = harness.configuration.validate(revision_id, actor="bootstrap")
-                active = harness.configuration.activate(
-                    validated.revision_id,
-                    expected_version=validated.version,
-                    actor="bootstrap",
-                )
+                active = harness.configuration.active()
                 # A durable delivery exists for the same Webhook id.
                 delivery = publish(
                     harness.repository,

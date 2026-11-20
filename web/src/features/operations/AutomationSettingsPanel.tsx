@@ -38,7 +38,6 @@ import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { Button } from "../../shared/ui/Button";
 import { AutomationTime } from "./AutomationInventory";
-import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
@@ -973,7 +972,7 @@ export function AutomationSettingsPanel() {
         query={query}
         unavailableTitle="系统运行设置不可用"
       >
-        {({ isFetching, refresh }) => {
+        {() => {
           if (query.isPending) {
             return showEngineReadWait ? (
               <StatusBanner variant="info" title="正在读取引擎设置">
@@ -1003,9 +1002,6 @@ export function AutomationSettingsPanel() {
                       "需要先完成首次设置并激活配置,才能发布引擎设置。"}
                   </p>
                 </StatusBanner>
-                <div className="mf-actions">
-                  <RefreshControl onRefresh={refresh} refreshing={isFetching} />
-                </div>
               </section>
             );
           }
@@ -1022,14 +1018,6 @@ export function AutomationSettingsPanel() {
                     <div>
                       <h2>系统运行设置</h2>
                     </div>
-                    <span className="mf-automation-settings-refresh">
-                      <RefreshControl
-                        label="刷新"
-                        refreshingLabel="刷新中…"
-                        onRefresh={refresh}
-                        refreshing={isFetching}
-                      />
-                    </span>
                   </header>
                   {!model.canManage && (
                     <StatusBanner variant="info" title="只读">

@@ -214,6 +214,17 @@ def request(
     return int(statuses[0].split()[0]), json.loads(result)
 
 
+def publish_initial_configuration(api, document: dict) -> dict:
+    status, body = request(
+        api,
+        "/api/configuration/publish",
+        method="POST",
+        body={"document": document},
+    )
+    assert status == 200, body
+    return body
+
+
 class ConfigurationObjectJourneyTests(unittest.TestCase):
     def _document(self, root: Path) -> dict:
         document = example_document()
@@ -222,6 +233,9 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
         document["storages"][1]["rootPath"] = str(root / "target")
         document["resourceLibraries"][0]["storagePath"] = "incoming"
         document["mediaLibraries"][0]["rootPath"] = "Movies"
+        # The checked save path verifies referenced Storage roots read-only.
+        (root / "source" / "incoming").mkdir(parents=True, exist_ok=True)
+        (root / "target" / "Movies").mkdir(parents=True, exist_ok=True)
         return document
 
     @staticmethod
@@ -429,7 +443,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 second_root = str(root / "second root")
                 target_path = (
-                    f"/api/configuration/revisions/{draft.revision_id}"
+                    f"/api/configuration/revisions/{created['revisionId']}"
                     "/objects/storages/guided-local"
                 )
                 status, updated = request(
@@ -450,7 +464,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(updated["version"], created["version"] + 1)
                 status, guided = request(
-                    api, f"/api/configuration/revisions/{draft.revision_id}/objects"
+                    api, f"/api/configuration/revisions/{updated['revisionId']}/objects"
                 )
                 self.assertEqual(status, 200)
                 stored = next(
@@ -521,6 +535,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                         )
 
                 corrected_root = str(root / "corrected source")
+                (root / "corrected source").mkdir(parents=True, exist_ok=True)
                 status, saved = request(
                     api,
                     target_path,
@@ -3013,7 +3028,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 status, detail = request(
-                    api, f"/api/configuration/revisions/{draft.revision_id}/objects"
+                    api, f"/api/configuration/revisions/{updated['revisionId']}/objects"
                 )
                 self.assertEqual(status, 200)
                 stored = next(
@@ -3024,7 +3039,8 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual((stored["language"], stored["enabled"]), ("ja-JP", False))
                 status, deleted = request(
                     api,
-                    f"{collection}/api-policy",
+                    f"/api/configuration/revisions/{updated['revisionId']}"
+                    "/objects/metadataPolicies/api-policy",
                     method="DELETE",
                     body={"expectedVersion": updated["version"]},
                 )
@@ -3830,55 +3846,29 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     body={"object": resource, "expectedVersion": failed_version},
                 )
                 self.assertEqual(status, 200)
-                self.assertEqual(edited["status"], "draft")
-                status, draft_detail = request(api, detail_path)
-                self.assertEqual(status, 200)
-                self.assertTrue(draft_detail["localSetupCheck"]["stale"])
-
-                status, revalidated = request(
+                self.assertEqual(edited["status"], "active")
+                self.assertNotEqual(edited["revisionId"], revision_id)
+                status, active_detail = request(
                     api,
-                    f"/api/configuration/revisions/{revision_id}/validate",
-                    method="POST",
-                    body={},
+                    f"/api/configuration/revisions/{edited['revisionId']}/objects",
                 )
                 self.assertEqual(status, 200)
-                self.assertEqual(revalidated["status"], "validated")
-                status, validated_detail = request(api, detail_path)
-                self.assertEqual(status, 200)
-                self.assertTrue(validated_detail["localSetupCheck"]["stale"])
-
-                current = service.require(revision_id)
-                with patch(
-                    "mediaflow.application.configuration_objects.load_runtime_configuration",
-                    return_value=runtime,
-                ):
-                    status, passed = request(
-                        api,
-                        f"/api/configuration/revisions/{revision_id}/local-setup-check",
-                        method="POST",
-                        body={
-                            "expectedVersion": current.version,
-                            "expectedDigest": current.digest,
-                            "resourceLibraryId": "source",
-                            "mediaLibraryId": "movies",
-                        },
+                # The prior failed check is historical evidence on the superseded
+                # source; the direct publication created no editable Draft.
+                self.assertFalse(
+                    any(
+                        revision.status.value in {"draft", "validated"}
+                        for revision in repository.list_revisions()
                     )
-                self.assertEqual(status, 200)
-                self.assertEqual(passed["status"], "passed")
-                status, passed_detail = request(api, detail_path)
-                self.assertEqual(status, 200)
-                self.assertFalse(passed_detail["localSetupCheck"]["stale"])
-                self.assertEqual(passed_detail["localSetupCheck"]["revisionId"], revision_id)
-                self.assertEqual(
-                    passed_detail["localSetupCheck"]["revisionVersion"], current.version
                 )
-                self.assertEqual(passed_detail["localSetupCheck"]["revisionDigest"], current.digest)
-                self.assertIsNone(service.active())
+                self.assertEqual(service.active().revision_id, edited["revisionId"])
 
     def test_missing_local_root_is_actionable_and_does_not_activate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             document = self._document(root)
+            (root / "target" / "Movies").rmdir()
+            (root / "target").rmdir()
             with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
                 service = ManagedConfigurationService(repository)
                 objects = ConfigurationObjectService(service)
@@ -4315,6 +4305,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
             root = Path(directory)
             document = self._document(root)
             target_id = "reference-target"
+            (root / "reference-target").mkdir(parents=True, exist_ok=True)
             document["storages"].append(
                 {
                     "id": target_id,
@@ -4367,6 +4358,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
             root = Path(directory)
             document = self._document(root)
             target_id = "reference-target"
+            (root / "reference-target").mkdir(parents=True, exist_ok=True)
             document["storages"].append(
                 {
                     "id": target_id,
@@ -4650,49 +4642,45 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(raw["document"], portable_managed_configuration_document(document))
                 self.assertNotIn("persistence", raw["document"])
                 self.assertNotIn("principals", raw["document"].get("api", {}))
-                # The retired remote-execution ticket settings are not part of
-                # a current starter document or its managed projection.
                 self.assertNotIn("remoteExecution", raw["document"].get("api", {}))
-                # The persisted Draft keeps its complete authority; only the
-                # response projection strips it.
                 self.assertEqual(service.require(draft.revision_id).document, document)
-                corrected = copy.deepcopy(document)
-                corrected["classificationPolicies"] = [
+                corrected = self._document(root)
+                corrected["mediaLibraries"].append(
                     {
-                        "id": "fixed",
-                        "rules": [],
+                        "id": target_id,
+                        "name": "Unreferenced",
+                        "storageId": "media-target",
+                        "rootPath": "Unreferenced",
+                        "enabled": True,
                     }
-                ]
+                )
+                (root / "target" / "Unreferenced").mkdir(parents=True, exist_ok=True)
                 status, saved = request(
                     api,
-                    f"/api/configuration/revisions/{draft.revision_id}",
-                    method="PUT",
-                    body={"document": corrected, "expectedVersion": draft.version},
+                    "/api/configuration/publish",
+                    method="POST",
+                    body={"document": corrected},
                 )
-                self.assertEqual(status, 200)
-                self.assertEqual(saved["version"], draft.version + 1)
-                status, guided = request(
-                    api, f"/api/configuration/revisions/{draft.revision_id}/objects"
-                )
-                self.assertEqual(status, 200)
-                self.assertIn(
-                    target_id,
-                    [item["id"] for item in guided["objects"]["mediaLibraries"]],
+                self.assertEqual(status, 200, saved)
+                current_active = service.active()
+                active_id = current_active.revision_id
+                active_version = current_active.version
+                active_path = (
+                    f"/api/configuration/revisions/{active_id}/objects/mediaLibraries/{target_id}"
                 )
                 status, deleted = request(
                     api,
-                    target_path,
+                    active_path,
                     method="DELETE",
-                    body={"expectedVersion": saved["version"]},
+                    body={"expectedVersion": active_version},
                 )
                 self.assertEqual(status, 200)
-                self.assertEqual(deleted["version"], saved["version"] + 1)
-                current = service.require(draft.revision_id)
+                current = service.require(deleted["revisionId"])
                 self.assertNotIn(
                     target_id,
                     [item["id"] for item in current.document["mediaLibraries"]],
                 )
-                audits = config_repository.list_revision_audits(draft.revision_id)
+                audits = config_repository.list_revision_audits(deleted["revisionId"])
                 self.assertEqual(
                     sum(
                         audit.safe_after().get("objectChange", {}).get("action") == "guided_delete"
@@ -4707,6 +4695,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
             root = Path(directory)
             document = self._document(root)
             target_id = "reference-target"
+            (root / "reference-target").mkdir(parents=True, exist_ok=True)
             document["storages"].append(
                 {
                     "id": target_id,
@@ -4726,6 +4715,23 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 }
                 for index in range(257)
             ]
+
+            def retarget(value: object) -> None:
+                if isinstance(value, dict):
+                    target = value.get("mediaLibraryId")
+                    if target == "movies":
+                        value["mediaLibraryId"] = "media-256"
+                    elif target == "tv":
+                        value["mediaLibraryId"] = "media-255"
+                    for item in value.values():
+                        retarget(item)
+                elif isinstance(value, list):
+                    for item in value:
+                        retarget(item)
+
+            retarget(document["classificationPolicies"])
+            for index in range(257):
+                (root / "target" / "Movies" / f"{index:03d}").mkdir(parents=True, exist_ok=True)
             with (
                 SQLiteConfigurationRepository(root / "configuration.sqlite3") as config_repository,
                 SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
@@ -4765,6 +4771,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             document = self._document(root)
+            (root / "reference-target").mkdir(parents=True, exist_ok=True)
             document["storages"].append(
                 {
                     "id": "reference-target",
@@ -4796,10 +4803,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     configuration_service=service,
                     bootstrap_document=document,
                 )
-                status, draft = request(
-                    api, "/api/configuration/drafts", method="POST", body={"document": document}
-                )
-                self.assertEqual(status, 201)
+                draft = publish_initial_configuration(api, document)
                 status, conflict = request(
                     api,
                     f"/api/configuration/revisions/{draft['revisionId']}/objects/storages/reference-target",
@@ -4843,8 +4847,11 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 409)
                 self.assertEqual(stale["error"]["code"], "configuration_version_conflict")
-                self.assertEqual(
-                    len(config_repository.list_revision_audits(draft["revisionId"])), 2
+                self.assertFalse(
+                    any(
+                        revision.status.value in {"draft", "validated"}
+                        for revision in config_repository.list_revisions()
+                    )
                 )
 
     def test_api_malformed_section_returns_400_without_partial_state(self) -> None:
@@ -4969,6 +4976,22 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 }
                 for index in range(257)
             ]
+
+            def retarget(value: object) -> None:
+                if isinstance(value, dict):
+                    if value.get("mediaLibraryId") == "movies":
+                        value["mediaLibraryId"] = "media-256"
+                    elif value.get("mediaLibraryId") == "tv":
+                        value["mediaLibraryId"] = "media-255"
+                    for item in value.values():
+                        retarget(item)
+                elif isinstance(value, list):
+                    for item in value:
+                        retarget(item)
+
+            retarget(document["classificationPolicies"])
+            for index in range(257):
+                (root / "target" / "Movies" / f"{index:03d}").mkdir(parents=True, exist_ok=True)
             with (
                 SQLiteConfigurationRepository(root / "configuration.sqlite3") as config_repository,
                 SQLiteTaskRepository(root / "runtime.sqlite3") as runtime_repository,
@@ -4992,7 +5015,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 status, detail = request(
-                    api, f"/api/configuration/revisions/{draft.revision_id}/objects"
+                    api, f"/api/configuration/revisions/{changed['revisionId']}/objects"
                 )
                 self.assertEqual(status, 200)
                 values = detail["objects"]["mediaLibraries"]
@@ -5018,10 +5041,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     configuration_service=service,
                     bootstrap_document=document,
                 )
-                status, draft = request(
-                    api, "/api/configuration/drafts", method="POST", body={"document": document}
-                )
-                self.assertEqual(status, 201)
+                draft = publish_initial_configuration(api, document)
                 body = {
                     "expectedVersion": draft["version"],
                     "object": {
@@ -5047,8 +5067,12 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 self.assertEqual(sum(status == 409 for status, _ in results), 1)
                 loser = next(value for status, value in results if status == 409)
                 self.assertEqual(loser["error"]["code"], "configuration_version_conflict")
-                audits = config_repository.list_revision_audits(draft["revisionId"])
-                self.assertEqual(sum(audit.action == "draft_edit" for audit in audits), 1)
+                self.assertFalse(
+                    any(
+                        revision.status.value in {"draft", "validated"}
+                        for revision in config_repository.list_revisions()
+                    )
+                )
 
     def test_api_guided_objects_check_and_checked_activation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -5068,10 +5092,7 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     configuration_service=service,
                     bootstrap_document=document,
                 )
-                status, draft = request(
-                    api, "/api/configuration/drafts", method="POST", body={"document": document}
-                )
-                self.assertEqual(status, 201)
+                draft = publish_initial_configuration(api, document)
                 revision_id = draft["revisionId"]
                 status, detail = request(api, f"/api/configuration/revisions/{revision_id}/objects")
                 self.assertEqual(status, 200)
@@ -5115,84 +5136,29 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                     body={"expectedVersion": updated["version"]},
                 )
                 self.assertEqual(status, 200)
-                status, validated = request(
+                # Each object command already validated and published through
+                # the direct checked boundary; no validate/activate Draft route
+                # remains.
+                status, retired = request(
                     api,
                     f"/api/configuration/revisions/{revision_id}/validate",
                     method="POST",
                     body={},
                 )
-                self.assertEqual(status, 200)
-                status, evidence = request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}/local-setup-check",
-                    method="POST",
-                    body={
-                        "expectedVersion": validated["version"],
-                        "expectedDigest": validated["digest"],
-                        "resourceLibraryId": "source",
-                        "mediaLibraryId": "movies",
-                    },
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(evidence["status"], "passed")
-                for storage_id in ("source-storage", "media-target"):
-                    status, storage_evidence = request(
-                        api,
-                        f"/api/configuration/revisions/{revision_id}/storage-check",
-                        method="POST",
-                        body={
-                            "storageId": storage_id,
-                            "expectedVersion": validated["version"],
-                            "expectedDigest": validated["digest"],
-                        },
-                    )
-                    self.assertEqual(status, 200)
-                    self.assertEqual(storage_evidence["status"], "passed")
-                status, active = request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}/recognition-strategy-test",
-                    method="POST",
-                    body={
-                        "expectedVersion": validated["version"],
-                        "expectedDigest": validated["digest"],
-                        "resourceLibraryId": "source",
-                        "syntheticPath": "Example.Movie.2024.1080p.mkv",
-                    },
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(active["status"], "completed")
-                status, precheck = request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}/destination-precheck",
-                    method="POST",
-                    body={
-                        "expectedVersion": validated["version"],
-                        "expectedDigest": validated["digest"],
-                        "recognitionType": "C",
-                        "sample": {
-                            "title": "The Matrix",
-                            "mediaType": "movie",
-                            "year": 1999,
-                            "genres": ["Action"],
-                            "extension": "mkv",
-                        },
-                    },
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(precheck["status"], "completed")
-                status, active = request(
-                    api,
-                    f"/api/configuration/revisions/{revision_id}/activate",
-                    method="POST",
-                    body={"expectedVersion": validated["version"], "checked": True},
-                )
-                self.assertEqual(status, 200)
+                self.assertEqual(status, 404)
+                active = deleted
                 self.assertEqual(active["status"], "active")
+                self.assertFalse(
+                    any(
+                        revision.status.value in {"draft", "validated"}
+                        for revision in config_repository.list_revisions()
+                    )
+                )
                 # The retired DryRun Job command no longer exists; a supported
                 # Organize Job is admitted by the one-shot authority boundary and
                 # carries the exact Active pin.
                 job_id, job = admit_organize_job(api)
-                self.assertEqual(job["configuration_snapshot_id"], revision_id)
+                self.assertEqual(job["configuration_snapshot_id"], active["revisionId"])
                 self.assertEqual(job["configuration_snapshot_digest"], active["digest"])
 
 

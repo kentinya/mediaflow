@@ -36,6 +36,7 @@ class ReleaseSecurityPolicyTests(unittest.TestCase):
                     "**Developer — affected tests",
                     "### Developer — 新增／修改与直接受影响测试",
                     "**Developer — 新增／修改与直接受影响测试",
+                    "**Developer** 运行受影响测试",
                 )
             ),
             "the active Task must document Developer's affected-test ownership",
@@ -48,6 +49,7 @@ class ReleaseSecurityPolicyTests(unittest.TestCase):
                     "### B — acceptance and full regression",
                     "**B — acceptance",
                     "**B — 独立验收与完整回归",
+                    "**B** 对候选版本",
                 )
             ),
             "the active Task must document B's acceptance/full-regression ownership",

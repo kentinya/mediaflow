@@ -456,6 +456,7 @@ def final_main(
                         revision = objects.publish_document(
                             document,
                             actor=arguments.actor,
+                            run_checks=False,
                         )
                         stdout.write(
                             json.dumps(

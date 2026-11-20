@@ -411,7 +411,7 @@ class ContainerArtifactTests(unittest.TestCase):
                         "--config",
                         str(bootstrap_path),
                         "config",
-                        "draft-import",
+                        "publish",
                         "--file",
                         str(configuration_path),
                     ],
@@ -419,19 +419,8 @@ class ContainerArtifactTests(unittest.TestCase):
                     stderr=stderr,
                 )
                 self.assertEqual(code, 0, stderr.getvalue())
-                revision_id = json.loads(stdout.getvalue())["revisionId"]
-                for arguments in (
-                    ["config", "draft-validate", revision_id],
-                    ["config", "activate", revision_id, "--expected-version", "1"],
-                ):
-                    stdout, stderr = io.StringIO(), io.StringIO()
-                    code = final_main(
-                        ["--config", str(bootstrap_path), *arguments],
-                        stdout=stdout,
-                        stderr=stderr,
-                    )
-                    self.assertEqual(code, 0, stderr.getvalue())
-                self.assertEqual(json.loads(stdout.getvalue())["status"], "active")
+                published = json.loads(stdout.getvalue())
+                self.assertEqual(published["status"], "active")
 
     def test_openlist_example_imports_through_documented_first_setup(self) -> None:
         """The shipped OpenList example imports exactly as the guide describes.
@@ -497,7 +486,7 @@ class ContainerArtifactTests(unittest.TestCase):
             # The retired spelling must fail closed with the exact correction.
             retired = dict(example["storage"])
             retired.update(retired.pop("options"))
-            code, _, error = run(["config", "draft-import", "--file", str(candidate_with(retired))])
+            code, _, error = run(["config", "publish", "--file", str(candidate_with(retired))])
             self.assertEqual(code, 2)
             self.assertIn("storages[openlist-example].baseUrl is retired", error)
             self.assertIn("Storage.options", error)
@@ -508,19 +497,19 @@ class ContainerArtifactTests(unittest.TestCase):
 
             # The corrected shipped shape continues on the same instance.
             code, stdout, error = run(
-                ["config", "draft-import", "--file", str(candidate_with(example["storage"]))]
+                ["config", "publish", "--file", str(candidate_with(example["storage"]))]
             )
             self.assertEqual(code, 0, error)
             imported = json.loads(stdout)
-            self.assertEqual(imported["status"], "draft")
+            self.assertEqual(imported["status"], "active")
             staged = status()
-            self.assertTrue(staged["setupRequired"])
-            self.assertIsNone(staged["active"])
+            self.assertFalse(staged["setupRequired"])
+            self.assertEqual(staged["active"]["revisionId"], imported["revisionId"])
             self.assertEqual(
                 [item["revisionId"] for item in staged["revisions"]],
                 [imported["revisionId"]],
             )
-            self.assertEqual(staged["revisions"][0]["status"], "draft")
+            self.assertEqual(staged["revisions"][0]["status"], "active")
 
             # The persisted Draft keeps the example's own values verbatim.
             connection = sqlite3.connect(database)
@@ -547,10 +536,10 @@ class ContainerArtifactTests(unittest.TestCase):
             self.assertIs(storages[2]["readOnly"], True)
             self.assertEqual(storages[2]["options"]["tokenEnv"], "OPENLIST_TOKEN")
 
-            # The staged Draft is recoverable through the canonical loader.
-            code, stdout, error = run(["config", "draft-validate", imported["revisionId"]])
+            # The direct publication is the current runtime authority.
+            code, stdout, error = run(["config", "status"])
             self.assertEqual(code, 0, error)
-            self.assertEqual(json.loads(stdout)["status"], "validated")
+            self.assertEqual(json.loads(stdout)["active"]["revisionId"], imported["revisionId"])
 
     def test_management_bootstrap_helper_needs_no_media_mount_and_no_secret(self) -> None:
         """The default deployment bootstrap is usable with durable data alone.

@@ -95,6 +95,51 @@ class WebhookTestService:
                 message=self._bounded_text(str(error), 384),
                 response_status=None,
             )
+        return self._send(
+            definition,
+            webhook_id=webhook_id,
+            actor=actor,
+            revision=revision,
+        )
+
+    def test_definition(
+        self,
+        raw: Mapping[str, object],
+        *,
+        webhook_id: str,
+        actor: str,
+    ) -> dict[str, object]:
+        """Send exactly one signed probe for the current unsaved form values."""
+
+        try:
+            definition = accepted_webhook_definition(raw)
+        except ValueError as error:
+            return self._result(
+                revision=None,
+                webhook_id=webhook_id,
+                definition=None,
+                actor=actor,
+                category="invalid_definition",
+                message=self._bounded_text(str(error), 384),
+                response_status=None,
+            )
+        if definition.webhook_id != webhook_id:
+            raise ValueError("Webhook test definition ID must match the route")
+        return self._send(
+            definition,
+            webhook_id=webhook_id,
+            actor=actor,
+            revision=None,
+        )
+
+    def _send(
+        self,
+        definition: WebhookDefinition,
+        *,
+        webhook_id: str,
+        actor: str,
+        revision: ManagedConfigurationRevision | None,
+    ) -> dict[str, object]:
         secret_env = definition.secret_env
         secret = os.environ.get(secret_env)
         if not secret:
@@ -147,18 +192,14 @@ class WebhookTestService:
                 message="the Webhook test timed out before a response",
                 response_status=None,
             )
-        except (WebhookTransportError, OSError, RuntimeError) as error:
-            category = "transport"
-            message = "the Webhook transport failed before a bounded response"
-            if isinstance(error, WebhookTransportError):
-                message = "the Webhook transport could not send the signed test request"
+        except (WebhookTransportError, OSError, RuntimeError):
             return self._result(
                 revision=revision,
                 webhook_id=webhook_id,
                 definition=definition,
                 actor=actor,
-                category=category,
-                message=message,
+                category="transport",
+                message="the Webhook transport could not send the signed test request",
                 response_status=None,
             )
         if 200 <= status < 300:
@@ -193,7 +234,7 @@ class WebhookTestService:
     def _result(
         self,
         *,
-        revision: ManagedConfigurationRevision,
+        revision: ManagedConfigurationRevision | None,
         webhook_id: str,
         definition: WebhookDefinition | None,
         actor: str,
@@ -251,12 +292,16 @@ class WebhookTestService:
         document = {
             "testId": test_id,
             "webhook": webhook_document,
-            "revision": {
-                "revisionId": revision.revision_id,
-                "version": revision.version,
-                "digest": revision.digest,
-                "status": revision.status.value,
-            },
+            "revision": (
+                {
+                    "revisionId": revision.revision_id,
+                    "version": revision.version,
+                    "digest": revision.digest,
+                    "status": revision.status.value,
+                }
+                if revision is not None
+                else None
+            ),
             "outcome": outcome,
             "category": category,
             "responseStatus": response_status,
@@ -304,7 +349,7 @@ class WebhookTestService:
         self,
         *,
         actor: str,
-        revision: ManagedConfigurationRevision,
+        revision: ManagedConfigurationRevision | None,
         webhook_id: str,
         category: str,
         outcome: str,
@@ -320,9 +365,16 @@ class WebhookTestService:
                     actor,
                     "POST",
                     (
-                        f"/api/configuration/revisions/{revision.revision_id}/objects/webhooks/"
-                        f"{webhook_id}/test?version={revision.version}&digest={revision.digest}"
-                        f"&category={category}"
+                        (
+                            f"/api/configuration/revisions/{revision.revision_id}/objects/webhooks/"
+                            f"{webhook_id}/test?version={revision.version}&digest={revision.digest}"
+                            f"&category={category}"
+                        )
+                        if revision is not None
+                        else (
+                            f"/api/operations/notifications/webhooks/{webhook_id}/test"
+                            f"?category={category}"
+                        )
                     )[:500],
                     "webhook-test",
                     outcome,

@@ -828,7 +828,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
 
             with patch.object(
                 repository,
-                "create_revision_with_audit",
+                "publish_revision_with_audit",
                 side_effect=RuntimeError("simulated successor persistence failure"),
             ):
                 status, response = request(
@@ -870,7 +870,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
 
             with patch.object(
                 repository,
-                "activate_revision",
+                "publish_revision_with_audit",
                 side_effect=RuntimeError("simulated activation persistence failure"),
             ):
                 status, response = request(

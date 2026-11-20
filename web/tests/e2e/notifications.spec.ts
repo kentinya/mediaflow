@@ -19,7 +19,6 @@ const VIEWER_TOKEN = "e2e-viewer-token";
 
 const WEBHOOK_ID = "ops-webhook";
 const ACTIVE_REVISION = "notification-active-rev-e2e-001";
-const DRAFT_REVISION = "notification-draft-rev-e2e-001";
 const DELIVERY_ID = "delivery-e2e-001";
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
@@ -96,11 +95,9 @@ test("the Operations landing links the Notification workspace with the exact Act
   await expect(
     page.getByText("密钥引用：已就绪", { exact: true }),
   ).toBeVisible();
-  // No open Draft: the create entry is explicitly unavailable and does not
-  // lead to a fillable form.
-  await expect(
-    page.getByRole("button", { name: "新建 Webhook（不可用）" }),
-  ).toBeDisabled();
+  // Definitions publish directly: the create entry is available without a
+  // Draft, and the list still links the durable delivery history.
+  await expect(page.getByRole("link", { name: "新建 Webhook" })).toBeVisible();
   await expect(page.getByRole("link", { name: "查看投递记录" })).toBeVisible();
   // The definition card links the exact durable detail route and opens the
   // coordinated card over the still-visible list.
@@ -159,280 +156,188 @@ test("the signed test sends exactly one bound request and never touches deliveri
   expect(encoded).not.toMatch(/Bearer |digest|X-MediaFlow-Signature/i);
 });
 
-test("the editor journey saves, validates and checked-activates the Webhook-only Draft", async ({
+test("the editor tests the exact form and applies it without draft routes", async ({
   page,
 }) => {
+  const mutations: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() !== "GET" &&
+      /\/api\/(configuration\/revisions|operations\/notifications)/.test(
+        request.url(),
+      )
+    ) {
+      mutations.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    }
+  });
+  await page.route(
+    `**/api/operations/notifications/webhooks/${WEBHOOK_ID}/test`,
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          testId: "e2e-test-1",
+          webhook: {
+            id: WEBHOOK_ID,
+            url: "https://example.invalid/hooks/edited",
+            events: ["task.completed", "task.failed"],
+            enabled: true,
+            secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
+          },
+          revision: null,
+          outcome: "success",
+          category: "http_204",
+          responseStatus: 204,
+          message: "delivered",
+          durableState: "no_delivery_created_no_configuration_change",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "apply the tested form",
+        }),
+      });
+    },
+  );
+  await page.route(
+    `**/api/configuration/revisions/*/objects/webhooks/${WEBHOOK_ID}`,
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          revisionId: "notification-active-rev-e2e-002",
+          version: 5,
+          revisionSequence: 4,
+          status: "active",
+          publishedFromRevisionId: "notification-active-rev-e2e-001",
+          publishedFromVersion: 3,
+          digest: "operator-hidden",
+          webhook: {
+            id: WEBHOOK_ID,
+            url: "https://example.invalid/hooks/edited",
+            events: ["task.completed", "task.failed"],
+            enabled: true,
+            secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
+          },
+        }),
+      });
+    },
+  );
+
   await connect(page);
   await openNotifications(page);
-  // Start the successor Draft from the workspace, then open the editor.
-  await page.getByRole("button", { name: "创建后继草稿" }).click();
-  await expect(page.getByText(/草稿 · 版本/)).toBeVisible();
-  await page.getByRole("link", { name: "查看定义" }).click();
-  await expect(page).toHaveURL(
-    new RegExp(`/operations/notifications/webhooks/${WEBHOOK_ID}$`),
-  );
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "编辑草稿" })
-    .click();
+  await page.getByRole("link", { name: "编辑定义" }).first().click();
   await expect(page).toHaveURL(
     new RegExp(`/operations/notifications/editor/${WEBHOOK_ID}$`),
   );
-  await expect(
-    page.getByRole("heading", { name: "编辑 Webhook ops-webhook" }),
-  ).toBeVisible();
-
-  // Saving is only meaningful for actual input; the unsaved form is separate
-  // from the durable saved Draft.
   await page
     .getByLabel("HTTPS 接收地址")
     .fill("https://example.invalid/hooks/edited");
-  await page.getByRole("button", { name: "保存到草稿" }).click();
-  await expect(page.getByText(/已保存到草稿版本 5/)).toBeVisible();
-
-  await page.getByRole("button", { name: "检查草稿", exact: true }).click();
+  await page.getByRole("button", { name: "发送签名测试" }).click();
+  await expect(page.getByText(/签名测试成功/)).toBeVisible();
+  await page.getByRole("button", { name: "应用更改" }).click();
   await expect(
-    page.getByRole("heading", { name: "草稿检查通过" }),
+    page.getByText(/更改已通过检查并发布为新的生效配置/),
   ).toBeVisible();
 
-  // Checked activation requires the explicit confirmation checkbox.
-  const activate = page.getByRole("button", {
-    name: "发布已检查草稿",
-    exact: true,
-  });
-  await expect(activate).toBeDisabled();
-  await page.getByLabel("我确认把当前已检查的草稿发布为新的已生效配置").check();
-  await activate.click();
-  await expect(page).toHaveURL(
-    new RegExp(`/operations/notifications/webhooks/${WEBHOOK_ID}$`),
-  );
-  await expect(page.getByText(/草稿已发布为已生效配置/)).toBeVisible();
-
-  const evidence = await notificationsEvidence(page);
-  const saves = evidence.items.filter(
-    (item) => item.objectType === "notification_webhook_save",
-  );
-  expect(saves).toHaveLength(1);
-  expect(saves[0].body).toMatchObject({
-    webhookId: WEBHOOK_ID,
-    expectedVersion: 4,
-  });
-  const activations = evidence.items.filter(
-    (item) => item.objectType === "notification_webhook_activation",
-  );
-  expect(activations).toHaveLength(1);
-  expect(activations[0].body).toMatchObject({
-    expectedRevisionId: DRAFT_REVISION,
-  });
-  expect(JSON.stringify(evidence.items)).not.toMatch(/digest|Bearer /i);
+  expect(mutations.filter((item) => item.includes("/test"))).toHaveLength(1);
+  expect(
+    mutations.filter((item) =>
+      /\/validate|\/activate|successor|\/draft/.test(item),
+    ),
+  ).toEqual([]);
+  expect(mutations.filter((item) => item.startsWith("PUT ")).length).toBe(1);
 });
 
-test("an authorized operator creates a Webhook definition inside the open Draft", async ({
+test("the create form tests the current values before one direct apply", async ({
   page,
 }) => {
+  const mutations: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() !== "GET") {
+      mutations.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    }
+  });
+  await page.route(
+    "**/api/operations/notifications/webhooks/*/test",
+    async (route) => {
+      const body = route.request().postDataJSON() as {
+        webhook?: { id?: string; url?: string; events?: string[] };
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          testId: "e2e-test-new",
+          webhook: {
+            id: body.webhook?.id ?? "new-webhook",
+            url: body.webhook?.url ?? "https://example.invalid/hooks/new",
+            events: body.webhook?.events ?? ["task.completed"],
+            enabled: true,
+            secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
+          },
+          revision: null,
+          outcome: "success",
+          category: "http_204",
+          responseStatus: 204,
+          message: "delivered",
+          durableState: "no_delivery_created_no_configuration_change",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "apply the tested form",
+        }),
+      });
+    },
+  );
+  await page.route(
+    "**/api/configuration/revisions/*/objects/webhooks",
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          revisionId: "notification-active-rev-e2e-003",
+          version: 5,
+          revisionSequence: 4,
+          status: "active",
+          publishedFromRevisionId: "notification-active-rev-e2e-001",
+          publishedFromVersion: 3,
+          digest: "operator-hidden",
+          webhook: {
+            id: "new-webhook",
+            url: "https://example.invalid/hooks/new",
+            events: ["task.completed"],
+            enabled: true,
+            secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
+          },
+        }),
+      });
+    },
+  );
+
   await connect(page);
   await openNotifications(page);
-  await page.getByRole("button", { name: "创建后继草稿" }).click();
-  await expect(page.getByText(/草稿 · 版本/)).toBeVisible();
   await page.getByRole("link", { name: "新建 Webhook" }).click();
   await expect(page).toHaveURL(/\/operations\/notifications\/webhooks\/new$/);
-  await expect(
-    page.getByRole("button", { name: "读取最新草稿状态" }),
-  ).toBeVisible();
-  // The canonical deployment-owned secret reference is accepted; no secret
-  // value is ever requested or stored.
-  await page.getByLabel("标识符").fill("created-webhook");
+  await page.getByLabel("标识符").fill("new-webhook");
   await page
     .getByLabel("HTTPS 接收地址")
-    .fill("https://example.invalid/hooks/created");
+    .fill("https://example.invalid/hooks/new");
   await page.getByLabel("密钥环境变量引用").fill("MEDIAFLOW_WEBHOOK_SECRET");
-  await page.getByRole("checkbox", { name: /task\.completed/ }).check();
-  await page.getByRole("button", { name: "保存到草稿" }).click();
-  await expect(page).toHaveURL(
-    /\/operations\/notifications\/webhooks\/created-webhook$/,
-  );
-  await expect(
-    page.getByRole("heading", { name: "Webhook created-webhook" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("dialog").getByText("仅草稿", { exact: true }),
-  ).toBeVisible();
-
-  const evidence = await notificationsEvidence(page);
-  const creates = evidence.items.filter(
-    (item) => item.objectType === "notification_webhook_create",
-  );
-  expect(creates).toHaveLength(1);
-  // The evidence body is bounded; the created identity travels as objectId.
-  expect(creates[0].objectId).toBe("created-webhook");
-  expect(creates[0].body).toMatchObject({ expectedVersion: 4 });
-  expect(JSON.stringify(evidence.items)).not.toMatch(
-    /Bearer |digest|X-MediaFlow-Signature/i,
-  );
-});
-
-test("an authorized operator copies a definition and toggles it inside the Draft", async ({
-  page,
-}) => {
-  await connect(page);
-  await openNotifications(page);
-  await page.getByRole("button", { name: "创建后继草稿" }).click();
-  await page.getByRole("link", { name: "查看定义" }).click();
-  await expect(page).toHaveURL(
-    new RegExp(`/operations/notifications/webhooks/${WEBHOOK_ID}$`),
-  );
-  await page.getByRole("button", { name: "复制到草稿" }).click();
-  await expect(page).toHaveURL(
-    /\/operations\/notifications\/webhooks\/ops-webhook-copy$/,
-  );
-  await expect(
-    page.getByRole("heading", { name: "Webhook ops-webhook-copy" }),
-  ).toBeVisible();
-  const refreshed = page.waitForResponse(
-    (response) =>
-      response.request().method() === "GET" &&
-      response
-        .url()
-        .endsWith("/operations/notifications/webhooks/ops-webhook-copy"),
-  );
-  await page.getByRole("button", { name: "在草稿中启用" }).click();
-  // The page refreshes to the durable Draft truth before the next exact
-  // optimistic mutation, so the disable submits the refetched version fence.
-  await refreshed;
-  await page.getByRole("button", { name: "在草稿中停用" }).click();
-
-  const evidence = await notificationsEvidence(page);
-  for (const kind of ["copy", "enable", "disable"]) {
-    const actions = evidence.items.filter(
-      (item) => item.objectType === `notification_webhook_${kind}`,
-    );
-    expect(actions).toHaveLength(1);
-  }
-  // The copy is bound to the reviewed source identity; the toggles act on the
-  // copied definition inside the same open Draft.
-  const copyAction = evidence.items.find(
-    (item) => item.objectType === "notification_webhook_copy",
-  );
-  expect(copyAction?.body).toMatchObject({ webhookId: WEBHOOK_ID });
-  const enableAction = evidence.items.find(
-    (item) => item.objectType === "notification_webhook_enable",
-  );
-  expect(enableAction?.body).toMatchObject({
-    webhookId: "ops-webhook-copy",
-    expectedVersion: 5,
-  });
-  const disableAction = evidence.items.find(
-    (item) => item.objectType === "notification_webhook_disable",
-  );
-  expect(disableAction?.body).toMatchObject({
-    webhookId: "ops-webhook-copy",
-    expectedVersion: 6,
-  });
-  expect(JSON.stringify(evidence.items)).not.toMatch(/digest|Bearer /i);
-});
-
-test("a wrong-object success document never renders as a completed mutation", async ({
-  page,
-}) => {
-  // The hostile fake answers mutations with success documents about another
-  // Webhook and another delivery; the V2 client must refuse to render them.
-  await page.request.post("/__test__/reset-notifications?hostile=1");
-  await connect(page);
-  await openNotifications(page);
-  // The Draft is staged before the definition detail is ever read, so the
-  // journey reads the exact durable Draft state without a stale cache.
-  await page.getByRole("button", { name: "创建后继草稿" }).click();
-  await page.getByRole("link", { name: "查看定义" }).first().click();
+  await page.getByRole("checkbox").first().check();
+  await expect(page.getByRole("button", { name: "应用更改" })).toBeDisabled();
   await page.getByRole("button", { name: "发送签名测试" }).click();
-  await expect(page.getByText(/测试结果未知/)).toBeVisible();
-  await expect(page.getByText(/测试成功/)).toHaveCount(0);
-  await closeCard(page);
-
-  // The create success document answers for another revision: the journey
-  // stays on the form and never opens a definition as created.
-  await page.getByRole("link", { name: "新建 Webhook" }).click();
-  await page.getByLabel("标识符").fill("created-webhook");
-  await page
-    .getByLabel("HTTPS 接收地址")
-    .fill("https://example.invalid/hooks/created");
-  await page.getByLabel("密钥环境变量引用").fill("MEDIAFLOW_WEBHOOK_SECRET");
-  await page.getByRole("checkbox", { name: /task\.completed/ }).check();
-  await page.getByRole("button", { name: "保存到草稿" }).click();
-  await expect(page.getByText(/命令结果未知/)).toBeVisible();
-  await expect(page).toHaveURL(/\/webhooks\/new$/);
-  await expect(
-    page.getByRole("heading", { name: "Webhook created-webhook" }),
-  ).toHaveCount(0);
-  await closeCard(page);
-
-  // The copy success document answers for an unrelated definition: the
-  // detail page stays on the reviewed source identity. A stale optimistic
-  // fence is also never rendered as success.
-  await page.getByRole("link", { name: "查看定义" }).first().click();
-  await page.getByRole("button", { name: "复制到草稿" }).click();
-  await expect(
-    page.getByText(/命令结果未知|草稿在动作执行前已经变化/),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: `Webhook ${WEBHOOK_ID}` }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", {
-      name: "Webhook operations-webhook-copy-malicious",
-    }),
-  ).toHaveCount(0);
-  await closeCard(page);
-
-  await page.getByRole("link", { name: "查看投递记录" }).click();
-  await page.getByRole("link", { name: "查看投递" }).first().click();
-  await page.getByLabel("我确认重新入队这条精确的死信投递").check();
-  await page.getByRole("button", { name: "重新入队死信投递" }).click();
-  await expect(page.getByText(/命令结果未知/)).toBeVisible();
-  // The delivery itself stays on its truthful dead-letter state.
-  await expect(
-    page.getByRole("dialog").getByText("死信", { exact: true }),
-  ).toBeVisible();
-});
-
-test("a split-identity activation success document never renders as success", async ({
-  page,
-}) => {
-  // The hostile fake answers the checked activation with an Active identity
-  // that differs from the exact reviewed Draft identity; the V2 client must
-  // refuse to render it and must never replay the activation.
-  await page.request.post("/__test__/reset-notifications?hostile=1");
-  await connect(page);
-  await openNotifications(page);
-  await page.getByRole("button", { name: "创建后继草稿" }).click();
-  await page.getByRole("link", { name: "查看定义" }).click();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "编辑草稿" })
-    .click();
-  // The checked activation is only offered for a validated Draft: validate
-  // the freshly staged successor Draft first.
-  await page.getByRole("button", { name: "检查草稿", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "草稿检查通过" }),
-  ).toBeVisible();
-  await page.getByLabel("我确认把当前已检查的草稿发布为新的已生效配置").check();
-  await page
-    .getByRole("button", { name: "发布已检查草稿", exact: true })
-    .click();
-  await expect(page.getByText(/命令结果未知/)).toBeVisible();
-  // The rejected activation is never replayed and nothing was activated.
+  await expect(page.getByText(/签名测试成功/)).toBeVisible();
+  await page.getByRole("button", { name: "应用更改" }).click();
   await expect(page).toHaveURL(
-    new RegExp(`/operations/notifications/editor/${WEBHOOK_ID}$`),
+    new RegExp(`/operations/notifications/webhooks/new-webhook$`),
   );
-
-  const evidence = await notificationsEvidence(page);
-  const activations = evidence.items.filter(
-    (item) => item.objectType === "notification_webhook_activation",
-  );
-  expect(activations).toHaveLength(1);
-  expect(activations[0].body).toMatchObject({
-    expectedRevisionId: DRAFT_REVISION,
-  });
+  expect(mutations.filter((item) => item.includes("/test"))).toHaveLength(1);
+  expect(
+    mutations.filter((item) =>
+      /\/validate|\/activate|successor|\/draft/.test(item),
+    ),
+  ).toEqual([]);
 });
 
 test("the delivery list filters dead letters and the detail card requeues with explicit confirmation", async ({

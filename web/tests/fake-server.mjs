@@ -4984,31 +4984,17 @@ function webhookDocument(state, token, overrides = {}) {
       revisionSequence: state.activated ? 4 : 2,
       status: "active",
     },
-    draftState: state.draftCreated
-      ? {
-          present: true,
-          reason: null,
-          revisionId: NOTIFICATION_DRAFT_REVISION,
-          revisionVersion: state.draftVersion,
-          revisionStatus: state.draftStatus,
-          baseActiveRevisionId: NOTIFICATION_ACTIVE_REVISION,
-          updatedAt: MANUAL_RECORDED_AT,
-          validatedAt:
-            state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
-          validationErrors: [],
-        }
-      : {
-          present: false,
-          reason:
-            "no open successor Draft contains this Webhook definition; create one to edit it",
-          revisionId: null,
-          revisionVersion: null,
-          revisionStatus: null,
-          baseActiveRevisionId: null,
-          updatedAt: null,
-          validatedAt: null,
-          validationErrors: [],
-        },
+    draftState: {
+      present: false,
+      reason: "definitions are published directly; no draft exists",
+      revisionId: null,
+      revisionVersion: null,
+      revisionStatus: null,
+      baseActiveRevisionId: null,
+      updatedAt: null,
+      validatedAt: null,
+      validationErrors: [],
+    },
     actions: webhookActions(state, token, id),
   };
   if (overrides.definitionState !== undefined) {
@@ -5023,11 +5009,7 @@ function webhookDocument(state, token, overrides = {}) {
 function webhookActions(state, token, webhookId = NOTIFICATION_WEBHOOK_ID) {
   const { manage, activate } = notificationPermissions(token);
   const operationsRoute = `/api/operations/notifications/webhooks/${webhookId}`;
-  const editPath = state.draftCreated
-    ? `/api/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/objects/webhooks/${webhookId}`
-    : null;
-  const noDraft =
-    "an open successor Draft is required to edit this Webhook definition";
+  const editPath = `/api/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/objects/webhooks/${webhookId}`;
   return {
     detail: notificationAction({
       available: true,
@@ -5049,80 +5031,58 @@ function webhookActions(state, token, webhookId = NOTIFICATION_WEBHOOK_ID) {
         "test the exact displayed revision after reviewing its endpoint and secret readiness",
     }),
     edit: notificationAction({
-      available: manage && state.draftCreated,
-      reason: manage
-        ? state.draftCreated
-          ? null
-          : noDraft
-        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
-      method: "PUT",
-      path: editPath,
-      durableOutcome:
-        "the bounded definition form is stored in the open successor Draft at a new optimistic revision version",
-      nextAction:
-        "save the bounded form, then validate and explicitly activate",
-    }),
-    copy: notificationAction({
-      available: manage && state.draftCreated,
-      reason: manage
-        ? state.draftCreated
-          ? null
-          : noDraft
-        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
-      path: editPath === null ? null : `${editPath}/copy`,
-      durableOutcome:
-        "a copied, disabled Webhook definition is stored inside the open successor Draft",
-      nextAction:
-        "open the copied definition, edit it, then validate and activate",
-    }),
-    enable: notificationAction({
-      available: manage && state.draftCreated,
-      reason: manage
-        ? state.draftCreated
-          ? null
-          : noDraft
-        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
-      path: editPath === null ? null : `${editPath}/enable`,
-      durableOutcome:
-        "the definition is enabled inside the open successor Draft only",
-      nextAction: "review the Draft, validate it, then explicitly activate",
-    }),
-    disable: notificationAction({
-      available: manage && state.draftCreated,
-      reason: manage
-        ? state.draftCreated
-          ? null
-          : noDraft
-        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
-      path: editPath === null ? null : `${editPath}/disable`,
-      durableOutcome:
-        "the definition is disabled inside the open successor Draft only",
-      nextAction: "review the Draft, validate it, then explicitly activate",
-    }),
-    draftCreate: notificationAction({
       available: manage,
       reason: manage
         ? null
         : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
-      path: `/api/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor`,
+      method: "PUT",
+      path: editPath,
       durableOutcome:
-        "a successor Draft seeded from the immutable Active configuration is stored",
-      nextAction:
-        "create or open the successor Draft, then add or edit Webhook definitions inside it",
+        "the bounded definition is validated and published as the new Active",
+      nextAction: "apply the tested form; it becomes effective immediately",
+    }),
+    copy: notificationAction({
+      available: manage,
+      reason: manage
+        ? null
+        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
+      path: `${editPath}/copy`,
+      durableOutcome: "a copied, disabled definition is published directly",
+      nextAction: "open the copied definition, test it, then apply",
+    }),
+    enable: notificationAction({
+      available: manage,
+      reason: manage
+        ? null
+        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
+      path: `${editPath}/enable`,
+      durableOutcome: "the definition is enabled in the new Active snapshot",
+      nextAction: "test the current form, then apply the enabled definition",
+    }),
+    disable: notificationAction({
+      available: manage,
+      reason: manage
+        ? null
+        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
+      path: `${editPath}/disable`,
+      durableOutcome: "the definition is disabled in the new Active snapshot",
+      nextAction: "apply the disabled definition",
+    }),
+    draftCreate: notificationAction({
+      available: false,
+      reason: "definitions are published directly; no draft exists",
+      path: null,
+      durableOutcome: "none",
+      nextAction: "apply the Webhook form",
     }),
     activate: notificationAction({
-      available: activate && state.draftCreated,
-      reason: activate
-        ? state.draftCreated
-          ? null
-          : noDraft
-        : "the connected API principal cannot activate configuration (required permission: activate_configuration)",
-      path: `${operationsRoute}/activate-draft`,
+      available: false,
+      reason:
+        "the definition is already Active; applying publishes a new snapshot",
+      path: null,
       requiresConfirmation: true,
-      durableOutcome:
-        "the exact reviewed Webhook-only Draft change becomes the immutable Active configuration; no delivery is created",
-      nextAction:
-        "activate the reviewed Draft after validating it; the resulting Active identity is reported without a digest",
+      durableOutcome: "none",
+      nextAction: "apply the tested form",
     }),
   };
 }
@@ -5178,31 +5138,17 @@ function notificationListDocument(state, token) {
     ],
     total: 1 + (state.createdWebhook ? 1 : 0) + (state.copiedWebhook ? 1 : 0),
     truncated: false,
-    draftState: state.draftCreated
-      ? {
-          present: true,
-          reason: null,
-          revisionId: NOTIFICATION_DRAFT_REVISION,
-          revisionVersion: state.draftVersion,
-          revisionStatus: state.draftStatus,
-          baseActiveRevisionId: NOTIFICATION_ACTIVE_REVISION,
-          updatedAt: MANUAL_RECORDED_AT,
-          validatedAt:
-            state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
-          validationErrors: [],
-        }
-      : {
-          present: false,
-          reason:
-            "no open successor Draft exists; create one to add or edit Webhook definitions",
-          revisionId: null,
-          revisionVersion: null,
-          revisionStatus: null,
-          baseActiveRevisionId: null,
-          updatedAt: null,
-          validatedAt: null,
-          validationErrors: [],
-        },
+    draftState: {
+      present: false,
+      reason: "definitions are published directly; no draft exists",
+      revisionId: null,
+      revisionVersion: null,
+      revisionStatus: null,
+      baseActiveRevisionId: null,
+      updatedAt: null,
+      validatedAt: null,
+      validationErrors: [],
+    },
     supportedEvents: [
       "task.completed",
       "task.failed",
@@ -5211,30 +5157,22 @@ function notificationListDocument(state, token) {
     ],
     actions: {
       create: notificationAction({
-        available: notificationPermissions(token).manage && state.draftCreated,
-        reason:
-          notificationPermissions(token).manage && state.draftCreated
-            ? null
-            : "an open successor Draft is required to add a Webhook definition",
-        method: "POST",
-        path: state.draftCreated
-          ? `/api/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/objects/webhooks`
-          : null,
-        durableOutcome:
-          "the bounded Webhook definition is stored inside the open successor Draft",
-        nextAction:
-          "start or open a successor Draft, then create the definition inside it",
-      }),
-      createDraft: notificationAction({
         available: notificationPermissions(token).manage,
         reason: notificationPermissions(token).manage
           ? null
-          : "the connected API principal cannot create a successor Draft (required permission: manage_configuration)",
-        path: `/api/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor`,
+          : "the connected API principal cannot create Webhook Definitions",
+        method: "POST",
+        path: `/api/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/objects/webhooks`,
         durableOutcome:
-          "a successor Draft seeded from the immutable Active configuration is stored",
-        nextAction:
-          "create or open the successor Draft, then add or edit Webhook definitions inside it",
+          "the bounded Webhook definition is validated and published as the new Active",
+        nextAction: "apply the tested definition",
+      }),
+      createDraft: notificationAction({
+        available: false,
+        reason: "definitions are published directly; no draft exists",
+        path: null,
+        durableOutcome: "none",
+        nextAction: "apply the tested definition",
       }),
     },
   };
@@ -17119,6 +17057,107 @@ const server = createServer(async (req, res) => {
         return;
       }
       sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+
+    if (
+      url.pathname === "/api/system/settings/reconcile" &&
+      req.method === "GET"
+    ) {
+      const submissionId = url.searchParams.get("submissionId") ?? "";
+      const committed =
+        state.lastSubmission !== undefined &&
+        state.lastSubmission.submissionId === submissionId;
+      sendJson(res, 200, {
+        state: committed ? "COMMITTED" : "NOT_COMMITTED",
+        committed,
+        submissionId,
+        committedRevisionId: committed ? state.lastSubmission.revisionId : null,
+        current: settingsProjection(state, state.active.revisionId, true),
+        nextAction: committed
+          ? "this exact submission is the current published target"
+          : "this exact submission terminated without publishing; apply again deliberately",
+        sideEffects: "none",
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/system/settings" && req.method === "PUT") {
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) return;
+      const document = parsed.document ?? {};
+      const edits = document.edits;
+      const valid = settingsEditsValid(edits);
+      if (!valid.ok) {
+        sendJson(res, 422, {
+          error: {
+            code: "system_settings_invalid",
+            message: valid.error,
+            details: {
+              errors: [{ field: "edits", message: valid.error }],
+              durableState: "active_preserved",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "correct invalid settings values and submit again",
+            },
+          },
+        });
+        return;
+      }
+      if (
+        (document.expectedActiveRevisionId !== undefined &&
+          document.expectedActiveRevisionId !== state.active.revisionId) ||
+        (document.expectedActiveVersion !== undefined &&
+          document.expectedActiveVersion !== state.active.revisionSequence) ||
+        (document.expectedActiveDigest !== undefined &&
+          document.expectedActiveDigest !== state.active.digest)
+      ) {
+        sendJson(res, 409, {
+          error: {
+            code: "configuration_version_conflict",
+            message: "Active changed",
+            details: {
+              revisionId: state.active.revisionId,
+              currentVersion: state.active.revisionSequence,
+              durableState: "active_preserved",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction:
+                "reload configuration status, then apply the change again",
+            },
+          },
+        });
+        return;
+      }
+      state.values = applySettingsEdits(state.values, edits);
+      state.active = {
+        revisionId: `settings-active-${state.active.revisionSequence + 1}`,
+        version: state.active.version + 1,
+        revisionSequence: state.active.revisionSequence + 1,
+        digest: `settings-digest-${state.active.revisionSequence + 1}`,
+      };
+      state.lastSubmission = {
+        submissionId:
+          typeof document.submissionId === "string"
+            ? document.submissionId
+            : null,
+        revisionId: state.active.revisionId,
+      };
+      if (state.saveFail === "unknown") {
+        req.socket.destroy();
+        return;
+      }
+      sendJson(res, 200, {
+        ...settingsProjection(state, state.active.revisionId, true),
+        published: true,
+        status: "active",
+        consumption: {
+          consumed: true,
+          revisionId: state.active.revisionId,
+          hotConsumedFields: [],
+          restartRequiredFields: ["locale"],
+        },
+      });
       return;
     }
 
