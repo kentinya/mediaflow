@@ -3,7 +3,9 @@ import {
   expect,
   test,
   type APIRequestContext,
+  type APIResponse,
   type Locator,
+  type Response as PlaywrightResponse,
   type Page,
 } from "@playwright/test";
 
@@ -114,6 +116,8 @@ type NativeRecoveryKind =
   | "conflict"
   | "conflict_overwrite";
 
+type NativeConfirmationScenario = "normal" | "late" | "explicit" | "race";
+
 type NativeRecoverySeed = {
   readonly runId: string;
   readonly taskId: string;
@@ -126,9 +130,12 @@ type NativeRecoverySeed = {
 async function seedNativeRecovery(
   request: APIRequestContext,
   kind: NativeRecoveryKind,
+  variant?: string,
 ): Promise<NativeRecoverySeed> {
+  const query = new URLSearchParams({ kind });
+  if (variant !== undefined) query.set("variant", variant);
   const response = await request.post(
-    `${BASE}/__harness__/seed-task-item-recovery?kind=${kind}`,
+    `${BASE}/__harness__/seed-task-item-recovery?${query.toString()}`,
   );
   expect(response.ok()).toBeTruthy();
   return (await response.json()) as NativeRecoverySeed;
@@ -138,6 +145,7 @@ async function openNativeRecovery(
   page: Page,
   seeded: NativeRecoverySeed,
 ): Promise<void> {
+  await page.setViewportSize({ width: 1280, height: 720 });
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
   const view = seeded.sourcePath.startsWith("Classification")
@@ -241,12 +249,180 @@ async function chooseNativeRecoveryDecision(
   }
 }
 
+/** Confirm one real native summary, including its lost-response recovery. */
+async function confirmNativeRecovery(
+  page: Page,
+  request: APIRequestContext,
+  recovery: Locator,
+  confirm: Locator,
+  seeded: NativeRecoverySeed,
+  scenario: NativeConfirmationScenario,
+): Promise<void> {
+  const executePath = /\/api\/operations\/organize\/previews\/[^/]+\/execute$/;
+  if (scenario === "normal") {
+    const confirmResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        executePath.test(new URL(response.url()).pathname),
+    );
+    await confirm.click();
+    const confirmed = await confirmResponse;
+    expect(confirmed.status()).toBe(202);
+    const confirmation = (await confirmed.json()) as {
+      readonly taskId: string;
+      readonly executionId: string;
+    };
+    expect(confirmation.taskId).toBe(seeded.taskId);
+    await expect(
+      recovery.getByText(/已受理 1 项；常驻 Worker 将执行已确认的精确子集/),
+    ).toBeVisible();
+    return;
+  }
+
+  let admissionReads = 0;
+  const onAdmission = (response: PlaywrightResponse) => {
+    const url = new URL(response.url());
+    if (
+      response.request().method() === "GET" &&
+      /\/api\/operations\/organize\/previews\/[^/]+\/admission$/.test(
+        url.pathname,
+      )
+    ) {
+      admissionReads += 1;
+    }
+  };
+  page.on("response", onAdmission);
+  const executionIds = async (): Promise<string[]> => {
+    const state = (await (
+      await request.get(
+        `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+      )
+    ).json()) as { readonly executionIds: string[] };
+    return state.executionIds;
+  };
+  let executeAttempts = 0;
+  let originalUpstream: Promise<APIResponse | null> | null = null;
+  // Reading through a closure keeps the declared type at the assertion site:
+  // TypeScript cannot see that the route handler already assigned it.
+  const upstream = (): Promise<APIResponse | null> | null => originalUpstream;
+  let markSecondStarted: (() => void) | undefined;
+  let releaseSecond: (() => void) | undefined;
+  const secondStarted = new Promise<void>((resolve) => {
+    markSecondStarted = resolve;
+  });
+  const secondMayContinue = new Promise<void>((resolve) => {
+    releaseSecond = resolve;
+  });
+  if (scenario === "late" || scenario === "race") {
+    const armed = await request.post(
+      `${BASE}/__harness__/arm-execute-admission`,
+    );
+    expect(armed.ok()).toBeTruthy();
+  }
+  await page.route(executePath, async (route) => {
+    executeAttempts += 1;
+    if (scenario === "explicit" && executeAttempts === 1) {
+      // This request never reaches the real service. The browser still has
+      // the exact retained identity and may explicitly confirm it later.
+      await route.abort("failed");
+      return;
+    }
+    if (executeAttempts === 1) {
+      originalUpstream = route.fetch().catch(() => null);
+      await expect
+        .poll(async () => {
+          const state = await (
+            await request.get(`${BASE}/__harness__/execute-admission-state`)
+          ).json();
+          return state.reached;
+        })
+        .toBe(true);
+      // The real request is paused before admission; only its browser response
+      // is lost. Separate admission GETs can now prove there is no record yet.
+      await route.abort("connectionreset");
+      return;
+    }
+    if (scenario === "race") {
+      markSecondStarted?.();
+      await secondMayContinue;
+    }
+    await route.continue();
+  });
+  const secondResponse =
+    scenario === "late"
+      ? null
+      : page.waitForResponse(
+          (response) =>
+            response.request().method() === "POST" &&
+            executePath.test(new URL(response.url()).pathname),
+        );
+
+  try {
+    await confirm.click();
+    await expect
+      .poll(() => admissionReads, { timeout: 10_000 })
+      .toBeGreaterThanOrEqual(2);
+    expect(await executionIds()).toHaveLength(0);
+    await expect(recovery.getByText(/本次确认暂未确认/)).toBeVisible();
+    await expect(recovery.getByText(/本次确认未获受理/)).toHaveCount(0);
+    expect(executeAttempts).toBe(1);
+    const sameBatch = recovery.getByRole("button", {
+      name: "确认同一批（1 项）",
+    });
+    await expect(sameBatch).toBeEnabled();
+
+    if (scenario === "late") {
+      await request.post(`${BASE}/__harness__/release-execute-admission`);
+      await expect.poll(executionIds).toHaveLength(1);
+      const original = await upstream();
+      if (original !== null) expect(original.status()).toBe(202);
+    } else {
+      if (scenario === "race") {
+        await sameBatch.click();
+        await secondStarted;
+        // Let the delayed original win before the explicit request reaches
+        // admission. The backend must fold/refuse the loser without a second
+        // durable execution, and the panel must reconcile either response.
+        await request.post(`${BASE}/__harness__/release-execute-admission`);
+        await expect.poll(executionIds).toHaveLength(1);
+        const original = await upstream();
+        if (original !== null) expect(original.status()).toBe(202);
+        releaseSecond?.();
+      } else {
+        await sameBatch.click();
+      }
+      const response = await secondResponse!;
+      expect([202, 409]).toContain(response.status());
+      if (response.status() === 202) {
+        expect(await response.json()).toMatchObject({ taskId: seeded.taskId });
+      }
+      await expect.poll(executionIds).toHaveLength(1);
+    }
+
+    await expect(
+      recovery.getByText(/本次确认已经受理|已受理 1 项；常驻 Worker/),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(new RegExp(`run=${seeded.taskId}`));
+    await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+    expect(await executionIds()).toHaveLength(1);
+    expect(executeAttempts).toBe(scenario === "late" ? 1 : 2);
+  } finally {
+    if (scenario === "late" || scenario === "race") {
+      await request.post(`${BASE}/__harness__/release-execute-admission`);
+    }
+    releaseSecond?.();
+    await page.unroute(executePath);
+    page.off("response", onAdmission);
+  }
+}
+
 async function finishNativeRecovery(
   page: Page,
   request: APIRequestContext,
   recovery: Locator,
   seeded: NativeRecoverySeed,
   kind: NativeRecoveryKind,
+  confirmationScenario: NativeConfirmationScenario,
 ): Promise<void> {
   const analysis = await (
     await request.post(
@@ -302,7 +478,7 @@ async function finishNativeRecovery(
   await expect(confirm).toBeVisible();
   mkdirSync("test-results/PATCH-20261111-2", { recursive: true });
   await page.screenshot({
-    path: `test-results/PATCH-20261111-2/${kind}.png`,
+    path: `test-results/PATCH-20261111-2/${kind}-${confirmationScenario}.png`,
     fullPage: true,
     animations: "disabled",
   });
@@ -315,27 +491,15 @@ async function finishNativeRecovery(
       .check();
     await expect(confirm).toBeEnabled();
   }
-  const confirmResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      /\/api\/operations\/organize\/previews\/[^/]+\/execute$/.test(
-        new URL(response.url()).pathname,
-      ),
+  await confirmNativeRecovery(
+    page,
+    request,
+    recovery,
+    confirm,
+    seeded,
+    confirmationScenario,
   );
-  await confirm.click();
-  const confirmed = await confirmResponse;
-  expect(confirmed.status()).toBe(202);
-  const confirmation = (await confirmed.json()) as {
-    readonly taskId: string;
-    readonly executionId: string;
-  };
-  expect(confirmation.taskId).toBe(seeded.taskId);
-  // The operator stays in the exact Task detail that confirmed the subset:
-  // the refreshed panel states the accepted admission, and the real queue/
-  // execution state is read here instead of a separate execution page.
-  await expect(
-    recovery.getByText(/已受理 1 项；常驻 Worker 将执行已确认的精确子集/),
-  ).toBeVisible();
+  // The operator stays in the exact Task detail that confirmed the subset.
   await expect(page).not.toHaveURL(/organize\/execution/);
   const worker = await (
     await request.post(`${BASE}/__harness__/run-manual-worker`)
@@ -350,6 +514,10 @@ async function finishNativeRecovery(
   expect(state.sourceExists).toBe(false);
   expect(state.sourceResultHistory.length).toBeGreaterThan(0);
   expect(state.sourceResultHistory.at(-1).status).toBe("SUCCESS");
+  if (confirmationScenario !== "normal") {
+    expect(state.executionIds).toHaveLength(1);
+    expect(state.sourceResultHistory).toHaveLength(1);
+  }
   if (kind === "conflict") {
     expect(state.conflictTargetPreserved).toBe(true);
   }
@@ -363,8 +531,12 @@ async function runNativeRecoveryJourney(
   request: APIRequestContext,
   kind: NativeRecoveryKind,
   heading: RegExp,
+  options: {
+    readonly variant?: string;
+    readonly confirmation?: NativeConfirmationScenario;
+  } = {},
 ): Promise<NativeRecoverySeed> {
-  const seeded = await seedNativeRecovery(request, kind);
+  const seeded = await seedNativeRecovery(request, kind, options.variant);
   await openNativeRecovery(page, seeded);
   const recovery = page
     .getByRole("dialog", { name: "运行详情" })
@@ -435,7 +607,15 @@ async function runNativeRecoveryJourney(
     await expect(recovery.getByText("继续此条目的安全分析")).toHaveCount(0);
     await page.setViewportSize({ width: 1280, height: 720 });
   }
-  await finishNativeRecovery(page, request, recovery, seeded, kind);
+  const confirmationScenario = options.confirmation ?? "normal";
+  await finishNativeRecovery(
+    page,
+    request,
+    recovery,
+    seeded,
+    kind,
+    confirmationScenario,
+  );
   expect(
     calls.filter(
       (call) =>
@@ -450,6 +630,15 @@ async function runNativeRecoveryJourney(
   ).toHaveLength(1);
   if (kind === "metadata_correction") {
     expect(metadataSearches).toHaveLength(1);
+  }
+  if (confirmationScenario !== "normal") {
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "POST" &&
+          /\/operations\/organize\/previews\/[^/]+\/execute$/.test(call.path),
+      ),
+    ).toHaveLength(confirmationScenario === "late" ? 1 : 2);
   }
   return seeded;
 }
@@ -3988,7 +4177,7 @@ test("PATCH-20261111-2 native Metadata correction searches explicitly before the
   );
 });
 
-test("PATCH-20261111-2 native Classification recovery keeps the same Task through summary and effect", async ({
+test("PATCH-20261120-3 native Classification recovery reconciles a late original admission", async ({
   page,
   request,
 }) => {
@@ -3997,6 +4186,33 @@ test("PATCH-20261111-2 native Classification recovery keeps the same Task throug
     request,
     "classification",
     /待处理的分类决策/,
+    { variant: "Late", confirmation: "late" },
+  );
+});
+
+test("PATCH-20261120-3 native Classification recovery explicitly confirms a request that never arrived", async ({
+  page,
+  request,
+}) => {
+  await runNativeRecoveryJourney(
+    page,
+    request,
+    "classification",
+    /待处理的分类决策/,
+    { variant: "Explicit", confirmation: "explicit" },
+  );
+});
+
+test("PATCH-20261120-3 native Classification recovery admits one execution when the late original races an explicit confirmation", async ({
+  page,
+  request,
+}) => {
+  await runNativeRecoveryJourney(
+    page,
+    request,
+    "classification",
+    /待处理的分类决策/,
+    { variant: "Race", confirmation: "race" },
   );
 });
 

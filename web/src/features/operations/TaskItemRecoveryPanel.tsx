@@ -4,7 +4,6 @@ import { useAuthToken } from "../../shared/api/auth-context";
 import {
   continueTaskItemAnalysis,
   executeOrganizePreview,
-  fetchOrganizeAdmissionOutcome,
   ignoreTaskItemReview,
   type OrganizeAdmissionOutcomeRead,
   prepareTaskItemRecoverySummary,
@@ -24,6 +23,7 @@ import {
   taskItemRecoveryQueryOptions,
 } from "./run-detail-query";
 import { runOverviewQueryKey, runOverviewQueryOptions } from "./run-query";
+import { organizePreviewQueryOptions } from "./organize-query";
 import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import {
   organizeDiscoveryQueryKey,
@@ -38,6 +38,7 @@ import {
   beginTaskItemRecoveryConfirmationRetention,
   clearTaskItemRecoveryConfirmation,
   readTaskItemRecoveryConfirmation,
+  type RetainedTaskItemRecoveryConfirmation,
 } from "./task-item-recovery-confirmation-session";
 import {
   useOrganizeAdmissionWatchGroup,
@@ -172,6 +173,23 @@ function outcomeMessage(code: string, status: number): string {
 
 function isUnknown(status: number, code: string): boolean {
   return status === 0 || status >= 500 || code === "malformed_response";
+}
+
+const AMBIGUOUS_CONFIRMATION_CODES = new Set([
+  "admission_changed",
+  "authorization_consumed",
+  "concurrent_execution",
+  "duplicate_execution",
+  "intent_stale",
+  "item_stale",
+  "preparation_stale",
+  "scope_changed",
+  "source_superseded",
+  "stale_checkpoint",
+]);
+
+function isAmbiguousConfirmation(status: number, code: string): boolean {
+  return !isUnknown(status, code) && AMBIGUOUS_CONFIRMATION_CODES.has(code);
 }
 
 function candidateSummary(value: {
@@ -485,6 +503,17 @@ export function TaskItemRecoveryPanel({
             checkpointVersion: preparation.checkpointVersion,
           }
         : null;
+  const confirmationPreviewQuery = useQuery(
+    organizePreviewQueryOptions(
+      token,
+      activePreparation?.previewId ?? "",
+      activePreparation !== null,
+    ),
+  );
+  const confirmationPreview =
+    confirmationPreviewQuery.data?.ok === true
+      ? confirmationPreviewQuery.data.model
+      : null;
   const confirmedPreparation =
     durablePreparation?.status === "confirmed" &&
     durablePreparation.executionId !== null
@@ -690,7 +719,6 @@ export function TaskItemRecoveryPanel({
   const handleConfirmationOutcome = (
     _entry: OrganizeAdmissionWatchEntry,
     outcome: OrganizeAdmissionOutcomeRead,
-    attempt: number,
   ) => {
     if (principalIdentity.resolved !== true) return;
     const confirmed = submittedConfirmation;
@@ -711,25 +739,15 @@ export function TaskItemRecoveryPanel({
       refreshLinkedReads();
       return;
     }
-    if (model.outcome === "not_admitted" && attempt >= 2) {
-      // The first no-record answer may precede the original POST's commit.
-      // Two successful reads, after the submit itself settled, are the
-      // bounded absence evidence that makes an explicit confirmation safe;
-      // the backend's atomic admission still deduplicates any race.
-      clearTaskItemRecoveryConfirmation(
-        principal,
-        { runId, taskId, itemId },
-        confirmed,
-      );
-      const samePreparedSummary =
-        durablePreparation?.preparationId === confirmed.preparationId &&
-        durablePreparation.status === "prepared";
+    if (model.outcome === "not_admitted") {
+      // This read may precede the original POST's durable commit. Keep the
+      // exact request and the existing backoff: only a matching admission
+      // settles it automatically, while a current summary may offer one
+      // explicit confirmation of the same batch after repeated no-record reads.
       updateRecoverySession({
-        repeatLocked: false,
-        submittedConfirmation: null,
-        message: samePreparedSummary
-          ? "本次确认未获受理；已读回同一计划摘要，可重新检查后再次确认。 "
-          : "本次确认未获受理；当前计划摘要已变化，请按当前状态继续。 ",
+        repeatLocked: true,
+        message:
+          "本次确认暂未确认；原摘要、版本和选择仍保留，系统会继续只读核对，不会自动重发。 ",
       });
       return;
     }
@@ -769,6 +787,28 @@ export function TaskItemRecoveryPanel({
     (confirmationWatchState === null ||
       (!confirmationWatchState.exhausted &&
         confirmationWatchState.phase !== "not_equivalent"));
+  const retainedSummaryMatches =
+    submittedConfirmation !== null &&
+    activePreparation !== null &&
+    activePreparation.status === "prepared" &&
+    activePreparation.preparationId === submittedConfirmation.preparationId &&
+    activePreparation.previewId === submittedConfirmation.previewId &&
+    activePreparation.intentVersion ===
+      submittedConfirmation.expectedIntentVersion &&
+    confirmationPreview?.current === true &&
+    confirmationPreview.previewId === submittedConfirmation.previewId &&
+    confirmationPreview.intentVersion ===
+      submittedConfirmation.expectedIntentVersion &&
+    confirmationPreview.executeAction.available &&
+    submittedConfirmation.itemIds.every((id) =>
+      confirmationPreview.executionCandidateItemIds.includes(id),
+    );
+  const canResubmitRetained =
+    submittedConfirmation !== null &&
+    confirmationWatchState?.phase === "not_admitted" &&
+    confirmationWatchState.attempt >= 2 &&
+    retainedSummaryMatches &&
+    !busy;
 
   const continueAt = async (
     expectedCheckpointVersion: string,
@@ -998,21 +1038,12 @@ export function TaskItemRecoveryPanel({
     }
   };
 
-  const confirmPreparation = async () => {
-    if (
-      activePreparation === null ||
-      activePreparation.status !== "prepared" ||
-      confirmSelection === null ||
-      confirmSelection.length === 0 ||
-      busy ||
-      repeatLocked
-    ) {
-      return;
-    }
-    // The exact submitted request must stay reconcilable across a reload or
-    // re-auth, so it is saved under the backend-authenticated principal
-    // before the POST. While that identity has not been established, a
-    // confirmation cannot be retained and therefore must not be sent.
+  const confirmSubmission = async (
+    submission: RetainedTaskItemRecoveryConfirmation,
+  ) => {
+    if (busy) return;
+    // Save the exact identity before every Execute. Reconfirming the retained
+    // batch reuses that same entry; a different batch cannot replace it.
     if (principalIdentity.resolved !== true) {
       updateRecoverySession({
         repeatLocked: false,
@@ -1021,14 +1052,6 @@ export function TaskItemRecoveryPanel({
       });
       return;
     }
-    const submission = {
-      preparationId: activePreparation.preparationId,
-      previewId: activePreparation.previewId,
-      itemIds: [...confirmSelection],
-      expectedIntentVersion: activePreparation.intentVersion,
-      allowOverwrite: allowOverwriteConfirm,
-      allowSourceCleanup: allowCleanupConfirm,
-    } as const;
     const retention = beginTaskItemRecoveryConfirmationRetention(
       principalIdentity.principalId,
       { runId, taskId, itemId },
@@ -1036,8 +1059,6 @@ export function TaskItemRecoveryPanel({
     );
     if (!retention.ok) {
       if (retention.reason === "already-pending") {
-        // An earlier confirmation of this exact item is still unreconciled;
-        // a second submission must never be sent on top of it.
         const retained = readTaskItemRecoveryConfirmation(
           principalIdentity.principalId,
           { runId, taskId, itemId },
@@ -1047,7 +1068,7 @@ export function TaskItemRecoveryPanel({
             repeatLocked: true,
             submittedConfirmation: retained,
             message:
-              "此条目已有一份尚未核对的原确认请求；已恢复其原请求身份。请点击“重新读取条目后再继续”核对，不会重发确认。",
+              "此条目已有一份尚未核对的原确认请求；已恢复其原请求身份，系统会继续只读核对，不会重发确认。",
           });
           return;
         }
@@ -1077,33 +1098,60 @@ export function TaskItemRecoveryPanel({
         setPreparation(null);
         setConfirmSelection(null);
         refreshLinkedReads();
-        // The operator stays in this exact Task detail: refreshLinkedReads
-        // refreshes the flow, items, results and evidence so the real queue/
-        // execution state is read here instead of a separate execution page.
-        // When this panel was unmounted while the confirmation was in flight
-        // (card closed, Task/item switched), the operator's restored list or
-        // other item context stays untouched; the accepted result is kept in
-        // the durable session and re-read on the next reopen.
+        // Admission is not file success. Stay in this exact Task detail and
+        // read the queue, per-item results and effects from durable state.
       } else {
-        // An unknown response is never treated as a refusal.  Keep the exact
-        // submitted request identity — in the session store for this mount and
-        // in the principal-scoped retention for a reload or re-auth — and let
-        // the operator explicitly re-read the current admission evidence,
-        // which reveals whether this exact confirmation was admitted.
-        await reportUnknown(result.code, result.status);
-        if (!isUnknown(result.status, result.code)) {
-          clearTaskItemRecoveryConfirmation(
-            principalIdentity.principalId,
-            { runId, taskId, itemId },
-            submission,
-          );
-          updateRecoverySession({ submittedConfirmation: null });
+        if (isAmbiguousConfirmation(result.status, result.code)) {
+          // A delayed original request may have won the atomic admission.
+          // Duplicate/stale answers therefore return to the same exact read,
+          // rather than clearing the only identity that can prove the winner.
+          updateRecoverySession({
+            repeatLocked: true,
+            message: `服务端返回 ${result.code}；原请求是否已受理仍需核对，系统会继续读取同一批的持久受理记录，不会自动重发。`,
+          });
+          confirmationWatch.retry();
+        } else {
+          await reportUnknown(result.code, result.status);
+          if (!isUnknown(result.status, result.code)) {
+            clearTaskItemRecoveryConfirmation(
+              principalIdentity.principalId,
+              { runId, taskId, itemId },
+              submission,
+            );
+            updateRecoverySession({ submittedConfirmation: null });
+          }
         }
         refreshLinkedReads();
       }
     } finally {
       finishAction();
     }
+  };
+
+  const confirmPreparation = async () => {
+    if (
+      activePreparation === null ||
+      activePreparation.status !== "prepared" ||
+      confirmSelection === null ||
+      confirmSelection.length === 0 ||
+      busy ||
+      repeatLocked
+    ) {
+      return;
+    }
+    await confirmSubmission({
+      preparationId: activePreparation.preparationId,
+      previewId: activePreparation.previewId,
+      itemIds: [...confirmSelection],
+      expectedIntentVersion: activePreparation.intentVersion,
+      allowOverwrite: allowOverwriteConfirm,
+      allowSourceCleanup: allowCleanupConfirm,
+    });
+  };
+
+  const confirmRetainedPreparation = async () => {
+    if (!canResubmitRetained || submittedConfirmation === null) return;
+    await confirmSubmission(submittedConfirmation);
   };
 
   const readDurableAnalysisState = async (
@@ -1156,13 +1204,17 @@ export function TaskItemRecoveryPanel({
   };
 
   const reconcile = async () => {
-    // An unresolved identity read never blocks reconciliation: it only means
-    // the retention cannot be cleared here, and the entry stays available for
-    // the next mount instead of being interpreted as a resubmission.
-    const reconcilePrincipalId =
-      principalIdentity.resolved === true
-        ? principalIdentity.principalId
-        : null;
+    if (submittedConfirmation !== null) {
+      // The existing generic read entry also restarts this confirmation's
+      // bounded automatic watch. It never performs a second Execute.
+      updateRecoverySession({
+        repeatLocked: true,
+        message:
+          "本次确认暂未确认；已重新发起原请求的只读核对，原摘要、版本和选择保持不变。 ",
+      });
+      confirmationWatch.retry();
+      return;
+    }
     const result = await query.refetch();
     if (result.data?.ok !== true) {
       updateRecoverySession({
@@ -1262,89 +1314,6 @@ export function TaskItemRecoveryPanel({
       return;
     }
     const durable = result.data.model.manualRecoveryPreparation ?? null;
-    // The reconciliation is bound to the exact confirmation this page
-    // submitted.  The official admission read proves whether that exact
-    // reviewed selection, intent version and effects were admitted; a newer
-    // summary, a sibling's execution or only a successful TaskItem GET never
-    // unlocks the unknown submission.
-    if (submittedConfirmation !== null) {
-      let outcome;
-      try {
-        outcome = await fetchOrganizeAdmissionOutcome(
-          token,
-          submittedConfirmation,
-        );
-      } catch {
-        updateRecoverySession({
-          repeatLocked: true,
-          message:
-            "本次确认的受理证据仍无法读取；保持提交锁定，恢复读取后再检查。 ",
-        });
-        return;
-      }
-      if (!outcome.ok) {
-        updateRecoverySession({
-          repeatLocked: true,
-          message:
-            "尚未读回本次提交对应的受理证据；保持提交锁定，请刷新页面后按当前持久状态处理。 ",
-        });
-        return;
-      }
-      if (outcome.model.outcome === "known") {
-        // The admission service proved that the exact Preview, intent
-        // version, reviewed selection and destructive permissions this page
-        // submitted are the durable admission.  That proof is bound to the
-        // submission, not to the file currently opened: the opened file may be
-        // an unselected sibling whose own summary legitimately stays
-        // ``prepared``.  The original execution/Task facts are therefore the
-        // reconciliation result, and the current file's state is refreshed to
-        // continue on its own.
-        clearTaskItemRecoveryConfirmation(
-          reconcilePrincipalId,
-          { runId, taskId, itemId },
-          submittedConfirmation,
-        );
-        updateRecoverySession({
-          repeatLocked: false,
-          submittedConfirmation: null,
-          message: admissionOutcomeMessage(outcome.model),
-        });
-        refreshLinkedReads();
-        return;
-      }
-      if (outcome.model.outcome === "not_admitted") {
-        clearTaskItemRecoveryConfirmation(
-          reconcilePrincipalId,
-          { runId, taskId, itemId },
-          submittedConfirmation,
-        );
-        if (
-          durable?.preparationId === submittedConfirmation.preparationId &&
-          durable.status === "prepared"
-        ) {
-          updateRecoverySession({
-            repeatLocked: false,
-            submittedConfirmation: null,
-            message:
-              "本次确认未获受理；已读回同一计划摘要，可重新检查后再次确认。 ",
-          });
-        } else {
-          updateRecoverySession({
-            repeatLocked: false,
-            submittedConfirmation: null,
-            message:
-              "本次确认未获受理；当前计划摘要已变化，请按当前状态继续。 ",
-          });
-        }
-        return;
-      }
-      updateRecoverySession({
-        repeatLocked: true,
-        message:
-          "同一预览下存在其他受理记录，但没有证明本次提交；保持提交锁定，请核对原 Task 与当前摘要。 ",
-      });
-      return;
-    }
     updateRecoverySession({
       repeatLocked: false,
       message:
@@ -1856,6 +1825,17 @@ export function TaskItemRecoveryPanel({
         >
           <p>{message}</p>
         </StatusBanner>
+      )}
+      {canResubmitRetained && submittedConfirmation !== null && (
+        <div className="mf-actions">
+          <button
+            type="button"
+            className="mf-button mf-button-secondary"
+            onClick={() => void confirmRetainedPreparation()}
+          >
+            确认同一批（{submittedConfirmation.itemIds.length} 项）
+          </button>
+        </div>
       )}
       {owesRecoveryAction &&
         activePreparation !== null &&

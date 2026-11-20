@@ -71,6 +71,17 @@ function twoItemPreviewDocument(): Record<string, unknown> {
   return value;
 }
 
+function notAdmittedOutcome(): Record<string, unknown> {
+  return {
+    ...admissionOutcome(),
+    outcome: "not_admitted",
+    executionId: null,
+    taskId: null,
+    status: null,
+    selectedItemIds: [],
+  };
+}
+
 function executionDocument(): Record<string, unknown> {
   const value = JSON.parse(
     JSON.stringify(
@@ -389,6 +400,16 @@ function preparedPreparation(): Record<string, unknown> {
     execution_id: null,
     hasExecutionAuthority: false,
     next_action: "review the current plan summary and confirm",
+  };
+}
+
+function confirmedPreparation(): Record<string, unknown> {
+  return {
+    ...preparedPreparation(),
+    status: "confirmed",
+    authorization_id: "authorization-1",
+    execution_id: "execution-1",
+    next_action: "inspect the linked execution",
   };
 }
 
@@ -1576,6 +1597,213 @@ describe("TaskItemRecoveryPanel", () => {
     });
     expect(confirmAttempts).toBe(1);
   });
+
+  it("keeps the original confirmation through early no-record reads until the late admission appears", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    let currentRecovery = completedRecovery(preparedPreparation());
+    let confirmAttempts = 0;
+    let admissionReads = 0;
+    let admitted = false;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (
+          method === "GET" &&
+          url === "/api/operations/organize/previews/preview-1"
+        ) {
+          return new Response(JSON.stringify(previewDocument()), {
+            status: 200,
+          });
+        }
+        if (
+          method === "GET" &&
+          url.startsWith(
+            "/api/operations/organize/previews/preview-1/admission?",
+          )
+        ) {
+          admissionReads += 1;
+          return new Response(
+            JSON.stringify(
+              admitted ? admissionOutcome() : notAdmittedOutcome(),
+            ),
+            { status: 200 },
+          );
+        }
+        if (
+          method === "POST" &&
+          url === "/api/operations/organize/previews/preview-1/execute"
+        ) {
+          confirmAttempts += 1;
+          throw new TypeError("response lost before the delayed commit");
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      },
+    );
+    vi.stubGlobal("fetch", withPrincipalEndpoint(fetchMock));
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    const summary = await within(panel).findByRole("region", {
+      name: "新计划摘要",
+    });
+    await user.click(
+      await within(summary).findByRole("button", {
+        name: "确认继续整理 1 项",
+      }),
+    );
+
+    const sameBatch = await within(panel).findByRole(
+      "button",
+      { name: "确认同一批（1 项）" },
+      { timeout: 5_000 },
+    );
+    expect(admissionReads).toBeGreaterThanOrEqual(2);
+    expect(confirmAttempts).toBe(1);
+    expect(within(panel).getByText(/本次确认暂未确认/)).toBeVisible();
+    expect(
+      within(summary).getByRole("button", { name: "正在受理…" }),
+    ).toBeDisabled();
+    expect(sameBatch).toBeEnabled();
+
+    // The original POST commits late, without another browser write. The next
+    // existing backoff read proves that exact admission and releases the lock.
+    admitted = true;
+    currentRecovery = completedRecovery(confirmedPreparation());
+    expect(
+      await within(panel).findByText(
+        /原执行 execution-1 已归属 Task task-1/,
+        {},
+        { timeout: 5_000 },
+      ),
+    ).toBeVisible();
+    expect(confirmAttempts).toBe(1);
+    expect(admissionReads).toBeGreaterThanOrEqual(3);
+    expect(
+      within(panel).queryByRole("button", { name: "确认同一批（1 项）" }),
+    ).toBeNull();
+  }, 15_000);
+
+  it("uses the retained identity for an explicit same-batch confirmation and reconciles a duplicate late response", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    let currentRecovery = completedRecovery(preparedPreparation());
+    let confirmAttempts = 0;
+    let admissionReads = 0;
+    let admitted = false;
+    const executeBodies: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), { status: 200 });
+        }
+        if (
+          method === "GET" &&
+          url === "/api/operations/organize/previews/preview-1"
+        ) {
+          return new Response(JSON.stringify(previewDocument()), {
+            status: 200,
+          });
+        }
+        if (
+          method === "GET" &&
+          url.startsWith(
+            "/api/operations/organize/previews/preview-1/admission?",
+          )
+        ) {
+          admissionReads += 1;
+          return new Response(
+            JSON.stringify(
+              admitted ? admissionOutcome() : notAdmittedOutcome(),
+            ),
+            { status: 200 },
+          );
+        }
+        if (
+          method === "POST" &&
+          url === "/api/operations/organize/previews/preview-1/execute"
+        ) {
+          confirmAttempts += 1;
+          executeBodies.push(
+            JSON.parse(String(init?.body)) as Record<string, unknown>,
+          );
+          if (confirmAttempts === 1) {
+            throw new TypeError("the original request never arrived");
+          }
+          // The delayed original wins while the explicit confirmation is in
+          // flight. Its duplicate response is not proof of non-admission.
+          admitted = true;
+          currentRecovery = completedRecovery(confirmedPreparation());
+          return new Response(
+            JSON.stringify({ error: { code: "duplicate_execution" } }),
+            { status: 409 },
+          );
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      },
+    );
+    vi.stubGlobal("fetch", withPrincipalEndpoint(fetchMock));
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    const summary = await within(panel).findByRole("region", {
+      name: "新计划摘要",
+    });
+    await user.click(
+      await within(summary).findByRole("button", {
+        name: "确认继续整理 1 项",
+      }),
+    );
+    const sameBatch = await within(panel).findByRole(
+      "button",
+      { name: "确认同一批（1 项）" },
+      { timeout: 5_000 },
+    );
+    expect(confirmAttempts).toBe(1);
+    await user.click(sameBatch);
+
+    expect(
+      await within(panel).findByText(
+        /原执行 execution-1 已归属 Task task-1/,
+        {},
+        { timeout: 5_000 },
+      ),
+    ).toBeVisible();
+    expect(confirmAttempts).toBe(2);
+    expect(executeBodies).toHaveLength(2);
+    expect(executeBodies[1]).toEqual(executeBodies[0]);
+    expect(admissionReads).toBeGreaterThanOrEqual(3);
+  }, 15_000);
 
   it("keeps an opened sibling's prepared summary after the exact admitted subset is proven", async () => {
     const user = userEvent.setup();

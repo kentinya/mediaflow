@@ -1585,6 +1585,9 @@ class AppState:
         #: settlement here lets the browser observe both through ordinary
         #: reads. Test infrastructure only; it writes no product state.
         self.primary_limit_settlement_gate: dict[str, threading.Event] | None = None
+        #: One-shot network boundary for a lost Execute response whose real
+        #: request reaches admission only after the browser's read-only checks.
+        self.execute_admission_gate: dict[str, threading.Event] | None = None
 
     @property
     def database(self) -> Path:
@@ -2536,6 +2539,31 @@ def _run_manual_task_once(state: AppState, *, task_id: str | None = None):
         return worker.run_next()
 
 
+def arm_execute_admission_gate(state: AppState) -> dict[str, object]:
+    """Hold one real Execute before its atomic admission, once only."""
+
+    gate = {"reached": threading.Event(), "release": threading.Event()}
+    state.execute_admission_gate = gate
+    return {"armed": True}
+
+
+def execute_admission_gate_state(state: AppState) -> dict[str, object]:
+    gate = state.execute_admission_gate
+    return {
+        "armed": gate is not None,
+        "reached": gate is not None and gate["reached"].is_set(),
+    }
+
+
+def release_execute_admission_gate(state: AppState) -> dict[str, object]:
+    gate = state.execute_admission_gate
+    if gate is None:
+        return {"released": False}
+    gate["release"].set()
+    state.execute_admission_gate = None
+    return {"released": True}
+
+
 def arm_preparation_freeze_gate(state: AppState) -> dict[str, object]:
     """Arm the one-shot real freeze→analysis synchronization boundary."""
 
@@ -3316,6 +3344,7 @@ def seed_task_item_recovery_journey(
     *,
     title: str | None = None,
     year: int | None = None,
+    variant: str | None = None,
 ) -> dict[str, str]:
     """Create one real four-type blocker on a current Files-admitted Task.
 
@@ -3331,6 +3360,8 @@ def seed_task_item_recovery_journey(
     Provider candidate injection and the durable plan request (the probe's
     Provider answers no candidate for the original year by design), and caches
     under its own key so no existing journey's fixture is reused or changed.
+    ``variant`` creates another ordinary recovery source for independent
+    late-admission scenarios without changing the production journey.
     """
 
     supported = {
@@ -3343,7 +3374,13 @@ def seed_task_item_recovery_journey(
     }
     if kind not in supported:
         raise ValueError("unsupported recovery fixture kind")
-    cache_key = f"{kind}:{title}" if title is not None else kind
+    cache_key = (
+        f"{kind}:{title}"
+        if title is not None
+        else f"{kind}:{variant}"
+        if variant is not None
+        else kind
+    )
     probe_override = title is not None
     with state._manual_lock:
         if cache_key in state.recovery_runs:
@@ -3374,6 +3411,8 @@ def seed_task_item_recovery_journey(
         else:
             title = titles[kind]
             year = years[kind]
+            if variant is not None:
+                title = f"{title}{variant}"
             filename = f"{title}.{year}.mkv"
         provider_id = {
             "recognition": "205",
@@ -3383,6 +3422,8 @@ def seed_task_item_recovery_journey(
             "conflict": "218",
             "conflict_overwrite": "220",
         }[kind]
+        if variant is not None:
+            provider_id = f"{provider_id}-{variant.lower()}"
         source_file = state.managed.root / "source" / filename
         source_file.write_bytes(b"synthetic recovery media; no real codec parsing")
         scan = StorageScanner(
@@ -4085,6 +4126,7 @@ def task_item_recovery_state(state: AppState, *, item_id: str | None = None) -> 
         state.repository.get_item(run["successItemId"]) if run.get("successItemId") else None
     )
     results = state.repository.list_results(run["taskId"], limit=100)
+    executions = state.repository.list_manual_executions_for_task(run["taskId"])
     provider = state.managed.metadata_registry.resolve("tmdb")
     return {
         "available": True,
@@ -4095,6 +4137,11 @@ def task_item_recovery_state(state: AppState, *, item_id: str | None = None) -> 
         "itemStatus": source.status.value if source else None,
         "itemStage": source.stage if source else None,
         "resultIds": [value.result_id for value in results if value.item_id == run["itemId"]],
+        "executionIds": [
+            value.execution_id
+            for value in executions
+            if any(item.task_item_id == run["itemId"] for item in value.items)
+        ],
         "sourceResultHistory": [
             {
                 "resultId": value.result_id,
@@ -6031,6 +6078,12 @@ def application(environ, start_response):
                 if requested_discovery
                 else run_discovery_worker_once(STATE)
             )
+        elif path == "/__harness__/arm-execute-admission" and method == "POST":
+            document = arm_execute_admission_gate(STATE)
+        elif path == "/__harness__/execute-admission-state" and method == "GET":
+            document = execute_admission_gate_state(STATE)
+        elif path == "/__harness__/release-execute-admission" and method == "POST":
+            document = release_execute_admission_gate(STATE)
         elif path == "/__harness__/arm-preparation-freeze" and method == "POST":
             document = arm_preparation_freeze_gate(STATE)
         elif path == "/__harness__/preparation-freeze-state" and method == "GET":
@@ -6052,11 +6105,13 @@ def application(environ, start_response):
             kind = (query.get("kind") or ["recognition"])[0]
             probe_title = (query.get("title") or [None])[0]
             probe_year = (query.get("year") or [None])[0]
+            probe_variant = (query.get("variant") or [None])[0]
             document = seed_task_item_recovery_journey(
                 STATE,
                 kind,
                 title=probe_title,
                 year=int(probe_year) if probe_year is not None else None,
+                variant=probe_variant,
             )
         elif path == "/__harness__/metadata-search-calls" and method == "GET":
             provider = STATE.managed.metadata_registry.resolve("tmdb")
@@ -6216,6 +6271,16 @@ def application(environ, start_response):
             ],
         )
         return [body]
+    if (
+        STATE.execute_admission_gate is not None
+        and str(environ.get("REQUEST_METHOD", "GET")).upper() == "POST"
+        and path.startswith("/api/operations/organize/previews/")
+        and path.endswith("/execute")
+    ):
+        gate = STATE.execute_admission_gate
+        if not gate["reached"].is_set():
+            gate["reached"].set()
+            gate["release"].wait(timeout=120)
     return STATE.api(environ, start_response)
 
 

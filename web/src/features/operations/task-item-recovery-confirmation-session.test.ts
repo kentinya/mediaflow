@@ -104,7 +104,14 @@ describe("task item recovery confirmation session", () => {
     ).toBe("preview-2");
   });
 
-  it("never overwrites an unreconciled entry for the same item", () => {
+  it("reuses only the exact pending identity and never overwrites it with another batch", () => {
+    expect(
+      beginTaskItemRecoveryConfirmationRetention(
+        PRINCIPAL,
+        IDENTITY,
+        submission(),
+      ),
+    ).toEqual({ ok: true });
     expect(
       beginTaskItemRecoveryConfirmationRetention(
         PRINCIPAL,

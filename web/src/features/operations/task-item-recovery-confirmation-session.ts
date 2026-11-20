@@ -13,10 +13,10 @@
  * Task after its tab was closed. The shared principal-session cleaner removes
  * every entry when the credential or active account changes.
  *
- * The retained entry is consumed only by the read-only admission
- * reconciliation. It is cleared when the outcome is proven (accepted response,
- * known admission, explicit non-admission) and kept while the outcome is
- * unknown, so one unknown confirmation always stays exactly one entry.
+ * The retained entry is consumed by read-only admission reconciliation and by
+ * an explicit confirmation of that same batch. It is cleared by an accepted
+ * response, matching admission or definite pre-admission refusal. A no-record
+ * read keeps it because the original POST may still commit later.
  */
 
 import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
@@ -184,9 +184,9 @@ export function readTaskItemRecoveryConfirmation(
  * Save the exact confirmation context a submission needs before its POST.
  *
  * The write is synchronous and checked: if the principal identity, the
- * request fields or session storage are unavailable, or the same item already
- * keeps an unreconciled confirmation, no request may be sent — a
- * confirmation that cannot be reconciled must never be submitted.
+ * request fields or session storage are unavailable, no request may be sent.
+ * An exact pending identity may be reused for deliberate same-batch
+ * confirmation; a different batch cannot overwrite it.
  */
 export function beginTaskItemRecoveryConfirmationRetention(
   principalId: string | null,
@@ -203,7 +203,12 @@ export function beginTaskItemRecoveryConfirmationRetention(
   }
   try {
     const key = confirmationKey(segment, identity);
-    if (session.getItem(key) !== null) {
+    const existingRaw = session.getItem(key);
+    if (existingRaw !== null) {
+      const existing = readStoredConfirmation(existingRaw);
+      if (existing !== null && sameSubmission(existing, submission)) {
+        return { ok: true };
+      }
       return { ok: false, reason: "already-pending" };
     }
     if (countRetained(session, segment) >= MAX_PENDING) {
