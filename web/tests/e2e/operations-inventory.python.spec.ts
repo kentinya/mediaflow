@@ -1855,28 +1855,45 @@ test("the opened item reconciles the exact sibling subset admission it did not s
         entry.method === "POST" &&
         entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
     );
+  // The server keeps the real admission; only the automatic read-only check
+  // is held so the pending state is observable. That automatic check owns
+  // the retained confirmation: no manual reconciliation entry may compete
+  // with it or restart the same read while the original request may be in
+  // flight.
+  let holdAdmissionReads = true;
+  await page.route(
+    /\/api\/operations\/organize\/previews\/[^/]+\/admission(?:\?|$)/,
+    async (route) => {
+      if (holdAdmissionReads) {
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    },
+  );
   await summary.getByRole("button", { name: "确认继续整理 1 项" }).click();
-  await expect(detail.getByText(/请求响应未送达/)).toBeVisible();
+  await expect(detail.getByText(/本次确认暂未确认/)).toBeVisible();
+  await expect(
+    detail.getByRole("button", { name: /重新读取条目后再继续/ }),
+  ).toHaveCount(0);
   expect(exactExecutePosts()).toHaveLength(1);
   expect(committed).not.toBeNull();
   expect(committed!.taskId).toBe(taskId);
   expect(committed!.selectedItemIds).toHaveLength(1);
 
-  // AC-4: the unknown outcome must survive a full reload and re-auth BEFORE
-  // the first reconcile click.  The rebuilt page restores the original
-  // request identity from the principal-scoped session and offers the
-  // read-only reconciliation of that exact submission instead of a fresh
-  // confirmation over both files.
+  // AC-4: the unknown outcome must survive a full reload and re-auth, and the
+  // automatic check must resume by itself.  The rebuilt page restores the
+  // original request identity from the principal-scoped session instead of
+  // falling back to a fresh confirmation over both files.
   await page.reload();
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   const restoredDetail = page.getByRole("dialog", { name: "运行详情" });
   await expect(restoredDetail).toBeVisible();
   await openEvidence("Fifteenth.2015.mkv");
-  const restoredReconcile = restoredDetail.getByRole("button", {
-    name: /重新读取条目后再继续/,
-  });
-  await expect(restoredReconcile).toBeVisible();
-  await expect(restoredReconcile).toBeEnabled();
+  await expect(restoredDetail.getByText(/本次确认暂未确认/)).toBeVisible();
+  await expect(
+    restoredDetail.getByRole("button", { name: /重新读取条目后再继续/ }),
+  ).toHaveCount(0);
   await expect(
     restoredDetail
       .getByRole("region", { name: "新计划摘要" })
@@ -1884,12 +1901,25 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   ).toBeDisabled();
   expect(exactExecutePosts()).toHaveLength(1);
 
-  // The bounded admission read proves this exact submitted subset, even though
-  // the opened file itself was left out and keeps its prepared summary.
-  await restoredReconcile.click();
+  // Releasing the read lets the watch prove the durable admission of this
+  // exact Preview, version, selected sibling and effect options without a
+  // click and without another Execute, even though the opened file itself was
+  // left out and keeps its prepared summary.
+  const releasedAdmissionRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname ===
+        `/api/operations/organize/previews/${committed!.previewId}/admission` &&
+      response.status() === 200,
+  );
+  holdAdmissionReads = false;
+  const releasedAdmission = await releasedAdmissionRead;
+  expect(new URL(releasedAdmission.url()).search).toBe(
+    `?itemIds=${committed!.selectedItemIds.join(",")}&expectedIntentVersion=${committed!.intentVersion}&allowOverwrite=false&allowSourceCleanup=false`,
+  );
   await expect(
     restoredDetail.getByText(/原执行 .* 已归属 Task/).first(),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
   const restoredAdmissionReads = api.filter(
     (entry) =>
       entry.method === "GET" &&
@@ -1909,6 +1939,9 @@ test("the opened item reconciles the exact sibling subset admission it did not s
       .getByRole("button", { name: /确认继续整理/ }),
   ).toBeEnabled();
   expect(exactExecutePosts()).toHaveLength(1);
+  await page.unroute(
+    /\/api\/operations\/organize\/previews\/[^/]+\/admission(?:\?|$)/,
+  );
 
   // Closing and reopening the evidence keeps the known admission fact in the
   // exact item session instead of resubmitting it.
