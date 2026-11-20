@@ -1,17 +1,75 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261120-2 — 手动整理主文件超限后的任务收尾
 
-## PATCH-20261120-1 — B 验收 PASS
+用户于 2026-11-20 授权激活独立 Task，待 Developer 开始实施。
+[上一独立修复的 B 验收](https://github.com/kentinya/mediaflow/blob/66e1e799b5bc5ada7b8ea81bd15052969c40b38a/TASK.md#patch-20261120-1--b-验收-pass)
 
 ```text
-Decision: PASS — 2026-11-20
+Task ID: PATCH-20261120-2
+Task Type: STANDALONE MINOR BUG
+Parent Slice: NONE
+Status: PLANNED
+Task Base: 1323d56c71390551424b0134f3500d25f77fb9d9
+Difficulty: High
 Test Level: T4
-Reviewed Base: 660fecb6637ed36910493c65b94b0b8c3ced7681
-Reviewed Head: 45fb52884b51b4438c939416622c27357d08c610
-Product Checkpoint: a38f1550b5f539af07b4f8e20a87e1d83eedbbb4
+Planner / Reviewer: B
+Implementation Authorization: USER AUTHORIZED ON 2026-11-20
 ```
 
-B 验证了后续季匹配、策略阈值和从文件页转到任务中心的人工修正，显式确认前源和目标均为零变更。
-Python 全量 2338 项中 7 项跳过，其余通过。13 项原生浏览器测试、构建与发布验收通过。
-[固定验收记录](https://github.com/kentinya/mediaflow/blob/66e1e799b5bc5ada7b8ea81bd15052969c40b38a/TASK.md#patch-20261120-1--b-验收-pass)
+规划基线为 `mediaflow` 的 `main`，规划前工作区干净，Git 与工作区可写，治理检查通过。
+依据 [Development Workflow §3.1](docs/development-workflow.md#31-independent-minor-bugs)、
+[`V2-TASK-012–014`、`V2-OPS-010/017–019`](docs/v2-requirements.md) 和
+[Files 手动整理旅程](docs/product-experience.md#current--manual-organize-dialog-slice53-pass--closed)。
 
-[现行操作说明](docs/product-experience.md#manual-organize) · [元数据策略说明](docs/configuration.md#metadata-query-type-and-saved-identity)
+### 目标和现状
+
+用户在资源库 Files 对目录或混合选择发起整理。发现第 101 个合格主文件后，系统将任务标为准备失败，
+解除本次准备的来源占用，让用户从原文件页缩小范围后重新发起。
+
+发现服务已持久保存 `primary_limit` 和最多 100 个扫描发现，并拒绝生成可执行方案。任务引擎仍将这次发现归入等待人工。
+关联任务仍在运行且没有文件条目，来源占用判定便继续保护已记录的来源。缩小范围后若选到同一文件，新请求返回 `source_already_organizing`。
+[超限记录](mediaflow/application/media_discovery.py#L4113) · [任务结算](mediaflow/application/manual_task_engine.py#L267) · [来源占用](mediaflow/infrastructure/sqlite_runtime.py#L12851)
+
+### 实施范围和步骤
+
+1. **结算新任务。** 在 Files 关联任务的发现收尾处识别持久的 `primary_limit`，兼顾拒绝列表和旧版不完整原因字段。
+   将 Task 标为 `failed`，调度标为 `settled`，记录「准备阶段超限」及结束时间。复用受版本、任务认领和控制条件保护的结算路径，
+   在同一提交中发布任务终态与调度结果，由现有终态判定解除本次来源占用。保留发现、范围、配置 pin 和诊断。
+   Finalize、分析、确认和执行入口拒绝这份截断清单。
+2. **自动收尾旧记录。** 由驻留 Worker 对当前受支持数据库中的卡住记录做有界、幂等核对，覆盖已经停在 `waiting_human` 的任务。
+   要求精确关联到 Files 手动任务，存在持久的超限停止证据，发现未冻结且无方案，任务从未受理执行，
+   且无进行中、已完成或效果不明的文件操作证据。提交时在同一事务内复核关联、任务版本、执行历史和控制条件。
+   发现有效认领、竞争中的控制请求或证据不足时，交给现有生命周期处理并维持来源保护。自动收尾复用失败结算，保留历史和审计。
+3. **呈现原因和下一步。** 整理弹窗依据后端超限事实显示「本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。」
+   用户关闭弹窗回到原目录和选择，调整后提交新请求。任务中心显示「失败／准备阶段超限」，按后端终态隐藏「继续整理」。
+   通过旧地址打开准备记录时只读。
+
+### 验收条件
+
+- [ ] 目录含 101 个合格主文件时，旧任务进入「失败」且调度结算。`primary_limit` 和扫描历史可读取，方案、执行受理和媒体变更均为零。直接调用 Finalize 也无法把截断清单变成可执行方案。
+- [ ] 无需取消旧任务，在一个新小批次中选中旧记录保留的同一个文件，能成功受理并生成可确认方案。弹窗有指定提示，任务中心结束详情无「继续整理」，原准备地址只读。
+- [ ] 恰好 100 个合格主文件能得到完整的待确认方案。正常待确认任务仍拦截同一来源的重复受理，实际修改仍由原有显式确认授权。
+- [ ] 用当前版本已有记录模拟服务重启。可证实从未执行的旧超限任务经驻留 Worker 自动结算，重复启动或轮询保持同一结果。旧任务 ID、发现记录、配置 pin 和历史保留，重复提交旧请求仍按原身份对账。
+- [ ] 自动收尾跳过已有执行受理、活跃认领、效果证据或无法证明未执行的旧记录。覆盖取消或状态竞争、结算提交失败后重试，
+  并验证已完成或效果不确定的文件仍受原有防重放规则保护。
+
+### 测试与分工
+
+**Developer 受影响检查**
+
+- 仓库根目录运行 `.venv/bin/python -m unittest tests.test_media_discovery.RetainedTaskKernelFilesJourneyTests tests.test_manual_task_engine.ManualTaskDiscoveryTests`。在现有类中覆盖 100/101、同一来源重新受理、旧记录重开及并发或失败注入，用临时 SQLite/Storage 核对历史和零变更。
+- 在 `web/` 运行 `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx src/features/operations/OperationsInventory.test.tsx` 和 `npm run typecheck`。检查明确提示、返回原文件页、旧任务只读及正常待确认入口。提交候选前运行 `git diff --check`。
+
+**B 验收**
+
+- 独立审查 Task Base 至候选检查点，用真实 API、SQLite 和 Worker 复核超限、旧任务安全收尾及竞争条件。用更新前格式的当前受支持记录验证数据库重开。
+- 在 `web/` 运行 `npm run build` 和 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts`。在现有原生测试中覆盖从 Files 触发超限、任务中心查看结束详情、回到 Files 用同一文件发起小批次并进入确认。
+- 执行[适用的 T4 全量门禁](docs/development-workflow.md#shared-full-regression-commands)，记录实际结果和候选 SHA。
+
+### 边界
+
+本次使用现有 100 个主文件上限，适用资源库 Files 手动整理及其 API。可配置上限属于独立能力。
+自动化／CLI 行为、其他扫描预算及普通读取失败的子集确认仍依各自现行契约。
+
+### 交接与评审记录
+
+Developer 实施后记录候选 SHA、受影响测试及风险，交 B 独立验收。B 记录审查范围、实际结果及 PASS 或 FIX REQUIRED。
