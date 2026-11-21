@@ -630,8 +630,9 @@ are reconciled from durable identity before another explicit attempt; reads neve
   in `高级配置`, with rule counts, command readiness and technical identities in secondary diagnostics.
 - **State:** management bootstrap provides setup and recovery. Current Active and historical published
   revisions show exact versions, digests, references, evidence and capability readiness. Only Active
-  governs runtime; no resumable configuration draft exists. A previous schema-11 store is inspected
-  read-only and reaches the current structure only through the explicit confirmed data switch.
+  governs runtime. Settings synchronizes automatically, keeping edits in progress when published
+  values change. Configuration drafts are retired. For a schema-11 store, review the read-only
+  inspection and confirm the data switch before starting the current version.
 - **Action:** edit typed settings or business objects and explicitly apply. The backend binds the
   current Active baseline, validates the candidate, runs the applicable read-only checks and publishes
   atomically. Advanced whole-document JSON and portable-package import use the same explicit check and
@@ -710,7 +711,7 @@ never automatically Add again, reset the database or move media. Existing saved 
   and the separate complete-flow check at the bottom; it has no inventory search. Each family keeps
   one local search and its existing state filter.
 - **Action:** typed lifecycle/reference impact, exact object test or policy preview and one `保存`.
-  Search/filter/navigation/refresh are read-only and create no Draft, Provider call or work. A
+  Search/filter/navigation/refresh are read-only and create no Provider call or work. A
   successful refresh retains the current family, keyword, state filter and unsaved input; changing
   family clears the keyword. Busy refresh is visibly unavailable. Forms retain correctable
   tab-scoped input, not credentials or publication authority.
@@ -819,7 +820,7 @@ publication, local analysis and safety semantics remain.
   repeating it. In-flight submission blocks duplicate Save and unsafe exits. Unsaved close, Escape
   and route/back navigation offer Continue editing/Discard; repeated close is not explicit discard.
   Existing tab-scoped input restoration after refresh/reauthentication remains, without persisting
-  credentials or treating drafts as Active.
+  credentials or presenting unsaved input as published.
 - **Visual/accessible completion:** coordinated entry/exit, stable loading-to-ready geometry,
   pinned title/close/footer, internal long-content scrolling, background lock/gutter compensation,
   inert background, Tab trapping and focus return. Desktop, 390px and short windows must support

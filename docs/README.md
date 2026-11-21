@@ -4,6 +4,8 @@ Web 从 `/` 进入，API 使用 `/api/*`。换址后可在任务中心查看原�
 
 共享顶栏只提供账户入口。通过侧栏「通知」管理 Webhook 和查看投递记录，通过「存储管理」的类型卡片和分页查找存储。[使用说明](product-experience.md#v2-operator-web) · [存储管理](product-experience.md#storage-management-and-root-recovery)
 
+在「系统设置」初始化空配置或直接应用修改。已有配置 schema 11 的实例在启动新版前需要检查切换范围并显式确认。[系统设置](configuration.md#system-settings-web) · [旧库切换](configuration.md#previous-store-data-switch) · [草稿退役验收](https://github.com/kentinya/mediaflow/blob/dc20ea07a85c2280b37b3852fdc567281f9713e3/TASK.md)
+
 ## 使用和部署
 
 | 文档 | 内容 |

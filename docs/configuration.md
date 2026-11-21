@@ -135,7 +135,7 @@ labels the audit record for `initialize` and `publish`. The retired `draft-impor
 
 ### Previous-store data switch
 
-A store that still reports configuration schema 11 contains unpublished revisions and their
+A store that still reports configuration schema 11 may contain unpublished revisions and their
 draft-only evidence from the retired draft lifecycle. This build does not retire them while opening
 the database. `config status` reads that file through a read-only connection and reports
 `DATA_SWITCH_REQUIRED` with the exact affected revision IDs, evidence per revision, affected audit
@@ -199,6 +199,10 @@ link. The page starts with a compact configuration summary and the three system 
 Published values and actual process adoption remain separate; instance details can be expanded.
 Command readiness, rule-family counts, exact snapshot identities and consumption evidence are in
 the secondary `诊断` section rather than repeated in the main settings view.
+
+Settings reads the latest published values on entry, tab return, reconnect and after application.
+It updates untouched fields and keeps edits in progress. A field changed by another operator is
+marked for review.
 
 The two save paths use the same direct publication rule:
 
@@ -484,9 +488,8 @@ The guided checked path requires current evidence for the exact candidate:
 4. when a MediaLibrary destination is declared, the current provider-neutral destination precheck
    is successful.
 
-The server rechecks revision identity, evidence identity and dependency validity in the activation
-transaction. Compatibility activation is a distinct, explicitly labelled path; it is not evidence
-that the guided safety checks passed.
+Before publishing, the server rechecks the Active baseline, applicable candidate evidence and
+dependency validity. The new snapshot and publication audit are committed atomically.
 
 ## Web, API and CLI surfaces
 
@@ -546,13 +549,12 @@ explicit [deployment maintenance procedure](deployment.md#backup-and-same-versio
 Old-task/Job conversion and cross-version upgrade/rollback are outside current support.
 Do not infer a feature or permission to rebuild user data from an old schema number.
 
-Slice55 preserves the accepted V2 data already present at its Base: existing
-managed Draft/Active revisions, Storage and two library kinds, rules, runtime settings, Automation
-and notification definitions, legal Task/request/result/audit rows and original pins retain their
-IDs, relationships, digests and target semantics. They do not need reinitialization or resubmission,
-and completed/unknown effects are not replayed. Only V1 or obsolete migration shapes are outside the
-conversion/takeover boundary; see [Deployment](deployment.md#boundary) and
-[Release](release.md#current-v2-validation-boundary).
+Published V2 configurations and the supported Storage, library, rules, system settings, Automation
+and notification data retain their identities, relationships and digests. Existing Tasks keep their
+pins, results and audit history. Completed or uncertain effects retain their recorded outcomes.
+For configuration schema 11, use the [explicit data switch](#previous-store-data-switch) before
+starting the current version. The [deployment boundary](deployment.md#boundary) and
+[release validation](release.md#current-v2-validation-boundary) describe supported recovery.
 
 ## Current limitations
 

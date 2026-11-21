@@ -37,14 +37,12 @@ installation, health, restart, backup, restore and failure-recovery procedures.
 - Deployment secrets are values in a host-owned environment file mounted at
   `/run/mediaflow/deployment.env`. Compose source and rendered Compose output
   contain only the file path and variable references, never secret values.
-- Accepted V2 data already present at the
-  [Slice55 Base](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed) — managed Draft/Active revisions, Storage and both library kinds, rules,
-  runtime settings, Automation/notification definitions, legal Task/request/result/audit rows and
-  original pins — keeps its IDs, relationships, digests and target semantics. It needs no
-  reinitialization or resubmission, and completed/unknown effects are never replayed. V1 and
-  obsolete migration shapes receive ordinary current rejection/not-found behavior, not a hidden
-  converter, alias or fallback. Restore uses the same artifact version that produced the supported
-  backup.
+- Supported V2 published configurations, business objects, Task/request/result/audit rows and
+  original pins retain their IDs, relationships, digests and target semantics. Completed or
+  uncertain effects retain their original outcomes. Configuration schema 11 requires the
+  [explicit unpublished-revision data switch](configuration.md#previous-store-data-switch).
+  V1 and obsolete migration inputs receive ordinary rejection or not-found behavior. Restore
+  uses the same artifact version that produced the supported backup.
 - The same image contains the built V2 static artifact at
   `/opt/mediaflow/web/dist`, bound to the running process through
   `MEDIAFLOW_UI_V2_ASSET_ROOT`. Node, npm and the frontend source tree exist
@@ -209,9 +207,9 @@ Published Storage roots are deliberately not part of this probe: the
 deployment configuration is a management-only bootstrap, so the probe never
 sees them. Media access declared by a published Active is validated by checked
 publication and reported by the authenticated Storage read check and the
-ordinary Storage surfaces. A removed or unreadable mounted media root therefore
-leaves the API container healthy and `/health` answering `200`, while the read
-check returns its bounded `permission_denied` failure.
+ordinary Storage surfaces. The API container stays healthy when a published media root becomes
+unavailable. The Storage read check reports the storage failure, such as `permission_denied`
+when the container lacks read permission.
 
 Every resident service additionally publishes a **durable registration and
 heartbeat** in the shared runtime database, and the healthcheck requires one.

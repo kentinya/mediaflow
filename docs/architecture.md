@@ -334,18 +334,17 @@ Original accepted Slice boundaries and unchanged execution safety remain.
 and schedule controls for saved-definition editing. Keep distinct create/edit IDs, exact candidates,
 observed Active versions and command identities. The existing creation and saved-definition edit
 routes, ordinary links and direct-entry/login continuations lead to that experience over a bounded
-list return context. Avoid parallel validators/forms, client-side policy authority, new draft stores
-or a general command framework. Existing legitimate Draft-only/history states are not relabelled
-as Active, and copy/remove authority is preserved. Any obsolete exclusive form code may be removed
-only after proving its supported consumers are covered; unrelated lifecycle cleanup is out of scope.
+list return context. Reuse the shared form and backend validators. The inventory reads published
+definitions, and removed definitions remain available as read-only history where supported.
+Copy and removal retain their existing permission checks.
 
 **Optional enablement and later enable/disable:** one ordinary form submission carries the explicit
 create-time enable choice; the default remains disabled. Reuse existing focused publication and
 shared permission/validation/audit/intent authority. The implemented create command carries a strict
 optional top-level boolean `enabled`; omission stays disabled, while true enables the normalized
 candidate in one atomic publication. An enabled candidate alone cannot bypass explicit command choice.
-Each publication switches Active and its audit atomically, with
-whole-document validation and no unrelated Draft changes. Enabled publication requires the same
+Each publication validates the whole candidate, changes only the submitted definition, and commits
+the new Active and its audit atomically. Enabled publication requires the same
 real principal's `GRANT_UNATTENDED_EXECUTION` and exact saved effective scope as current enabled edit.
 No implicit enablement from omitted input or invalid truthy values is permitted. Copy stays disabled.
 
@@ -570,7 +569,7 @@ Only OrganizerExecutor mutates, with current permission/effect/scope/capability/
 Settings page. Remove Automation's settings tab/form and duplicate ordinary editors; old links
 navigate to System Settings. Reuse the existing focused API and managed checked publication,
 validation, submission reconciliation and per-instance adoption evidence; no new store or endpoint
-is required. Only the three intended fields change, preserving unrelated Drafts/configuration.
+is required. The publication changes only the submitted runtime settings.
 
 | Existing key | CURRENT consumer |
 |---|---|
@@ -1032,9 +1031,9 @@ explicit object test / complete-flow test
 `RulesWorkspaceCommandService` composes `ConfigurationObjectService` and
 `ManagedConfigurationService`; generic revision/object APIs remain shared. Family-local analysis
 uses `stage_analysis_candidate`/`RulesObjectAnalysisService`; compatibility complete analysis retains
-`stage_preview_candidate`. Save constructs its own focused successor and never publishes sibling
-Draft edits. The API enforces READ/configuration/activation permissions and serializes runtime
-preparation with atomic publication. A failure preserves prior Active and correctable input;
+`stage_preview_candidate`. Save constructs its own focused successor from the current Active and
+the submitted object. The API enforces READ/configuration/activation permissions and serializes
+runtime preparation with atomic publication. A failure preserves prior Active and correctable input;
 unknown publication is reconciled by reading authority before another submission.
 
 The eight inventories cover Overview, type binding, types, rules and Metadata/Naming/Classification/
@@ -1665,9 +1664,9 @@ Completed/in-flight effects are not rolled back; uncertain mutation is never aut
 
 The ordinary V2 inventory/detail reads saved definitions and bounded `executionReadiness`, without
 querying historical grant eligibility. Enabled is a published schedule state, not proof of a valid
-future plan. Removed/Draft-only/unavailable states retain their actual identities; reads create no
-work. Confirmed focused Save advances the same form's publication identity while preserving
-later input. Peer changes retain the old candidate. Unknown responses retain principal-scoped
+future plan. Removed definitions retain their historical identity, and unavailable reads retain
+their failure state. Confirmed focused Save advances the same form's publication identity while
+preserving later input. Peer changes retain the old candidate. Unknown responses retain principal-scoped
 candidate/action/base identity and reconcile only the matching durable command and activation audit;
 absence is unknown, never permission to replay. Reconnect does not resubmit commands.
 
@@ -1797,7 +1796,7 @@ GET /api/operations/automation/settings   READ
 PUT /api/operations/automation/settings   MANAGE_CONFIGURATION
   → strict three-field normalization (no other key, no bool/fractional/non-finite)
   → observed Active captured, no-op detected (publishes nothing)
-  → successor Draft from that exact Active
+  → in-memory candidate from that exact Active
   → only automation.{maximumActiveJobs,workerPollSeconds,
                      schedulerPollSeconds} applied
   → whole-candidate validation → runtime preparation → atomic activation
@@ -1821,10 +1820,9 @@ bounded `prepare` stage.
 
 A Save carries a client-generated submission identity. Unknown outcomes are
 reconciled against that exact submission's own durable evidence
-(`committed` / `superseded` / `not_committed` / `unresolved`); equal values,
-another writer's equal publication, or a still-Draft failed revision can never
-certify it. A submission that terminates without ever owning a revision — a
-three-field input refusal, a stale/no-op refusal, or a
+(`committed` / `superseded` / `not_committed` / `unresolved`). A matching value
+alone cannot identify the request that published it. A submission that terminates without owning
+a revision — a three-field input refusal, a stale/no-op refusal, or a
 persist/validate/prepare/activate fault — records its own bounded terminal
 outcome under the same actor + submission identity, so a lost failure response
 reconciles into a *terminal, correctable* state instead of a permanently blocked
@@ -1868,9 +1866,9 @@ merged candidate the request sent: the two differ by construction, so comparing
 against the candidate would treat another writer's preserved field as a fresh
 keystroke and restore its old value after a successful Save.
 
-`SystemSettingsService` retains the generic Draft editor and its
-`/api/system/settings` semantics unchanged; the focused command is a distinct
-contract, not a replacement. Shared validation stays in
+`SystemSettingsService` applies the advanced settings groups through
+`/api/system/settings`. The focused engine-settings command handles the three runtime fields.
+Both publish checked candidates directly. Shared validation stays in
 `mediaflow.domain.system_settings` (now including finite-number rejection) and the
 three-field subset/bounds/meanings live in `mediaflow.domain.automation_settings`.
 `AutomationSettingsService` composes the existing `ManagedConfigurationService`
@@ -1949,8 +1947,8 @@ secret values or changing completed media work.
 The V2 Web uses persistent definition/delivery list backgrounds with nested routes for create,
 definition, editor and delivery cards; existing external URLs remain supported. Notification-specific
 presentation and exit handling reuse the shared modal shell. They do not introduce another
-configuration, delivery or command protocol. Backend actions/RBAC remain authoritative, and denied
-Draft editors render read-only content rather than writable controls.
+configuration, delivery or command protocol. Backend permissions determine whether operators
+can edit the published definition or view it read-only.
 
 The editor keeps local inputs paired with their saved revision/version baseline. Remote changes
 with unsaved input require an explicit reconciliation choice; an in-flight ordinary Save updates
