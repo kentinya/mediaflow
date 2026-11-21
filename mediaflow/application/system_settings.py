@@ -399,6 +399,9 @@ class SystemSettingsService:
         submission_id: str | None,
         stage: str,
         next_action: str,
+        kind: str = "system_settings",
+        object_id: str = "system_settings",
+        action: str = "settings_apply",
         extra: dict[str, object] | None = None,
     ) -> None:
         """Persist a bounded not-committed answer for another managed publish entry.
@@ -415,6 +418,9 @@ class SystemSettingsService:
             outcome="not_committed",
             stage=stage,
             next_action=next_action,
+            kind=kind,
+            object_id=object_id,
+            action=action,
             extra=extra,
         )
 
@@ -426,6 +432,9 @@ class SystemSettingsService:
         outcome: str,
         stage: str,
         next_action: str,
+        kind: str = "system_settings",
+        object_id: str = "system_settings",
+        action: str = "settings_apply",
         extra: dict[str, object] | None = None,
     ) -> None:
         if not isinstance(submission_id, str) or not submission_id.strip():
@@ -450,9 +459,9 @@ class SystemSettingsService:
                     {},
                     {
                         "objectChange": {
-                            "kind": "system_settings",
-                            "objectId": "system_settings",
-                            "action": "settings_apply",
+                            "kind": kind,
+                            "objectId": object_id,
+                            "action": action,
                             "submissionId": submission_id,
                             "outcome": outcome,
                             "stage": stage,

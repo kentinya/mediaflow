@@ -3086,6 +3086,9 @@ class MediaFlowApi:
                             "review the reported condition and the current Active, "
                             "then publish the intended document again deliberately"
                         ),
+                        kind="configuration_document",
+                        object_id="configuration",
+                        action="configuration_publish",
                         extra={"code": type(error).__name__},
                     )
                 raise
@@ -3152,6 +3155,9 @@ class MediaFlowApi:
                                     "review the reported condition and the current Active, "
                                     "then import an appropriate package deliberately"
                                 ),
+                                kind="configuration_package",
+                                object_id="configuration",
+                                action="configuration_package_import",
                                 extra={"code": type(error).__name__},
                             )
                         raise
