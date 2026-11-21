@@ -287,12 +287,19 @@ export const exportConfigurationPackage = (
 export const importConfigurationPackage = (
   token: string | null,
   packageValue: Record<string, unknown>,
+  submissionId?: string,
   fetchImpl?: FetchLike,
 ) =>
   request<Record<string, unknown>>(
     token,
     "/api/configuration/packages",
-    { method: "POST", body: JSON.stringify({ package: packageValue }) },
+    {
+      method: "POST",
+      body: JSON.stringify({
+        package: packageValue,
+        ...(submissionId === undefined ? {} : { submissionId }),
+      }),
+    },
     fetchImpl,
   );
 

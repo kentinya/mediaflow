@@ -937,6 +937,62 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     self.assertEqual(status, 404)
                     self.assertEqual(body["error"]["code"], "not_found")
 
+    def test_api_document_submission_reconciles_without_a_second_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            document = set_local_roots(example_document(), Path(directory))
+            document["persistence"]["databasePath"] = str(Path(directory) / "runtime.sqlite3")
+            with (
+                SQLiteConfigurationRepository(
+                    Path(directory) / "runtime.sqlite3"
+                ) as configuration_repository,
+                SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as runtime_repository,
+            ):
+                service = ManagedConfigurationService(configuration_repository)
+                admin = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
+                api = MediaFlowApi(
+                    runtime_repository,
+                    principals=(admin,),
+                    configuration_service=service,
+                    bootstrap_document=document,
+                )
+                status, first = publish_document(api, document)
+                self.assertEqual(status, 200)
+                current = service.active()
+                submission_id = "document-publish-submission-1"
+                status, published = request(
+                    api,
+                    "/api/configuration/publish",
+                    method="POST",
+                    body=json.dumps(
+                        {
+                            "document": current.document,
+                            "expectedActiveRevisionId": current.revision_id,
+                            "expectedActiveVersion": current.revision_sequence
+                            or current.version,
+                            "expectedActiveDigest": current.digest,
+                            "submissionId": submission_id,
+                        }
+                    ).encode(),
+                )
+                self.assertEqual(status, 200, published)
+                self.assertEqual(published["submissionId"], submission_id)
+                before = len(service.repository.list_revisions(limit=100))
+                status, reconciled = request(
+                    api,
+                    "/api/system/settings/reconcile",
+                    query=f"submissionId={submission_id}",
+                )
+                self.assertEqual(status, 200, reconciled)
+                self.assertEqual(reconciled["state"], "COMMITTED")
+                self.assertEqual(
+                    reconciled["committedRevisionId"], published["revisionId"]
+                )
+                self.assertEqual(reconciled["sideEffects"], "none")
+                self.assertEqual(
+                    len(service.repository.list_revisions(limit=100)), before
+                )
+                self.assertEqual(service.active().revision_id, published["revisionId"])
+
     def test_api_invalid_candidate_is_rejected_then_corrected_publish_pins_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             document = set_local_roots(example_document(), Path(directory))

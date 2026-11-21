@@ -945,7 +945,13 @@ configuration, ResourceLibrary validation, applicable checked evidence, publicat
 rebinding inside the backend. The operator does not manage intermediate candidate states. A
 validation, dependency, Storage-check, publication or runtime-load failure rejects the command and
 leaves the previous Active pointer and runtime authority intact. Settings, Rules, Storage, libraries,
-Automation and notification forms use the same direct checked-publication boundary.
+Automation and notification forms use the same direct checked-publication boundary. These managed
+publication entrances — typed group apply, full-document publish, portable-package import and corrupt
+Active replacement — carry one client request identity into their own activation audit. A lost answer
+is reconciled by reading that exact identity and the current Active, so reconnect can show this
+request's terminal result and the effective snapshot without another publish. A settings form follows
+a newly read Active when it is clean; with typed input it keeps the input, focus and edit baseline,
+synchronizes untouched fields and marks a field another writer changed.
 
 ## CURRENT — Empty business runtime and resident configuration lifecycle
 

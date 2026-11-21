@@ -327,6 +327,11 @@ revision and activation evidence. Equal values alone — or another writer publi
 never certify a submission that did not publish, and only a terminal proof clears the resubmission
 block. The retained submission context (identity, submitted values and the publication identity the
 form was edited against) survives a reload, is principal-scoped, and never stores a bearer token.
+Typed group apply, full-document JSON publish, portable-package import and corrupt-Active replacement
+share this per-request read-only reconciliation; a reconnect shows both that request's result and the
+current Active. The form follows a newly read Active when it has no typed input; with edits in progress
+it keeps the exact input, focus and edit baseline, updates untouched fields and marks a field changed
+by another session.
 
 ## Storage configuration model
 

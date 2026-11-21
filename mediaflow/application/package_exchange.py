@@ -325,6 +325,7 @@ class PackageExchangeService:
         package_value: object,
         *,
         actor: str,
+        submission_id: str | None = None,
     ) -> dict[str, object]:
         if self._configuration is None:
             raise PackageExchangeError(
@@ -413,6 +414,16 @@ class PackageExchangeService:
                 expected_active_version=active.revision_sequence or active.version,
                 expected_active_digest=active.digest,
                 run_checks=requires_checks,
+                audit_context=(
+                    {
+                        "kind": "configuration_package",
+                        "objectId": "configuration",
+                        "action": "configuration_package_import",
+                        "submissionId": submission_id,
+                    }
+                    if submission_id is not None
+                    else None
+                ),
             )
         except (ConfigurationVersionConflict, RuntimeSnapshotUnavailable):
             raise
@@ -428,6 +439,7 @@ class PackageExchangeService:
         result: dict[str, object] = {
             "imported": True,
             "action": "published",
+            **({"submissionId": submission_id} if submission_id is not None else {}),
             "revision": published.summary(),
             "sideEffects": "configuration_only",
             "retrySafe": True,

@@ -499,8 +499,6 @@ class SystemSettingsService:
             change = audit.after.get("objectChange")
             if not isinstance(change, dict):
                 continue
-            if change.get("objectId") != "system_settings":
-                continue
             if change.get("submissionId") != submission_id:
                 continue
             if audit.action == "settings_outcome":

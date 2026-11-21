@@ -229,18 +229,30 @@ class PackageExchangeApiTests(unittest.TestCase):
         code, package = request(api, "/api/configuration/packages/export/configuration")
         self.assertEqual(code, 200)
 
+        submission_id = "package-import-submission-1"
         code, imported = request(
             api,
             "/api/configuration/packages",
             method="POST",
-            body={"package": package},
+            body={"package": package, "submissionId": submission_id},
         )
         self.assertEqual(code, 200)
         self.assertEqual(imported["action"], "published")
         self.assertEqual(imported["revision"]["status"], "active")
+        self.assertEqual(imported["submissionId"], submission_id)
         self.assertNotIn("currentDraft", imported)
         self.assertEqual(
             imported["publishedActive"]["revisionId"],
+            imported["revision"]["revisionId"],
+        )
+        code, reconciled = request(
+            api,
+            f"/api/system/settings/reconcile?submissionId={submission_id}",
+        )
+        self.assertEqual(code, 200)
+        self.assertEqual(reconciled["state"], "COMMITTED")
+        self.assertEqual(
+            reconciled["committedRevisionId"],
             imported["revision"]["revisionId"],
         )
 

@@ -3021,11 +3021,17 @@ class MediaFlowApi:
                 "expectedActiveVersion",
                 "expectedActiveDigest",
                 "replaceActive",
+                "submissionId",
             }
             if set(document).difference(allowed) or not isinstance(document.get("document"), dict):
                 raise ValueError(
                     "configuration publication requires a document and the exact Active identity"
                 )
+            submission_id = document.get("submissionId")
+            if submission_id is not None and (
+                not isinstance(submission_id, str) or not submission_id.strip()
+            ):
+                raise ValueError("submissionId must be a non-empty string")
             expected_revision_id = document.get("expectedActiveRevisionId")
             if expected_revision_id is not None and not isinstance(expected_revision_id, str):
                 raise ValueError("expectedActiveRevisionId must be a string")
@@ -3049,6 +3055,16 @@ class MediaFlowApi:
                     expected_active_version=expected_version,
                     expected_active_digest=expected_digest,
                     replace_active=replace_active,
+                    audit_context=(
+                        {
+                            "kind": "configuration_document",
+                            "objectId": "configuration",
+                            "action": "configuration_publish",
+                            "submissionId": submission_id,
+                        }
+                        if submission_id is not None
+                        else None
+                    ),
                     before_publish=lambda candidate: prepared.append(
                         self._prepare_runtime_binding_for_revision(candidate)
                     ),
@@ -3061,6 +3077,8 @@ class MediaFlowApi:
                 self._publish_runtime_binding(prepared[0])
             response = revision.summary()
             response["published"] = True
+            if submission_id is not None:
+                response["submissionId"] = submission_id
             response["nextAction"] = "当前运行时已按新 Active 重新绑定"
             return self._response(start_response, 200, response)
         if parts == ["api", "configuration"]:
@@ -3103,10 +3121,11 @@ class MediaFlowApi:
                 if method == "POST":
                     self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
                     self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
-                    package_value, _recovery = self._package_import_request(environ)
+                    package_value, _recovery, submission_id = self._package_import_request(environ)
                     result = self._package_exchange.import_configuration(
                         package_value,
                         actor=principal.principal_id,
+                        submission_id=submission_id,
                     )
                     return self._response(
                         start_response,
@@ -9320,7 +9339,7 @@ class MediaFlowApi:
     @staticmethod
     def _package_import_request(
         environ: dict,
-    ) -> tuple[object, dict[str, object] | None]:
+    ) -> tuple[object, dict[str, object] | None, str | None]:
         raw_length = environ.get("CONTENT_LENGTH", "0") or "0"
         try:
             length = int(raw_length)
@@ -9360,7 +9379,7 @@ class MediaFlowApi:
                 next_action="import an unmodified JSON configuration package",
             )
         if "package" in value:
-            allowed = {"package"}
+            allowed = {"package", "submissionId"}
             if set(value).difference(allowed):
                 raise PackageExchangeError(
                     "package import request contains unsupported fields",
@@ -9371,9 +9390,21 @@ class MediaFlowApi:
                 )
             package_value = value["package"]
             recovery = value.get("recovery")
+            submission_id = value.get("submissionId")
+            if submission_id is not None and (
+                not isinstance(submission_id, str) or not submission_id.strip()
+            ):
+                raise PackageExchangeError(
+                    "package import submissionId must be a non-empty string",
+                    code="invalid_request",
+                    status=422,
+                    durable_state="no_configuration_changed",
+                    next_action="resend the package with a valid request identity",
+                )
         else:
             package_value = value
             recovery = None
+            submission_id = None
         if not isinstance(package_value, dict):
             raise PackageExchangeError(
                 "configuration package must be an object",
@@ -9390,7 +9421,7 @@ class MediaFlowApi:
                 durable_state="no_configuration_changed",
                 next_action="send only the exact configuration package",
             )
-        return package_value, recovery
+        return package_value, recovery, submission_id
 
     @staticmethod
     def _optional_document(environ: dict) -> dict:

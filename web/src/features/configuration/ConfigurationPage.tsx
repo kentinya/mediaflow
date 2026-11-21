@@ -66,7 +66,8 @@ const QUERY_KEY = ["configuration-status"] as const;
 
 const PENDING_APPLY_PREFIX = "mediaflow.configuration.apply-pending:v1:";
 
-interface PendingApply {
+interface PendingSettingsApply {
+  readonly kind: "settings";
   readonly submissionId: string;
   readonly groupId: string;
   readonly selectionId: string;
@@ -76,11 +77,23 @@ interface PendingApply {
   readonly submittedPaths: readonly string[];
 }
 
+interface PendingConfigurationPublication {
+  readonly kind: "configuration";
+  readonly submissionId: string;
+  /** The exact operator action this request identity belongs to. */
+  readonly label: string;
+  readonly selectionId: string | null;
+}
+
+type PendingApply = PendingSettingsApply | PendingConfigurationPublication;
+
 interface ApplyReconciliation {
   readonly state: string;
   readonly committed: boolean;
   readonly committedRevisionId: string | null;
   readonly nextAction: string | null;
+  readonly currentRevisionId: string | null;
+  readonly currentVersion: number | null;
 }
 
 function newApplySubmissionId(): string | null {
@@ -118,6 +131,27 @@ function readPendingApply(principalId: string | null): PendingApply | null {
     }
     const record = value as Record<string, unknown>;
     const submissionId = record["submissionId"];
+    if (typeof submissionId !== "string" || submissionId === "") return null;
+    // The first retained shape predates whole-document request identities and
+    // therefore names a settings group. A record of unknown kind is never
+    // guessed into a publication request.
+    if (record["kind"] === "configuration") {
+      const label = record["label"];
+      const selectionId = record["selectionId"];
+      if (
+        typeof label !== "string" ||
+        label === "" ||
+        (selectionId !== null && typeof selectionId !== "string")
+      ) {
+        return null;
+      }
+      return {
+        kind: "configuration",
+        submissionId,
+        label,
+        selectionId: selectionId as string | null,
+      };
+    }
     const groupId = record["groupId"];
     const selectionId = record["selectionId"];
     const body = record["body"];
@@ -125,8 +159,6 @@ function readPendingApply(principalId: string | null): PendingApply | null {
     const startedBaseline = record["startedBaseline"];
     const submittedPaths = record["submittedPaths"];
     if (
-      typeof submissionId !== "string" ||
-      submissionId === "" ||
       typeof groupId !== "string" ||
       typeof selectionId !== "string" ||
       body === null ||
@@ -143,6 +175,7 @@ function readPendingApply(principalId: string | null): PendingApply | null {
       return null;
     }
     return {
+      kind: "settings",
       submissionId,
       groupId,
       selectionId,
@@ -857,6 +890,13 @@ export function ConfigurationPage() {
   const [reconciliation, setReconciliation] =
     useState<ApplyReconciliation | null>(null);
   const verifiedSubmissionRef = useRef<string | null>(null);
+  // A just-published successor may become visible before the status read that
+  // names it. This identity prevents an older in-flight status document from
+  // temporarily selecting the superseded Active again.
+  const latestPublishedRef = useRef<{
+    readonly revisionId: string;
+    readonly revisionVersion: number | null;
+  } | null>(null);
   const [showInspector, setShowInspector] = useState(false);
   const [replacementText, setReplacementText] = useState("");
   const [replacementError, setReplacementError] = useState<string | null>(null);
@@ -1127,6 +1167,115 @@ export function ConfigurationPage() {
 
   const selectedView =
     selectionId === null ? null : (views[selectionId] ?? null);
+  // Follow the Active the status read actually names. A clean form adopts the
+  // new snapshot; a form with typed input moves to the new Active while keeping
+  // the exact input, focus target, and edit baseline that input was typed
+  // against. Unedited fields then display the new effective values, and a field
+  // changed by another session stays marked instead of silently overwriting
+  // either value.
+  useEffect(() => {
+    const nextActiveId = model.activeId;
+    if (nextActiveId === null || selectionId === null) return;
+    if (nextActiveId === selectionId) {
+      latestPublishedRef.current = null;
+      return;
+    }
+    const currentView = viewsRef.current[selectionId];
+    const currentForm = formsRef.current[selectionId];
+    const currentGroups = currentView
+      ? readSettingGroups(currentView.settings)
+      : [];
+    const currentBaseline = baselineValues(currentGroups);
+    const currentValues = currentView
+      ? formValues(currentForm, currentGroups, currentBaseline)
+      : (currentForm?.values ?? {});
+    const typed = currentForm !== undefined &&
+      (currentGroups.length > 0
+        ? currentGroups.some((group) =>
+            group.fields.some((field) =>
+              fieldChanged(
+                field,
+                currentValues[field.path] ?? "",
+                currentBaseline,
+              ),
+            ),
+          )
+        : Object.entries(currentForm.values).some(
+            ([path, value]) => value !== (currentForm.initial[path] ?? ""),
+          ));
+    const published = latestPublishedRef.current;
+    if (
+      published?.revisionId === selectionId &&
+      (model.activeVersion === null ||
+        (published.revisionVersion !== null &&
+          model.activeVersion < published.revisionVersion))
+    ) {
+      return;
+    }
+    const selectedVersion = currentView?.revisionVersion ?? null;
+    if (
+      selectedVersion !== null &&
+      model.activeVersion !== null &&
+      selectedVersion > model.activeVersion
+    ) {
+      return;
+    }
+    const nextAuthority: InputAuthority = {
+      kind: "active",
+      revisionId: nextActiveId,
+      revisionVersion: model.activeVersion,
+      draftVersion: model.activeVersion,
+      digest: text(model.activeRecord?.digest, "") || null,
+    };
+    updateForms((previous) => {
+      const next: Record<string, FormState> = {};
+      const existing = previous[nextActiveId];
+      if (existing !== undefined) {
+        next[nextActiveId] = existing;
+      } else if (currentForm !== undefined && typed) {
+        next[nextActiveId] = {
+          // The typed values are retained byte-for-byte; untouched fields keep
+          // following the baseline through their unchanged initial value.
+          values: { ...currentForm.values },
+          initial: { ...currentForm.initial },
+          authority: nextAuthority,
+        };
+      }
+      return next;
+    });
+    if (currentView !== undefined) {
+      // Keep the same rendered fields until the new Active's read completes so
+      // the focused input is not remounted between the two snapshots.
+      updateViews((previous) => ({
+        ...previous,
+        [nextActiveId]: {
+          ...currentView,
+          revisionId: nextActiveId,
+          digest: nextAuthority.digest,
+        },
+      }));
+    }
+    setSelectionId(nextActiveId);
+    if (!awaitingVerification && reconciliation === null) {
+      setNotice({
+        tone: "warning",
+        title: "已同步新的生效配置",
+        text: typed
+          ? "其他会话发布了新的生效配置；未编辑的字段已同步，正在编辑的输入、焦点和编辑基线保留，被其他会话修改的字段会单独标记。"
+          : "其他会话发布了新的生效配置；当前没有未提交输入，表单已切换到最新读到的生效快照。",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    awaitingVerification,
+    model.activeId,
+    model.activeVersion,
+    reconciliation,
+    selectionId,
+    updateForms,
+    updateViews,
+  ]);
+
   const settingsWritable =
     selectedView === null || selectedView.settingsState === "ready";
   const canWrite =
@@ -1235,6 +1384,10 @@ export function ConfigurationPage() {
 
   const updateFieldInput = (field: SettingField, value: string) => {
     if (selectionId === null || selectedView === null) return;
+    // Typing pins this form to the exact Active it was typed against. A status
+    // read that names another Active must then move the edit session explicitly
+    // instead of silently re-keying the derived selection and dropping input.
+    setSelectionId(selectionId);
     updateForms((previousForms) => {
       const current: FormState = previousForms[selectionId] ?? {
         values: { ...baseline },
@@ -1294,7 +1447,8 @@ export function ConfigurationPage() {
       submissionId,
       edits: result.edits,
     };
-    const pending: PendingApply = {
+    const pending: PendingSettingsApply = {
+      kind: "settings",
       submissionId,
       groupId: group.id,
       selectionId,
@@ -1372,6 +1526,10 @@ export function ConfigurationPage() {
         };
         return next;
       });
+      latestPublishedRef.current = {
+        revisionId: newRevisionId,
+        revisionVersion: newRevisionVersion,
+      };
       setSelectionId(newRevisionId);
       setActiveGroup(group.id);
       setPendingApply(null);
@@ -1529,10 +1687,15 @@ export function ConfigurationPage() {
       const currentData = refreshed.data;
       const currentActive = asRecord(currentData?.active);
       const currentActiveId = revisionIdOf(currentActive);
-      if (pending.selectionId !== null) {
-        await loadRevision(pending.selectionId);
+      const currentVersion =
+        numberValue(currentActive?.revisionSequence) ??
+        numberValue(currentActive?.version);
+      const pendingSelection =
+        pending.kind === "settings" ? pending.selectionId : null;
+      if (pendingSelection !== null) {
+        await loadRevision(pendingSelection);
       }
-      if (currentActiveId !== null && currentActiveId !== pending.selectionId) {
+      if (currentActiveId !== null && currentActiveId !== pendingSelection) {
         await loadRevision(currentActiveId);
       }
       setReconciliation({
@@ -1544,6 +1707,8 @@ export function ConfigurationPage() {
             : null,
         nextAction:
           typeof result.nextAction === "string" ? result.nextAction : null,
+        currentRevisionId: currentActiveId,
+        currentVersion,
       });
       if (result.state === "UNRESOLVED") {
         setReadNotice(
@@ -1556,24 +1721,37 @@ export function ConfigurationPage() {
       writePendingApply(principalId, null);
       const committed =
         result.state === "COMMITTED" || result.state === "SUPERSEDED";
+      const currentCopy =
+        currentActiveId === null
+          ? "当前没有可用的生效配置"
+          : `当前生效配置为 ${currentActiveId}${
+              currentVersion !== null ? `（序号 ${currentVersion}）` : ""
+            }`;
       if (committed) {
         setNotice({
           tone: result.state === "COMMITTED" ? "success" : "warning",
           title:
-            result.state === "COMMITTED"
-              ? "本次应用已发布"
-              : "本次应用已发布，已被后续发布替换",
+            pending.kind === "configuration"
+              ? result.state === "COMMITTED"
+                ? `${pending.label}已发布`
+                : `${pending.label}已发布，已被后续发布替换`
+              : result.state === "COMMITTED"
+                ? "本次应用已发布"
+                : "本次应用已发布，已被后续发布替换",
           text: `本次请求身份 ${pending.submissionId.slice(0, 8)}… 的结果：${
             result.state === "COMMITTED"
               ? "是当前生效值"
               : "曾发布，当前生效值已更新"
-          }。当前生效配置见上方摘要；表单中尚未提交的输入仍保留。`,
+          }；${currentCopy}。表单中尚未提交的输入仍保留。`,
         });
       } else {
         setNotice({
           tone: "warning",
-          title: "本次应用未发布",
-          text: "已通过同一请求身份的持久证据确认本次没有发布。当前生效值保持原样；你的输入仍在表单中，可核对后再次明确应用。",
+          title:
+            pending.kind === "configuration"
+              ? `${pending.label}未发布`
+              : "本次应用未发布",
+          text: `已通过同一请求身份的持久证据确认本次没有发布；${currentCopy}，当前生效值保持原样。你的输入仍在对应位置，可核对后再次明确应用。`,
         });
       }
     } catch {
@@ -1636,8 +1814,15 @@ export function ConfigurationPage() {
   const refreshAfterPublication = async () => {
     void client.invalidateQueries({ queryKey: QUERY_KEY });
     const next = await query.refetch();
-    const activeId = revisionIdOf(asRecord(next.data?.active));
+    const activeRecord = asRecord(next.data?.active);
+    const activeId = revisionIdOf(activeRecord);
     if (activeId !== null) {
+      latestPublishedRef.current = {
+        revisionId: activeId,
+        revisionVersion:
+          numberValue(activeRecord?.revisionSequence) ??
+          numberValue(activeRecord?.version),
+      };
       setSelectionId(activeId);
       await loadRevision(activeId);
     }
@@ -1654,6 +1839,10 @@ export function ConfigurationPage() {
 
   const applyReplacement = async () => {
     if (busy !== null || awaitingVerification) return;
+    if (!model.canManage || !model.canActivate) {
+      setReplacementError("当前账号没有管理并激活配置的权限；本次没有发布。");
+      return;
+    }
     let document: unknown;
     try {
       document = JSON.parse(replacementText);
@@ -1671,6 +1860,19 @@ export function ConfigurationPage() {
       setReplacementError("完整配置必须是一个 JSON 对象；本次没有发布。");
       return;
     }
+    const submissionId = newApplySubmissionId();
+    if (submissionId === null) {
+      setReplacementError(
+        "当前浏览器无法生成安全的请求标识；本次没有发送发布请求，请更新浏览器后重试。",
+      );
+      return;
+    }
+    const pending: PendingConfigurationPublication = {
+      kind: "configuration",
+      submissionId,
+      label: "完整配置替换",
+      selectionId,
+    };
     setBusy({ kind: "import" });
     setReplacementError(null);
     setNotice(null);
@@ -1678,7 +1880,12 @@ export function ConfigurationPage() {
       const published = await publishConfiguration(token, {
         document,
         replaceActive: true,
+        submissionId,
       });
+      setPendingApply(null);
+      writePendingApply(principalId, null);
+      setAwaitingVerification(false);
+      verifiedSubmissionRef.current = submissionId;
       setReplacementText("");
       setNotice({
         tone: "success",
@@ -1693,13 +1900,26 @@ export function ConfigurationPage() {
     } catch (error) {
       const message = importFailureMessage(error);
       setReplacementError(message);
-      setNotice({
-        tone: "error",
-        title: "完整配置未发布",
-        text: message,
-      });
       if (configurationMutationFailure(error, "import").verifyRequired) {
+        setPendingApply(pending);
+        writePendingApply(principalId, pending);
         setAwaitingVerification(true);
+        setReconciliation(null);
+        setNotice({
+          tone: "error",
+          title: "完整配置发布结果待核实",
+          text: "本次发布没有收到可确认的回包。系统不会重复发布；正在用同一请求身份只读核对本次结果和当前生效值。",
+        });
+        void client.invalidateQueries({ queryKey: QUERY_KEY });
+      } else {
+        setPendingApply(null);
+        writePendingApply(principalId, null);
+        setAwaitingVerification(false);
+        setNotice({
+          tone: "error",
+          title: "完整配置未发布",
+          text: message,
+        });
       }
     } finally {
       setBusy(null);
@@ -1737,6 +1957,21 @@ export function ConfigurationPage() {
       );
       return;
     }
+    const submissionId = newApplySubmissionId();
+    if (submissionId === null) {
+      setImportError(
+        "当前浏览器无法生成安全的请求标识；本次没有发送发布请求，请更新浏览器后重试。",
+      );
+      return;
+    }
+    const label =
+      importMode === "package" ? "脱敏配置包导入" : "完整配置导入";
+    const pending: PendingConfigurationPublication = {
+      kind: "configuration",
+      submissionId,
+      label,
+      selectionId,
+    };
     setBusy({ kind: "import" });
     setImportError(null);
     setNotice(null);
@@ -1745,6 +1980,7 @@ export function ConfigurationPage() {
         const imported = await importConfigurationPackage(
           token,
           parsed as Record<string, unknown>,
+          submissionId,
         );
         const revision = asRecord(imported.revision);
         setPackageImportText("");
@@ -1758,7 +1994,10 @@ export function ConfigurationPage() {
           }；请核对上方表单和诊断中的真实状态。`,
         });
       } else {
-        const body: Record<string, unknown> = { document: parsed };
+        const body: Record<string, unknown> = {
+          document: parsed,
+          submissionId,
+        };
         if (model.activeHealthy && model.activeId !== null) {
           body.expectedActiveRevisionId = model.activeId;
           if (model.activeVersion !== null) {
@@ -1779,17 +2018,35 @@ export function ConfigurationPage() {
           }；请核对上方表单和诊断中的真实状态。`,
         });
       }
+      setPendingApply(null);
+      writePendingApply(principalId, null);
+      setAwaitingVerification(false);
+      verifiedSubmissionRef.current = submissionId;
       await refreshAfterPublication();
     } catch (error) {
       const message = importFailureMessage(error);
       setImportError(message);
-      setNotice({
-        tone: "error",
-        title: importMode === "package" ? "脱敏配置包未导入" : "完整配置未发布",
-        text: message,
-      });
       if (configurationMutationFailure(error, "import").verifyRequired) {
+        setPendingApply(pending);
+        writePendingApply(principalId, pending);
         setAwaitingVerification(true);
+        setReconciliation(null);
+        setNotice({
+          tone: "error",
+          title: `${label}结果待核实`,
+          text: "本次发布没有收到可确认的回包。系统不会重复发布；正在用同一请求身份只读核对本次结果和当前生效值。",
+        });
+        void client.invalidateQueries({ queryKey: QUERY_KEY });
+      } else {
+        setPendingApply(null);
+        writePendingApply(principalId, null);
+        setAwaitingVerification(false);
+        setNotice({
+          tone: "error",
+          title:
+            importMode === "package" ? "脱敏配置包未导入" : "完整配置未发布",
+          text: message,
+        });
       }
     } finally {
       setBusy(null);
@@ -1902,11 +2159,21 @@ export function ConfigurationPage() {
                         : "尚不能证明本次请求的持久结果；系统不会重新发布。"}
                 </p>
                 <p>
-                  当前生效值以页面摘要和表单基线为准；本次请求身份
+                  本次请求身份
                   {reconciliation.committedRevisionId !== null
                     ? ` 发布的配置为 ${reconciliation.committedRevisionId}`
                     : " 没有已知的已发布修订"}
-                  。
+                  ；
+                  {reconciliation.currentRevisionId === null
+                    ? "当前没有可用的生效配置"
+                    : `当前生效配置为 ${
+                        reconciliation.currentRevisionId
+                      }${
+                        reconciliation.currentVersion === null
+                          ? ""
+                          : `（序号 ${reconciliation.currentVersion}）`
+                      }`}
+                  。表单与摘要均按这次只读读回更新。
                 </p>
                 {reconciliation.nextAction !== null && (
                   <p>{reconciliation.nextAction}</p>
@@ -2139,6 +2406,12 @@ export function ConfigurationPage() {
                                   value,
                                   baseline,
                                 );
+                                const editBaseline = form?.initial[field.path];
+                                const remoteChanged =
+                                  form !== undefined &&
+                                  editBaseline !== undefined &&
+                                  editBaseline !==
+                                    (baseline[field.path] ?? "");
                                 const fieldBoundary = groupHasMixedBoundaries
                                   ? boundaryLabel(field.boundary)
                                   : null;
@@ -2155,6 +2428,10 @@ export function ConfigurationPage() {
                                       changed
                                         ? " mf-settings-field-changed"
                                         : ""
+                                    }${
+                                      remoteChanged
+                                        ? " mf-settings-field-remote"
+                                        : ""
                                     }`}
                                     key={field.path}
                                   >
@@ -2166,6 +2443,22 @@ export function ConfigurationPage() {
                                         </span>
                                       )}
                                     </label>
+                                    {remoteChanged && (
+                                      <p
+                                        className="mf-settings-remote-change"
+                                        role="status"
+                                      >
+                                        其他会话已修改此字段；编辑基线仍为{" "}
+                                        {editBaseline === ""
+                                          ? "未配置"
+                                          : editBaseline}
+                                        ，当前生效值为{" "}
+                                        {(baseline[field.path] ?? "") === ""
+                                          ? "未配置"
+                                          : baseline[field.path]}
+                                        {changed ? "，你的输入已保留。" : "。"}
+                                      </p>
+                                    )}
                                     <div className="mf-settings-control">
                                       {field.valueType === "boolean" ? (
                                         <select

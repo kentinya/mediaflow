@@ -58,6 +58,12 @@ const SECTIONS = {
       valueType: "enum",
       boundary: "hot_consumed",
     },
+    "operationalLogging.retentionDays": {
+      label: "Operational logging retention",
+      value: 30,
+      valueType: "integer",
+      boundary: "hot_consumed",
+    },
   },
   Automation: {
     "automation.maximumActiveJobs": {
@@ -374,6 +380,167 @@ describe("V2 configuration direct publication", () => {
     expect(screen.getByRole("button", { name: "应用更改" })).toBeEnabled();
   });
 
+  it("follows a new Active from another session without discarding a clean form", async () => {
+    let remotePublished = false;
+    const remoteSections = {
+      ...SECTIONS,
+      Localization: {
+        ...SECTIONS.Localization,
+        locale: { ...SECTIONS.Localization.locale, value: "en-US" },
+      },
+      Logging: {
+        ...SECTIONS.Logging,
+        "operationalLogging.retentionDays": {
+          ...SECTIONS.Logging["operationalLogging.retentionDays"],
+          value: 52,
+        },
+      },
+    };
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-2")) {
+        return revisionDetail({
+          revisionId: "active-2",
+          version: 5,
+          revisionSequence: 5,
+          digest: "digest-2",
+        });
+      }
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings")) {
+        return response(
+          remotePublished
+            ? activeSettings({
+                revisionId: "active-2",
+                revisionVersion: 5,
+                draftVersion: 5,
+                revisionDigest: "digest-2",
+                sections: remoteSections,
+              })
+            : activeSettings(),
+        );
+      }
+      return response(
+        remotePublished
+          ? activeStatus({
+              active: {
+                revisionId: "active-2",
+                version: 5,
+                revisionSequence: 5,
+                digest: "digest-2",
+              },
+            })
+          : activeStatus(),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+    await userEvent.click(await screen.findByRole("button", { name: "日志" }));
+    expect(screen.getByLabelText("日志保留天数")).toHaveValue("30");
+
+    remotePublished = true;
+    window.dispatchEvent(new Event("online"));
+
+    expect(await screen.findByText("序号 5", { exact: true })).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByLabelText("日志保留天数")).toHaveValue("52"),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "语言与时区" }),
+    );
+    expect(screen.getByLabelText("系统语言")).toHaveValue("en-US");
+    expect(screen.queryByText(/其他会话已修改此字段/)).toBeNull();
+  });
+
+  it("keeps typed input and edit baseline when another session changes the same field", async () => {
+    let remotePublished = false;
+    const remoteSections = {
+      ...SECTIONS,
+      Localization: {
+        ...SECTIONS.Localization,
+        locale: { ...SECTIONS.Localization.locale, value: "en-US" },
+      },
+      Logging: {
+        ...SECTIONS.Logging,
+        "operationalLogging.retentionDays": {
+          ...SECTIONS.Logging["operationalLogging.retentionDays"],
+          value: 52,
+        },
+      },
+    };
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-2")) {
+        return revisionDetail({
+          revisionId: "active-2",
+          version: 5,
+          revisionSequence: 5,
+          digest: "digest-2",
+        });
+      }
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings")) {
+        return response(
+          remotePublished
+            ? activeSettings({
+                revisionId: "active-2",
+                revisionVersion: 5,
+                draftVersion: 5,
+                revisionDigest: "digest-2",
+                sections: remoteSections,
+              })
+            : activeSettings(),
+        );
+      }
+      return response(
+        remotePublished
+          ? activeStatus({
+              active: {
+                revisionId: "active-2",
+                version: 5,
+                revisionSequence: 5,
+                digest: "digest-2",
+              },
+            })
+          : activeStatus(),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+    await userEvent.click(await screen.findByRole("button", { name: "日志" }));
+    const input = screen.getByLabelText("日志保留天数");
+    fireEvent.change(input, { target: { value: "51" } });
+    input.focus();
+    expect(input).toHaveValue("51");
+    expect(input).toHaveFocus();
+
+    remotePublished = true;
+    window.dispatchEvent(new Event("online"));
+
+    expect(await screen.findByText("序号 5", { exact: true })).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByLabelText("日志保留天数")).toHaveValue("51"),
+    );
+    expect(screen.getByLabelText("日志保留天数")).toHaveFocus();
+    expect(
+      screen.getAllByText(/其他会话已修改此字段/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText(/编辑基线仍为 30/)).toBeVisible();
+    expect(screen.getByText(/当前生效值为 52/)).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "语言与时区" }),
+    );
+    expect(screen.getByLabelText("系统语言")).toHaveValue("en-US");
+  });
+
   it("shows a corrupt Active without offering a resumable draft", async () => {
     const fetchMock = vi.fn(async (input: string) => {
       if (input.includes("/operations/automation/settings"))
@@ -629,6 +796,105 @@ describe("V2 configuration direct publication", () => {
     expect(writes).toHaveLength(1);
     expect(writes[0]).toEqual({
       document: { locale: "zh-CN" },
+      submissionId: expect.any(String),
     });
+  });
+
+  it("reconciles a lost full-document import without a second publish", async () => {
+    let published = false;
+    let reconcileReads = 0;
+    let publishWrites = 0;
+    let submitted: Record<string, unknown> | null = null;
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-2")) {
+        return revisionDetail({
+          revisionId: "active-2",
+          version: 5,
+          revisionSequence: 5,
+          digest: "digest-2",
+        });
+      }
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings/reconcile")) {
+        reconcileReads += 1;
+        return response({
+          state: "COMMITTED",
+          committed: true,
+          submissionId: submitted?.["submissionId"],
+          committedRevisionId: "active-2",
+          committedRevisionVersion: 5,
+          current: null,
+          nextAction:
+            "this exact submission published and is the current Active settings",
+        });
+      }
+      if (input === "/api/configuration/publish" && init?.method === "POST") {
+        publishWrites += 1;
+        submitted = JSON.parse(String(init.body)) as Record<string, unknown>;
+        published = true;
+        throw new TypeError("network lost");
+      }
+      if (input.includes("/system/settings")) {
+        return response(
+          published
+            ? activeSettings({
+                revisionId: "active-2",
+                revisionVersion: 5,
+                draftVersion: 5,
+                revisionDigest: "digest-2",
+              })
+            : activeSettings(),
+        );
+      }
+      return response(
+        published
+          ? activeStatus({
+              active: {
+                revisionId: "active-2",
+                version: 5,
+                revisionSequence: 5,
+                digest: "digest-2",
+              },
+            })
+          : activeStatus(),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+    const importPanel = await screen.findByRole("region", {
+      name: "导入配置",
+    });
+    fireEvent.change(within(importPanel).getByLabelText("导入完整配置 JSON"), {
+      target: { value: '{"locale":"en-US"}' },
+    });
+    await userEvent.click(
+      within(importPanel).getByRole("button", { name: "核对并应用" }),
+    );
+
+    expect(
+      await screen.findByText("完整配置导入已发布", { exact: false }),
+    ).toBeVisible();
+    expect(
+      screen.getAllByText(/当前生效配置为 active-2/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(/序号 5/).length).toBeGreaterThan(0);
+    expect(reconcileReads).toBe(1);
+    expect(publishWrites).toBe(1);
+    expect(submitted).toMatchObject({
+      document: { locale: "en-US" },
+      submissionId: expect.any(String),
+    });
+    expect(
+      fetchMock.mock.calls.filter(
+        ([path, init]) =>
+          String(path) === "/api/configuration/publish" &&
+          (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toHaveLength(1);
   });
 });

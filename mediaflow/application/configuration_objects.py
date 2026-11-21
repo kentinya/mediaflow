@@ -680,6 +680,7 @@ class ConfigurationObjectService:
         run_checks: bool = True,
         before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
         replace_active: bool = False,
+        audit_context: dict[str, object] | None = None,
     ) -> ManagedConfigurationRevision:
         """Publish one complete candidate through the shared checked boundary."""
 
@@ -696,6 +697,7 @@ class ConfigurationObjectService:
             readiness=readiness,
             before_publish=before_publish,
             replace_active=replace_active,
+            audit_context=audit_context,
         )
 
     def publish_object(
