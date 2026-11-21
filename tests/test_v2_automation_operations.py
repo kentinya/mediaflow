@@ -24,18 +24,18 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.security import ApiRole
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.account_fixtures import AccountSessions
 from tests.task_engine_test_helpers import claim_and_run
 
 ADMIN_TOKEN = "automation-admin-token"
 VIEWER_TOKEN = "automation-viewer-token"
-MANAGER_TOKEN = "automation-manager-token"
 
 OPERATIONS_ROUTE = "/api/operations/automation/task-definitions"
 
@@ -72,17 +72,6 @@ def _document(root: Path) -> dict:
     value["historyPath"] = str(root / "history.jsonl")
     value["storages"][0]["rootPath"] = str(root / "source")
     value["storages"][1]["rootPath"] = str(root / "target")
-    # The current-configuration grant permission authority resolves principals
-    # from the Active document, so the journey's granting principal must be
-    # configured there with the admin role.
-    value["api"]["principals"] = [
-        {
-            "id": "admin",
-            "tokenEnv": "MEDIAFLOW_TEST_ADMIN_TOKEN",
-            "roles": ["admin"],
-            "enabled": True,
-        }
-    ]
     return value
 
 
@@ -104,8 +93,14 @@ def _request(
         "CONTENT_LENGTH": str(len(payload)),
         "wsgi.input": io.BytesIO(payload),
         "REMOTE_ADDR": "127.0.0.1",
-        "HTTP_AUTHORIZATION": f"Bearer {token}",
+        "HTTP_HOST": "127.0.0.1",
+        "HTTP_ORIGIN": "http://127.0.0.1",
     }
+    session = getattr(api, "_fixture_session_cookies", {}).get(token)
+    if session is not None:
+        environ["HTTP_COOKIE"] = session
+    else:
+        environ["HTTP_AUTHORIZATION"] = f"Bearer {token}"
     result = b"".join(api(environ, lambda status, _headers: statuses.append(status)))
     return int(statuses[0].split()[0]), json.loads(result)
 
@@ -211,19 +206,26 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 ) as configuration_repository,
                 SQLiteTaskRepository(root / "runtime.sqlite3") as runtime,
             ):
+                accounts = AccountSessions(runtime)
+                accounts.add("admin", (ApiRole.ADMIN,))
+                accounts.add("viewer", (ApiRole.VIEWER,))
+                session_cookies = {
+                    ADMIN_TOKEN: accounts.cookie("admin"),
+                    VIEWER_TOKEN: accounts.cookie("viewer"),
+                }
                 managed = ManagedConfigurationService(
                     configuration_repository,
                     bootstrap_database_path=str(root / "runtime.sqlite3"),
                 )
+                publishing_api = MediaFlowApi(
+                    runtime,
+                    account_service=accounts.service,
+                    configuration_service=managed,
+                    bootstrap_document=document,
+                )
+                publishing_api._fixture_session_cookies = session_cookies
                 status, active = _request(
-                    MediaFlowApi(
-                        runtime,
-                        principals=(
-                            ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
-                        ),
-                        configuration_service=managed,
-                        bootstrap_document=document,
-                    ),
+                    publishing_api,
                     "/api/configuration/publish",
                     method="POST",
                     body={"document": document},
@@ -231,27 +233,12 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 self.assertEqual(status, 200, active)
                 api = MediaFlowApi(
                     runtime,
-                    principals=(
-                        ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
-                        ResolvedApiPrincipal(
-                            "viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})
-                        ),
-                        ResolvedApiPrincipal(
-                            "manager",
-                            MANAGER_TOKEN,
-                            frozenset(
-                                {
-                                    ApiPermission.READ,
-                                    ApiPermission.SUBMIT_DRY_RUN,
-                                    ApiPermission.MANAGE_CONFIGURATION,
-                                }
-                            ),
-                        ),
-                    ),
+                    account_service=accounts.service,
                     configuration_service=managed,
                     bootstrap_document=document,
                     metadata_provider_registry_factory=_provider_registry_factory,
                 )
+                api._fixture_session_cookies = session_cookies
                 value = SimpleNamespace(
                     api=api,
                     managed=managed,

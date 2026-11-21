@@ -11,6 +11,7 @@ from mediaflow.application.automation_execution_authority import AutomationInten
 from mediaflow.application.automation_execution_intent import activation_evidence, resolve_principal
 from mediaflow.domain.automation import AutomationTaskDefinition, SchedulerConfigurationSnapshot
 from mediaflow.domain.configuration_management import AutomationDefinitionSaveError
+from mediaflow.domain.security import ApiRole
 from tests import test_v2_automation_lifecycle as lifecycle
 
 
@@ -134,10 +135,11 @@ class ExecutionIntentTests(unittest.TestCase):
         f = self.fixture
         now = datetime.now(UTC)
         (job,) = self.scheduler(active, definition).tick(now)
+        f.accounts.set_roles("admin", (ApiRole.VIEWER,))
         document = copy.deepcopy(active.document)
-        document["api"]["principals"][0]["roles"] = ["viewer"]
+        document["automation"]["workerPollSeconds"] = 2
         successor = self.publish(document)
-        # Unrelated role publication retains the original principal, never launders it.
+        # Unrelated publication retains the original principal, never launders it.
         self.assertEqual("admin", resolve_principal(f.managed, job, definition).principal_id)
         with self.assertRaises(AutomationIntentBoundaryError):
             f.api._automation_execution_authority.assert_live(job, definition)
@@ -505,14 +507,9 @@ class ExecutionIntentTests(unittest.TestCase):
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
         reader = _ConfiguredPermissionAuthority(
-            lambda: _current_automation_configuration(fixture.database)
+            lambda: _current_automation_configuration(fixture.database),
+            fixture.accounts.service,
         )
         self.assertTrue(reader.has_permission("admin", ApiPermission.GRANT_UNATTENDED_EXECUTION))
-        document = copy.deepcopy(fixture.managed.active().document)
-        document["api"]["principals"][0]["roles"] = ["viewer"]
-        draft = fixture.managed.import_draft(document, actor="admin")
-        validated = fixture.managed.validate(draft.revision_id, actor="admin")
-        fixture.managed.activate(
-            validated.revision_id, expected_version=validated.version, actor="admin"
-        )
+        fixture.accounts.set_roles("admin", (ApiRole.VIEWER,))
         self.assertFalse(reader.has_permission("admin", ApiPermission.GRANT_UNATTENDED_EXECUTION))

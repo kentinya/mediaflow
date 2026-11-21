@@ -41,12 +41,7 @@ from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.failure import decode_failure_explanation
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.processing_checkpoint import CheckpointConfiguration, EffectCertainty
-from mediaflow.domain.security import (
-    ROLE_PERMISSIONS,
-    ApiPermission,
-    ApiRole,
-    ResolvedApiPrincipal,
-)
+from mediaflow.domain.security import ApiRole
 from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.domain.task_scheduling import TaskControl
 from mediaflow.final_cli import final_main
@@ -56,6 +51,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.account_fixtures import AccountSessions
 
 ADMIN_TOKEN = "entrance-recovery-admin"
 OPERATOR_TOKEN = "entrance-recovery-operator"
@@ -183,9 +179,6 @@ def entrance_journey(
         for policy in document.get("metadataPolicies", ()):
             policy["maxProviderRequests"] = max_provider_requests
     document["automationTaskDefinitions"] = []
-    document["api"]["principals"] = [
-        {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": True}
-    ]
     config = root / "bootstrap.json"
     config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     if provider_registry is None:
@@ -228,6 +221,11 @@ def entrance_journey(
             version=revision.version,
         )
         with SQLiteTaskRepository(str(database)) as repository:
+            accounts = AccountSessions(repository)
+            accounts.add("admin", (ApiRole.ADMIN,))
+            accounts.add("operator", (ApiRole.OPERATOR,))
+            if viewer_token is not None:
+                accounts.add("viewer", (ApiRole.VIEWER,))
             intents = ManualOrganizeIntentService(
                 repository,
                 managed,
@@ -244,27 +242,19 @@ def entrance_journey(
             )
             api = MediaFlowApi(
                 repository,
-                principals=(
-                    ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
-                    ResolvedApiPrincipal(
-                        "operator", OPERATOR_TOKEN, ROLE_PERMISSIONS[ApiRole.OPERATOR]
-                    ),
-                    *(
-                        ()
-                        if viewer_token is None
-                        else (
-                            ResolvedApiPrincipal(
-                                "viewer", viewer_token, ROLE_PERMISSIONS[ApiRole.VIEWER]
-                            ),
-                        )
-                    ),
-                ),
+                account_service=accounts.service,
                 configuration_service=managed,
                 bootstrap_document=document,
                 manual_intent_service=intents,
                 manual_preview_service=previews,
                 metadata_provider_registry_factory=lambda ids: provider_registry,
             )
+            api._fixture_session_cookies = {
+                ADMIN_TOKEN: accounts.cookie("admin"),
+                OPERATOR_TOKEN: accounts.cookie("operator"),
+            }
+            if viewer_token is not None:
+                api._fixture_session_cookies[viewer_token] = accounts.cookie("viewer")
             yield SimpleNamespace(
                 api=api,
                 repository=repository,
@@ -291,7 +281,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         self.clock = _Clock()
         self.environment = patch.dict(
             os.environ,
-            {"TMDB_ACCESS_TOKEN": "sentinel-tmdb", "MEDIAFLOW_API_TOKEN": ADMIN_TOKEN},
+            {"TMDB_ACCESS_TOKEN": "sentinel-tmdb"},
             clear=False,
         )
         self.environment.start()
@@ -359,8 +349,14 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             "CONTENT_LENGTH": str(len(payload)),
             "wsgi.input": io.BytesIO(payload),
             "REMOTE_ADDR": "127.0.0.1",
-            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_HOST": "127.0.0.1",
+            "HTTP_ORIGIN": "http://127.0.0.1",
         }
+        session = getattr(value.api, "_fixture_session_cookies", {}).get(token)
+        if session is not None:
+            environ["HTTP_COOKIE"] = session
+        else:
+            environ["HTTP_AUTHORIZATION"] = f"Bearer {token}"
         environ.update(headers or {})
         result = b"".join(value.api(environ, lambda status, _h: statuses.append(status)))
         return int(statuses[0].split()[0]), (json.loads(result) if result else {})

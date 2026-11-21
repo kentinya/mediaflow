@@ -407,19 +407,6 @@ class TerminalTaskNotificationTests(_DiscoveryFixture):
 
     def _document(self) -> dict:
         document = self.document()
-        # The fixture's authenticated operator is also the current published
-        # principal, so Run once resolves its execution permission from the
-        # same managed Active the Worker will run under.
-        document["api"] = {
-            "principals": [
-                {
-                    "id": "operator",
-                    "tokenEnv": "MEDIAFLOW_TERMINAL_OPERATOR_TOKEN",
-                    "roles": ["operator"],
-                    "enabled": True,
-                }
-            ]
-        }
         # A real rule answer for the fixture's own library identity, so the
         # journey parks at its exact plan summary instead of an undecided
         # Recognition problem.

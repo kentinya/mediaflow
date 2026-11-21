@@ -767,14 +767,6 @@ def build_managed_fixture(
     document["resourceLibraries"][0]["storagePath"] = ""
     document["resourceLibraries"][0]["displayRootPath"] = str(source_root)
     document["mediaLibraries"][0]["rootPath"] = "Movies"
-    document["api"]["principals"] = [
-        {
-            "id": ADMIN_PRINCIPAL.principal_id,
-            "tokenEnv": "MEDIAFLOW_HARNESS_ADMIN_TOKEN",
-            "roles": ["admin"],
-            "enabled": True,
-        }
-    ]
     if include_cross_storage_destinations:
         document["resourceLibraries"].append(
             {
@@ -1815,6 +1807,7 @@ def admit_harness_organize_task(
     managed: ManagedHarnessContext | None,
     *,
     actor: str = "harness",
+    scope_path: str | None = None,
 ):
     """Admit one organizing Task through the shared current kernel."""
 
@@ -1830,6 +1823,7 @@ def admit_harness_organize_task(
         execute_authorized=True,
         trigger=TaskTrigger.MANUAL,
         principal=actor,
+        scope_path=scope_path,
         item_limit=1,
         configuration_snapshot_id=snapshot_id,
         configuration_snapshot_digest=snapshot_digest,
@@ -2394,10 +2388,15 @@ def _request_intent_plan_via_durable_analysis(state: AppState, intent: dict, *, 
     return preview
 
 
-def seed_queued_remote_task(state: AppState) -> dict:
+def seed_queued_remote_task(state: AppState, *, scope_path: str | None = None) -> dict:
     """Admit one fresh organizing Task through the current kernel."""
 
-    task = admit_harness_organize_task(state.repository, state.managed, actor="harness-claim")
+    task = admit_harness_organize_task(
+        state.repository,
+        state.managed,
+        actor="harness-claim",
+        scope_path=scope_path,
+    )
     return {"taskId": task.task_id, "status": task.status.value}
 
 
@@ -6119,7 +6118,8 @@ def application(environ, start_response):
         elif path == "/__harness__/retirement-change" and method == "POST":
             document = retirement_stability_state(STATE, change=True)
         elif path == "/__harness__/seed-queued-task" and method == "POST":
-            document = seed_queued_remote_task(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = seed_queued_remote_task(STATE, scope_path=(query.get("scope") or [None])[0])
         elif path == "/__harness__/run-worker" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             requested_task = (query.get("taskId") or [None])[0]

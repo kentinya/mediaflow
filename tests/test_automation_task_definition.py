@@ -14,19 +14,17 @@ from mediaflow.domain.automation import (
     AutomationTaskRunMode,
 )
 from mediaflow.domain.configuration_management import ConfigurationVersionConflict
-from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.security import ApiRole
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.account_fixtures import AccountSessions
 
 
 def _document(root: Path) -> dict:
     value = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
     value["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
-    value["api"]["principals"] = [
-        {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": True}
-    ]
     value["storages"][0]["rootPath"] = str(root / "source")
     value["storages"][1]["rootPath"] = str(root / "target")
     (root / "source" / "incoming").mkdir(parents=True, exist_ok=True)
@@ -52,26 +50,33 @@ def _request(
         "CONTENT_LENGTH": str(len(payload)),
         "wsgi.input": io.BytesIO(payload),
         "REMOTE_ADDR": "127.0.0.1",
-        "HTTP_AUTHORIZATION": f"Bearer {token}",
+        "HTTP_HOST": "127.0.0.1",
+        "HTTP_ORIGIN": "http://127.0.0.1",
     }
+    session = getattr(api, "_fixture_session_cookies", {}).get(token)
+    if session is not None:
+        environ["HTTP_COOKIE"] = session
+    else:
+        environ["HTTP_AUTHORIZATION"] = f"Bearer {token}"
     result = b"".join(api(environ, lambda status, _headers: statuses.append(status)))
     return int(statuses[0].split()[0]), json.loads(result)
 
 
 def _api(runtime, managed, document, *, include_viewer: bool = True):
-    principals = [
-        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
-    ]
+    accounts = AccountSessions(runtime)
+    accounts.add("admin", (ApiRole.ADMIN,))
     if include_viewer:
-        principals.append(
-            ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
-        )
-    return MediaFlowApi(
+        accounts.add("viewer", (ApiRole.VIEWER,))
+    api = MediaFlowApi(
         runtime,
-        principals=tuple(principals),
+        account_service=accounts.service,
         configuration_service=managed,
         bootstrap_document=document,
     )
+    api._fixture_session_cookies = {"admin-token": accounts.cookie("admin")}
+    if include_viewer:
+        api._fixture_session_cookies["viewer-token"] = accounts.cookie("viewer")
+    return api
 
 
 class AutomationTaskDefinitionDomainTests(unittest.TestCase):
@@ -543,17 +548,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                     configuration,
                     bootstrap_database_path=str(root / "runtime.sqlite3"),
                 )
-                api = MediaFlowApi(
-                    runtime,
-                    principals=(
-                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
-                        ResolvedApiPrincipal(
-                            "viewer", "viewer-token", frozenset({ApiPermission.READ})
-                        ),
-                    ),
-                    configuration_service=managed,
-                    bootstrap_document=document,
-                )
+                api = _api(runtime, managed, document)
                 draft = managed.import_draft(document, actor="tester")
                 status, body = _request(
                     api,

@@ -19,7 +19,6 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest import mock
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
@@ -34,7 +33,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryBudgets,
 )
 from mediaflow.domain.metadata import MediaCandidate, MediaType
-from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.security import ApiRole
 from mediaflow.domain.storage import (
     StorageError,
     StorageErrorCode,
@@ -45,6 +44,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.account_fixtures import AccountSessions
 from tests.task_engine_test_helpers import (
     ManualOrganizeExecutionWorker,
     claim_and_run,
@@ -53,12 +53,9 @@ from tests.task_engine_test_helpers import (
 SNAPSHOT_ID = "active-1"
 SNAPSHOT_DIGEST = "a" * 64
 OPERATOR_TOKEN = "operator-token"
-#: A second published operator sharing the same ResourceLibrary.  The tokens are
-#: environment-owned exactly like production, so a two-principal journey resolves
-#: them through the real configuration loader.
+#: Lookup keys for the two real database accounts used by the second-operator
+#: journey.  The keys only select the already-issued session cookie.
 SECOND_OPERATOR_TOKEN = "second-operator-token"
-SECOND_OPERATOR_FIRST_ENV = "MEDIAFLOW_TEST_FIRST_OPERATOR_TOKEN"
-SECOND_OPERATOR_SECOND_ENV = "MEDIAFLOW_TEST_SECOND_OPERATOR_TOKEN"
 
 
 class _Clock:
@@ -256,26 +253,6 @@ class _DiscoveryFixture(unittest.TestCase):
         second_operator: bool = False,
     ) -> dict:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
-        if second_operator:
-            # Two enabled operator principals share one published configuration.
-            # Their tokens are environment-owned exactly like production, so the
-            # journey resolves them through the real loader instead of injecting
-            # synthetic permission sets.
-            document["api"]["principals"] = [
-                {
-                    "id": "operator",
-                    "tokenEnv": SECOND_OPERATOR_FIRST_ENV,
-                    "roles": ["operator"],
-                    "enabled": True,
-                },
-                {
-                    "id": "second-operator",
-                    "tokenEnv": SECOND_OPERATOR_SECOND_ENV,
-                    "roles": ["operator"],
-                    "enabled": True,
-                },
-            ]
-            document["api"].pop("tokenEnv", None)
         document["persistence"]["databasePath"] = str(self.database)
         document["historyPath"] = str(self.root / "history.jsonl")
         document["storages"] = [
@@ -441,6 +418,17 @@ class _DiscoveryFixture(unittest.TestCase):
             runtime = _runtime_for(
                 managed, revision, stability=stability, exclude_rules=exclude_rules
             )
+            accounts = AccountSessions(repository)
+            accounts.add("operator", (ApiRole.OPERATOR,))
+            if second_operator:
+                accounts.add("second-operator", (ApiRole.OPERATOR,))
+            accounts.add("viewer", (ApiRole.VIEWER,))
+            session_cookies = {
+                OPERATOR_TOKEN: accounts.cookie("operator"),
+                "viewer-token": accounts.cookie("viewer"),
+            }
+            if second_operator:
+                session_cookies[SECOND_OPERATOR_TOKEN] = accounts.cookie("second-operator")
             intents = ManualOrganizeIntentService(
                 repository,
                 managed,
@@ -508,48 +496,9 @@ class _DiscoveryFixture(unittest.TestCase):
                     notice=lambda line: None,
                     **({"lease_seconds": worker_lease} if worker_lease is not None else {}),
                 )
-            if second_operator:
-                with mock.patch.dict(
-                    os.environ,
-                    {
-                        SECOND_OPERATOR_FIRST_ENV: OPERATOR_TOKEN,
-                        SECOND_OPERATOR_SECOND_ENV: SECOND_OPERATOR_TOKEN,
-                    },
-                ):
-                    principals = runtime.resolve_api_principals()
-            else:
-                principals = (
-                    ResolvedApiPrincipal(
-                        "operator",
-                        OPERATOR_TOKEN,
-                        frozenset(
-                            {
-                                ApiPermission.READ,
-                                ApiPermission.MANAGE_MANUAL_ORGANIZE,
-                                ApiPermission.EXECUTE_MANUAL_ORGANIZE,
-                                # The production OPERATOR role also carries the
-                                # Task Center control permission; the fixture
-                                # mirrors it so the real pause/cancel route is
-                                # exercised through its authenticated entry.
-                                ApiPermission.CANCEL_JOB,
-                                # RO-2/AC-15: the native four-type recovery this
-                                # journey exercises is the operator's own decision
-                                # surface, so the fixture principal carries exactly
-                                # the documented operator permissions.
-                                ApiPermission.RESOLVE_RECOGNITION_REVIEW,
-                                ApiPermission.RESOLVE_METADATA_REVIEW,
-                                ApiPermission.RESOLVE_CLASSIFICATION_REVIEW,
-                                ApiPermission.RESOLVE_CONFIRMATION,
-                            }
-                        ),
-                    ),
-                )
             api = MediaFlowApi(
                 repository,
-                principals=(
-                    *principals,
-                    ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
-                ),
+                account_service=accounts.service,
                 configuration_service=managed,
                 bootstrap_document=document,
                 manual_intent_service=intents,
@@ -558,6 +507,7 @@ class _DiscoveryFixture(unittest.TestCase):
                 media_discovery_service=discovery,
                 storage_adapters=dict(storages),
             )
+            api._fixture_session_cookies = session_cookies
             try:
                 yield SimpleNamespace(
                     api=api,
@@ -620,10 +570,16 @@ class _DiscoveryFixture(unittest.TestCase):
             "QUERY_STRING": query_string,
             "CONTENT_LENGTH": str(len(raw)),
             "REMOTE_ADDR": "127.0.0.1",
+            "HTTP_HOST": "127.0.0.1",
+            "HTTP_ORIGIN": "http://127.0.0.1",
             "wsgi.input": io.BytesIO(raw),
             "CONTENT_TYPE": "application/json",
-            "HTTP_AUTHORIZATION": f"Bearer {token}",
         }
+        session = getattr(value.api, "_fixture_session_cookies", {}).get(token)
+        if session is not None:
+            environ["HTTP_COOKIE"] = session
+        else:
+            environ["HTTP_AUTHORIZATION"] = f"Bearer {token}"
         response = b"".join(value.api(environ, lambda status, headers: statuses.append(status)))
         return int(statuses[0].split()[0]), json.loads(response)
 

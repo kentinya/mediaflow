@@ -397,10 +397,16 @@ class ResidentWorkerBootstrapTests(ResidentAdoptionFixture):
         import json
         from pathlib import Path
 
+        from mediaflow.domain.security import ApiRole
+        from tests.account_fixtures import AccountSessions
+
         source = self.root / "source"
         target = self.root / "target"
         source.mkdir()
         target.mkdir()
+        with SQLiteTaskRepository(self.database) as repository:
+            accounts = AccountSessions(repository)
+            accounts.add("admin", (ApiRole.ADMIN,))
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         document["persistence"] = {"databasePath": self.database}
         document["historyPath"] = str(self.root / "history.jsonl")
@@ -408,7 +414,6 @@ class ResidentWorkerBootstrapTests(ResidentAdoptionFixture):
         document["storages"][1]["rootPath"] = str(target)
         document["resourceLibraries"][0]["storagePath"] = ""
         document["resourceLibraries"][0]["displayRootPath"] = str(source)
-        document["api"] = json.loads(json.dumps(self.document["api"]))
         document["automation"]["workerPollSeconds"] = 0.2
         document["automation"]["schedulerPollSeconds"] = 0.2
         self.publish_first_draft(document)
@@ -1000,21 +1005,22 @@ class CurrentConsumerMembershipTests(ResidentAdoptionFixture):
         import io
         import json
 
-        from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+        from mediaflow.domain.security import ApiRole
         from mediaflow.infrastructure.sqlite_configuration_management import (
             SQLiteConfigurationRepository,
         )
         from mediaflow.interfaces.service_api import MediaFlowApi
+        from tests.account_fixtures import AccountSessions
 
         with (
             SQLiteConfigurationRepository(self.database) as configuration,
             SQLiteTaskRepository(self.database) as repository,
         ):
+            accounts = AccountSessions(repository)
+            accounts.add("admin", (ApiRole.ADMIN,))
             api = MediaFlowApi(
                 repository,
-                principals=(
-                    ResolvedApiPrincipal("admin", "settings-read-token", frozenset(ApiPermission)),
-                ),
+                account_service=accounts.service,
                 configuration_service=ManagedConfigurationService(
                     configuration,
                     bootstrap_database_path=self.database,
@@ -1030,7 +1036,7 @@ class CurrentConsumerMembershipTests(ResidentAdoptionFixture):
                 "CONTENT_LENGTH": "0",
                 "wsgi.input": io.BytesIO(b""),
                 "REMOTE_ADDR": "127.0.0.1",
-                "HTTP_AUTHORIZATION": "Bearer settings-read-token",
+                "HTTP_COOKIE": accounts.cookie("admin"),
             }
             raw = b"".join(api(environ, lambda status, headers: statuses.append(status)))
         self.assertTrue(statuses and statuses[0].startswith("200"), (statuses, raw[:2000]))

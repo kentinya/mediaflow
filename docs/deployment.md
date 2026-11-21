@@ -63,12 +63,14 @@ installation, health, restart, backup, restore and failure-recovery procedures.
 python3 scripts/make_deployment_config.py --output config/mediaflow.json
 ```
 
-This renders the **management-only** bootstrap: the durable database locator and
-one environment reference for the API credential, with no Storage, library,
-policy, schedule or Webhook. It is deliberately the default, because it is the
-shape a fresh installation needs and it starts every service without any media
-mount. Open `/configuration` and initialize a valid empty baseline; Storage and
-libraries are configured afterwards through the business pages.
+This renders the **management-only** bootstrap: only the durable database
+locator, with no Web/API identity, Storage, library, policy, schedule or Webhook.
+It is deliberately the default, because it is the shape a fresh installation
+needs and it starts every service without any media mount. Generate the one-time
+setup code on the host with `mediaflow accounts issue-setup-code`, create the
+first administrator on the root page, then open `/configuration` and initialize a
+valid empty baseline; Storage and libraries are configured afterwards through
+the business pages.
 
 In `系统设置` (`/configuration`), the compact `配置状态摘要` shows whether setup is required.
 Use `初始化为空配置` to publish a valid empty baseline. The `高级配置` groups read the exact
@@ -207,10 +209,9 @@ The container entrypoint performs a bounded preflight before each command: it
 verifies the config file and `/data` are present and writable, checks every
 Local Storage root declared in the deployment configuration file for a mounted
 directory with the intended read-only/read-write access, rejects host-root and
-Docker-socket paths, and only for the API command verifies that the referenced
-API identity is retired: a configuration declaring `api.principals` or
-`api.tokenEnv` fails closed with the removal guidance, and an unsupported
-database file is refused without modification. Preflight never scans media,
+Docker-socket paths, rejects retired identity keys in every configuration input
+(`api.principals` and `api.tokenEnv`) with the exact removal guidance, and refuses
+an unsupported database file without modification. Preflight never scans media,
 calls a Provider, creates a Task, sends a notification, or mutates Storage.
 
 Each Compose service also declares a bounded healthcheck. The healthcheck runs
@@ -278,7 +279,7 @@ The production artifact flow is one image, two stages, one Python runtime:
   same entry document. The browser shows its ordinary not-found view or connection screen.
   Their old assets return 404. Retired API paths under `/api/v1` and `/api/v2` return JSON 404
   before authentication. The current `/api/*` routes enforce the signed-in
-  account session or an issued API token plus RBAC.
+  account session and its current database roles.
 - Update bookmarks by removing the `/ui-v2` segment and keeping the page path and query. In API
   scripts, use `/api/tasks` in place of `/api/v1/tasks` for the existing task list. Verify with
   a read of `GET /health` and an authenticated `GET /api/tasks?limit=1`. Reopen the original
@@ -696,7 +697,7 @@ The old-schema upgrade harness is historical and is not an accepted/current Slic
 Fresh startup, new-work durability and same-version restart/fault proofs above define current support.
 
 The release-security harness verifies image/build-context,
-Compose-topology, non-root/mount, API-token/RBAC and canary redaction
+Compose-topology, non-root/mount, account-session RBAC and canary redaction
 acceptance on the exact candidate image:
 
 ```bash

@@ -194,7 +194,7 @@ class MetadataSearchYearTests(unittest.TestCase):
         self.clock = _Clock()
         self.environment = patch.dict(
             os.environ,
-            {"TMDB_ACCESS_TOKEN": "sentinel-tmdb", "MEDIAFLOW_API_TOKEN": ADMIN_TOKEN},
+            {"TMDB_ACCESS_TOKEN": "sentinel-tmdb"},
             clear=False,
         )
         self.environment.start()
@@ -317,8 +317,14 @@ class MetadataSearchYearTests(unittest.TestCase):
             "CONTENT_LENGTH": str(len(payload)),
             "wsgi.input": io.BytesIO(payload),
             "REMOTE_ADDR": "127.0.0.1",
-            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_HOST": "127.0.0.1",
+            "HTTP_ORIGIN": "http://127.0.0.1",
         }
+        session = getattr(value.api, "_fixture_session_cookies", {}).get(token)
+        if session is not None:
+            environ["HTTP_COOKIE"] = session
+        else:
+            environ["HTTP_AUTHORIZATION"] = f"Bearer {token}"
         result = b"".join(value.api(environ, lambda status, _h: statuses.append(status)))
         return int(statuses[0].split()[0]), (json.loads(result) if result else {})
 

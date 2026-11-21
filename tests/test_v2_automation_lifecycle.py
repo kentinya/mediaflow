@@ -25,10 +25,11 @@ from unittest.mock import patch
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.security import ApiPermission, ApiRole, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.account_fixtures import AccountSessions
 
 BASE = "/api/operations/automation/definitions"
 ADMIN_TOKEN = "automation-lifecycle-admin"
@@ -65,9 +66,6 @@ def _document(root: Path) -> dict:
     value["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
     value["storages"][0]["rootPath"] = str(root / "source")
     value["storages"][1]["rootPath"] = str(root / "target")
-    value["api"]["principals"] = [
-        {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": True}
-    ]
     return value
 
 
@@ -104,6 +102,9 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self.runtime = SQLiteTaskRepository(str(self.root / "runtime.sqlite3"))
         self.addCleanup(self.runtime.close)
         self.document = _document(self.root)
+        self.accounts = AccountSessions(self.runtime)
+        self.accounts.add("admin", (ApiRole.ADMIN,))
+        self.accounts.add("viewer", (ApiRole.VIEWER,))
         self.managed = ManagedConfigurationService(
             self.repository,
             bootstrap_database_path=str(self.root / "runtime.sqlite3"),
@@ -119,9 +120,8 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         )
         self.api = MediaFlowApi(
             self.runtime,
+            # Focused permission subsets that the current roles do not express.
             principals=(
-                ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
-                ResolvedApiPrincipal("viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})),
                 ResolvedApiPrincipal(
                     "manager",
                     MANAGER_TOKEN,
@@ -139,6 +139,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
                     ),
                 ),
             ),
+            account_service=self.accounts.service,
             configuration_service=self.managed,
             bootstrap_document=self.document,
         )
@@ -164,8 +165,17 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             "CONTENT_LENGTH": str(len(payload)),
             "wsgi.input": io.BytesIO(payload),
             "REMOTE_ADDR": "127.0.0.1",
-            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_HOST": "127.0.0.1",
+            "HTTP_ORIGIN": "http://127.0.0.1",
         }
+        session = {
+            ADMIN_TOKEN: self.accounts.cookie("admin"),
+            VIEWER_TOKEN: self.accounts.cookie("viewer"),
+        }.get(token)
+        if session is not None:
+            environ["HTTP_COOKIE"] = session
+        else:
+            environ["HTTP_AUTHORIZATION"] = f"Bearer {token}"
         result = b"".join(self.api(environ, lambda status, _headers: statuses.append(status)))
         return int(statuses[0].split()[0]), (json.loads(result) if result else {})
 
@@ -637,10 +647,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         # A runtime/API reopen must not change the durable answer.
         reopened = MediaFlowApi(
             self.runtime,
-            principals=(
-                ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
-                ResolvedApiPrincipal("viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})),
-            ),
+            account_service=self.accounts.service,
             configuration_service=self.managed,
             bootstrap_document=self.document,
         )
@@ -1025,10 +1032,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         # A runtime/API reopen must not change the durable answer.
         reopened = MediaFlowApi(
             self.runtime,
-            principals=(
-                ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
-                ResolvedApiPrincipal("viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})),
-            ),
+            account_service=self.accounts.service,
             configuration_service=self.managed,
             bootstrap_document=self.document,
         )
@@ -1412,9 +1416,11 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             managed = ManagedConfigurationService(
                 repository, bootstrap_database_path=str(root / "runtime.sqlite3")
             )
+            accounts = AccountSessions(runtime)
+            accounts.add("admin", (ApiRole.ADMIN,))
             api = MediaFlowApi(
                 runtime,
-                principals=(ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),),
+                account_service=accounts.service,
                 configuration_service=managed,
                 bootstrap_document=_document(root),
             )
@@ -1426,7 +1432,9 @@ class AutomationLifecycleApiTests(unittest.TestCase):
                 "CONTENT_LENGTH": "0",
                 "wsgi.input": io.BytesIO(b""),
                 "REMOTE_ADDR": "127.0.0.1",
-                "HTTP_AUTHORIZATION": f"Bearer {ADMIN_TOKEN}",
+                "HTTP_HOST": "127.0.0.1",
+                "HTTP_ORIGIN": "http://127.0.0.1",
+                "HTTP_COOKIE": accounts.cookie("admin"),
             }
             result = b"".join(api(environ, lambda status, _headers: statuses.append(status)))
             self.assertEqual(int(statuses[0].split()[0]), 503)
@@ -1468,6 +1476,8 @@ class SameFileRemovalAuthorityTests(unittest.TestCase):
         # configuration authority AND the runtime state, so the bootstrap
         # locator must resolve to the same file the repositories open.
         self.document["persistence"]["databasePath"] = str(self.database)
+        self.accounts = AccountSessions(self.runtime)
+        self.accounts.add("admin", (ApiRole.ADMIN,))
         self.managed = ManagedConfigurationService(
             self.repository,
             bootstrap_database_path=str(self.database),
@@ -1482,7 +1492,7 @@ class SameFileRemovalAuthorityTests(unittest.TestCase):
         )
         self.api = MediaFlowApi(
             self.runtime,
-            principals=(ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),),
+            account_service=self.accounts.service,
             configuration_service=self.managed,
             bootstrap_document=self.document,
         )
@@ -1497,7 +1507,9 @@ class SameFileRemovalAuthorityTests(unittest.TestCase):
             "CONTENT_LENGTH": str(len(payload)),
             "wsgi.input": io.BytesIO(payload),
             "REMOTE_ADDR": "127.0.0.1",
-            "HTTP_AUTHORIZATION": f"Bearer {ADMIN_TOKEN}",
+            "HTTP_HOST": "127.0.0.1",
+            "HTTP_ORIGIN": "http://127.0.0.1",
+            "HTTP_COOKIE": self.accounts.cookie("admin"),
         }
         result = b"".join(self.api(environ, lambda status, _headers: statuses.append(status)))
         return int(statuses[0].split()[0]), (json.loads(result) if result else {})

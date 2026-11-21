@@ -36,17 +36,13 @@ from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.domain.media_discovery import DiscoveryBudgets
-from mediaflow.domain.security import (
-    ROLE_PERMISSIONS,
-    ApiPermission,
-    ApiRole,
-    ResolvedApiPrincipal,
-)
+from mediaflow.domain.security import ApiRole
 from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.account_fixtures import AccountSessions
 from tests.task_engine_test_helpers import claim_and_run
 
 ADMIN_TOKEN = "automation-run-once-admin"
@@ -262,9 +258,6 @@ class RunOnceApiTests(unittest.TestCase):
             if source_scope is not None:
                 definition["sourceScope"] = source_scope
             definitions = [definition]
-        value["api"]["principals"] = [
-            {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": True}
-        ]
         value["recognitionRules"] = [
             {
                 "id": "movies",
@@ -305,6 +298,10 @@ class RunOnceApiTests(unittest.TestCase):
             SQLiteConfigurationRepository(self.root / "configuration.sqlite3") as configuration,
             SQLiteTaskRepository(str(self.root / "runtime.sqlite3")) as repository,
         ):
+            self.accounts = AccountSessions(repository)
+            self.accounts.add("admin", (ApiRole.ADMIN,))
+            self.accounts.add("operator", (ApiRole.OPERATOR,))
+            self.accounts.add("viewer", (ApiRole.VIEWER,))
             managed = ManagedConfigurationService(
                 configuration,
                 bootstrap_database_path=str(self.root / "runtime.sqlite3"),
@@ -359,13 +356,7 @@ class RunOnceApiTests(unittest.TestCase):
             run_once = AutomationRunOnceService(discovery, previews, clock=self.clock)
             api = MediaFlowApi(
                 repository,
-                principals=(
-                    ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
-                    ResolvedApiPrincipal(
-                        "operator", OPERATOR_TOKEN, ROLE_PERMISSIONS[ApiRole.OPERATOR]
-                    ),
-                    ResolvedApiPrincipal("viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})),
-                ),
+                account_service=self.accounts.service,
                 configuration_service=managed,
                 bootstrap_document=document,
                 manual_intent_service=intents,
@@ -400,8 +391,18 @@ class RunOnceApiTests(unittest.TestCase):
             "CONTENT_LENGTH": str(len(payload)),
             "wsgi.input": io.BytesIO(payload),
             "REMOTE_ADDR": "127.0.0.1",
-            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_HOST": "127.0.0.1",
+            "HTTP_ORIGIN": "http://127.0.0.1",
         }
+        session = {
+            ADMIN_TOKEN: self.accounts.cookie("admin"),
+            OPERATOR_TOKEN: self.accounts.cookie("operator"),
+            VIEWER_TOKEN: self.accounts.cookie("viewer"),
+        }.get(token)
+        if session is not None:
+            environ["HTTP_COOKIE"] = session
+        else:
+            environ["HTTP_AUTHORIZATION"] = f"Bearer {token}"
         result = b"".join(value.api(environ, lambda status, _headers: statuses.append(status)))
         return int(statuses[0].split()[0]), (json.loads(result) if result else {})
 
@@ -2901,18 +2902,10 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.target.mutations)
 
     def test_current_permission_loss_after_admission_settles_task_without_effects(self):
-        import copy
-
         self.media("One.2001.mkv")
         with self.journey() as value:
             self.admit(value)
-            document = copy.deepcopy(value.managed.active().document)
-            document["api"]["principals"][0]["roles"] = ["viewer"]
-            draft = value.managed.import_draft(document, actor="admin")
-            validated = value.managed.validate(draft.revision_id, actor="admin")
-            value.managed.activate(
-                validated.revision_id, expected_version=validated.version, actor="admin"
-            )
+            self.accounts.set_roles("admin", (ApiRole.VIEWER,))
             result = self.execute(value)
             self.assertEqual("failed", result.status.value)
             self.assertEqual("failed", value.repository.get_task(result.task_id).status.value)
