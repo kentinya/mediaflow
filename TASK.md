@@ -409,3 +409,26 @@ Authorized bug acceptance complete: NO
 - Ruff check/format、`py_compile`、`git diff --check`、治理检查通过。
 
 剩余风险：T4 全量门禁、通知真实桌面及 390px 截图验收、Base 数据切换与 Docker 套件按 Task 分工留给 B；未推送、未部署。
+
+### B 第十二次返工复核
+
+```text
+Reviewed Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Reviewed Head: fa8f9dd8c3be69bf6460cd38335f03709fac71c1
+Reviewed Implementation: 901b81beae4141a7956e40aec5c3ee9bf63c604c
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+- 上轮接口问题已解决。用生产 Web 构建在真实 Python 上打开通知列表、新建与编辑卡，并核对实际通知、设置和存储响应，已移除上轮发现的草稿字段。真实通知浏览器 3 项通过，真实设置及自动化运行设置浏览器 20 项通过。
+- Python 全量执行 2327 项，其中 7 项跳过，其余通过。Web 单测 104 个文件、1594 项通过，Node 浏览器 276 项通过。生产构建、类型检查、Lint、Prettier、Ruff、编译、依赖和示例配置检查通过。候选 wheel 安装冒烟通过。Docker 空配置与媒体挂载、重启与故障、发布安全验收均通过。
+- 使用真实 Base 库的新副本再次执行数据切换。状态读取和未确认切换保持文件校验和一致。确认切换移除两份未发布修订，两份已发布修订、六条相关审计、一个固定任务及其结果逐项一致。异常引用和切换失败回滚由本轮 Python 全量覆盖。
+- **Docker 健康验收仍按旧部署模型判断媒体权限。** 已有健康脚本通过启动、直接发布、Worker 停启和 API 密钥恢复，随后等待 API 因媒体目录权限变化变成 `unhealthy`，超时退出。候选镜像中 UID 10001 读到目录权限为 `000`，确认无法读取。该路径只在已发布配置中声明，容器健康探针读取的是管理 bootstrap，原 Compose 探针退出码为 0。B 另外从真实容器的「存储管理 → 查看来源存储 → 运行只读检查」复验，权限正常时通过，移除权限后报失败，此时 `/health` 返回 `200`，恢复权限后再次通过。三次操作都沿用同一个已生效版本，任务清单保持为空。
+- **部分首次部署指引仍指向退役操作。** 可选媒体挂载 Compose 文件的开头要求进入设置创建草稿，当前《产品体验》的首次启动摘要还要求创建或恢复 Draft。新实例进入系统设置实际可直接初始化空配置。生成部署配置的 `--help` 也仍将导入、验证和激活写成分步操作。
+- 本轮日志位于 `.git/validation-evidence/fa8f9dd8c3be69bf6460cd38335f03709fac71c1/b-review/`。
+
+#### Developer 修复指导
+
+1. 修正仓库已有 Docker 健康验收的媒体权限步骤。沿当前管道直接发布带媒体挂载的配置，保留 Worker 停启和 API 密钥缺失与恢复的原断言。权限变更后用现有存储只读检查确认媒体访问失败，恢复后确认读取通过，同时核对 API 存活、已生效版本和任务清单。同步部署指南对这两个信号的描述。
+2. 把上述首次部署指引和配置生成命令帮助改为实际操作。新实例可从系统设置初始化空配置，已有完整输入可直接核对并应用。用现有 Docker 首次配置旅程和 `make_deployment_config.py --help` 核对说明。
