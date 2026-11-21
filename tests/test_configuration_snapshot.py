@@ -993,6 +993,37 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 self.assertEqual(service.active().revision_id, published["revisionId"])
 
+                # A refused command with a lost transport also has a terminal
+                # answer for its own identity; absence alone is never proof.
+                refused_submission = "document-publish-refused-1"
+                status, refused = request(
+                    api,
+                    "/api/configuration/publish",
+                    method="POST",
+                    body=json.dumps(
+                        {
+                            "document": current.document,
+                            "expectedActiveRevisionId": current.revision_id,
+                            "expectedActiveVersion": (current.revision_sequence or current.version)
+                            + 99,
+                            "submissionId": refused_submission,
+                        }
+                    ).encode(),
+                )
+                self.assertEqual(status, 409, refused)
+                status, reconciled = request(
+                    api,
+                    "/api/system/settings/reconcile",
+                    query=f"submissionId={refused_submission}",
+                )
+                self.assertEqual(status, 200, reconciled)
+                self.assertEqual(reconciled["state"], "NOT_COMMITTED")
+                self.assertFalse(reconciled["committed"])
+                self.assertEqual(reconciled["sideEffects"], "none")
+                self.assertEqual(
+                    service.active().revision_id, published["revisionId"]
+                )
+
     def test_api_invalid_candidate_is_rejected_then_corrected_publish_pins_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             document = set_local_roots(example_document(), Path(directory))

@@ -392,6 +392,32 @@ class SystemSettingsService:
             bootstrap_database_path=self._config.bootstrap_database_path,
         )
 
+    def record_submission_outcome(
+        self,
+        *,
+        actor: str,
+        submission_id: str | None,
+        stage: str,
+        next_action: str,
+        extra: dict[str, object] | None = None,
+    ) -> None:
+        """Persist a bounded not-committed answer for another managed publish entry.
+
+        Settings, whole-document publication and portable-package import share
+        one reconciliation read. When their command refuses before publishing,
+        this exact submission must still have a terminal durable answer so a
+        lost transport cannot leave the operator permanently blocked.
+        """
+
+        self._record_outcome(
+            actor=actor,
+            submission_id=submission_id,
+            outcome="not_committed",
+            stage=stage,
+            next_action=next_action,
+            extra=extra,
+        )
+
     def _record_outcome(
         self,
         *,

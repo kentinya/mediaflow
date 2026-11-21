@@ -3047,34 +3047,48 @@ class MediaFlowApi:
             if not isinstance(replace_active, bool):
                 raise ValueError("replaceActive must be boolean")
             prepared: list[_ApiRuntimeBinding] = []
-            with self._runtime_binding_lock:
-                revision = self._configuration_objects.publish_document(
-                    document["document"],
-                    actor=principal.principal_id,
-                    expected_active_revision_id=expected_revision_id,
-                    expected_active_version=expected_version,
-                    expected_active_digest=expected_digest,
-                    replace_active=replace_active,
-                    audit_context=(
-                        {
-                            "kind": "configuration_document",
-                            "objectId": "configuration",
-                            "action": "configuration_publish",
-                            "submissionId": submission_id,
-                        }
-                        if submission_id is not None
-                        else None
-                    ),
-                    before_publish=lambda candidate: prepared.append(
-                        self._prepare_runtime_binding_for_revision(candidate)
-                    ),
-                )
-                if len(prepared) != 1:
-                    raise RuntimeSnapshotUnavailable(
-                        "the replacement runtime binding was not prepared; no Active was published",
-                        reason="runtime_unavailable",
+            try:
+                with self._runtime_binding_lock:
+                    revision = self._configuration_objects.publish_document(
+                        document["document"],
+                        actor=principal.principal_id,
+                        expected_active_revision_id=expected_revision_id,
+                        expected_active_version=expected_version,
+                        expected_active_digest=expected_digest,
+                        replace_active=replace_active,
+                        audit_context=(
+                            {
+                                "kind": "configuration_document",
+                                "objectId": "configuration",
+                                "action": "configuration_publish",
+                                "submissionId": submission_id,
+                            }
+                            if submission_id is not None
+                            else None
+                        ),
+                        before_publish=lambda candidate: prepared.append(
+                            self._prepare_runtime_binding_for_revision(candidate)
+                        ),
                     )
-                self._publish_runtime_binding(prepared[0])
+                    if len(prepared) != 1:
+                        raise RuntimeSnapshotUnavailable(
+                            "the replacement runtime binding was not prepared; no Active was published",
+                            reason="runtime_unavailable",
+                        )
+                    self._publish_runtime_binding(prepared[0])
+            except Exception as error:
+                if submission_id is not None and self._system_settings is not None:
+                    self._system_settings.record_submission_outcome(
+                        actor=principal.principal_id,
+                        submission_id=submission_id,
+                        stage="publish",
+                        next_action=(
+                            "review the reported condition and the current Active, "
+                            "then publish the intended document again deliberately"
+                        ),
+                        extra={"code": type(error).__name__},
+                    )
+                raise
             response = revision.summary()
             response["published"] = True
             if submission_id is not None:
@@ -3122,11 +3136,25 @@ class MediaFlowApi:
                     self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
                     self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
                     package_value, _recovery, submission_id = self._package_import_request(environ)
-                    result = self._package_exchange.import_configuration(
-                        package_value,
-                        actor=principal.principal_id,
-                        submission_id=submission_id,
-                    )
+                    try:
+                        result = self._package_exchange.import_configuration(
+                            package_value,
+                            actor=principal.principal_id,
+                            submission_id=submission_id,
+                        )
+                    except Exception as error:
+                        if submission_id is not None and self._system_settings is not None:
+                            self._system_settings.record_submission_outcome(
+                                actor=principal.principal_id,
+                                submission_id=submission_id,
+                                stage="import",
+                                next_action=(
+                                    "review the reported condition and the current Active, "
+                                    "then import an appropriate package deliberately"
+                                ),
+                                extra={"code": type(error).__name__},
+                            )
+                        raise
                     return self._response(
                         start_response,
                         201 if result.get("action") == "created" else 200,

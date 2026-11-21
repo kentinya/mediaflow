@@ -262,6 +262,25 @@ class PackageExchangeApiTests(unittest.TestCase):
         statuses = [revision.status.value for revision in service.repository.list_revisions()]
         self.assertEqual(statuses, ["active", "superseded"])
 
+        # A refused import with a lost transport also has a terminal answer for
+        # its own request identity, not merely an absence of activation.
+        refused_submission = "package-import-refused-1"
+        code, refused = request(
+            api,
+            "/api/configuration/packages",
+            method="POST",
+            body={"package": package, "submissionId": refused_submission},
+        )
+        self.assertEqual(code, 409)
+        code, reconciled = request(
+            api,
+            f"/api/system/settings/reconcile?submissionId={refused_submission}",
+        )
+        self.assertEqual(code, 200, reconciled)
+        self.assertEqual(reconciled["state"], "NOT_COMMITTED")
+        self.assertFalse(reconciled["committed"])
+        self.assertEqual(reconciled["sideEffects"], "none")
+
         # The same package is now stale: it names the previous Active and can
         # not overwrite the winner by being replayed.
         code, replayed = request(
