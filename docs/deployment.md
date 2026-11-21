@@ -423,6 +423,14 @@ results from its Base. General cross-version upgrade and rollback, mixed-version
 Task/Job migrations are deferred. An incompatible schema fails closed. Keep the original database
 for diagnosis and recovery. See [Slice 56 A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed).
 
+One configuration data switch is explicitly supported from configuration schema 11 to 12. Stop the
+services and keep a verified backup, run `mediaflow config status` and review the listed unpublished
+revisions, evidence and Task pins, then run `mediaflow config retire-unpublished --confirm`. The
+switch is atomic: an admitted Task pinning an unpublished revision or a database failure blocks it
+without changing the file. Start the services after it succeeds; other cross-version transitions
+remain outside current support. Exact scope and recovery behavior are in the
+[configuration guide](configuration.md#previous-store-data-switch).
+
 Stop the stack and retain a verified backup under `/data` before maintenance. Backup is read-only
 with respect to live media and never overwrites an existing destination:
 
@@ -563,7 +571,8 @@ Delivery detail explains this state without exposing endpoints or secret values.
 
 Container probes open the existing SQLite database read-only. An absent or incompatible schema is
 not ready; probes never create a database or install tables. Use the backup and same-version recovery workflow above; cross-version schema transitions
-are outside current support. Temporary database contention makes readiness
+are outside current support apart from the explicit configuration schema 11 to 12 data switch
+documented in the [configuration guide](configuration.md#previous-store-data-switch). Temporary database contention makes readiness
 unavailable while resident processes keep polling safely; it does not requeue uncertain media work.
 The V2 Operations service-status section separates infrastructure health from configuration waiting
 and links to Settings for configuration recovery.

@@ -120,6 +120,8 @@ mediaflow config status
 mediaflow config initialize
 mediaflow config publish --file config/mediaflow.activation.json
 mediaflow config publish --file config/mediaflow.activation.json --replace-active
+mediaflow config retire-unpublished
+mediaflow config retire-unpublished --confirm
 ```
 
 Each command selects the deployment bootstrap with `--config PATH` or `MEDIAFLOW_CONFIG`; the
@@ -130,6 +132,30 @@ Active revision is missing or corrupt, `--replace-active` is the explicit recove
 requires `--file` and never infers a replacement from retained history. The optional `--actor`
 labels the audit record for `initialize` and `publish`. The retired `draft-import`,
 `draft-validate` and `activate` commands, aliases and parameters are unknown command-line inputs.
+
+### Previous-store data switch
+
+A store that still reports configuration schema 11 contains unpublished revisions and their
+draft-only evidence from the retired draft lifecycle. This build does not retire them while opening
+the database. `config status` reads that file through a read-only connection and reports
+`DATA_SWITCH_REQUIRED` with the exact affected revision IDs, evidence per revision, affected audit
+rows and any admitted Task that pins one of them. Web/API startup and `config initialize`/`config
+publish` refuse to open the store, naming the same affected revision IDs, until the switch is applied.
+
+Review the reported scope, then apply it explicitly. Without `--confirm` the command only prints
+the same scope and changes nothing:
+
+```bash
+mediaflow --config config/mediaflow.json config status
+mediaflow --config config/mediaflow.json config retire-unpublished --confirm
+```
+
+One transaction removes only the listed unpublished revisions, their revision-bound evidence and
+their lifecycle audits, then advances the configuration marker to 12. Published Active and
+Superseded revisions keep their IDs, digests, audits, Task pins and results. A Task pin to an
+affected revision blocks the switch and is named with its Task ID; an SQLite failure rolls the
+transaction back and leaves the previous store intact. Start or restart the services after a
+successful switch.
 
 Web settings, business forms and `系统设置` → `高级配置` → `导入配置` share the same direct
 publication services. The import entry accepts either the complete configuration JSON or a

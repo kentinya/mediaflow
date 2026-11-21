@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import signal
+import sqlite3
 import threading
 import time
 from collections.abc import Callable
@@ -64,7 +65,10 @@ from mediaflow.cli import render_strategy_result
 from mediaflow.domain.automation import SchedulerConfigurationSnapshot
 from mediaflow.domain.automation_settings import engine_values_from_document
 from mediaflow.domain.configuration_input import reject_retired_configuration_input
-from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
+from mediaflow.domain.configuration_management import (
+    ManagedConfigurationStatus,
+    RuntimeSnapshotUnavailable,
+)
 from mediaflow.domain.failure import decode_failure_explanation
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.notification import NotificationDeliveryStatus
@@ -82,6 +86,10 @@ from mediaflow.domain.task_persistence import (
     task_item_counts,
 )
 from mediaflow.domain.task_scheduling import TaskControl
+from mediaflow.infrastructure.configuration_data_switch import (
+    ConfigurationDataSwitchScope,
+    read_configuration_data_switch,
+)
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.metadata_provider_bootstrap import (
     LazyMetadataProviderRegistryFactory,
@@ -98,9 +106,16 @@ from mediaflow.infrastructure.runtime_configuration import (
     with_managed_snapshot,
 )
 from mediaflow.infrastructure.runtime_lease import RuntimeDatabaseLease, RuntimeLeaseMode
+from mediaflow.infrastructure.sqlite_applicability import (
+    evaluate_database_applicability,
+    read_database_markers,
+)
 from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
+)
+from mediaflow.infrastructure.sqlite_configuration_schema import (
+    CONFIGURATION_SCHEMA_VERSION,
 )
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
@@ -137,6 +152,15 @@ def final_main(
         "--replace-active",
         action="store_true",
         help="explicitly replace an unavailable managed Active from --file",
+    )
+    retire_unpublished = config_commands.add_parser(
+        "retire-unpublished",
+        help="review and switch a previous store to published-history-only structure",
+    )
+    retire_unpublished.add_argument(
+        "--confirm",
+        action="store_true",
+        help="apply the reviewed data switch in one transaction",
     )
     analyze = commands.add_parser("analyze", help="analyze one file without planning execution")
     analyze.add_argument("path")
@@ -314,6 +338,7 @@ def final_main(
                 "status",
                 "initialize",
                 "publish",
+                "retire-unpublished",
             }
         )
         management_bootstrap_database_path = None
@@ -406,12 +431,82 @@ def final_main(
                 "status",
                 "initialize",
                 "publish",
+                "retire-unpublished",
             }
             if managed_config_command:
                 database_path = management_bootstrap_database_path
                 if database_path is None:
                     raise RuntimeError("configuration management bootstrap locator is unavailable")
-                with SQLiteConfigurationRepository(database_path) as repository:
+                if arguments.config_command == "status":
+                    # A previous supported store is inspected through a read-only
+                    # connection.  Status never applies the data switch; it lists
+                    # the exact revisions, evidence and admitted Task pins.
+                    evaluate_database_applicability(
+                        read_database_markers(database_path),
+                        current_runtime_version=SCHEMA_VERSION,
+                        current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
+                    )
+                    pending_switch = read_configuration_data_switch(database_path)
+                    if pending_switch is not None:
+                        stdout.write(
+                            json.dumps(
+                                _data_switch_status_document(pending_switch),
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                            + "\n"
+                        )
+                        return 0
+                data_switch_command = arguments.config_command == "retire-unpublished"
+                reviewed_switch = None
+                if data_switch_command:
+                    reviewed_switch = read_configuration_data_switch(database_path)
+                    if reviewed_switch is not None and not arguments.confirm:
+                        stdout.write(
+                            json.dumps(
+                                {
+                                    "switched": False,
+                                    "dataSwitch": reviewed_switch.document(),
+                                    "nextAction": reviewed_switch.next_action(),
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                            + "\n"
+                        )
+                        raise ValueError(
+                            "configuration data switch requires --confirm after "
+                            "reviewing the affected revisions"
+                        )
+                    if reviewed_switch is not None and reviewed_switch.blocked:
+                        stdout.write(
+                            json.dumps(
+                                {
+                                    "switched": False,
+                                    "dataSwitch": reviewed_switch.document(),
+                                    "nextAction": reviewed_switch.next_action(),
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                            + "\n"
+                        )
+                        raise ValueError(reviewed_switch.next_action())
+                try:
+                    repository = SQLiteConfigurationRepository(
+                        database_path,
+                        apply_data_switch=data_switch_command and arguments.confirm,
+                    )
+                except sqlite3.Error as error:
+                    if not data_switch_command:
+                        raise
+                    raise RuntimeError(
+                        "configuration data switch failed and was rolled back "
+                        f"({type(error).__name__}: {error}); the previous store "
+                        "was preserved. Correct the reported database fault, then "
+                        "run `mediaflow config status` again"
+                    ) from error
+                with repository:
                     service = ManagedConfigurationService(
                         repository,
                         bootstrap_database_path=database_path,
@@ -421,6 +516,64 @@ def final_main(
                     if arguments.config_command == "status":
                         stdout.write(
                             json.dumps(service.status_document(), ensure_ascii=False, indent=2)
+                            + "\n"
+                        )
+                        return 0
+                    if data_switch_command:
+                        active = repository.get_active_revision()
+                        remaining = [
+                            revision
+                            for revision in repository.list_revisions(limit=500)
+                            if revision.status
+                            in {
+                                ManagedConfigurationStatus.DRAFT,
+                                ManagedConfigurationStatus.VALIDATED,
+                            }
+                        ]
+                        if remaining:
+                            raise RuntimeError(
+                                "the data switch left unpublished configuration "
+                                "revisions behind: "
+                                + ", ".join(item.revision_id for item in remaining)
+                            )
+                        actual_schema_version = read_database_markers(
+                            database_path
+                        ).configuration_version
+                        if actual_schema_version != CONFIGURATION_SCHEMA_VERSION:
+                            raise RuntimeError(
+                                "the configuration store did not report the current "
+                                "schema after the data switch"
+                            )
+                        stdout.write(
+                            json.dumps(
+                                {
+                                    "switched": reviewed_switch is not None,
+                                    "configurationSchemaVersion": actual_schema_version,
+                                    "removedRevisions": [
+                                        {"revisionId": revision_id, "status": status}
+                                        for revision_id, status in (
+                                            repository.data_switch_removed_revisions
+                                        )
+                                    ],
+                                    "removedEvidence": [
+                                        {"table": table, "rows": rows}
+                                        for table, rows in (repository.data_switch_removed_evidence)
+                                    ],
+                                    "removedAuditRows": (repository.data_switch_removed_audit_rows),
+                                    "active": active.summary() if active is not None else None,
+                                    "remainingRevisionCount": len(
+                                        repository.list_revisions(limit=500)
+                                    ),
+                                    "nextAction": (
+                                        "start or restart MediaFlow services so they "
+                                        "open the switched configuration store"
+                                        if reviewed_switch is not None
+                                        else "no configuration data switch was pending"
+                                    ),
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            )
                             + "\n"
                         )
                         return 0
@@ -3229,6 +3382,25 @@ def _configuration(
         digest=active.digest,
         version=active.version,
     )
+
+
+def _data_switch_status_document(scope: ConfigurationDataSwitchScope) -> dict[str, object]:
+    """Report a pending data switch without serving business configuration."""
+
+    return {
+        "authority": "MANAGEMENT_BOOTSTRAP",
+        "health": "DATA_SWITCH_REQUIRED",
+        "managementReady": False,
+        "managedActivation": scope.managed_activation,
+        "setupRequired": False,
+        "runtimeConfigured": False,
+        "runtimeReady": False,
+        "recoveryRequired": scope.managed_activation,
+        "active": None,
+        "revisions": [],
+        "dataSwitch": scope.document(),
+        "nextAction": scope.next_action(),
+    }
 
 
 def _bootstrap_database_path(document: object) -> str:

@@ -43,6 +43,11 @@ from mediaflow.domain.configuration_management import (
     validate_configuration_object_id,
     validate_storage_configuration,
 )
+from mediaflow.infrastructure.configuration_data_switch import (
+    RETIRED_UNPUBLISHED_EVIDENCE_TABLES,
+    ConfigurationDataSwitchRequired,
+    read_configuration_data_switch,
+)
 from mediaflow.infrastructure.sqlite_applicability import (
     assert_supported_database,
     evaluate_database_applicability,
@@ -63,13 +68,37 @@ class SQLiteConfigurationRepository:
         ConfigurationObjectKind.MEDIA_LIBRARY,
     }
 
-    def __init__(self, database_path: str | Path) -> None:
+    def __init__(
+        self,
+        database_path: str | Path,
+        *,
+        apply_data_switch: bool = False,
+    ) -> None:
         self._path = Path(database_path)
         self._database_markers = assert_supported_database(
             self._path,
             current_runtime_version=SCHEMA_VERSION,
             current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
         )
+        # A previous supported store is inspected through a read-only connection
+        # next.  Retiring its unpublished rows is an explicit deployment action,
+        # so an ordinary read (or a process start) never mutates the file; it
+        # fails closed with the exact affected scope instead.
+        pending_switch = (
+            read_configuration_data_switch(self._path)
+            if self._database_markers.configuration_version is not None
+            and self._database_markers.configuration_version < CONFIGURATION_SCHEMA_VERSION
+            else None
+        )
+        if pending_switch is not None and not apply_data_switch:
+            raise ConfigurationDataSwitchRequired(pending_switch)
+        self._apply_data_switch = apply_data_switch
+        # The explicit switch records what its own transaction removed, so the
+        # deployment command reports the committed outcome rather than the
+        # earlier review snapshot.
+        self._data_switch_removed_revisions: tuple[tuple[str, str], ...] = ()
+        self._data_switch_removed_evidence: tuple[tuple[str, int], ...] = ()
+        self._data_switch_removed_audit_rows = 0
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(str(self._path), check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
@@ -82,6 +111,24 @@ class SQLiteConfigurationRepository:
         """Return the bootstrap locator used by this configuration store."""
 
         return str(self._path)
+
+    @property
+    def data_switch_removed_revisions(self) -> tuple[tuple[str, str], ...]:
+        """Published-only switches report the revisions they deleted."""
+
+        return self._data_switch_removed_revisions
+
+    @property
+    def data_switch_removed_evidence(self) -> tuple[tuple[str, int], ...]:
+        """Per-table evidence row counts deleted by the switch transaction."""
+
+        return self._data_switch_removed_evidence
+
+    @property
+    def data_switch_removed_audit_rows(self) -> int:
+        """Lifecycle audit rows deleted with the unpublished revisions."""
+
+        return self._data_switch_removed_audit_rows
 
     def close(self) -> None:
         with self._lock:
@@ -2344,6 +2391,16 @@ class SQLiteConfigurationRepository:
                 (CONFIGURATION_SCHEMA_VERSION,),
             )
         elif int(marker["version"]) < CONFIGURATION_SCHEMA_VERSION:
+            if not self._apply_data_switch:
+                # The constructor already refused with the read-only scope.
+                # This only guards a caller that bypassed that entry.
+                scope = read_configuration_data_switch(self._path)
+                if scope is None:  # pragma: no cover - defensive re-read
+                    raise RuntimeError(
+                        "configuration data switch is pending; review "
+                        "`mediaflow config status` and apply it explicitly"
+                    )
+                raise ConfigurationDataSwitchRequired(scope)
             self._retire_unpublished_revisions_locked()
             self._connection.execute(
                 "UPDATE schema_version SET version=? WHERE component='configuration_management'",
@@ -2354,11 +2411,13 @@ class SQLiteConfigurationRepository:
     def _retire_unpublished_revisions_locked(self) -> None:
         """Switch a supported previous store to published-history-only structure.
 
-        Direct publication no longer keeps recoverable drafts.  The switch lists
-        every affected revision, refuses to proceed when an admitted Task still
-        pins one of them, and deletes the draft-only validation evidence in the
-        same transaction as the schema marker.  Any failure rolls the whole
-        initialization transaction back and leaves the file unchanged.
+        This transaction only runs for the explicit `config retire-unpublished
+        --confirm` entry, after `config status` listed the same scope from a
+        read-only connection.  It refuses to proceed when an admitted Task still
+        pins one of the affected revisions, and deletes the draft-only evidence
+        and audits in the same transaction as the schema marker.  Any failure
+        rolls the whole initialization transaction back and leaves the file
+        unchanged.
         """
 
         rows = self._connection.execute(
@@ -2372,6 +2431,9 @@ class SQLiteConfigurationRepository:
         if not rows:
             return
         retired_ids = [str(row["revision_id"]) for row in rows]
+        self._data_switch_removed_revisions = tuple(
+            (str(row["revision_id"]), str(row["status"])) for row in rows
+        )
         placeholders = ",".join("?" for _ in retired_ids)
         tables = {
             str(item["name"])
@@ -2400,25 +2462,20 @@ class SQLiteConfigurationRepository:
                         "configuration database still has admitted Tasks pinned to "
                         f"unpublished drafts ({pinned}); the file was not modified"
                     )
-        for table in (
-            "managed_local_setup_checks",
-            "managed_storage_setup_checks",
-            "managed_recognition_strategy_tests",
-            "managed_naming_previews",
-            "managed_classification_previews",
-            "managed_organize_authority_previews",
-            "managed_destination_previews",
-            "managed_destination_prechecks",
-        ):
-            self._connection.execute(
+        removed_evidence: list[tuple[str, int]] = []
+        for table in RETIRED_UNPUBLISHED_EVIDENCE_TABLES:
+            deleted = self._connection.execute(
                 f"DELETE FROM {table} WHERE revision_id IN ({placeholders})",
                 tuple(retired_ids),
-            )
-        self._connection.execute(
+            ).rowcount
+            if deleted:
+                removed_evidence.append((table, deleted))
+        self._data_switch_removed_evidence = tuple(removed_evidence)
+        self._data_switch_removed_audit_rows = self._connection.execute(
             "DELETE FROM configuration_change_audits "
             f"WHERE object_kind=? AND object_id IN ({placeholders})",
             (ConfigurationObjectKind.SYSTEM_SETTINGS.value, *retired_ids),
-        )
+        ).rowcount
         self._connection.execute(
             f"DELETE FROM managed_configuration_revisions WHERE revision_id IN ({placeholders})",
             tuple(retired_ids),

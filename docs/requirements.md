@@ -626,13 +626,16 @@ Candidate
 - 发布失败时旧 Active 保持有效，不允许部分发布；持久化失败时 Active、审计和发布标记一起回滚。
 - JSON 长期保留用于 bootstrap、导入导出、迁移和支持包；持久配置修订只包含当前和历史已发布
   快照。JSON 不得与 Managed Configuration 同时成为互相竞争的 Active source of truth。
+- 旧 schema 库中的未发布草稿及其专属证据只能通过显式数据切换退出：首次只读列出受影响修订、
+  证据、审计和任务固定引用；确认后在同一事务内清理并升级结构，存在受受理任务固定引用时停止，
+  失败完整回滚。已发布身份、摘要、审计、任务固定引用和结果保持可用。
 
 #### **当前 Managed Configuration 产品边界（已实现）**
 
 - 已实现 whole-document 已发布 Active revision 的 SQLite 持久化、版本/digest、验证证据、
   原子发布和脱敏 Before/After 审计；检查候选只在一次命令内短暂存在，失败即清理。
 - 已接入受鉴权 API 与 Operator Web Configuration 视图，以及本地 `config status`、
-  `config initialize` 和 `config publish` 管理命令。旧草稿导入、验证、激活命令和参数退出。
+  `config initialize`、`config publish` 和 `config retire-unpublished --confirm` 管理命令。旧草稿导入、验证、激活命令和参数退出。
 - 新建 Task/Automation Job 记录其 configuration snapshot ID/digest；发布不启动扫描、Provider、
   Storage 或 Organizer，旧在途工作继续使用原快照。
 - 运行时缺失/损坏场景会拒绝工作且不回退 JSON；F1 在完整 runtime 校验成功前不发布 identity，

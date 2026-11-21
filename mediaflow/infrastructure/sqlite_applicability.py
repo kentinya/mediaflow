@@ -29,8 +29,9 @@ from pathlib import Path
 MIN_RUNTIME_SCHEMA_VERSION = 58
 
 #: The immediately previous managed-configuration schema.  It contains the same
-#: current tables plus unpublished draft revisions that this build retires on
-#: open.  Any older marker remains unsupported.
+#: current tables plus unpublished draft revisions that this build retires
+#: only through the explicit operator-confirmed data switch.  Any older marker
+#: remains unsupported.
 MIN_CONFIGURATION_SCHEMA_VERSION = 11
 
 #: Tables that prove a pre-V2 database even when its runtime marker is absent.

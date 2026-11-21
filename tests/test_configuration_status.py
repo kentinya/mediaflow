@@ -427,22 +427,23 @@ class ConfigurationDraftRetirementTests(unittest.TestCase):
         )
         unpublished = service.import_draft(document, actor="tester")
         with sqlite3.connect(database) as connection:
-            connection.execute(
-                "INSERT INTO managed_local_setup_checks "
-                "(revision_id, revision_version, revision_digest, status, checked_at, actor, "
-                "storage_ids, operations, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    unpublished.revision_id,
-                    unpublished.version,
-                    unpublished.digest,
-                    "passed",
-                    "2026-11-20T00:00:00+00:00",
-                    "tester",
-                    "[]",
-                    "[]",
-                    1,
-                ),
-            )
+            for revision in (active, unpublished):
+                connection.execute(
+                    "INSERT INTO managed_local_setup_checks "
+                    "(revision_id, revision_version, revision_digest, status, checked_at, actor, "
+                    "storage_ids, operations, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        revision.revision_id,
+                        revision.version,
+                        revision.digest,
+                        "passed",
+                        "2026-11-20T00:00:00+00:00",
+                        "tester",
+                        "[]",
+                        "[]",
+                        1,
+                    ),
+                )
             connection.execute(
                 "UPDATE schema_version SET version=11 WHERE component='configuration_management'"
             )
@@ -450,7 +451,105 @@ class ConfigurationDraftRetirementTests(unittest.TestCase):
         service.repository.close()
         return active, unpublished
 
-    def test_previous_store_switch_removes_unpublished_revisions_and_evidence(self) -> None:
+    def _bootstrap(self, root: Path, database: Path) -> Path:
+        bootstrap = root / "bootstrap.json"
+        bootstrap.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "persistence": {"databasePath": str(database)},
+                    "api": {"principals": []},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return bootstrap
+
+    def _run(self, bootstrap: Path, *arguments: str) -> tuple[int, str, str]:
+        from mediaflow.final_cli import final_main
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = final_main(["--config", str(bootstrap), *arguments], stdout=stdout, stderr=stderr)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def _schema_version(self, database: Path) -> int:
+        import sqlite3
+
+        with sqlite3.connect(database) as connection:
+            return int(
+                connection.execute(
+                    "SELECT version FROM schema_version WHERE component='configuration_management'"
+                ).fetchone()[0]
+            )
+
+    def test_status_lists_switch_scope_without_modifying_the_previous_store(self) -> None:
+        import sqlite3
+
+        from mediaflow.infrastructure.configuration_data_switch import (
+            ConfigurationDataSwitchRequired,
+        )
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "configuration.sqlite3"
+            active, unpublished = self._seed_store(database)
+            bootstrap = self._bootstrap(root, database)
+            code, output, errors = self._run(bootstrap, "config", "status")
+            self.assertEqual(code, 0, errors)
+            status = json.loads(output)
+            self.assertEqual(status["health"], "DATA_SWITCH_REQUIRED")
+            self.assertFalse(status["managementReady"])
+            switch = status["dataSwitch"]
+            self.assertEqual(switch["state"], "PENDING")
+            self.assertEqual(switch["configurationSchemaVersion"], 11)
+            self.assertEqual(switch["targetConfigurationSchemaVersion"], 12)
+            self.assertEqual(
+                [item["revisionId"] for item in switch["affectedRevisions"]],
+                [unpublished.revision_id],
+            )
+            self.assertEqual(switch["affectedRevisions"][0]["status"], "draft")
+            self.assertIn(
+                {"table": "managed_local_setup_checks", "rows": 1},
+                switch["affectedRevisions"][0]["evidence"],
+            )
+            self.assertGreater(switch["auditRows"], 0)
+            self.assertIn("retire-unpublished --confirm", switch["confirmation"])
+            # Opening the normal repository must fail closed with the same
+            # scope instead of silently switching the file.
+            with self.assertRaises(ConfigurationDataSwitchRequired) as raised:
+                SQLiteConfigurationRepository(database)
+            self.assertIn(unpublished.revision_id, str(raised.exception))
+            self.assertIn("was not modified", str(raised.exception))
+            self.assertEqual(self._schema_version(database), 11)
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT status FROM managed_configuration_revisions WHERE revision_id=?",
+                        (unpublished.revision_id,),
+                    ).fetchone()[0],
+                    "draft",
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM managed_local_setup_checks WHERE revision_id=?",
+                        (unpublished.revision_id,),
+                    ).fetchone()[0],
+                    1,
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM configuration_change_audits WHERE object_id=?",
+                        (unpublished.revision_id,),
+                    ).fetchone()[0],
+                    int(switch["auditRows"]),
+                )
+
+    def test_confirmed_switch_retires_unpublished_rows_and_preserves_published_history(
+        self,
+    ) -> None:
         import sqlite3
 
         from mediaflow.infrastructure.sqlite_configuration_management import (
@@ -458,24 +557,44 @@ class ConfigurationDraftRetirementTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory) / "configuration.sqlite3"
+            root = Path(directory)
+            database = root / "configuration.sqlite3"
             active, unpublished = self._seed_store(database)
-            with SQLiteConfigurationRepository(database) as repository:
-                revisions = repository.list_revisions(limit=100)
-                self.assertEqual(
-                    [(revision.revision_id, revision.status.value) for revision in revisions],
-                    [(active.revision_id, "active")],
-                )
-                self.assertIsNone(repository.get_revision(unpublished.revision_id))
-                self.assertEqual(repository.get_active_revision().digest, active.digest)
-                self.assertFalse(repository.list_revision_audits(active.revision_id) == ())
+            bootstrap = self._bootstrap(root, database)
             with sqlite3.connect(database) as connection:
-                self.assertEqual(
+                connection.execute(
+                    "CREATE TABLE tasks (task_id TEXT PRIMARY KEY, status TEXT NOT NULL, "
+                    "created_at TEXT NOT NULL, configuration_snapshot_id TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, ?, ?)",
+                    (
+                        "task-published",
+                        "running",
+                        "2026-11-20T00:00:00+00:00",
+                        active.revision_id,
+                    ),
+                )
+                connection.commit()
+            code, output, errors = self._run(bootstrap, "config", "retire-unpublished", "--confirm")
+            self.assertEqual(code, 0, errors)
+            result = json.loads(output)
+            self.assertTrue(result["switched"])
+            self.assertEqual(result["configurationSchemaVersion"], 12)
+            self.assertEqual(
+                [item["revisionId"] for item in result["removedRevisions"]],
+                [unpublished.revision_id],
+            )
+            self.assertEqual(result["active"]["revisionId"], active.revision_id)
+            self.assertEqual(result["active"]["digest"], active.digest)
+            self.assertEqual(self._schema_version(database), 12)
+            with sqlite3.connect(database) as connection:
+                self.assertIsNone(
                     connection.execute(
-                        "SELECT version FROM schema_version "
-                        "WHERE component='configuration_management'"
-                    ).fetchone()[0],
-                    12,
+                        "SELECT revision_id FROM managed_configuration_revisions "
+                        "WHERE revision_id=?",
+                        (unpublished.revision_id,),
+                    ).fetchone()
                 )
                 self.assertEqual(
                     connection.execute(
@@ -484,17 +603,59 @@ class ConfigurationDraftRetirementTests(unittest.TestCase):
                     ).fetchone()[0],
                     0,
                 )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM configuration_change_audits WHERE object_id=?",
+                        (unpublished.revision_id,),
+                    ).fetchone()[0],
+                    0,
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM configuration_change_audits WHERE object_id=?",
+                        (active.revision_id,),
+                    ).fetchone()[0]
+                    > 0,
+                    True,
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM managed_local_setup_checks WHERE revision_id=?",
+                        (active.revision_id,),
+                    ).fetchone()[0],
+                    1,
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT configuration_snapshot_id FROM tasks WHERE task_id=?",
+                        ("task-published",),
+                    ).fetchone()[0],
+                    active.revision_id,
+                )
+            # The same store now opens normally and reports only published
+            # revisions, with the Active identity unchanged.
+            with SQLiteConfigurationRepository(database) as repository:
+                self.assertEqual(
+                    [
+                        (revision.revision_id, revision.status.value)
+                        for revision in repository.list_revisions(limit=100)
+                    ],
+                    [(active.revision_id, "active")],
+                )
+                self.assertEqual(repository.get_active_revision().digest, active.digest)
+                self.assertFalse(repository.list_revision_audits(active.revision_id) == ())
+            code, output, errors = self._run(bootstrap, "config", "retire-unpublished", "--confirm")
+            self.assertEqual(code, 0, errors)
+            self.assertFalse(json.loads(output)["switched"])
 
-    def test_switch_stops_and_rolls_back_when_an_admitted_task_pins_a_draft(self) -> None:
+    def test_switch_is_blocked_and_status_locates_a_pinned_admitted_task(self) -> None:
         import sqlite3
 
-        from mediaflow.infrastructure.sqlite_configuration_management import (
-            SQLiteConfigurationRepository,
-        )
-
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory) / "configuration.sqlite3"
+            root = Path(directory)
+            database = root / "configuration.sqlite3"
             active, unpublished = self._seed_store(database)
+            bootstrap = self._bootstrap(root, database)
             with sqlite3.connect(database) as connection:
                 connection.execute(
                     "CREATE TABLE tasks (task_id TEXT PRIMARY KEY, status TEXT NOT NULL, "
@@ -510,24 +671,89 @@ class ConfigurationDraftRetirementTests(unittest.TestCase):
                     ),
                 )
                 connection.commit()
-            with self.assertRaises(ValueError) as raised:
-                SQLiteConfigurationRepository(database)
-            self.assertIn("admitted Tasks pinned to unpublished drafts", str(raised.exception))
-            self.assertIn(unpublished.revision_id, str(raised.exception))
+            code, output, errors = self._run(bootstrap, "config", "status")
+            self.assertEqual(code, 0, errors)
+            switch = json.loads(output)["dataSwitch"]
+            self.assertEqual(switch["state"], "BLOCKED")
+            self.assertEqual(
+                [(item["taskId"], item["revisionId"]) for item in switch["pinnedTasks"]],
+                [("task-pinned", unpublished.revision_id)],
+            )
+            code, output, errors = self._run(bootstrap, "config", "retire-unpublished", "--confirm")
+            self.assertEqual(code, 2)
+            self.assertIn("task-pinned", errors)
+            self.assertEqual(json.loads(output)["switched"], False)
+            self.assertEqual(self._schema_version(database), 11)
             with sqlite3.connect(database) as connection:
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT version FROM schema_version "
-                        "WHERE component='configuration_management'"
-                    ).fetchone()[0],
-                    11,
-                )
                 self.assertEqual(
                     connection.execute(
                         "SELECT status FROM managed_configuration_revisions WHERE revision_id=?",
                         (unpublished.revision_id,),
                     ).fetchone()[0],
                     "draft",
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT revision_id FROM managed_configuration_revisions "
+                        "WHERE status='active'"
+                    ).fetchone()[0],
+                    active.revision_id,
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM managed_local_setup_checks WHERE revision_id=?",
+                        (unpublished.revision_id,),
+                    ).fetchone()[0],
+                    1,
+                )
+
+    def test_switch_failure_rolls_back_to_the_previous_store(self) -> None:
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "configuration.sqlite3"
+            active, unpublished = self._seed_store(database)
+            bootstrap = self._bootstrap(root, database)
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "CREATE TRIGGER reject_switch_evidence_delete "
+                    "BEFORE DELETE ON managed_local_setup_checks "
+                    "BEGIN SELECT RAISE(ABORT, 'simulated evidence delete failure'); END"
+                )
+                connection.commit()
+            code, _, errors = self._run(bootstrap, "config", "retire-unpublished", "--confirm")
+            self.assertEqual(code, 2)
+            self.assertIn("simulated evidence delete failure", errors)
+            self.assertEqual(self._schema_version(database), 11)
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT status FROM managed_configuration_revisions WHERE revision_id=?",
+                        (unpublished.revision_id,),
+                    ).fetchone()[0],
+                    "draft",
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM managed_local_setup_checks WHERE revision_id=?",
+                        (unpublished.revision_id,),
+                    ).fetchone()[0],
+                    1,
+                )
+                connection.execute("DROP TRIGGER reject_switch_evidence_delete")
+                connection.commit()
+            code, output, errors = self._run(bootstrap, "config", "retire-unpublished", "--confirm")
+            self.assertEqual(code, 0, errors)
+            self.assertTrue(json.loads(output)["switched"])
+            self.assertEqual(self._schema_version(database), 12)
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT status FROM managed_configuration_revisions WHERE revision_id=?",
+                        (unpublished.revision_id,),
+                    ).fetchone(),
+                    None,
                 )
                 self.assertEqual(
                     connection.execute(

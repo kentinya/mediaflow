@@ -630,7 +630,8 @@ are reconciled from durable identity before another explicit attempt; reads neve
   in `高级配置`, with rule counts, command readiness and technical identities in secondary diagnostics.
 - **State:** management bootstrap provides setup and recovery. Current Active and historical published
   revisions show exact versions, digests, references, evidence and capability readiness. Only Active
-  governs runtime; no resumable configuration draft exists.
+  governs runtime; no resumable configuration draft exists. A previous schema-11 store is inspected
+  read-only and reaches the current structure only through the explicit confirmed data switch.
 - **Action:** edit typed settings or business objects and explicitly apply. The backend binds the
   current Active baseline, validates the candidate, runs the applicable read-only checks and publishes
   atomically. Advanced whole-document JSON and portable-package import use the same explicit check and
