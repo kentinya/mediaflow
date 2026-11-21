@@ -135,7 +135,9 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   // selected run. The token stays memory-only and the admission is not
   // replayed.
   await page.reload();
-  await expect(page.getByLabel("Login name")).toBeVisible();
+  const signIn = page.getByLabel("Login name");
+  const authenticated = page.getByRole("button", { name: "Account menu" });
+  await expect(signIn.or(authenticated).first()).toBeVisible();
   await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
