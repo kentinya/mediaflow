@@ -740,14 +740,47 @@ class NotificationDeliveryCompatibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             harness = ManagedWebhookHarness(directory, transport=transport)
             try:
-                revision_id = harness.draft.revision_id
+                validated = harness.configuration.validate(
+                    harness.draft.revision_id, actor="bootstrap"
+                )
+                active = harness.configuration.activate(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    actor="bootstrap",
+                )
+                service = harness.api._webhook_tests
+                original_transport = service._transport
+                service._transport = FakeTransport(204)
+                try:
+                    with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "top-secret-value"}):
+                        status, tested = request(
+                            harness.api,
+                            "/api/operations/notifications/webhooks/ops-webhook/test",
+                            method="POST",
+                            body=json.dumps(
+                                {
+                                    "webhook": webhook_document(),
+                                    "expectedRevisionId": active.revision_id,
+                                    "expectedVersion": active.version,
+                                }
+                            ).encode(),
+                        )
+                    self.assertEqual(status, 200, tested)
+                finally:
+                    service._transport = original_transport
                 status, created = request(
                     harness.api,
-                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{active.revision_id}/objects/webhooks",
                     method="POST",
-                    body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
+                    body=json.dumps(
+                        {
+                            "object": webhook_document(),
+                            "expectedVersion": active.version,
+                            "testEvidenceId": tested["testEvidenceId"],
+                        }
+                    ).encode(),
                 )
-                self.assertEqual(status, 200)
+                self.assertEqual(status, 200, created)
                 active = harness.configuration.active()
                 # A durable delivery exists for the same Webhook id.
                 delivery = publish(

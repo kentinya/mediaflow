@@ -758,6 +758,8 @@ export function normalizeNotificationDraftDocument(
 
 export interface WebhookTestResultModel {
   readonly testId: string | null;
+  /** Server-side proof binding this success to the tested form and baseline. */
+  readonly testEvidenceId: string | null;
   readonly webhookId: string;
   readonly revisionId: string | null;
   readonly revisionVersion: number | null;
@@ -810,6 +812,7 @@ export function normalizeWebhookTestResult(
   }
   const model = {
     testId: optionalText(source, "testId", 128),
+    testEvidenceId: optionalText(source, "testEvidenceId", 128),
     webhookId: uriSafeSegment(webhook, "id", 64),
     revisionId: revision === null ? null : text(revision, "revisionId", 128),
     revisionVersion: revision === null ? null : count(revision, "version"),

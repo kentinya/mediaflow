@@ -13,14 +13,16 @@
  * action and never lets pointer or keyboard reach an invalid submission.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useAuthToken } from "../../shared/api/auth-context";
+import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import {
   createWebhookDefinition,
+  fetchAuthenticatedPrincipal,
   testWebhookDefinitionForm,
 } from "../../shared/api/api-client";
+import { reconcileSystemSettings } from "../../shared/api/configuration-api";
 import {
   notificationListQueryKey,
   notificationListQueryOptions,
@@ -38,7 +40,6 @@ import {
   webhookFormIssues,
   type WebhookFormValues,
   isUnknownCommandResult,
-  unknownCommandMessage,
 } from "./notification-presentation";
 import {
   NotificationCard,
@@ -47,6 +48,13 @@ import {
   useLastSuccessfulRead,
   useNotificationCardGuard,
 } from "./notification-card";
+import {
+  newNotificationSubmissionId,
+  notificationApplyScope,
+  readPendingNotificationApply,
+  writePendingNotificationApply,
+  type PendingNotificationApply,
+} from "./notification-publication";
 
 const INITIAL_FORM: WebhookFormValues = {
   url: "",
@@ -81,8 +89,36 @@ export function NotificationNewPage() {
   const [testResult, setTestResult] = useState<{
     readonly context: string;
     readonly success: boolean;
+    readonly evidenceId: string | null;
     readonly message: string;
   } | null>(null);
+  const [pendingApply, setPendingApply] =
+    useState<PendingNotificationApply | null>(null);
+  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [reconciliation, setReconciliation] = useState<string | null>(null);
+  const [reconciledVersion, setReconciledVersion] = useState<number | null>(
+    null,
+  );
+  const verifiedSubmissionRef = useRef<string | null>(null);
+  const verificationInFlightRef = useRef(false);
+  const verifyOutcomeRef = useRef<(pending: PendingNotificationApply) => void>(
+    () => {},
+  );
+  const guardRef = useRef<ReturnType<typeof useNotificationCardGuard> | null>(
+    null,
+  );
+
+  const authGeneration = useAuthGeneration();
+  const principalQuery = useQuery({
+    queryKey: ["authenticated-principal", authGeneration],
+    queryFn: () => fetchAuthenticatedPrincipal(token),
+    enabled: token !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+  });
+  const principalId = principalQuery.data?.principalId ?? null;
 
   const query = useQuery(notificationListQueryOptions(token));
   useAuthorizedReadAuthorityRecovery(query);
@@ -92,23 +128,39 @@ export function NotificationNewPage() {
       revisionId: string;
       expectedVersion: number;
       object: Record<string, unknown>;
+      webhookId: string;
+      testEvidenceId: string;
+      submissionId: string;
     }) =>
       createWebhookDefinition(token, {
         revisionId: input.revisionId,
         expectedVersion: input.expectedVersion,
         object: input.object,
+        testEvidenceId: input.testEvidenceId,
+        submissionId: input.submissionId,
       }),
     retry: false,
-    onMutate: () => setError(null),
+    onMutate: () => {
+      setError(null);
+      setReconciliation(null);
+    },
     onSuccess: (result, input) => {
       if (result.ok) {
+        setPendingApply(null);
+        setAwaitingVerification(false);
+        writePendingNotificationApply(
+          principalId,
+          notificationApplyScope("create", input.webhookId),
+          null,
+        );
+        verifiedSubmissionRef.current = input.submissionId;
         void queryClient.invalidateQueries({
           queryKey: [notificationListQueryKey],
         });
         const createdId = result.model.id;
         // The bound model is the exact created identity; the known result is
         // delivered to the detail card even if its follow-up read is slow.
-        guard.guardNavigation(() =>
+        guardRef.current?.guardNavigation(() =>
           navigate({
             to: "/operations/notifications/webhooks/$webhookId",
             params: { webhookId: createdId },
@@ -124,13 +176,30 @@ export function NotificationNewPage() {
         return;
       }
       if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("Webhook 定义可能已经发布"));
+        const pending: PendingNotificationApply = {
+          submissionId: input.submissionId,
+          webhookId: input.webhookId,
+          baselineRevisionId: input.revisionId,
+          baselineVersion: input.expectedVersion,
+        };
+        setPendingApply(pending);
+        setAwaitingVerification(true);
+        writePendingNotificationApply(
+          principalId,
+          notificationApplyScope("create", input.webhookId),
+          pending,
+        );
+        setError(
+          "应用结果待核实：本次请求没有收到可确认的回包。系统不会重复发布；正在用同一请求身份只读核对本次结果和当前生效配置。",
+        );
         return;
       }
+      setPendingApply(null);
+      setAwaitingVerification(false);
       setShowIssues(true);
       setError(
         result.status === 409
-          ? "定义没有发布：配置在你编辑期间已经变化。重新读取后再提交；服务端保留了胜出的版本。"
+          ? "定义没有发布：配置在你编辑期间已经变化，或签名测试证据与当前表单不一致。重新读取并对当前表单成功测试后再提交；服务端保留了胜出的版本。"
           : `定义没有发布（${result.code}）。修正表单后重试；系统没有自动重试。`,
       );
     },
@@ -140,10 +209,14 @@ export function NotificationNewPage() {
     mutationFn: (input: {
       context: string;
       webhook: Record<string, unknown>;
+      revisionId: string;
+      revisionVersion: number;
     }) =>
       testWebhookDefinitionForm(token, {
         webhookId: webhookId.trim(),
         webhook: input.webhook,
+        expectedRevisionId: input.revisionId,
+        expectedVersion: input.revisionVersion,
       }),
     retry: false,
     onMutate: () => {
@@ -155,6 +228,7 @@ export function NotificationNewPage() {
         setTestResult({
           context: input.context,
           success: result.model.outcome === "success",
+          evidenceId: result.model.testEvidenceId,
           message:
             result.model.outcome === "success"
               ? `签名测试成功。${result.model.message} 下一步：${result.model.nextAction}`
@@ -170,12 +244,144 @@ export function NotificationNewPage() {
     },
   });
 
+  const busy = createMutation.isPending || testMutation.isPending || verifying;
+
+  const verifyApplicationOutcome = async (
+    pending: PendingNotificationApply,
+  ) => {
+    if (verificationInFlightRef.current) return;
+    verificationInFlightRef.current = true;
+    verifiedSubmissionRef.current = pending.submissionId;
+    setVerifying(true);
+    setAwaitingVerification(true);
+    setError(null);
+    try {
+      const result = await reconcileSystemSettings(token, pending.submissionId);
+      const refreshed = await query.refetch();
+      const model = refreshed.data?.ok === true ? refreshed.data.model : null;
+      const currentVersion =
+        typeof model?.activeConfiguration?.version === "number"
+          ? model.activeConfiguration.version
+          : null;
+      const state =
+        typeof result.state === "string" ? result.state : "UNRESOLVED";
+      const committedVersion =
+        typeof result.committedRevisionVersion === "number"
+          ? result.committedRevisionVersion
+          : null;
+      const readShowsCommitted =
+        currentVersion !== null && currentVersion !== pending.baselineVersion;
+      setReconciledVersion(
+        state === "COMMITTED" &&
+          !readShowsCommitted &&
+          committedVersion !== null
+          ? committedVersion
+          : currentVersion,
+      );
+      if (state === "UNRESOLVED") {
+        setReconciliation("待核实");
+        setError(
+          "无法证明本次请求的持久结果；应用保持阻止，系统没有重新发布。恢复连接后可再次自动核实。",
+        );
+        return;
+      }
+      setAwaitingVerification(false);
+      setPendingApply(null);
+      writePendingNotificationApply(
+        principalId,
+        notificationApplyScope("create", pending.webhookId),
+        null,
+      );
+      if (state === "COMMITTED" || state === "SUPERSEDED") {
+        setReconciliation(
+          state === "COMMITTED"
+            ? "本次创建已确认发布"
+            : "本次创建已确认发布，之后的发布已成为当前生效值",
+        );
+        void queryClient.invalidateQueries({
+          queryKey: [notificationListQueryKey],
+        });
+        guardRef.current?.guardNavigation(() =>
+          navigate({
+            to: "/operations/notifications/webhooks/$webhookId",
+            params: { webhookId: pending.webhookId },
+            state: {
+              notificationCreateOutcome: {
+                webhookId: pending.webhookId,
+                revisionId: pending.baselineRevisionId,
+                version: currentVersion,
+              },
+            } as never,
+          }),
+        );
+      } else {
+        setReconciliation("本次创建未发布");
+        setError(
+          `已通过同一请求身份的持久证据确认本次没有发布；当前生效配置版本为 ${currentVersion ?? "未知"}，表单输入仍保留。`,
+        );
+      }
+    } catch {
+      setError(
+        "无法完成只读核实；应用保持阻止。请确认服务可用后再次核实，系统不会自动重发发布请求。",
+      );
+    } finally {
+      verificationInFlightRef.current = false;
+      setVerifying(false);
+    }
+  };
+
+  useEffect(() => {
+    verifyOutcomeRef.current = (pending) => {
+      void verifyApplicationOutcome(pending);
+    };
+  });
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (principalId === null || webhookId.trim() === "") return;
+    const scope = notificationApplyScope("create", webhookId.trim());
+    const stored = readPendingNotificationApply(principalId, scope);
+    if (stored === null) return;
+    setWebhookId(stored.webhookId);
+    setPendingApply((previous) => previous ?? stored);
+    setAwaitingVerification(true);
+    setReconciliation(null);
+  }, [principalId, webhookId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    if (!awaitingVerification || pendingApply === null || busy) return;
+    if (verifiedSubmissionRef.current === pendingApply.submissionId) return;
+    void verifyApplicationOutcome(pendingApply);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [awaitingVerification, pendingApply, busy]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      if (awaitingVerification && pendingApply !== null) {
+        verifyOutcomeRef.current(pendingApply);
+        return;
+      }
+      void query.refetch();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [awaitingVerification, pendingApply, query.refetch]);
+
   const closeCard = () => {
     void navigate({ to: "/operations/notifications" });
   };
   const dirty =
     webhookId.trim().length > 0 || !sameWebhookForm(form, INITIAL_FORM);
-  const busy = createMutation.isPending || testMutation.isPending;
   const createInFlight = createMutation.isPending;
   const guard = useNotificationCardGuard({
     busy,
@@ -191,12 +397,16 @@ export function NotificationNewPage() {
     firstFieldId: "notification-new-id",
     fallbackFocusId: "notification-definitions-background",
   });
+  useEffect(() => {
+    guardRef.current = guard;
+  });
 
   const issues = webhookFormIssues(form);
   const testContext = `${form.url}\u0000${form.secretEnv}`;
   const testedForCurrentForm =
     testResult !== null &&
     testResult.success &&
+    testResult.evidenceId !== null &&
     testResult.context === testContext &&
     webhookId.trim().length > 0;
   const fieldIssue = (field: string): string | null =>
@@ -251,7 +461,12 @@ export function NotificationNewPage() {
             <Button
               type="submit"
               form="notification-new-form"
-              disabled={busy || !testedForCurrentForm}
+              disabled={
+                busy ||
+                awaitingVerification ||
+                pendingApply !== null ||
+                !testedForCurrentForm
+              }
             >
               {createMutation.isPending ? "正在应用…" : "应用更改"}
             </Button>
@@ -343,7 +558,16 @@ export function NotificationNewPage() {
           className="mf-notification-card-scroll"
           onSubmit={(event) => {
             event.preventDefault();
-            if (busy || readDegraded) return;
+            if (
+              busy ||
+              readDegraded ||
+              awaitingVerification ||
+              pendingApply !== null ||
+              testResult?.evidenceId === null ||
+              testResult?.evidenceId === undefined
+            ) {
+              return;
+            }
             setShowIssues(true);
             setTouched(new Set(ALL_FORM_FIELDS));
             if (issues.length > 0 && webhookId.trim().length === 0) {
@@ -366,14 +590,56 @@ export function NotificationNewPage() {
               setError("当前配置缺少精确版本，不能安全保存。重新读取后再试。");
               return;
             }
+            const submissionId = newNotificationSubmissionId();
+            if (submissionId === null) {
+              setError(
+                "无法生成安全的请求标识；本次没有发送写入，请更新浏览器后重试。",
+              );
+              return;
+            }
             setError(null);
+            setReconciliation(null);
             createMutation.mutate({
               revisionId,
               expectedVersion: revisionVersion,
               object: buildWebhookObject(webhookId.trim(), form),
+              webhookId: webhookId.trim(),
+              testEvidenceId: testResult.evidenceId,
+              submissionId,
             });
           }}
         >
+          {awaitingVerification && pendingApply !== null && (
+            <StatusBanner variant="error" title="应用结果待核实">
+              <p>
+                本次请求没有收到可确认的回包，可能已经发布，也可能没有。
+                正在用同一请求身份只读核对本次结果和当前生效配置；核实期间不会再次发布，系统不会自动重发发布请求。
+              </p>
+              <div className="mf-actions">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={verifying || busy}
+                  onClick={() => void verifyApplicationOutcome(pendingApply)}
+                >
+                  {verifying ? "核实中…" : "核实当前状态"}
+                </Button>
+              </div>
+            </StatusBanner>
+          )}
+          {reconciliation !== null && (
+            <StatusBanner
+              variant={
+                reconciliation.includes("已确认") ? "success" : "warning"
+              }
+              title="本次创建结果"
+            >
+              <p>
+                {reconciliation}；当前生效配置版本：
+                {reconciledVersion ?? "不可用"}。页面没有重新发布。
+              </p>
+            </StatusBanner>
+          )}
           {readDegraded && (
             <StatusBanner variant="warning" title="最新读取失败">
               <p>
@@ -428,14 +694,21 @@ export function NotificationNewPage() {
                 type="button"
                 variant="secondary"
                 disabled={
-                  busy || issues.length > 0 || webhookId.trim().length === 0
+                  busy ||
+                  issues.length > 0 ||
+                  webhookId.trim().length === 0 ||
+                  revisionId === null ||
+                  revisionVersion === null
                 }
-                onClick={() =>
+                onClick={() => {
+                  if (revisionId === null || revisionVersion === null) return;
                   testMutation.mutate({
                     context: testContext,
                     webhook: buildWebhookObject(webhookId.trim(), form),
-                  })
-                }
+                    revisionId,
+                    revisionVersion,
+                  });
+                }}
               >
                 {testMutation.isPending ? "正在发送签名测试…" : "发送签名测试"}
               </Button>

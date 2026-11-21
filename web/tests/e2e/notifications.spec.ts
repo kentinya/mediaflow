@@ -178,6 +178,7 @@ test("the editor tests the exact form and applies it without draft routes", asyn
         contentType: "application/json",
         body: JSON.stringify({
           testId: "e2e-test-1",
+          testEvidenceId: "e2e-evidence-1",
           webhook: {
             id: WEBHOOK_ID,
             url: "https://example.invalid/hooks/edited",
@@ -185,7 +186,11 @@ test("the editor tests the exact form and applies it without draft routes", asyn
             enabled: true,
             secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
           },
-          revision: null,
+          revision: {
+            revisionId: ACTIVE_REVISION,
+            version: 3,
+            status: "active",
+          },
           outcome: "success",
           category: "http_204",
           responseStatus: 204,
@@ -269,6 +274,7 @@ test("the create form tests the current values before one direct apply", async (
         contentType: "application/json",
         body: JSON.stringify({
           testId: "e2e-test-new",
+          testEvidenceId: "e2e-evidence-new",
           webhook: {
             id: body.webhook?.id ?? "new-webhook",
             url: body.webhook?.url ?? "https://example.invalid/hooks/new",
@@ -276,7 +282,11 @@ test("the create form tests the current values before one direct apply", async (
             enabled: true,
             secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
           },
-          revision: null,
+          revision: {
+            revisionId: ACTIVE_REVISION,
+            version: 3,
+            status: "active",
+          },
           outcome: "success",
           category: "http_204",
           responseStatus: 204,

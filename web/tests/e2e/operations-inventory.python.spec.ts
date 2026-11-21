@@ -4283,40 +4283,9 @@ test("the Notifications page edits the real published Webhook and reads it back"
   browser,
 }) => {
   const api = recordApiCalls(page);
-  const testBodies: Array<Record<string, unknown>> = [];
-  // The real backend owns the form publication. Only the external signed
-  // probe is fulfilled locally: production Playwright must not send an
-  // arbitrary HTTPS request to example.invalid. The test still proves the
-  // browser submits the exact current form once and never publishes during
-  // the probe.
-  await page.route(
-    "**/api/operations/notifications/webhooks/operations-webhook/test",
-    async (route) => {
-      const body = route.request().postDataJSON() as {
-        webhook?: Record<string, unknown>;
-      };
-      testBodies.push(body);
-      const webhook = body.webhook ?? {};
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          testId: "harness-webhook-test-1",
-          webhook,
-          revision: null,
-          outcome: "success",
-          category: "http_204",
-          responseStatus: 204,
-          message: "the endpoint accepted the signed probe",
-          durableState: "no_delivery_created_no_configuration_change",
-          sideEffects: "none",
-          retrySafe: true,
-          nextAction: "apply the tested form",
-        }),
-      });
-    },
-  );
-
+  // The real backend performs the signed test through the harness local
+  // transport, records the evidence, and the direct publication verifies it.
+  // No browser route substitutes the test outcome.
   await connect(page, ADMIN_TOKEN);
   const definitionsRead = page.waitForResponse(
     (response) =>
@@ -4357,11 +4326,14 @@ test("the Notifications page edits the real published Webhook and reads it back"
   await attempts.fill("7");
   await dialog.getByRole("button", { name: "发送签名测试" }).click();
   await expect(dialog.getByText(/签名测试成功/)).toBeVisible();
-  expect(testBodies).toHaveLength(1);
-  expect(testBodies[0].webhook).toMatchObject({
-    id: "operations-webhook",
-    maxAttempts: 7,
-  });
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        entry.path ===
+          "/api/operations/notifications/webhooks/operations-webhook/test",
+    ),
+  ).toHaveLength(1);
 
   const publish = page.waitForResponse(
     (candidate) =>
@@ -4378,7 +4350,14 @@ test("the Notifications page edits the real published Webhook and reads it back"
   await expect(
     dialog.getByText(/更改已通过检查并发布为新的生效配置/),
   ).toBeVisible();
-  expect(testBodies).toHaveLength(1);
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        entry.path ===
+          "/api/operations/notifications/webhooks/operations-webhook/test",
+    ),
+  ).toHaveLength(1);
   expect(
     api.filter(
       (entry) =>
@@ -4418,6 +4397,83 @@ test("the Notifications page edits the real published Webhook and reads it back"
     await viewerContext.close();
   }
   expect(api.filter((entry) => entry.path.startsWith("/api/jobs"))).toEqual([]);
+});
+
+test("the Notification editor verifies a lost apply response after reconnect without republishing", async ({
+  page,
+}) => {
+  let publishRequests = 0;
+  let reconcileReads = 0;
+  let firstReconcileSeen: (() => void) | null = null;
+  const firstReconcile = new Promise<void>((resolve) => {
+    firstReconcileSeen = resolve;
+  });
+  await page.route(
+    "**/api/configuration/revisions/*/objects/webhooks/operations-webhook",
+    async (route) => {
+      if (route.request().method() !== "PUT") {
+        await route.continue();
+        return;
+      }
+      publishRequests += 1;
+      // The real Python server accepts and publishes the request; only the
+      // browser response is lost.
+      await route.fetch();
+      await route.abort("failed");
+    },
+  );
+  await page.route("**/api/system/settings/reconcile?**", async (route) => {
+    reconcileReads += 1;
+    if (reconcileReads === 1) {
+      firstReconcileSeen?.();
+      firstReconcileSeen = null;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          state: "UNRESOLVED",
+          committed: false,
+          submissionId: "notification-lost-response",
+          current: null,
+          nextAction: "no terminal durable outcome can be proven yet",
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await connect(page, ADMIN_TOKEN);
+  await page.getByRole("link", { name: "Notifications", exact: true }).click();
+  await page.getByRole("link", { name: "编辑定义" }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "编辑 Webhook operations-webhook",
+  });
+  await expect(dialog).toBeVisible();
+  const attempts = dialog.getByLabel("最大尝试次数");
+  await attempts.fill("8");
+  await dialog.getByRole("button", { name: "发送签名测试" }).click();
+  await expect(dialog.getByText(/签名测试成功/)).toBeVisible();
+  await dialog.getByRole("button", { name: "应用更改" }).click();
+  await firstReconcile;
+  await expect(dialog.getByText("应用结果待核实")).toBeVisible();
+  await expect(
+    dialog.getByText(/当前仍无法证明本次请求的持久结果/),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "核实当前状态" }),
+  ).toBeEnabled();
+  expect(publishRequests).toBe(1);
+
+  // A reconnect carries the retained request identity into the same read-only
+  // reconciliation instead of publishing again or guessing from the form.
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(dialog.getByText(/本次请求已确认发布/)).toBeVisible();
+  await expect(dialog.getByText(/当前生效定义版本为 \d+/)).toBeVisible();
+  expect(reconcileReads).toBeGreaterThanOrEqual(2);
+  expect(publishRequests).toBe(1);
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 test("a settled Task publishes one outbox delivery the delivery pages read", async ({

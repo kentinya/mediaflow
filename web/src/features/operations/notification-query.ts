@@ -29,6 +29,7 @@ export function notificationListQueryOptions(
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    refetchOnMount: "always",
     staleTime: 5_000,
   });
 }

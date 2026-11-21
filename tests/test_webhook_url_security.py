@@ -486,9 +486,10 @@ class WebhookUrlLegacyProjectionTests(unittest.TestCase):
                     method="PUT",
                     body=json.dumps({"object": safe_a, "expectedVersion": legacy.version}).encode(),
                 )
-                # The runtime contract refuses a snapshot that still carries a
-                # credential-bearing legacy URL; the Active stays unchanged.
-                self.assertEqual(status, 400, blocked)
+                # Direct object publication cannot prove a successful probe of
+                # this form while the Active runtime still carries the unsafe
+                # sibling URL; the Active stays unchanged.
+                self.assertEqual(status, 409, blocked)
                 self.assertNotIn(SENTINEL, json.dumps(blocked))
                 self.assertEqual(harness.configuration.active().revision_id, revision_id)
 
@@ -581,25 +582,55 @@ class WebhookUrlCompatibilityTests(unittest.TestCase):
         transport = FakeTransport(204)
         with tempfile.TemporaryDirectory() as directory:
             harness = WebhookSecurityHarness(directory, transport=transport)
-            revision_id = harness.draft.revision_id
             try:
+                validated = harness.configuration.validate(
+                    harness.draft.revision_id, actor="bootstrap"
+                )
+                active = harness.configuration.activate(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    actor="bootstrap",
+                )
                 safe_url = "https://example.invalid/hooks/mediaflow/ops"
+                safe_document = webhook_document(
+                    id="ops-webhook",
+                    url=safe_url,
+                    events=["task.completed"],
+                )
+                service = harness.api._webhook_tests
+                original_transport = service._transport
+                service._transport = FakeTransport(204)
+                try:
+                    with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "env-secret-992"}):
+                        status, tested = request(
+                            harness.api,
+                            "/api/operations/notifications/webhooks/ops-webhook/test",
+                            method="POST",
+                            body=json.dumps(
+                                {
+                                    "webhook": safe_document,
+                                    "expectedRevisionId": active.revision_id,
+                                    "expectedVersion": active.version,
+                                }
+                            ).encode(),
+                        )
+                    self.assertEqual(status, 200, tested)
+                finally:
+                    service._transport = original_transport
                 status, created = request(
                     harness.api,
-                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
+                    f"/api/configuration/revisions/{active.revision_id}/objects/webhooks",
                     method="POST",
                     body=json.dumps(
                         {
-                            "object": webhook_document(
-                                id="ops-webhook",
-                                url=safe_url,
-                                events=["task.completed"],
-                            ),
-                            "expectedVersion": 1,
+                            "object": safe_document,
+                            "expectedVersion": active.version,
+                            "testEvidenceId": tested["testEvidenceId"],
                         }
                     ).encode(),
                 )
                 self.assertEqual(status, 200)
+                revision_id = created["revisionId"]
                 with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "env-secret-992"}):
                     status, detail = request(
                         harness.api,

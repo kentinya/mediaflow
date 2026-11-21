@@ -147,6 +147,69 @@ class WebhookManagementHarness:
         self.repository.close()
         self.config_repository.close()
 
+    def test_webhook_form(self, document):
+        """Run one explicit form test against the current Active baseline."""
+
+        active = self.configuration.active()
+        if active is None:
+            active = _activate(self)
+        service = self.api._webhook_tests
+        original = service._transport
+        service._transport = FakeTransport(204)
+        try:
+            with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "top-secret-value"}):
+                status, result = request(
+                    self.api,
+                    f"/api/operations/notifications/webhooks/{document['id']}/test",
+                    method="POST",
+                    body=json.dumps(
+                        {
+                            "webhook": document,
+                            "expectedRevisionId": active.revision_id,
+                            "expectedVersion": active.version,
+                        }
+                    ).encode(),
+                )
+        finally:
+            service._transport = original
+        if status != 200:
+            raise AssertionError(result)
+        return result["testEvidenceId"]
+
+    def create_webhook(self, document):
+        active = self.configuration.active() or _activate(self)
+        evidence = self.test_webhook_form(document)
+        status, response = request(
+            self.api,
+            f"/api/configuration/revisions/{active.revision_id}/objects/webhooks",
+            method="POST",
+            body=json.dumps(
+                {
+                    "object": document,
+                    "expectedVersion": active.version,
+                    "testEvidenceId": evidence,
+                }
+            ).encode(),
+        )
+        return status, response
+
+    def update_webhook(self, document):
+        active = self.configuration.active() or _activate(self)
+        evidence = self.test_webhook_form(document)
+        status, response = request(
+            self.api,
+            f"/api/configuration/revisions/{active.revision_id}/objects/webhooks/{document['id']}",
+            method="PUT",
+            body=json.dumps(
+                {
+                    "object": document,
+                    "expectedVersion": active.version,
+                    "testEvidenceId": evidence,
+                }
+            ).encode(),
+        )
+        return status, response
+
 
 def _activate(harness):
     validated = harness.configuration.validate(harness.draft.revision_id, actor="bootstrap")
@@ -322,32 +385,15 @@ class WebhookManagementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             harness = WebhookManagementHarness(directory)
             try:
-                active = _activate(harness)
-                revision_id = active.revision_id
-                version = active.version
-                status, created = request(
-                    harness.api,
-                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
-                    method="POST",
-                    body=json.dumps(
-                        {"object": webhook_document(), "expectedVersion": version}
-                    ).encode(),
-                )
+                _activate(harness)
+                status, created = harness.create_webhook(webhook_document())
                 self.assertEqual(status, 200, created)
                 revision_id, version = created["revisionId"], created["version"]
-                status, updated = request(
-                    harness.api,
-                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook",
-                    method="PUT",
-                    body=json.dumps(
-                        {
-                            "object": webhook_document(
-                                events=["task.completed", "task.failed", "task.cancelled"],
-                                maxRetrySeconds=30,
-                            ),
-                            "expectedVersion": version,
-                        }
-                    ).encode(),
+                status, updated = harness.update_webhook(
+                    webhook_document(
+                        events=["task.completed", "task.failed", "task.cancelled"],
+                        maxRetrySeconds=30,
+                    )
                 )
                 self.assertEqual(status, 200, updated)
                 revision_id, version = updated["revisionId"], updated["version"]
@@ -402,41 +448,28 @@ class WebhookManagementTests(unittest.TestCase):
             harness = WebhookManagementHarness(directory)
             try:
                 active = _activate(harness)
-                revision_id = active.revision_id
-                status, created = request(
-                    harness.api,
-                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
-                    method="POST",
-                    body=json.dumps(
-                        {"object": webhook_document(), "expectedVersion": active.version}
-                    ).encode(),
-                )
+                status, created = harness.create_webhook(webhook_document())
                 self.assertEqual(status, 200, created)
                 revision_id = created["revisionId"]
                 # Stale write with an old version fails closed.
+                evidence = harness.test_webhook_form(webhook_document())
                 status, stale = request(
                     harness.api,
                     f"/api/configuration/revisions/{revision_id}/objects/webhooks/ops-webhook",
                     method="PUT",
                     body=json.dumps(
-                        {"object": webhook_document(), "expectedVersion": active.version}
+                        {
+                            "object": webhook_document(),
+                            "expectedVersion": active.version,
+                            "testEvidenceId": evidence,
+                        }
                     ).encode(),
                 )
                 self.assertEqual(status, 409)
                 self.assertEqual(stale["error"]["details"]["durableState"], "active_preserved")
-                # The current Active accepts a fresh explicit edit and publishes
+                # The current Active accepts a fresh explicit create and publishes
                 # a new immutable snapshot.
-                status, updated = request(
-                    harness.api,
-                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
-                    method="POST",
-                    body=json.dumps(
-                        {
-                            "object": webhook_document(id="second"),
-                            "expectedVersion": created["version"],
-                        }
-                    ).encode(),
-                )
+                status, updated = harness.create_webhook(webhook_document(id="second"))
                 self.assertEqual(status, 200, updated)
                 self.assertNotEqual(harness.configuration.active().revision_id, revision_id)
                 self.assertFalse(
@@ -451,7 +484,8 @@ class WebhookManagementTests(unittest.TestCase):
     def test_validation_fails_closed_and_responses_are_secret_free(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             harness = WebhookManagementHarness(directory)
-            revision_id = harness.draft.revision_id
+            active = _activate(harness)
+            revision_id = active.revision_id
             try:
                 invalid_values = {
                     "http_url": webhook_document(url="http://example.invalid/hook"),
@@ -483,7 +517,9 @@ class WebhookManagementTests(unittest.TestCase):
                             harness.api,
                             f"/api/configuration/revisions/{revision_id}/objects/webhooks",
                             method="POST",
-                            body=json.dumps({"object": value, "expectedVersion": 1}).encode(),
+                            body=json.dumps(
+                                {"object": value, "expectedVersion": active.version}
+                            ).encode(),
                         )
                         self.assertEqual(status, 400, response)
                         encoded = json.dumps(response)
@@ -491,15 +527,9 @@ class WebhookManagementTests(unittest.TestCase):
 
                 # Readiness reflects deployment-owned env presence only.
                 with patch.dict(os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "real-secret-value"}):
-                    status, created = request(
-                        harness.api,
-                        f"/api/configuration/revisions/{revision_id}/objects/webhooks",
-                        method="POST",
-                        body=json.dumps(
-                            {"object": webhook_document(), "expectedVersion": 1}
-                        ).encode(),
-                    )
-                    self.assertEqual(status, 200)
+                    status, created = harness.create_webhook(webhook_document())
+                    self.assertEqual(status, 200, created)
+                    revision_id = harness.configuration.active().revision_id
                     status, detail = request(
                         harness.api,
                         f"/api/configuration/revisions/{revision_id}/objects",
@@ -519,16 +549,12 @@ class WebhookManagementTests(unittest.TestCase):
         transport = FakeTransport(204)
         with tempfile.TemporaryDirectory() as directory:
             harness = WebhookManagementHarness(directory, transport=transport)
-            revision_id = harness.draft.revision_id
             try:
-                status, created = request(
-                    harness.api,
-                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
-                    method="POST",
-                    body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
-                )
-                self.assertEqual(status, 200)
-                revision = harness.configuration.require(revision_id)
+                _activate(harness)
+                status, created = harness.create_webhook(webhook_document())
+                self.assertEqual(status, 200, created)
+                revision = harness.configuration.active()
+                revision_id = revision.revision_id
                 jobs_before = ()
                 tasks_before = harness.repository.list_tasks()
                 deliveries_before = harness.repository.list_deliveries()
@@ -595,16 +621,12 @@ class WebhookManagementTests(unittest.TestCase):
                 directory,
                 transport=FakeTransport(RuntimeError("transport token=leaked-secret")),
             )
-            revision_id = harness.draft.revision_id
             try:
-                status, created = request(
-                    harness.api,
-                    f"/api/configuration/revisions/{revision_id}/objects/webhooks",
-                    method="POST",
-                    body=json.dumps({"object": webhook_document(), "expectedVersion": 1}).encode(),
-                )
-                self.assertEqual(status, 200)
-                revision = harness.configuration.require(revision_id)
+                _activate(harness)
+                status, created = harness.create_webhook(webhook_document())
+                self.assertEqual(status, 200, created)
+                revision = harness.configuration.active()
+                revision_id = revision.revision_id
 
                 # Missing secret reference is deterministic and never sends.
                 with patch.dict(os.environ, {}, clear=True):
@@ -674,18 +696,12 @@ class WebhookManagementTests(unittest.TestCase):
             with self.subTest(category=category):
                 with tempfile.TemporaryDirectory() as directory:
                     harness = WebhookManagementHarness(directory, transport=FakeTransport(result))
-                    revision_id = harness.draft.revision_id
                     try:
-                        status, created = request(
-                            harness.api,
-                            f"/api/configuration/revisions/{revision_id}/objects/webhooks",
-                            method="POST",
-                            body=json.dumps(
-                                {"object": webhook_document(), "expectedVersion": 1}
-                            ).encode(),
-                        )
-                        self.assertEqual(status, 200)
-                        revision = harness.configuration.require(revision_id)
+                        _activate(harness)
+                        status, created = harness.create_webhook(webhook_document())
+                        self.assertEqual(status, 200, created)
+                        revision = harness.configuration.active()
+                        revision_id = revision.revision_id
                         with patch.dict(
                             os.environ, {"MEDIAFLOW_WEBHOOK_SECRET": "top-secret-value"}
                         ):

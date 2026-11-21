@@ -13,11 +13,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useAuthToken } from "../../shared/api/auth-context";
+import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import {
+  fetchAuthenticatedPrincipal,
   saveWebhookDefinitionDraft,
   testWebhookDefinitionForm,
 } from "../../shared/api/api-client";
+import { reconcileSystemSettings } from "../../shared/api/configuration-api";
 import {
   notificationDraftQueryKey,
   notificationDraftQueryOptions,
@@ -37,7 +39,6 @@ import {
   webhookFormIssues,
   type WebhookFormValues,
   isUnknownCommandResult,
-  unknownCommandMessage,
   unknownTestMessage,
 } from "./notification-presentation";
 import {
@@ -47,6 +48,13 @@ import {
   useLastSuccessfulRead,
   useNotificationCardGuard,
 } from "./notification-card";
+import {
+  newNotificationSubmissionId,
+  notificationApplyScope,
+  readPendingNotificationApply,
+  writePendingNotificationApply,
+  type PendingNotificationApply,
+} from "./notification-publication";
 
 interface SavedDraft {
   readonly revisionId: string;
@@ -72,6 +80,22 @@ const ALL_FORM_FIELDS = [
 
 const SAVE_BUTTON_ID = "notification-edit-save";
 
+interface ApplyReconciliation {
+  readonly state: string;
+  readonly committed: boolean;
+  readonly committedRevisionId: string | null;
+  readonly committedRevisionVersion: number | null;
+  readonly currentRevisionId: string | null;
+  readonly currentVersion: number | null;
+  readonly nextAction: string | null;
+}
+
+function optionalNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? value
+    : null;
+}
+
 export function NotificationEditorPage() {
   const { webhookId } = useParams({
     from: "/operations/notifications/editor/$webhookId",
@@ -90,18 +114,43 @@ export function NotificationEditorPage() {
   const [testResult, setTestResult] = useState<{
     readonly context: string;
     readonly success: boolean;
+    readonly evidenceId: string | null;
     readonly message: string;
   } | null>(null);
+  const [pendingApply, setPendingApply] =
+    useState<PendingNotificationApply | null>(null);
+  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [reconciliation, setReconciliation] =
+    useState<ApplyReconciliation | null>(null);
 
   const formRef = useRef(form);
   const baselineRef = useRef(baseline);
+  const submittedValuesRef = useRef<WebhookFormValues | null>(null);
   const formScrollRef = useRef<HTMLFormElement | null>(null);
+  const verifiedSubmissionRef = useRef<string | null>(null);
+  const verificationInFlightRef = useRef(false);
+  const verifyOutcomeRef = useRef<(pending: PendingNotificationApply) => void>(
+    () => {},
+  );
   useEffect(() => {
     formRef.current = form;
   }, [form]);
   useEffect(() => {
     baselineRef.current = baseline;
   }, [baseline]);
+
+  const authGeneration = useAuthGeneration();
+  const principalQuery = useQuery({
+    queryKey: ["authenticated-principal", authGeneration],
+    queryFn: () => fetchAuthenticatedPrincipal(token),
+    enabled: token !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+  });
+  const principalId = principalQuery.data?.principalId ?? null;
+  const applyScope = notificationApplyScope("editor", webhookId);
 
   const draftQuery = useQuery(notificationDraftQueryOptions(token, webhookId));
   useAuthorizedReadAuthorityRecovery(draftQuery);
@@ -263,24 +312,29 @@ export function NotificationEditorPage() {
       expectedVersion: number;
       object: Record<string, unknown>;
       values: WebhookFormValues;
+      testEvidenceId: string;
+      submissionId: string;
     }) =>
       saveWebhookDefinitionDraft(token, {
         revisionId: input.revisionId,
         webhookId,
         expectedVersion: input.expectedVersion,
         object: input.object,
+        testEvidenceId: input.testEvidenceId,
+        submissionId: input.submissionId,
       }),
     retry: false,
     onMutate: () => {
       setError(null);
       setSavedNotice(null);
+      setReconciliation(null);
     },
     onSuccess: (result, input) => {
       if (result.ok) {
         const saved = {
           revisionId: result.model.revisionId,
           version: result.model.version,
-          status: "draft",
+          status: "validated",
           values: input.values,
         };
         const local = formRef.current;
@@ -295,6 +349,12 @@ export function NotificationEditorPage() {
             : `更改已通过检查并发布为新的生效配置；需要重启的字段会在重启后采用。`,
         );
         clearEvidence();
+        setPendingApply(null);
+        setAwaitingVerification(false);
+        setReconciliation(null);
+        submittedValuesRef.current = null;
+        verifiedSubmissionRef.current = input.submissionId;
+        writePendingNotificationApply(principalId, applyScope, null);
         void queryClient.invalidateQueries({
           queryKey: [notificationDraftQueryKey],
         });
@@ -304,9 +364,25 @@ export function NotificationEditorPage() {
         return;
       }
       if (isUnknownCommandResult(result.status, result.code)) {
-        setError(unknownCommandMessage("更改可能已经发布"));
+        const pending: PendingNotificationApply = {
+          submissionId: input.submissionId,
+          webhookId,
+          baselineRevisionId: input.revisionId,
+          baselineVersion: input.expectedVersion,
+        };
+        submittedValuesRef.current = input.values;
+        setPendingApply(pending);
+        setAwaitingVerification(true);
+        setReconciliation(null);
+        writePendingNotificationApply(principalId, applyScope, pending);
+        setError(
+          "应用结果待核实：本次请求没有收到可确认的回包。系统不会重复发布；正在用同一请求身份只读核对本次结果和当前生效定义。",
+        );
         return;
       }
+      setPendingApply(null);
+      setAwaitingVerification(false);
+      writePendingNotificationApply(principalId, applyScope, null);
       if (result.status === 403) {
         setShowIssues(false);
         setSavePermissionDenied(true);
@@ -321,7 +397,7 @@ export function NotificationEditorPage() {
       setShowIssues(true);
       setError(
         result.status === 409
-          ? "应用没有执行：配置在你编辑期间已经变化。重新读取后再应用；服务端保留了胜出的版本。"
+          ? "应用没有执行：配置在你编辑期间已经变化，或签名测试证据与当前表单不一致。重新读取并对当前表单完成一次签名测试后再应用；服务端保留了胜出的版本。"
           : `更改没有发布（${result.code}）。服务端校验拒绝了表单或配置版本已过期；重新读取后修正，系统没有自动重试。`,
       );
     },
@@ -331,10 +407,14 @@ export function NotificationEditorPage() {
     mutationFn: (input: {
       context: string;
       webhook: Record<string, unknown>;
+      revisionId: string;
+      revisionVersion: number;
     }) =>
       testWebhookDefinitionForm(token, {
         webhookId,
         webhook: input.webhook,
+        expectedRevisionId: input.revisionId,
+        expectedVersion: input.revisionVersion,
       }),
     retry: false,
     onMutate: () => {
@@ -348,6 +428,7 @@ export function NotificationEditorPage() {
         setTestResult({
           context: input.context,
           success: model.outcome === "success",
+          evidenceId: model.testEvidenceId,
           message:
             model.outcome === "success"
               ? `签名测试成功。${model.message} 下一步：${model.nextAction}`
@@ -367,8 +448,193 @@ export function NotificationEditorPage() {
     },
   });
 
-  const busy = saveMutation.isPending || testMutation.isPending;
+  const busy = saveMutation.isPending || testMutation.isPending || verifying;
   const activateInFlight = saveMutation.isPending;
+
+  const verifyApplicationOutcome = async (
+    pending: PendingNotificationApply,
+  ) => {
+    if (verificationInFlightRef.current) return;
+    verificationInFlightRef.current = true;
+    verifiedSubmissionRef.current = pending.submissionId;
+    setVerifying(true);
+    setAwaitingVerification(true);
+    setError(null);
+    try {
+      const result = await reconcileSystemSettings(token, pending.submissionId);
+      const state =
+        typeof result.state === "string" ? result.state : "UNRESOLVED";
+      let refreshed = await draftQuery.refetch();
+      let model = refreshed.data?.ok === true ? refreshed.data.model : null;
+      let current = model?.draft ?? null;
+      if (
+        (state === "COMMITTED" || state === "SUPERSEDED") &&
+        (current === null || current.revisionId === pending.baselineRevisionId)
+      ) {
+        // The reconciler proves this exact request published; a read still
+        // showing the pre-request baseline is a stale read, so take one fresh
+        // read before presenting the current effective definition.
+        refreshed = await draftQuery.refetch();
+        model = refreshed.data?.ok === true ? refreshed.data.model : null;
+        current = model?.draft ?? null;
+      }
+      const currentValues =
+        current === null ? null : webhookFormFromDocument(current.webhook);
+      const currentRevisionId = current?.revisionId ?? null;
+      const currentVersion = current?.revisionVersion ?? null;
+      const committedVersion = optionalNumber(result.committedRevisionVersion);
+      const readShowsCommittedRevision =
+        current !== null && current.revisionId !== pending.baselineRevisionId;
+      const reportedCurrentVersion =
+        state === "COMMITTED" &&
+        !readShowsCommittedRevision &&
+        committedVersion !== null
+          ? committedVersion
+          : currentVersion;
+      setReconciliation({
+        state,
+        committed: result.committed === true,
+        committedRevisionId:
+          typeof result.committedRevisionId === "string"
+            ? result.committedRevisionId
+            : null,
+        committedRevisionVersion: optionalNumber(
+          result.committedRevisionVersion,
+        ),
+        currentRevisionId,
+        currentVersion: reportedCurrentVersion,
+        nextAction:
+          typeof result.nextAction === "string" ? result.nextAction : null,
+      });
+      if (state === "UNRESOLVED") {
+        setError(
+          "无法证明本次请求的持久结果；应用保持阻止，系统没有重新发布。当前生效定义已按真实读回显示；恢复连接后可再次自动核实。",
+        );
+        return;
+      }
+      setAwaitingVerification(false);
+      setPendingApply(null);
+      writePendingNotificationApply(principalId, applyScope, null);
+      const submitted = submittedValuesRef.current;
+      const local = formRef.current;
+      const editedDuringRequest =
+        submitted !== null &&
+        local !== null &&
+        !sameWebhookForm(local, submitted);
+      if (state === "COMMITTED" || state === "SUPERSEDED") {
+        // The exact baseline moved; an earlier probe cannot authorize a later
+        // form again, so require a fresh test before any next apply.
+        clearEvidence();
+        const readCaughtUp =
+          current !== null &&
+          currentValues !== null &&
+          current.revisionId !== pending.baselineRevisionId;
+        if (readCaughtUp && current !== null && currentValues !== null) {
+          setBaseline({
+            revisionId: current.revisionId,
+            version: current.revisionVersion,
+            status: current.revisionStatus,
+            values: currentValues,
+          });
+          if (editedDuringRequest) {
+            setRemote({
+              revisionId: current.revisionId,
+              version: current.revisionVersion,
+              status: current.revisionStatus,
+              values: currentValues,
+              kind: "updated",
+            });
+          } else {
+            setForm(currentValues);
+            setRemote(null);
+          }
+        } else if (submitted !== null) {
+          // The reconciler proved this request published; a read still showing
+          // the pre-request baseline has not caught up. Keep the applied input
+          // as the local baseline instead of reverting it to the old values.
+          const committedRevisionId =
+            typeof result.committedRevisionId === "string"
+              ? result.committedRevisionId
+              : pending.baselineRevisionId;
+          setBaseline({
+            revisionId: committedRevisionId,
+            version: committedVersion ?? pending.baselineVersion,
+            status: "validated",
+            values: submitted,
+          });
+          setForm(submitted);
+          setRemote(null);
+        }
+        void queryClient.invalidateQueries({
+          queryKey: [notificationListQueryKey],
+        });
+        setSavedNotice(
+          state === "COMMITTED"
+            ? `本次应用已通过同一请求身份确认发布；当前生效定义版本为 ${reportedCurrentVersion ?? "未知"}。页面未再次发送发布请求。`
+            : `本次应用已确认曾经发布，之后的发布已替换为当前生效定义版本 ${reportedCurrentVersion ?? "未知"}。页面未再次发送发布请求。`,
+        );
+        submittedValuesRef.current = null;
+      } else {
+        setSavedNotice(
+          `已通过同一请求身份的持久证据确认本次没有发布；当前生效定义版本为 ${reportedCurrentVersion ?? "未知"}，你的输入仍保留在表单中。`,
+        );
+      }
+    } catch {
+      setError(
+        "无法完成只读核实；应用保持阻止。请确认服务可用后再次核实，系统不会自动重发发布请求。",
+      );
+    } finally {
+      verificationInFlightRef.current = false;
+      setVerifying(false);
+    }
+  };
+
+  useEffect(() => {
+    verifyOutcomeRef.current = (pending) => {
+      void verifyApplicationOutcome(pending);
+    };
+  });
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (principalId === null) return;
+    const stored = readPendingNotificationApply(principalId, applyScope);
+    if (stored === null) return;
+    setPendingApply((previous) => previous ?? stored);
+    setAwaitingVerification(true);
+    setReconciliation(null);
+  }, [principalId, applyScope]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    if (!awaitingVerification || pendingApply === null || busy) return;
+    if (verifiedSubmissionRef.current === pendingApply.submissionId) return;
+    void verifyApplicationOutcome(pendingApply);
+    // The exact retained request is verified once; reconnect/return and the
+    // manual fallback retry an unreadable reconciliation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [awaitingVerification, pendingApply, busy]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      if (awaitingVerification && pendingApply !== null) {
+        verifyOutcomeRef.current(pendingApply);
+        return;
+      }
+      void draftQuery.refetch();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [awaitingVerification, pendingApply, draftQuery.refetch]);
 
   const closeCard = () => {
     void navigate({ to: "/operations/notifications" });
@@ -450,11 +716,13 @@ export function NotificationEditorPage() {
 
   const canTest =
     currentForm !== null &&
+    baseline !== null &&
     webhookFormIssues(currentForm).length === 0 &&
     loadedDraft?.actions.test.available === true;
   const testedForCurrentForm =
     testResult !== null &&
     testResult.success &&
+    testResult.evidenceId !== null &&
     testResult.context === testContext;
   const title =
     draft === null
@@ -488,6 +756,8 @@ export function NotificationEditorPage() {
     !saveAvailable ||
     !dirty ||
     !testedForCurrentForm ||
+    awaitingVerification ||
+    pendingApply !== null ||
     issues.length > 0;
 
   return (
@@ -733,7 +1003,11 @@ export function NotificationEditorPage() {
               readDegraded ||
               draft === null ||
               remote !== null ||
-              !dirty
+              !dirty ||
+              awaitingVerification ||
+              pendingApply !== null ||
+              testResult?.evidenceId === null ||
+              testResult?.evidenceId === undefined
             ) {
               return;
             }
@@ -743,16 +1017,71 @@ export function NotificationEditorPage() {
               setError("请修正标有说明的字段后再保存。");
               return;
             }
+            const submissionId = newNotificationSubmissionId();
+            if (submissionId === null) {
+              setError(
+                "无法生成安全的请求标识；本次没有发送写入，请更新浏览器后重试。",
+              );
+              return;
+            }
             const values = canonicalWebhookForm(currentForm);
             setError(null);
+            setSavedNotice(null);
             saveMutation.mutate({
               revisionId: baseline.revisionId,
               expectedVersion: baseline.version,
               object: buildWebhookObject(webhookId, values),
               values,
+              testEvidenceId: testResult.evidenceId,
+              submissionId,
             });
           }}
         >
+          {awaitingVerification && pendingApply !== null && (
+            <StatusBanner variant="error" title="应用结果待核实">
+              <p>
+                本次请求没有收到可确认的回包，可能已经发布，也可能没有。
+                正在用同一请求身份只读核对本次结果和当前生效定义；核实期间不会再次发布。系统不会自动重发发布请求。
+              </p>
+              <p>
+                请求身份 {pendingApply.submissionId.slice(0, 8)}…
+                {pendingApply.baselineRevisionId !== baseline.revisionId
+                  ? "；当前显示的生效基线已变化，核实会同时给出本次请求结果与当前生效定义。"
+                  : "。"}
+              </p>
+              <div className="mf-actions">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={verifying || busy || saveMutation.isPending}
+                  onClick={() => void verifyApplicationOutcome(pendingApply)}
+                >
+                  {verifying ? "核实中…" : "核实当前状态"}
+                </Button>
+              </div>
+            </StatusBanner>
+          )}
+          {reconciliation !== null && (
+            <StatusBanner
+              variant={reconciliation.committed ? "success" : "warning"}
+              title="本次应用结果"
+            >
+              <p>
+                {reconciliation.state === "COMMITTED"
+                  ? "本次请求已确认发布，并且是当前生效值。"
+                  : reconciliation.state === "SUPERSEDED"
+                    ? "本次请求已确认发布，之后的发布已成为当前生效值。"
+                    : reconciliation.state === "NOT_COMMITTED"
+                      ? "已通过同一请求身份的持久证据确认本次没有发布。"
+                      : "当前仍无法证明本次请求的持久结果；应用保持阻止。"}
+              </p>
+              <p>
+                当前生效定义版本：
+                {reconciliation.currentVersion ?? "不可用"}
+                。本次请求结果与当前生效值分别依据各自证据显示，页面没有重新发布。
+              </p>
+            </StatusBanner>
+          )}
           {readDegraded && (
             <StatusBanner variant="warning" title="最新读取失败">
               <p>
@@ -1122,9 +1451,12 @@ export function NotificationEditorPage() {
                   )}
                   onClick={() => {
                     if (currentForm === null) return;
+                    if (baseline === null) return;
                     testMutation.mutate({
                       context: testContext,
                       webhook: buildWebhookObject(webhookId, currentForm),
+                      revisionId: baseline.revisionId,
+                      revisionVersion: baseline.version,
                     });
                   }}
                 >

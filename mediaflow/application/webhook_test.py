@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from threading import Lock
 from typing import Any
 from uuid import uuid4
 
@@ -22,6 +24,20 @@ from mediaflow.domain.notification import (
 from mediaflow.domain.security import SecurityAuditRecord
 
 
+@dataclass(frozen=True)
+class _WebhookTestEvidence:
+    """The bounded proof one successful probe leaves for its exact form."""
+
+    test_id: str
+    actor: str
+    webhook_id: str
+    url: str
+    secret_env: str
+    baseline_revision_id: str
+    baseline_version: int
+    created_at: datetime
+
+
 def webhook_events_supported() -> tuple[str, ...]:
     return tuple(event.value for event in NotificationEventType)
 
@@ -36,6 +52,8 @@ class WebhookTestService:
     """
 
     MAX_TEST_BODY_BYTES = 64 * 1024
+    EVIDENCE_TTL = timedelta(minutes=15)
+    EVIDENCE_LIMIT = 128
 
     def __init__(
         self,
@@ -49,6 +67,12 @@ class WebhookTestService:
         self._transport = transport
         self._clock = clock or (lambda: datetime.now(UTC))
         self._audit_repository = audit_repository
+        # A successful test proves only the exact tested form against the exact
+        # Active baseline that was displayed. Evidence stays in this process,
+        # bounded by count and a short lifetime; it is never durable
+        # configuration and never a second publish authority.
+        self._evidence: dict[str, _WebhookTestEvidence] = {}
+        self._evidence_lock = Lock()
 
     def test(
         self,
@@ -100,6 +124,7 @@ class WebhookTestService:
             webhook_id=webhook_id,
             actor=actor,
             revision=revision,
+            baseline=revision,
         )
 
     def test_definition(
@@ -108,8 +133,9 @@ class WebhookTestService:
         *,
         webhook_id: str,
         actor: str,
+        baseline: ManagedConfigurationRevision,
     ) -> dict[str, object]:
-        """Send exactly one signed probe for the current unsaved form values."""
+        """Send exactly one signed probe for this unsaved form and baseline."""
 
         try:
             definition = accepted_webhook_definition(raw)
@@ -130,6 +156,7 @@ class WebhookTestService:
             webhook_id=webhook_id,
             actor=actor,
             revision=None,
+            baseline=baseline,
         )
 
     def _send(
@@ -139,6 +166,7 @@ class WebhookTestService:
         webhook_id: str,
         actor: str,
         revision: ManagedConfigurationRevision | None,
+        baseline: ManagedConfigurationRevision,
     ) -> dict[str, object]:
         secret_env = definition.secret_env
         secret = os.environ.get(secret_env)
@@ -217,6 +245,16 @@ class WebhookTestService:
             outcome = "failure"
             category = f"http_{status}"
             message = f"the Webhook endpoint rejected the signed test with HTTP {status}"
+        evidence_id = (
+            self._remember_evidence(
+                definition,
+                webhook_id=webhook_id,
+                actor=actor,
+                baseline=baseline,
+            )
+            if outcome == "success"
+            else None
+        )
         return self._result(
             revision=revision,
             webhook_id=webhook_id,
@@ -227,6 +265,7 @@ class WebhookTestService:
             response_status=status,
             outcome=outcome,
             test_id=test_id,
+            test_evidence_id=evidence_id,
         )
 
     # ------------------------------------------------------------------
@@ -243,6 +282,7 @@ class WebhookTestService:
         response_status: int | None,
         outcome: str = "failure",
         test_id: str | None = None,
+        test_evidence_id: str | None = None,
     ) -> dict[str, object]:
         webhook_document = (
             {
@@ -291,6 +331,7 @@ class WebhookTestService:
             next_action = "no further action required; the endpoint accepted the signed test"
         document = {
             "testId": test_id,
+            "testEvidenceId": test_evidence_id,
             "webhook": webhook_document,
             "revision": (
                 {
@@ -319,6 +360,108 @@ class WebhookTestService:
             outcome=outcome,
         )
         return document
+
+    # ------------------------------------------------------------------
+    # Successful-test evidence used by the checked object publication
+
+    def _remember_evidence(
+        self,
+        definition: WebhookDefinition,
+        *,
+        webhook_id: str,
+        actor: str,
+        baseline: ManagedConfigurationRevision,
+    ) -> str:
+        evidence_id = str(uuid4())
+        evidence = _WebhookTestEvidence(
+            evidence_id,
+            actor,
+            webhook_id,
+            definition.url,
+            definition.secret_env,
+            baseline.revision_id,
+            baseline.version,
+            self._clock(),
+        )
+        with self._evidence_lock:
+            self._prune_evidence_locked(evidence.created_at)
+            if len(self._evidence) >= self.EVIDENCE_LIMIT:
+                oldest = min(self._evidence.values(), key=lambda item: item.created_at)
+                self._evidence.pop(oldest.test_id, None)
+            self._evidence[evidence_id] = evidence
+        return evidence_id
+
+    def verify_evidence(
+        self,
+        evidence_id: object,
+        *,
+        webhook_id: str,
+        url: object,
+        secret_env: object,
+        baseline_revision_id: str,
+        baseline_version: int,
+        actor: str,
+    ) -> None:
+        """Require one successful probe for this exact form and baseline.
+
+        The check runs before any candidate is staged, so a missing, expired
+        or mismatched result cannot publish, advance an Active revision or add
+        a publication audit. A changed address or secret reference is a
+        different form and therefore a different proof.
+        """
+
+        evidence = None
+        if isinstance(evidence_id, str) and evidence_id.strip():
+            with self._evidence_lock:
+                evidence = self._evidence.get(evidence_id)
+                if evidence is not None:
+                    self._prune_evidence_locked(self._clock())
+                    evidence = self._evidence.get(evidence_id)
+        if evidence is None:
+            raise ConfigurationVersionConflict(
+                "a successful signature test of this form is required before applying",
+                durable_state="active_preserved",
+                next_action=(
+                    "run one signed test on the current form, then apply without changing "
+                    "its address or secret reference"
+                ),
+            )
+        active = self._configuration.active()
+        if (
+            evidence.actor != actor
+            or evidence.webhook_id != webhook_id
+            or not isinstance(url, str)
+            or evidence.url != url
+            or not isinstance(secret_env, str)
+            or evidence.secret_env != secret_env
+            or evidence.baseline_revision_id != baseline_revision_id
+            or evidence.baseline_version != baseline_version
+            or active is None
+            or active.revision_id != evidence.baseline_revision_id
+            or active.version != evidence.baseline_version
+        ):
+            raise ConfigurationVersionConflict(
+                "the successful signature test does not match this form, operator, or "
+                "current effective baseline; test the current form again before applying",
+                durable_state="active_preserved",
+                next_action=(
+                    "run one signed test on the current form, then apply without changing "
+                    "its address or secret reference"
+                ),
+            )
+
+    def consume_evidence(self, evidence_id: object) -> None:
+        if not isinstance(evidence_id, str):
+            return
+        with self._evidence_lock:
+            self._evidence.pop(evidence_id, None)
+
+    def _prune_evidence_locked(self, now: datetime) -> None:
+        expired = [
+            key for key, item in self._evidence.items() if now - item.created_at > self.EVIDENCE_TTL
+        ]
+        for key in expired:
+            self._evidence.pop(key, None)
 
     @classmethod
     def _definition_document(

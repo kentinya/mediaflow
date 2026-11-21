@@ -55,6 +55,9 @@ function recordingFetch(
           activeConfiguration: activeConfiguration(),
         });
       }
+      if (call.method === "GET" && call.url === "/api/auth/principal") {
+        return jsonResponse({ principal_id: "notification-admin" });
+      }
       if (call.method === "GET" && call.url.startsWith("/api/notifications?")) {
         return jsonResponse({ items: [], total: 0, truncated: false });
       }
@@ -295,8 +298,13 @@ describe("V2 Notification direct publication", () => {
       ) {
         return jsonResponse({
           testId: "test-new",
+          testEvidenceId: "evidence-new",
           webhook: webhookDocument({ id: "new-webhook" }),
-          revision: null,
+          revision: {
+            revisionId: ACTIVE_REVISION,
+            version: 3,
+            status: "active",
+          },
           outcome: "success",
           category: "http_204",
           responseStatus: 204,
@@ -348,7 +356,10 @@ describe("V2 Notification direct publication", () => {
           call.method === "POST",
       );
       expect(write).toBeDefined();
-      expect(write?.body).toMatchObject({ expectedVersion: 3 });
+      expect(write?.body).toMatchObject({
+        expectedVersion: 3,
+        testEvidenceId: "evidence-new",
+      });
     });
     expect(calls.some((call) => call.url.includes("/successor"))).toBe(false);
   });
@@ -361,10 +372,15 @@ describe("V2 Notification direct publication", () => {
       ) {
         return jsonResponse({
           testId: "test-edit",
+          testEvidenceId: "evidence-edit",
           webhook: webhookDocument({
             url: "https://example.invalid/hooks/updated",
           }),
-          revision: null,
+          revision: {
+            revisionId: ACTIVE_REVISION,
+            version: 3,
+            status: "active",
+          },
           outcome: "success",
           category: "http_204",
           responseStatus: 204,
@@ -410,6 +426,7 @@ describe("V2 Notification direct publication", () => {
       expect(write).toBeDefined();
       expect(write?.body).toMatchObject({
         expectedVersion: 3,
+        testEvidenceId: "evidence-edit",
         object: {
           url: "https://example.invalid/hooks/updated",
         },
@@ -430,6 +447,7 @@ describe("V2 Notification direct publication", () => {
       ) {
         return jsonResponse({
           testId: "test-1",
+          testEvidenceId: "evidence-test-1",
           webhookId: WEBHOOK_ID,
           revision: {
             revisionId: ACTIVE_REVISION,
@@ -465,6 +483,117 @@ describe("V2 Notification direct publication", () => {
       ).toHaveLength(1),
     );
     expect(await view.findByText(/测试成功/)).toBeVisible();
+  });
+
+  it("reconciles a lost apply response without publishing again", async () => {
+    let published = false;
+    let publishWrites = 0;
+    let reconcileReads = 0;
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.method === "POST" &&
+        call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}/test`
+      ) {
+        return jsonResponse({
+          testId: "test-lost",
+          testEvidenceId: "evidence-lost",
+          revision: {
+            revisionId: ACTIVE_REVISION,
+            version: 3,
+            status: "active",
+          },
+          webhook: webhookDocument({ maxAttempts: 7 }),
+          outcome: "success",
+          category: "http_204",
+          responseStatus: 204,
+          message: "delivered",
+          durableState: "no_delivery_created_no_configuration_change",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "apply the tested form",
+        });
+      }
+      if (
+        call.method === "PUT" &&
+        call.url ===
+          `/api/configuration/revisions/${ACTIVE_REVISION}/objects/webhooks/${WEBHOOK_ID}`
+      ) {
+        publishWrites += 1;
+        published = true;
+        throw new TypeError("network lost after commit");
+      }
+      if (
+        call.url.startsWith("/api/system/settings/reconcile") &&
+        call.method === "GET"
+      ) {
+        reconcileReads += 1;
+        return jsonResponse({
+          state: "COMMITTED",
+          committed: true,
+          submissionId: "submission-lost",
+          committedRevisionId: "revision-active-2",
+          committedRevisionVersion: 4,
+          current: null,
+          nextAction: "this exact submission published",
+        });
+      }
+      if (
+        call.method === "GET" &&
+        call.url === `/api/operations/notifications/webhooks/${WEBHOOK_ID}` &&
+        published
+      ) {
+        return jsonResponse({
+          webhook: definitionPayload({
+            maxAttempts: 7,
+            activeConfiguration: {
+              revisionId: "revision-active-2",
+              version: 4,
+              revisionSequence: 4,
+              status: "active",
+            },
+            draftState: {
+              present: true,
+              reason: null,
+              revisionId: "revision-active-2",
+              revisionVersion: 4,
+              revisionStatus: "validated",
+              baseActiveRevisionId: null,
+              updatedAt: null,
+              validatedAt: null,
+              validationErrors: [],
+            },
+          }),
+          activeConfiguration: {
+            revisionId: "revision-active-2",
+            version: 4,
+            revisionSequence: 4,
+            status: "active",
+          },
+        });
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
+    const view = within(await dialog());
+    const attempts = await view.findByLabelText("最大尝试次数");
+    await userEvent.clear(attempts);
+    await userEvent.type(attempts, "7");
+    await userEvent.click(view.getByRole("button", { name: "发送签名测试" }));
+    expect(await view.findByText(/签名测试成功/)).toBeVisible();
+    await userEvent.click(view.getByRole("button", { name: "应用更改" }));
+    expect(await view.findByText(/本次请求已确认发布/)).toBeVisible();
+    expect(await view.findByText(/当前生效定义版本为 4/)).toBeVisible();
+    expect(publishWrites).toBe(1);
+    expect(reconcileReads).toBeGreaterThanOrEqual(1);
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "PUT" &&
+          call.url.endsWith(`/objects/webhooks/${WEBHOOK_ID}`),
+      ),
+    ).toHaveLength(1);
+    expect(view.getByRole("button", { name: "应用更改" })).toBeDisabled();
   });
 
   it("does not render a fillable form when no Active configuration exists", async () => {

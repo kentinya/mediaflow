@@ -224,6 +224,23 @@ HARNESS_TOKEN = "harness-viewer-token"
 HARNESS_ADMIN_TOKEN = "harness-admin-token"
 WORKER_ID = "harness-inventory-worker"
 
+
+class _HarnessWebhookTransport:
+    """A local signed-webhook receiver for the real notification journey.
+
+    The production API's explicit test still composes and signs exactly one
+    request through this adapter; only the remote HTTPS destination is
+    replaced so the isolated browser proof never contacts example.invalid.
+    """
+
+    def __init__(self) -> None:
+        self.requests: list[object] = []
+
+    def send(self, request) -> int:
+        self.requests.append(request)
+        return 204
+
+
 PRINCIPAL = ResolvedApiPrincipal(
     "harness",
     HARNESS_TOKEN,
@@ -310,6 +327,7 @@ def build_api(
     api = MediaFlowApi(
         repository,
         principals=(PRINCIPAL, ADMIN_PRINCIPAL),
+        webhook_transport=_HarnessWebhookTransport(),
         **managed_options,
     )
     if managed is None:
@@ -6300,6 +6318,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.admin_principal_id is not None:
         ADMIN_PRINCIPAL = configured_harness_admin(args.admin_principal_id)
+
+    # The managed Webhook references this deployment environment variable.
+    # It is a harness-only value and never a production credential.
+    os.environ.setdefault("MEDIAFLOW_WEBHOOK_SECRET", "harness-webhook-secret")
 
     if not (asset_root() / "index.html").is_file():
         print(

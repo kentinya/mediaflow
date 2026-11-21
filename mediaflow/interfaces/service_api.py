@@ -158,6 +158,7 @@ from mediaflow.domain.media_discovery import (
 from mediaflow.domain.notification import (
     NotificationDeliveryConflict,
     NotificationDeliveryStatus,
+    WebhookDefinition,
 )
 from mediaflow.domain.operations_run import (
     DISCOVERY_COMMAND_LABEL,
@@ -3834,7 +3835,15 @@ class MediaFlowApi:
                 )
             kind = self._configuration_object_kind(parts[5])
             document = self._document(environ)
-            if set(document) != {"object", "expectedVersion"}:
+            webhook_kind = kind is ConfigurationObjectKind.WEBHOOK_DEFINITION
+            allowed = (
+                {"object", "expectedVersion", "testEvidenceId", "submissionId"}
+                if webhook_kind
+                else {"object", "expectedVersion"}
+            )
+            if set(document).difference(allowed) or not {"object", "expectedVersion"} <= set(
+                document
+            ):
                 raise ValueError(
                     "configuration object mutation requires object and expectedVersion"
                 )
@@ -3865,19 +3874,43 @@ class MediaFlowApi:
                         "validationError",
                     }
                 }
-            revision = self._configuration_objects.publish_object(
-                kind,
-                object_id=None,
-                value=value,
-                expected_version=expected,
-                actor=principal.principal_id,
-                action="save",
-                source_revision_id=parts[3],
-            )
+            submission_id = None
+            if webhook_kind:
+                if self._webhook_tests is None:
+                    return self._error(
+                        start_response,
+                        503,
+                        "service_unavailable",
+                        "managed Webhook publication service is unavailable",
+                    )
+                webhook_id = value.get("id")
+                if not isinstance(webhook_id, str) or not webhook_id:
+                    raise ValueError("Webhook definition requires a non-empty id")
+                revision, submission_id = self._publish_checked_webhook_object(
+                    document=document,
+                    expected=expected,
+                    value=value,
+                    source_revision_id=parts[3],
+                    principal=principal,
+                    webhook_id=webhook_id,
+                    action="create",
+                )
+            else:
+                revision = self._configuration_objects.publish_object(
+                    kind,
+                    object_id=None,
+                    value=value,
+                    expected_version=expected,
+                    actor=principal.principal_id,
+                    action="save",
+                    source_revision_id=parts[3],
+                )
             self._refresh_configuration_binding()
             response = revision.summary()
             response["publishedFromRevisionId"] = parts[3]
             response["publishedFromVersion"] = expected
+            if submission_id is not None:
+                response["submissionId"] = submission_id
             if kind is ConfigurationObjectKind.STORAGE:
                 storages = self._configuration_objects.revision_detail(revision.revision_id)[
                     "objects"
@@ -3991,7 +4024,15 @@ class MediaFlowApi:
                 )
             kind = self._configuration_object_kind(parts[5])
             document = self._document(environ)
-            if set(document) != {"object", "expectedVersion"}:
+            webhook_kind = kind is ConfigurationObjectKind.WEBHOOK_DEFINITION
+            allowed = (
+                {"object", "expectedVersion", "testEvidenceId", "submissionId"}
+                if webhook_kind
+                else {"object", "expectedVersion"}
+            )
+            if set(document).difference(allowed) or not {"object", "expectedVersion"} <= set(
+                document
+            ):
                 raise ValueError("configuration object update requires object and expectedVersion")
             expected = document["expectedVersion"]
             if isinstance(expected, bool) or not isinstance(expected, int):
@@ -4016,19 +4057,40 @@ class MediaFlowApi:
                         "validationError",
                     }
                 }
-            revision = self._configuration_objects.publish_object(
-                kind,
-                object_id=parts[6],
-                value=value,
-                expected_version=expected,
-                actor=principal.principal_id,
-                action="save",
-                source_revision_id=parts[3],
-            )
+            submission_id = None
+            if webhook_kind:
+                if self._webhook_tests is None:
+                    return self._error(
+                        start_response,
+                        503,
+                        "service_unavailable",
+                        "managed Webhook publication service is unavailable",
+                    )
+                revision, submission_id = self._publish_checked_webhook_object(
+                    document=document,
+                    expected=expected,
+                    value=value,
+                    source_revision_id=parts[3],
+                    principal=principal,
+                    webhook_id=parts[6],
+                    action="update",
+                )
+            else:
+                revision = self._configuration_objects.publish_object(
+                    kind,
+                    object_id=parts[6],
+                    value=value,
+                    expected_version=expected,
+                    actor=principal.principal_id,
+                    action="save",
+                    source_revision_id=parts[3],
+                )
             self._refresh_configuration_binding()
             response = revision.summary()
             response["publishedFromRevisionId"] = parts[3]
             response["publishedFromVersion"] = expected
+            if submission_id is not None:
+                response["submissionId"] = submission_id
             if kind is ConfigurationObjectKind.STORAGE:
                 storages = self._configuration_objects.revision_detail(revision.revision_id)[
                     "objects"
@@ -17314,17 +17376,17 @@ class MediaFlowApi:
             )
         self._require_empty_query(environ, "operations notification Webhook test")
         document = self._document(environ)
-        if set(document) == {"webhook"}:
+        form_mode = "webhook" in document
+        if form_mode:
+            if set(document) != {"webhook", "expectedRevisionId", "expectedVersion"}:
+                raise ValueError(
+                    "Webhook form test requires the current form, expectedRevisionId and "
+                    "expectedVersion"
+                )
             webhook = document["webhook"]
             if not isinstance(webhook, dict):
                 raise ValueError("Webhook test form must be an object")
-            result = self._webhook_tests.test_definition(
-                webhook,
-                webhook_id=webhook_id,
-                actor=principal.principal_id,
-            )
-            return self._response(start_response, 200, result)
-        if set(document) != {"expectedRevisionId", "expectedVersion"}:
+        elif set(document) != {"expectedRevisionId", "expectedVersion"}:
             raise ValueError(
                 "Webhook test requires the current form or expectedRevisionId and expectedVersion"
             )
@@ -17336,22 +17398,38 @@ class MediaFlowApi:
             raise ValueError("Webhook test expectedVersion must be an integer")
         revision = self._configuration_service.require(expected_revision_id)
         if revision.version != expected:
-            return self._error(
+            return self._webhook_test_stale_response(
                 start_response,
-                409,
-                "configuration_version_conflict",
-                "the selected Webhook revision is stale; reload before testing",
-                details={
-                    "revisionId": revision.revision_id,
-                    "currentVersion": revision.version,
-                    "durableState": "no test request was sent",
-                    "sideEffects": "none",
-                    "retrySafe": True,
-                    "nextAction": (
-                        "reload the Webhook definition, then test the exact current revision again"
-                    ),
-                },
+                revision_id=revision.revision_id,
+                current_version=revision.version,
             )
+        if form_mode:
+            # A create form names a definition that does not exist yet, so the
+            # form test binds only to the exact currently advertised Active
+            # baseline that the editor is editing against.
+            active = self._configuration_service.active()
+            if (
+                active is None
+                or active.revision_id != expected_revision_id
+                or active.version != expected
+            ):
+                return self._webhook_test_stale_response(
+                    start_response,
+                    revision_id=active.revision_id if active is not None else None,
+                    current_version=active.version if active is not None else None,
+                )
+            result = self._webhook_tests.test_definition(
+                webhook,
+                webhook_id=webhook_id,
+                actor=principal.principal_id,
+                baseline=active,
+            )
+            result["revision"] = {
+                "revisionId": active.revision_id,
+                "version": active.version,
+                "status": active.status.value,
+            }
+            return self._response(start_response, 200, result)
         # A valid historical revision with a matching version is still not the
         # displayed revision: only the exact currently advertised Active
         # revision that contains this definition may be tested, and the
@@ -17364,23 +17442,10 @@ class MediaFlowApi:
         if active is not None and in_active:
             advertised.add(active.revision_id)
         if expected_revision_id not in advertised:
-            return self._error(
+            return self._webhook_test_stale_response(
                 start_response,
-                409,
-                "configuration_version_conflict",
-                (
-                    "the selected revision is not the currently advertised Active revision "
-                    "for this Webhook definition; no test request was sent"
-                ),
-                details={
-                    "durableState": "no test request was sent",
-                    "sideEffects": "none",
-                    "retrySafe": True,
-                    "nextAction": (
-                        "reload the Webhook definition, then test the exact advertised "
-                        "revision again"
-                    ),
-                },
+                revision_id=active.revision_id if active is not None else None,
+                current_version=active.version if active is not None else None,
             )
         result = self._webhook_tests.test(
             expected_revision_id,
@@ -17395,6 +17460,103 @@ class MediaFlowApi:
         revision_evidence.pop("digest", None)
         result["revision"] = revision_evidence
         return self._response(start_response, 200, result)
+
+    def _webhook_test_stale_response(
+        self,
+        start_response: Callable,
+        *,
+        revision_id: str | None,
+        current_version: int | None,
+    ):
+        return self._error(
+            start_response,
+            409,
+            "configuration_version_conflict",
+            "the selected Webhook revision is stale; reload before testing",
+            details={
+                "revisionId": revision_id,
+                "currentVersion": current_version,
+                "durableState": "no test request was sent",
+                "sideEffects": "none",
+                "retrySafe": True,
+                "nextAction": (
+                    "reload the Webhook definition, then test the exact current revision again"
+                ),
+            },
+        )
+
+    def _publish_checked_webhook_object(
+        self,
+        *,
+        document: dict,
+        expected: int,
+        value: dict,
+        source_revision_id: str,
+        principal: ResolvedApiPrincipal,
+        webhook_id: str,
+        action: str,
+    ) -> tuple[object, str | None]:
+        """Publish one tested Webhook form only with matching probe evidence.
+
+        The evidence gate, candidate composition, activation and audit all run
+        under the ordinary object publication boundary. A rejected test or a
+        stale baseline writes no successor; a known refusal still records the
+        exact request identity so a lost response can be reconciled as
+        not-committed.
+        """
+
+        if self._configuration_objects is None or self._webhook_tests is None:
+            raise RuntimeError("managed Webhook publication service is unavailable")
+        submission_id = document.get("submissionId")
+        if submission_id is not None and (
+            not isinstance(submission_id, str) or not submission_id.strip()
+        ):
+            raise ValueError("submissionId must be a non-empty string")
+        evidence_id = document.get("testEvidenceId")
+        try:
+            # Canonical definition validation owns invalid-input answers; the
+            # test-evidence gate adds the successful-probe requirement for an
+            # otherwise-valid form and runs before any candidate is staged.
+            WebhookDefinition.from_document(value)
+            self._webhook_tests.verify_evidence(
+                evidence_id,
+                webhook_id=webhook_id,
+                url=value.get("url"),
+                secret_env=value.get("secretEnv"),
+                baseline_revision_id=source_revision_id,
+                baseline_version=expected,
+                actor=principal.principal_id,
+            )
+            revision = self._configuration_objects.publish_object(
+                ConfigurationObjectKind.WEBHOOK_DEFINITION,
+                object_id=(webhook_id if action == "update" else None),
+                value=value,
+                expected_version=expected,
+                actor=principal.principal_id,
+                action="save",
+                source_revision_id=source_revision_id,
+                audit_metadata=(
+                    {"submissionId": submission_id} if isinstance(submission_id, str) else None
+                ),
+            )
+        except Exception as error:
+            if submission_id is not None and self._system_settings is not None:
+                self._system_settings.record_submission_outcome(
+                    actor=principal.principal_id,
+                    submission_id=submission_id,
+                    stage="publish",
+                    next_action=(
+                        "review the reported condition and the current Active definition, "
+                        "then test and apply the intended form again deliberately"
+                    ),
+                    kind="configuration_webhook",
+                    object_id=webhook_id,
+                    action=("webhook_update" if action == "update" else "webhook_create"),
+                    extra={"code": type(error).__name__},
+                )
+            raise
+        self._webhook_tests.consume_evidence(evidence_id)
+        return revision, submission_id
 
     def _notification_delivery_operator_detail(
         self, delivery_id: str, start_response: Callable, principal: ResolvedApiPrincipal

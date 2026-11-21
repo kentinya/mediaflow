@@ -724,6 +724,7 @@ class ConfigurationObjectService:
         new_name: str | None = None,
         before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
         source_revision_id: str | None = None,
+        audit_metadata: Mapping[str, object] | None = None,
     ) -> ManagedConfigurationRevision:
         """Apply one object command and publish the checked successor directly.
 
@@ -831,6 +832,7 @@ class ConfigurationObjectService:
                     expected_version=draft.version,
                     actor=actor,
                     delete=delete,
+                    audit_metadata=audit_metadata,
                 )
             validated = self._managed.validate(edited.revision_id, actor=actor)
             if validated.status is not ManagedConfigurationStatus.VALIDATED:

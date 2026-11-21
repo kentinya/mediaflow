@@ -5895,6 +5895,10 @@ export interface CreateWebhookDefinitionOptions {
   readonly revisionId: string;
   readonly expectedVersion: number;
   readonly object: Record<string, unknown>;
+  /** The successful probe that binds this exact form and baseline. */
+  readonly testEvidenceId: string;
+  /** The operator request identity a lost response is reconciled by. */
+  readonly submissionId?: string;
 }
 
 export async function createWebhookDefinition(
@@ -5914,7 +5918,14 @@ export async function createWebhookDefinition(
     token,
     "POST",
     `/api/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks`,
-    { object: options.object, expectedVersion: options.expectedVersion },
+    {
+      object: options.object,
+      expectedVersion: options.expectedVersion,
+      testEvidenceId: options.testEvidenceId,
+      ...(options.submissionId === undefined
+        ? {}
+        : { submissionId: options.submissionId }),
+    },
     (payload) =>
       normalizeWebhookDefinitionMutation(payload, {
         revisionId: options.revisionId,
@@ -5934,6 +5945,10 @@ export interface SaveWebhookDefinitionDraftOptions {
   readonly webhookId: string;
   readonly expectedVersion: number;
   readonly object: Record<string, unknown>;
+  /** The successful probe that binds this exact form and baseline. */
+  readonly testEvidenceId: string;
+  /** The operator request identity a lost response is reconciled by. */
+  readonly submissionId?: string;
 }
 
 export async function saveWebhookDefinitionDraft(
@@ -5951,7 +5966,14 @@ export async function saveWebhookDefinitionDraft(
     token,
     "PUT",
     `/api/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/webhooks/${encodeURIComponent(options.webhookId)}`,
-    { object: options.object, expectedVersion: options.expectedVersion },
+    {
+      object: options.object,
+      expectedVersion: options.expectedVersion,
+      testEvidenceId: options.testEvidenceId,
+      ...(options.submissionId === undefined
+        ? {}
+        : { submissionId: options.submissionId }),
+    },
     (payload) =>
       normalizeWebhookDefinitionMutation(payload, {
         revisionId: options.revisionId,
@@ -6097,6 +6119,9 @@ export async function testWebhookDefinition(
 export interface TestWebhookDefinitionFormOptions {
   readonly webhookId: string;
   readonly webhook: Record<string, unknown>;
+  /** The exact Active baseline this form is edited against. */
+  readonly expectedRevisionId: string;
+  readonly expectedVersion: number;
 }
 
 export async function testWebhookDefinitionForm(
@@ -6111,12 +6136,16 @@ export async function testWebhookDefinitionForm(
     token,
     "POST",
     `/api/operations/notifications/webhooks/${encodeURIComponent(options.webhookId)}/test`,
-    { webhook: options.webhook },
+    {
+      webhook: options.webhook,
+      expectedRevisionId: options.expectedRevisionId,
+      expectedVersion: options.expectedVersion,
+    },
     (payload) =>
       normalizeWebhookTestResult(payload, {
         webhookId: options.webhookId,
-        revisionId: null,
-        version: null,
+        revisionId: options.expectedRevisionId,
+        version: options.expectedVersion,
       }),
     fetchImpl,
   );

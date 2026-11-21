@@ -209,6 +209,33 @@ class NotificationHarness:
     # ------------------------------------------------------------------
     # Journey helpers
 
+    def test_webhook_form(self, document: dict) -> tuple[object, str]:
+        """Run one explicit form test against the current Active baseline."""
+
+        active = self.configuration.active()
+        webhook_id = str(document.get("id") or WEBHOOK_ID)
+        service = self.api._webhook_tests
+        original_transport = service._transport
+        service._transport = FakeTransport(204)
+        try:
+            with patch.dict(os.environ, {SECRET_ENV: SECRET_VALUE}):
+                status, tested = _request(
+                    self.api,
+                    f"{OPERATIONS_ROUTE}/{webhook_id}/test",
+                    method="POST",
+                    body={
+                        "webhook": document,
+                        "expectedRevisionId": active.revision_id,
+                        "expectedVersion": active.version,
+                    },
+                )
+            assert status == 200, tested
+            evidence_id = tested.get("testEvidenceId")
+            assert isinstance(evidence_id, str) and evidence_id, tested
+        finally:
+            service._transport = original_transport
+        return active, evidence_id
+
     def open_webhook_draft(self, document: dict | None = None):
         """Publish one Webhook object directly and return the new Active identity.
 
@@ -219,8 +246,8 @@ class NotificationHarness:
         """
 
         stored = document or _webhook_document()
-        active = self.configuration.active()
-        version = active.revision_sequence or active.version
+        active, evidence_id = self.test_webhook_form(stored)
+        version = active.version
         if stored.get("id") == WEBHOOK_ID:
             route = (
                 f"/api/configuration/revisions/{active.revision_id}/objects/webhooks/{WEBHOOK_ID}"
@@ -233,7 +260,11 @@ class NotificationHarness:
             self.api,
             route,
             method=method,
-            body={"object": stored, "expectedVersion": version},
+            body={
+                "object": stored,
+                "expectedVersion": version,
+                "testEvidenceId": evidence_id,
+            },
         )
         assert status == 200, response
         assert response.get("webhook", {}).get("id"), response
@@ -468,18 +499,21 @@ class WebhookMutationJourneyTests(unittest.TestCase):
             try:
                 active = harness.configuration.active()
                 revision_id = active.revision_id
-                version = active.revision_sequence or active.version
+                version = active.version
                 route = f"/api/configuration/revisions/{revision_id}/objects/webhooks"
 
                 # The exact-bound edit publishes immediately and migrates a
                 # legacy nested spelling to the canonical root section.
+                edited_form = _webhook_document(maxAttempts=7)
+                _active, evidence_id = harness.test_webhook_form(edited_form)
                 status, edited = _request(
                     harness.api,
                     f"{route}/{WEBHOOK_ID}",
                     method="PUT",
                     body={
-                        "object": _webhook_document(maxAttempts=7),
+                        "object": edited_form,
                         "expectedVersion": version,
+                        "testEvidenceId": evidence_id,
                     },
                 )
                 self.assertEqual(status, 200, edited)
@@ -490,45 +524,53 @@ class WebhookMutationJourneyTests(unittest.TestCase):
                     harness.configuration.require(revision_id).status.value, "superseded"
                 )
                 revision_id = current.revision_id
-                version = current.revision_sequence or current.version
+                version = current.version
                 route = f"/api/configuration/revisions/{revision_id}/objects/webhooks"
 
                 # A stale expectedVersion is rejected atomically.
+                stale_form = _webhook_document(enabled=False)
+                _active, stale_evidence = harness.test_webhook_form(stale_form)
                 status, _stale = _request(
                     harness.api,
                     f"{route}/{WEBHOOK_ID}",
                     method="PUT",
                     body={
-                        "object": _webhook_document(enabled=False),
+                        "object": stale_form,
                         "expectedVersion": version - 1,
+                        "testEvidenceId": stale_evidence,
                     },
                 )
                 self.assertEqual(status, 409)
                 self.assertEqual(harness.configuration.active().revision_id, revision_id)
 
+                created_form = _webhook_document(id="created-webhook")
+                _active, created_evidence = harness.test_webhook_form(created_form)
                 status, created = _request(
                     harness.api,
                     route,
                     method="POST",
                     body={
-                        "object": _webhook_document(id="created-webhook"),
+                        "object": created_form,
                         "expectedVersion": version,
+                        "testEvidenceId": created_evidence,
                     },
                 )
                 self.assertEqual(status, 200, created)
                 self.assertEqual(created["webhook"]["id"], "created-webhook")
                 current = harness.configuration.active()
                 revision_id = current.revision_id
-                version = current.revision_sequence or current.version
+                version = current.version
                 route = f"/api/configuration/revisions/{revision_id}/objects/webhooks"
 
+                _active, collision_evidence = harness.test_webhook_form(created_form)
                 status, _collision = _request(
                     harness.api,
                     route,
                     method="POST",
                     body={
-                        "object": _webhook_document(id="created-webhook"),
+                        "object": created_form,
                         "expectedVersion": version,
+                        "testEvidenceId": collision_evidence,
                     },
                 )
                 self.assertEqual(status, 400)
@@ -536,7 +578,7 @@ class WebhookMutationJourneyTests(unittest.TestCase):
                 for action, expected_flag in (("enable", True), ("disable", False)):
                     current = harness.configuration.active()
                     revision_id = current.revision_id
-                    version = current.revision_sequence or current.version
+                    version = current.version
                     status, toggled = _request(
                         harness.api,
                         f"/api/configuration/revisions/{revision_id}/objects/webhooks/"
@@ -549,7 +591,7 @@ class WebhookMutationJourneyTests(unittest.TestCase):
 
                 current = harness.configuration.active()
                 revision_id = current.revision_id
-                version = current.revision_sequence or current.version
+                version = current.version
                 status, copied = _request(
                     harness.api,
                     f"/api/configuration/revisions/{revision_id}/objects/webhooks/"
@@ -575,36 +617,65 @@ class WebhookMutationJourneyTests(unittest.TestCase):
             try:
                 active = harness.configuration.active()
                 revision_id = active.revision_id
-                version = active.revision_sequence or active.version
                 route = f"/api/configuration/revisions/{revision_id}/objects/webhooks"
-                hostile = [
-                    {"object": _webhook_document(unknownField=1), "expectedVersion": version},
-                    {"object": _webhook_document(secret="value"), "expectedVersion": version},
-                    {
-                        "object": _webhook_document(url="http://example.invalid/x"),
-                        "expectedVersion": version,
-                    },
-                    {
-                        "object": _webhook_document(url="https://user:pw@example.invalid/x"),
-                        "expectedVersion": version,
-                    },
-                    {
-                        "object": _webhook_document(url="https://example.invalid/x?token=abc"),
-                        "expectedVersion": version,
-                    },
-                    {
-                        "object": _webhook_document(events=[]),
-                        "expectedVersion": version,
-                    },
-                    {
-                        "object": _webhook_document(events=["task.completed", "task.completed"]),
-                        "expectedVersion": version,
-                    },
-                    {"object": _webhook_document(maxAttempts=0), "expectedVersion": version},
+                valid_form = _webhook_document()
+                _active, evidence_id = harness.test_webhook_form(valid_form)
+                # The evidence matches this address, so the canonical object
+                # validator is the boundary that refuses these structural
+                # changes.
+                structural = [
+                    _webhook_document(unknownField=1),
+                    _webhook_document(secret="value"),
+                    _webhook_document(events=[]),
+                    _webhook_document(events=["task.completed", "task.completed"]),
+                    _webhook_document(maxAttempts=0),
                 ]
-                for document in hostile:
-                    status, error = _request(harness.api, route, method="POST", body=document)
-                    self.assertEqual(status, 400, document)
+                for value in structural:
+                    status, error = _request(
+                        harness.api,
+                        route,
+                        method="POST",
+                        body={
+                            "object": value,
+                            "expectedVersion": active.version,
+                            "testEvidenceId": evidence_id,
+                        },
+                    )
+                    self.assertEqual(status, 400, (value, error))
+                # Unsafe endpoints never produce successful test evidence and
+                # therefore cannot be applied.
+                probe_count = len(harness.transport.requests)
+                for value in (
+                    _webhook_document(url="http://example.invalid/x"),
+                    _webhook_document(url="https://user:pw@example.invalid/x"),
+                    _webhook_document(url="https://example.invalid/x?token=abc"),
+                ):
+                    with patch.dict(os.environ, {SECRET_ENV: SECRET_VALUE}):
+                        status, tested = _request(
+                            harness.api,
+                            f"{OPERATIONS_ROUTE}/{WEBHOOK_ID}/test",
+                            method="POST",
+                            body={
+                                "webhook": value,
+                                "expectedRevisionId": active.revision_id,
+                                "expectedVersion": active.version,
+                            },
+                        )
+                    self.assertEqual(status, 200, tested)
+                    self.assertEqual(tested["category"], "invalid_definition")
+                    self.assertIsNone(tested["testEvidenceId"])
+                    status, _rejected = _request(
+                        harness.api,
+                        route,
+                        method="POST",
+                        body={
+                            "object": value,
+                            "expectedVersion": active.version,
+                            "testEvidenceId": evidence_id,
+                        },
+                    )
+                    self.assertEqual(status, 400)
+                self.assertEqual(len(harness.transport.requests), probe_count)
                 self.assertEqual(harness.configuration.active().revision_id, revision_id)
                 self.assertFalse(
                     any(
@@ -697,11 +768,16 @@ class WebhookTestJourneyTests(unittest.TestCase):
                         harness.api,
                         f"{OPERATIONS_ROUTE}/{WEBHOOK_ID}/test",
                         method="POST",
-                        body={"webhook": form},
+                        body={
+                            "webhook": form,
+                            "expectedRevisionId": active.revision_id,
+                            "expectedVersion": active.version,
+                        },
                     )
                 self.assertEqual(status, 200, result)
                 self.assertEqual(result["outcome"], "success")
-                self.assertIsNone(result["revision"])
+                self.assertTrue(result["testEvidenceId"])
+                self.assertEqual(result["revision"]["revisionId"], active.revision_id)
                 self.assertEqual(len(harness.transport.requests), 1)
                 self.assertEqual(
                     harness.transport.requests[0].url,
@@ -842,18 +918,22 @@ class WebhookDirectPublicationTests(unittest.TestCase):
             harness = NotificationHarness(directory)
             try:
                 before = harness.configuration.active()
-                version = before.revision_sequence or before.version
+                tested, evidence_id = harness.test_webhook_form(_webhook_document(maxAttempts=9))
+                probes = len(harness.transport.requests)
                 status, published = _request(
                     harness.api,
                     f"/api/configuration/revisions/{before.revision_id}/objects/webhooks/{WEBHOOK_ID}",
                     method="PUT",
                     body={
                         "object": _webhook_document(maxAttempts=9),
-                        "expectedVersion": version,
+                        "expectedVersion": before.version,
+                        "testEvidenceId": evidence_id,
                     },
                 )
                 self.assertEqual(status, 200, published)
                 self.assertEqual(published["webhook"]["maxAttempts"], 9)
+                # Applying the already-tested form never probes again.
+                self.assertEqual(len(harness.transport.requests), probes)
                 active = harness.configuration.active()
                 self.assertNotEqual(active.revision_id, before.revision_id)
                 self.assertEqual(
@@ -874,22 +954,103 @@ class WebhookDirectPublicationTests(unittest.TestCase):
             finally:
                 harness.close()
 
+    def test_changed_address_after_test_is_refused_without_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            harness = NotificationHarness(directory)
+            try:
+                before = harness.configuration.active()
+                before_url = harness.active_webhook_definition().url
+                tested_address = _webhook_document(url="https://example.invalid/hooks/tested-a")
+                _active, evidence_id = harness.test_webhook_form(tested_address)
+                audits_before = len(
+                    harness.configuration_repository.list_recent_command_audits(
+                        ("activate",), limit=50
+                    )
+                )
+                # The exact same test identity cannot publish a different
+                # address; the previously published definition stays Active.
+                status, rejected = _request(
+                    harness.api,
+                    f"/api/configuration/revisions/{before.revision_id}/objects/webhooks/{WEBHOOK_ID}",
+                    method="PUT",
+                    body={
+                        "object": _webhook_document(url="https://example.invalid/hooks/tested-b"),
+                        "expectedVersion": before.version,
+                        "testEvidenceId": evidence_id,
+                        "submissionId": "webhook-address-change",
+                    },
+                )
+                self.assertEqual(status, 409, rejected)
+                self.assertEqual(harness.configuration.active().revision_id, before.revision_id)
+                self.assertEqual(
+                    len(
+                        harness.configuration_repository.list_recent_command_audits(
+                            ("activate",), limit=50
+                        )
+                    ),
+                    audits_before,
+                )
+                self.assertEqual(harness.active_webhook_definition().url, before_url)
+
+                # A probe of the new address succeeds, then that exact form
+                # publishes one new Active configuration.
+                tested_address = _webhook_document(url="https://example.invalid/hooks/tested-b")
+                _active, evidence_id = harness.test_webhook_form(tested_address)
+                status, published = _request(
+                    harness.api,
+                    f"/api/configuration/revisions/{before.revision_id}/objects/webhooks/{WEBHOOK_ID}",
+                    method="PUT",
+                    body={
+                        "object": tested_address,
+                        "expectedVersion": before.version,
+                        "testEvidenceId": evidence_id,
+                    },
+                )
+                self.assertEqual(status, 200, published)
+                current = harness.configuration.active()
+                self.assertNotEqual(current.revision_id, before.revision_id)
+                self.assertEqual(
+                    harness.active_webhook_definition().url,
+                    "https://example.invalid/hooks/tested-b",
+                )
+            finally:
+                harness.close()
+
+    def test_apply_without_successful_test_evidence_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            harness = NotificationHarness(directory)
+            try:
+                before = harness.configuration.active()
+                status, rejected = _request(
+                    harness.api,
+                    f"/api/configuration/revisions/{before.revision_id}/objects/webhooks/{WEBHOOK_ID}",
+                    method="PUT",
+                    body={
+                        "object": _webhook_document(maxAttempts=4),
+                        "expectedVersion": before.version,
+                    },
+                )
+                self.assertEqual(status, 409, rejected)
+                self.assertEqual(harness.configuration.active().revision_id, before.revision_id)
+            finally:
+                harness.close()
+
     def test_stale_identity_and_version_are_rejected_without_publication(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             harness = NotificationHarness(directory)
             try:
-                first = harness.configuration.active()
-                first_version = first.revision_sequence or first.version
-                status, _ = _request(
+                first, evidence_id = harness.test_webhook_form(_webhook_document(maxAttempts=4))
+                status, published = _request(
                     harness.api,
                     f"/api/configuration/revisions/{first.revision_id}/objects/webhooks/{WEBHOOK_ID}",
                     method="PUT",
                     body={
                         "object": _webhook_document(maxAttempts=4),
-                        "expectedVersion": first_version,
+                        "expectedVersion": first.version,
+                        "testEvidenceId": evidence_id,
                     },
                 )
-                self.assertEqual(status, 200)
+                self.assertEqual(status, 200, published)
                 second = harness.configuration.active()
                 # The old Active identity cannot publish again.
                 status, stale = _request(
@@ -898,22 +1059,27 @@ class WebhookDirectPublicationTests(unittest.TestCase):
                     method="PUT",
                     body={
                         "object": _webhook_document(maxAttempts=6),
-                        "expectedVersion": first_version,
+                        "expectedVersion": first.version,
+                        "testEvidenceId": evidence_id,
                     },
                 )
-                self.assertEqual(status, 409)
+                self.assertEqual(status, 409, stale)
                 self.assertEqual(harness.configuration.active().revision_id, second.revision_id)
                 # The current identity with a stale version is also refused.
+                _current, fresh_evidence = harness.test_webhook_form(
+                    _webhook_document(maxAttempts=6)
+                )
                 status, stale_version = _request(
                     harness.api,
                     f"/api/configuration/revisions/{second.revision_id}/objects/webhooks/{WEBHOOK_ID}",
                     method="PUT",
                     body={
                         "object": _webhook_document(maxAttempts=6),
-                        "expectedVersion": first_version,
+                        "expectedVersion": first.version,
+                        "testEvidenceId": fresh_evidence,
                     },
                 )
-                self.assertEqual(status, 409)
+                self.assertEqual(status, 409, stale_version)
                 self.assertEqual(harness.configuration.active().revision_id, second.revision_id)
             finally:
                 harness.close()
@@ -923,7 +1089,7 @@ class WebhookDirectPublicationTests(unittest.TestCase):
             harness = NotificationHarness(directory)
             try:
                 before = harness.configuration.active()
-                version = before.revision_sequence or before.version
+                _active, evidence_id = harness.test_webhook_form(_webhook_document(maxAttempts=9))
                 for token in (MANAGER_TOKEN, ACTIVATOR_TOKEN, VIEWER_TOKEN):
                     status, denied = _request(
                         harness.api,
@@ -931,12 +1097,92 @@ class WebhookDirectPublicationTests(unittest.TestCase):
                         method="PUT",
                         body={
                             "object": _webhook_document(maxAttempts=9),
-                            "expectedVersion": version,
+                            "expectedVersion": before.version,
+                            "testEvidenceId": evidence_id,
                         },
                         token=token,
                     )
                     self.assertEqual(status, 403, token)
                 self.assertEqual(harness.configuration.active().revision_id, before.revision_id)
+            finally:
+                harness.close()
+
+    def test_submission_identity_reconciles_publish_and_not_committed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            harness = NotificationHarness(directory)
+            try:
+                before = harness.configuration.active()
+                form = _webhook_document(maxAttempts=6)
+                _active, evidence_id = harness.test_webhook_form(form)
+                status, published = _request(
+                    harness.api,
+                    f"/api/configuration/revisions/{before.revision_id}/objects/webhooks/{WEBHOOK_ID}",
+                    method="PUT",
+                    body={
+                        "object": form,
+                        "expectedVersion": before.version,
+                        "testEvidenceId": evidence_id,
+                        "submissionId": "webhook-committed-submission",
+                    },
+                )
+                self.assertEqual(status, 200, published)
+                committed = harness.configuration.active()
+                status, reconciled = _request(
+                    harness.api,
+                    "/api/system/settings/reconcile",
+                    query="submissionId=webhook-committed-submission",
+                )
+                self.assertEqual(status, 200, reconciled)
+                self.assertEqual(reconciled["state"], "COMMITTED")
+                self.assertTrue(reconciled["committed"])
+                self.assertEqual(reconciled["committedRevisionId"], committed.revision_id)
+                self.assertEqual(reconciled["sideEffects"], "none")
+
+                # A later publication makes this exact request SUPERSEDED,
+                # while the same request still never publishes again.
+                _active, evidence_id = harness.test_webhook_form(_webhook_document(maxAttempts=8))
+                status, later = _request(
+                    harness.api,
+                    f"/api/configuration/revisions/{committed.revision_id}/objects/webhooks/{WEBHOOK_ID}",
+                    method="PUT",
+                    body={
+                        "object": _webhook_document(maxAttempts=8),
+                        "expectedVersion": committed.version,
+                        "testEvidenceId": evidence_id,
+                    },
+                )
+                self.assertEqual(status, 200, later)
+                status, superseded = _request(
+                    harness.api,
+                    "/api/system/settings/reconcile",
+                    query="submissionId=webhook-committed-submission",
+                )
+                self.assertEqual(status, 200, superseded)
+                self.assertEqual(superseded["state"], "SUPERSEDED")
+                self.assertEqual(harness.configuration.active().revision_id, later["revisionId"])
+
+                # A refused submission with the same identity reports its
+                # terminal not-committed evidence without changing the Active.
+                status, refused = _request(
+                    harness.api,
+                    f"/api/configuration/revisions/{later['revisionId']}/objects/webhooks/{WEBHOOK_ID}",
+                    method="PUT",
+                    body={
+                        "object": _webhook_document(maxAttempts=9),
+                        "expectedVersion": later["version"],
+                        "submissionId": "webhook-not-committed-submission",
+                    },
+                )
+                self.assertEqual(status, 409, refused)
+                status, not_committed = _request(
+                    harness.api,
+                    "/api/system/settings/reconcile",
+                    query="submissionId=webhook-not-committed-submission",
+                )
+                self.assertEqual(status, 200, not_committed)
+                self.assertEqual(not_committed["state"], "NOT_COMMITTED")
+                self.assertFalse(not_committed["committed"])
+                self.assertEqual(harness.configuration.active().revision_id, later["revisionId"])
             finally:
                 harness.close()
 
