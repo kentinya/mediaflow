@@ -897,4 +897,115 @@ describe("V2 configuration direct publication", () => {
       ),
     ).toHaveLength(1);
   });
+
+  it("continues a pending import verification after reconnect", async () => {
+    let committed = false;
+    let reconcileReads = 0;
+    let publishWrites = 0;
+    let submitted: Record<string, unknown> | null = null;
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-2")) {
+        return revisionDetail({
+          revisionId: "active-2",
+          version: 5,
+          revisionSequence: 5,
+          digest: "digest-2",
+        });
+      }
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings/reconcile")) {
+        reconcileReads += 1;
+        return response(
+          committed
+            ? {
+                state: "COMMITTED",
+                committed: true,
+                submissionId: submitted?.["submissionId"],
+                committedRevisionId: "active-2",
+                committedRevisionVersion: 5,
+                current: null,
+                nextAction:
+                  "this exact submission published and is the current Active settings",
+              }
+            : {
+                state: "UNRESOLVED",
+                committed: false,
+                submissionId: submitted?.["submissionId"],
+                current: null,
+                nextAction:
+                  "no terminal durable outcome is provable for this submission",
+              },
+        );
+      }
+      if (input === "/api/configuration/publish" && init?.method === "POST") {
+        publishWrites += 1;
+        submitted = JSON.parse(String(init.body)) as Record<string, unknown>;
+        throw new TypeError("network lost");
+      }
+      if (input.includes("/system/settings")) {
+        return response(
+          committed
+            ? activeSettings({
+                revisionId: "active-2",
+                revisionVersion: 5,
+                draftVersion: 5,
+                revisionDigest: "digest-2",
+              })
+            : activeSettings(),
+        );
+      }
+      return response(
+        committed
+          ? activeStatus({
+              active: {
+                revisionId: "active-2",
+                version: 5,
+                revisionSequence: 5,
+                digest: "digest-2",
+              },
+            })
+          : activeStatus(),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+    const importPanel = await screen.findByRole("region", {
+      name: "导入配置",
+    });
+    fireEvent.change(within(importPanel).getByLabelText("导入完整配置 JSON"), {
+      target: { value: '{"locale":"ja-JP"}' },
+    });
+    await userEvent.click(
+      within(importPanel).getByRole("button", { name: "核对并应用" }),
+    );
+
+    expect(
+      await screen.findByText(/尚不能证明本次请求的持久结果/),
+    ).toBeVisible();
+    expect(reconcileReads).toBe(1);
+    expect(publishWrites).toBe(1);
+
+    committed = true;
+    window.dispatchEvent(new Event("online"));
+
+    expect(
+      await screen.findByText("完整配置导入已发布", { exact: false }),
+    ).toBeVisible();
+    expect(
+      screen.getAllByText(/当前生效配置为 active-2/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(/序号 5/).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "核实当前状态" })).toBeNull();
+    expect(reconcileReads).toBe(2);
+    expect(publishWrites).toBe(1);
+    expect(submitted).toMatchObject({
+      document: { locale: "ja-JP" },
+      submissionId: expect.any(String),
+    });
+  });
 });

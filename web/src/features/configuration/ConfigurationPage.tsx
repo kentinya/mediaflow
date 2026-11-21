@@ -890,6 +890,8 @@ export function ConfigurationPage() {
   const [reconciliation, setReconciliation] =
     useState<ApplyReconciliation | null>(null);
   const verifiedSubmissionRef = useRef<string | null>(null);
+  const verificationInFlightRef = useRef(false);
+  const verifyOutcomeRef = useRef<(pending: PendingApply) => void>(() => {});
   // A just-published successor may become visible before the status read that
   // names it. This identity prevents an older in-flight status document from
   // temporarily selecting the superseded Active again.
@@ -1116,23 +1118,6 @@ export function ConfigurationPage() {
     // updates the read baseline; it never replaces form input.
     void loadRevision(selectionId);
   }, [authGeneration, loadRevision, selectionId]);
-
-  useEffect(() => {
-    const refresh = () => {
-      if (document.visibilityState === "hidden") return;
-      void query.refetch();
-      if (selectionId !== null) void loadRevision(selectionId);
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") refresh();
-    };
-    window.addEventListener("online", refresh);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.removeEventListener("online", refresh);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [loadRevision, query, selectionId]);
 
   useEffect(() => {
     if (principalId === null) return;
@@ -1678,7 +1663,9 @@ export function ConfigurationPage() {
   };
 
   const verifyApplicationOutcome = async (pending: PendingApply) => {
-    if (busy !== null) return;
+    if (busy !== null || verificationInFlightRef.current) return;
+    verificationInFlightRef.current = true;
+    verifiedSubmissionRef.current = pending.submissionId;
     setBusy({ kind: "verify" });
     setReadNotice(null);
     try {
@@ -1758,26 +1745,53 @@ export function ConfigurationPage() {
       setReadNotice(
         "无法完成只读核实；写入保持阻止。请确认服务可用后再次核实，系统不会自动重发发布请求。",
       );
-      verifiedSubmissionRef.current = null;
     } finally {
+      verificationInFlightRef.current = false;
       setBusy(null);
     }
   };
 
   useEffect(() => {
+    verifyOutcomeRef.current = (pending) => {
+      void verifyApplicationOutcome(pending);
+    };
+  });
+
+  // A reconnect or tab return carries an outstanding request identity into the
+  // same read-only reconciliation instead of only refreshing current state.
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      if (awaitingVerification && pendingApply !== null) {
+        verifyOutcomeRef.current(pendingApply);
+        return;
+      }
+      void query.refetch();
+      if (selectionId !== null) void loadRevision(selectionId);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [awaitingVerification, loadRevision, pendingApply, query, selectionId]);
+
+  useEffect(() => {
     if (!awaitingVerification || pendingApply === null || busy !== null) return;
     if (verifiedSubmissionRef.current === pendingApply.submissionId) return;
-    verifiedSubmissionRef.current = pendingApply.submissionId;
     void verifyApplicationOutcome(pendingApply);
-    // The exact retained submission is verified once; the manual fallback below
-    // is the only way to retry an unreadable reconciliation.
+    // The exact retained submission is verified once; reconnect/return and the
+    // manual fallback retry an unreadable reconciliation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [awaitingVerification, pendingApply, busy]);
 
   const verifyConfigurationState = async () => {
     if (busy !== null) return;
     if (pendingApply !== null) {
-      verifiedSubmissionRef.current = pendingApply.submissionId;
       await verifyApplicationOutcome(pendingApply);
       return;
     }
