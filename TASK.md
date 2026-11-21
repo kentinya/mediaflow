@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: B REVIEW TASK57.1
+Next Action: DEVELOPER FIXES TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: B REVIEW TASK57.1
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -205,6 +205,52 @@ Slice 57 的 RO-1 首位设置、会话恢复、改密和 HTTPS 会话尚未达�
   后续账号管理范围。B 应按本 Task 新链路使用隔离空库、真实 Compose 和候选镜像验收，
   不应以旧多角色脚本作为本 Task 的通过条件。真实 Compose、wheel、Scheduler/Worker
   账号权限实测仍由 B 完成。
+
+#### B 复核结果
+
+```text
+Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..42ee79cb5237a091f0c13cdd6d2b065976c8bda6
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1 多标签账号切换后仍显示上一位用户。** 同一浏览器用管理员打开任务中心，在另一个
+  标签页退出并以只读账号登录，再回原标签页点击「刷新」。`/api/operations/runs`
+  返回 200，会话状态是只读账号，原页面仍显示 `admin`。两个标签共享 Cookie，原标签
+  的账号和查询缓存只在它自己的认证状态改变时更新。
+- **P1 本机 Worker 和 Scheduler 启动仍接受旧启动配置。** 使用上一版本生成器输出的
+  `api.principals` bootstrap，分别启动本机 API、Worker、Scheduler。API 退出并指明
+  要删除的键，两个后台进程却创建数据库、继续运行，并只提示业务配置不可用。常驻进程
+  直接使用旧 bootstrap 加载分支，跳过了新校验。
+
+#### Developer 本轮返工指导
+
+1. 在共享认证层接通同一浏览器各标签的登录与退出状态。账号变化后用现有
+   `/api/auth/status` 确认当前身份，再恢复受保护页面。按原账号清理查询缓存和会话上下文，
+   按当前账号重新读取页面，保留允许的路由和查询参数。用已有真实 Python 夹具中的
+   管理员和只读账号回归「标签 A 打开任务中心 → 标签 B 退出并以只读账号登录 → 标签 A
+   刷新任务中心」，断言页面账号、可用操作和读取结果归属一致。
+2. 将退役身份字段的现行校验接到本机常驻服务读取 bootstrap 的入口，在打开数据库前
+   给出包含具体删除键的错误。覆盖 `worker run`、`scheduler run` 和共用此入口的
+   `notification-worker run`。用旧生成器产物复测启动拒绝，再用当前生成器的最小配置
+   验证常驻服务可正常等待首次业务配置。
+3. Developer 执行受影响的
+   `.venv/bin/python -m unittest discover -s tests -p test_resident_services.py`、
+   `.venv/bin/python -m unittest discover -s tests -p test_api_credentials.py`，
+   以及 `web/` 下的
+   `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/web-account-auth.python.spec.ts`。
+   在交付记录中列出新增的双标签场景以及本机启动拒绝的结果。
+
+B 独立运行生产 Web 构建、真实 Python/SQLite 认证浏览器用例 4 项、深链浏览器用例
+15 项、API 凭证用例 8 项。打开 HTTPS 生产入口创建管理员成功，在系统设置初始化空配置
+成功，浏览器会话 Cookie 有 Secure、HttpOnly 和 SameSite=Lax。本机 API 已拒绝旧字段。
+多标签切换和本机常驻启动的实测支持上述结论。按工作流在复现阻塞后结束本轮验收，
+完整 T4、Compose、wheel、Scheduler／Worker 运行权限和原提交结果核对待修正候选。
+日志位于 `.git/validation-evidence/42ee79cb5237a091f0c13cdd6d2b065976c8bda6/b-review/`。
+
+Slice 57 的 RO-1 已验证上述设置、登录恢复与改密旅程，账号切换尚未达标。RO-2 用户管理
+和脚本令牌仍待后续 Task。RO-3 的本机常驻启动与实作重启验收仍有缺口。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
