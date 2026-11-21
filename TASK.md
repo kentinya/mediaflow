@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: B REVIEW TASK57.1
+Next Action: DEVELOPER FIXES TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: B REVIEW TASK57.1
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -288,6 +288,53 @@ Slice 57 的 RO-1 已验证上述设置、登录恢复与改密旅程，账号�
 - 剩余风险：完整 T4 全量 Python、真实 Compose、候选镜像、wheel、真实 Scheduler／Worker
   账号权限运行验收和其他真实 Python 浏览器 spec 未由 Developer 执行，按工作流留给 B
   独立验收。Docker 多角色发布安全脚本和部分诊断脚本仍按后续账号管理范围处理。
+
+#### B 回归复核结果
+
+```text
+Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..e85752e7c11f545d59328278915f5280fd44132b
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1｜Python 回归未走到当前业务入口。** 全量执行 2,344 项，10 项断言失败、143 项报错、
+  7 项跳过。152 项失败或报错来自测试准备阶段提交的旧 `api.principals`，剩余 1 项来自
+  Worker 夹具读取当前 bootstrap 已移除的 `api` 节。比如「用有效账号启用自动化 → 由
+  Scheduler 受理 → 收回权限 → 下一次执行被拒绝」的用例在准备 Active 时已停止，尚未
+  检查后台行为。
+- **P1｜任务中心的真实浏览器回归仍按旧登录流程计数。** 用例从登录前开始记录请求。
+  新账号登录发出的 `POST /api/auth/login` 被计入「打开任务详情和刷新」的只读断言，
+  这次 POST 来自登录表单。实测 6 项通过，任务中心该用例失败，49 项在首个失败后未执行。
+
+#### Developer 回归修正指导
+
+1. 迁移 Python 日志中失败的 12 个模块共用的准备步骤。用当前生成器的最小配置或其等价
+   locator-only 夹具建立数据库，以测试账号和当前角色验证需要身份的业务路径。在执行权限
+   用例中通过数据库账号角色变化回归授权、撤权和明确拒绝，沿用现有任务、固定快照、效果及
+   非重放断言。旧字段用在专门验证退役拒绝的输入中。
+2. 让任务中心回归先完成登录，再记录打开列表、详情和刷新的全部请求，继续断言该阶段只有
+   GET。把刷新与显式会话失效作为各自的测试动作。刷新验证原页与查询参数，失效后重新登录
+   验证恢复原任务和核对原请求，保留执行次数和效果断言。
+3. 同步 `docs/deployment.md` 的前置步骤与 README 现行入口。用最小配置启动 Compose，
+   在容器内领取设置码，通过首页创建管理员，再进入系统设置初始化。
+4. Developer 运行受影响的 Python 模块。首轮可按文件执行
+   `.venv/bin/python -m unittest discover -s tests -p test_v2_automation_lifecycle.py`、
+   `.venv/bin/python -m unittest discover -s tests -p test_automation_execution_intent.py` 和
+   `.venv/bin/python -m unittest discover -s tests -p test_automation_settings_resident.py`。
+   在 `web/` 运行
+   `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`。
+   B 负责下一候选的完整回归与发布验收。
+
+上轮两项阻塞通过定向复测。真实 Python/SQLite 登录旅程 5 项通过，包含双标签账号切换并核对
+只读角色。常驻服务 29 项通过，覆盖三种本机命令在打开数据库前拒绝退役字段。生产 Web
+构建、wheel 构建及源码目录外安装冒烟通过。真实系统设置浏览器用例 5 项通过，含丢失发布
+回包后的原请求核对。完整 T4、Compose、真实 Scheduler／Worker 执行和整理提交的不重放
+验收待修正候选。日志见
+`.git/validation-evidence/e85752e7c11f545d59328278915f5280fd44132b/b-review/`。
+
+Slice 57 的 RO-1 已通过本轮设置、会话恢复、改密和账号切换定向验证。RO-2 的用户管理与
+脚本令牌待后续 Task。RO-3 的本机启动校验已通过，后台执行和部署验收待完成。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
