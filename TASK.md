@@ -204,3 +204,19 @@ Next: SAME TASK FIX LOOP
 #### Developer 修复指导
 
 让真实通知列表、详情和表单共同使用当前已发布 Webhook 和发布权限。调整 `service_api.py` 与 `notification.ts`，从通知响应和解析移除退役的草稿激活动作，并让管理员的编辑入口指向当前已发布定义。同时清理退出编辑时承诺保留草稿的提示，保留继续编辑和放弃输入的选择。用同样的响应契约更新 Node 夹具。用现有真实 Python 浏览器入口复测「通知列表 → 编辑已发布定义 → 签名测试当前输入 → 应用更改 → 回到列表读回新值」，核对测试只发一次请求、应用只发布一次，以及无发布权限账号只能查看。
+
+### Developer 第八轮修复报告
+
+```text
+Task Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Candidate: 37039d70f3caa015d547c91e1d178a1c7c7502b1
+Decision: READY FOR B REVIEW
+Authorized bug acceptance complete: NO
+```
+
+- 通知列表、详情和表单统一读取当前已发布 Active Webhook。列表不再从打开草稿查找编辑目标；管理员的编辑、复制、启用、停用和签名测试绑定当前 Active 修订，且同时要求管理配置与发布配置权限。无发布权限账号只读。
+- 从通知响应和前端解析移除退役的草稿创建、验证和激活动作；详情和列表不再显示草稿修订状态，编辑退出提示改为“当前生效配置不会被修改”。Node 假服务同步移除这些动作，真实 Python 通知列表与编辑旅程恢复可用。
+- 真实 Python 浏览器旅程已更新为「通知列表 → 编辑已发布定义 → 签名测试当前输入 → 应用更改 → 回到列表读回新值」。应用写入真实 Python/SQLite；签名探测由浏览器本地路由承接，避免向 example.invalid 发送外部请求。实测发布请求 1 次、测试请求 1 次，读回最大尝试次数 7。
+- Python `tests.test_v2_notification_operations` 26 项通过；Task 指定的六个配置相关 Python 模块 159 项通过。Web `src/features/operations` 32 个文件 390 项通过；Task 指定的配置组件 5 个文件 67 项通过。Node 通知浏览器用例 9 项通过；真实 Python 通知浏览器用例 1 项通过。
+- `npm run build`、TypeScript、ESLint、Prettier、Ruff check/format、`py_compile`、`git diff --check` 与 governance check 通过。
+- 未运行 T4 全量门禁、真实桌面/390px 通知截图验收及 Base 数据切换；按 Task 分工留给 B。外部 HTTPS 签名探测未在浏览器验收中真实外发，后端签名测试与失败分类仍由 Python 用例覆盖。
