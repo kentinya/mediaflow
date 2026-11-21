@@ -346,6 +346,9 @@ test("a same-browser account switch reconciles the other tab before its next rea
   await expect(accountButton).toContainText("readonly");
   const session = await page.request.get(`${BASE}/api/auth/session`);
   expect(session.status()).toBe(200);
-  expect((await session.json()).account.username).toBe("readonly");
+  const account = (await session.json()).account;
+  expect(account.username).toBe("readonly");
+  expect(account.roles).toEqual(["viewer"]);
+  expect(account.permissions).toEqual(["read"]);
   await second.close();
 });
