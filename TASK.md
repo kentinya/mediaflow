@@ -383,3 +383,29 @@ Next: SAME TASK FIX LOOP
 
 1. 通知列表、详情、新建和编辑直接使用已发布定义、当前生效版本与发布权限。同步删除后端 `draftState`、前端的草稿解析与把已发布版本转换成草稿的适配层。通过真实「通知 → 编辑／新建 → 签名测试 → 应用 → 读回」核对正常响应和表单。沿现有丢回包测试保留对原请求的一次提交及重连核实断言。
 2. 从配置状态、版本详情、管理就绪响应和存储清单删除 `setupDraft` 与 `setupDraftExists`。同步前端模型及夹具。沿「系统设置」和「存储管理 → 去完成设置」核对正常和未初始化场景，未初始化引导指向现有的空配置初始化。
+
+### Developer 第十二轮修复报告
+
+```text
+Task Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Candidate: 901b81be64c1b418a373c0fbfb42127dd2124932
+Decision: READY FOR B REVIEW
+Authorized bug acceptance complete: NO
+```
+
+- 通知列表、列表项、定义详情、新建和编辑现在直接消费当前已发布 Webhook 定义：后端移除 `draftState` 与 `definitionState`，列表只投影 Active 中的定义；详情增加 `supportedEvents` 供表单使用。前端删除草稿状态解析、新建卡从草稿选择基线的逻辑，以及把已发布版本包装成 `validated` 草稿的读取适配层。编辑直接使用 `webhook.activeConfiguration` 与 `webhook.document`，应用、签名测试、原请求核实和读回逻辑保持原样。
+- 从配置状态、版本详情、管理就绪响应、系统状态快照和存储清单移除 `setupDraft`、`setupDraftExists`；同步前端模型、测试夹具和通知/存储浏览器假服务。未初始化时 Storage 仍指向现有 `/configuration`，由设置页执行空配置初始化。
+- 清理通知列表、详情和编辑表单中的退役草稿徽标、草稿原因映射及旧断言；Node 通知夹具改为只返回已发布定义。
+
+实际结果：
+
+- `.venv/bin/python -m unittest tests.test_v2_notification_operations tests.test_management_setup tests.test_v2_storage_operations`：66 项通过。
+- `.venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_configuration_status tests.test_configuration_package_exchange tests.test_configuration_destination_activation tests.test_system_settings_management tests.test_automation_settings_management`：159 项通过。
+- 通知定向 Python 用例最终 29 项通过，含详情不再返回 `draftState` / `definitionState`、列表与创建后定义只含发布状态。
+- `npm run test -- run src/entities/operations/notification.test.ts src/features/operations/NotificationRouter.test.tsx src/features/operations/notification-presentation.test.ts src/entities/storage/storage-management.test.ts src/features/storage/StorageManagementPage.test.tsx`：144 项通过。
+- `npm run test:e2e -- tests/e2e/notifications.spec.ts`：9 项通过；`tests/e2e/storage-management.spec.ts --grep setup`：5 项通过；`tests/e2e/rules-readiness.spec.ts --grep "no-Active family"`：1 项通过。
+- 真实 Python 浏览器：`playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep Notification` 3 项通过；`playwright.python.automation.config.ts tests/e2e/configuration-settings.python.spec.ts` 5 项通过。
+- `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 通过；构建产物为 `index-DU0t5_Q6.js` / `index-Tw5pYUJe.css`。
+- Ruff check/format、`py_compile`、`git diff --check`、治理检查通过。
+
+剩余风险：T4 全量门禁、通知真实桌面及 390px 截图验收、Base 数据切换与 Docker 套件按 Task 分工留给 B；未推送、未部署。
