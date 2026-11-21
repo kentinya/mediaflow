@@ -46,7 +46,7 @@ function localAnalysisPayload(
     testedAt: "2026-01-01T00:00:00+00:00",
     stale: false,
     localOnly: true,
-    candidateState: "validated_non_active",
+    candidateState: "check_only",
     providerCalls: 0,
     storageReads: 0,
     identityStatus: null,

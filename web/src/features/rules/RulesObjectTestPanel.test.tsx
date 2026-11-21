@@ -73,7 +73,7 @@ function analysisPayload(
     testedAt: "2026-01-01T00:00:00+00:00",
     stale: false,
     localOnly: true,
-    candidateState: "validated_non_active",
+    candidateState: "check_only",
     providerCalls: 0,
     storageReads: 0,
     identityStatus: null,
@@ -986,7 +986,7 @@ describe("Rules local-test result readability", () => {
     expect(diagnostics?.querySelector("summary")?.textContent).toBe("诊断信息");
     const diagnosticsText = diagnostics?.textContent ?? "";
     expect(diagnosticsText).toContain("recognitionRules");
-    expect(diagnosticsText).toContain("validated_non_active");
+    expect(diagnosticsText).toContain("check_only");
     expect(diagnosticsText).toContain("candidate-revision-1234".slice(0, 8));
     expect(diagnosticsText).toContain("Provider 调用 / Storage 读取");
     // The rerun control shares the same button styling too.

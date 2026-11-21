@@ -283,5 +283,18 @@ export const exportConfigurationPackage = (
     fetchImpl,
   );
 
+/** Validate and publish one exported configuration package. */
+export const importConfigurationPackage = (
+  token: string | null,
+  packageValue: Record<string, unknown>,
+  fetchImpl?: FetchLike,
+) =>
+  request<Record<string, unknown>>(
+    token,
+    "/api/configuration/packages",
+    { method: "POST", body: JSON.stringify({ package: packageValue }) },
+    fetchImpl,
+  );
+
 export const fetchManagementReadiness = (token: string | null) =>
   request<Record<string, unknown>>(token, "/api/management/readiness", {});

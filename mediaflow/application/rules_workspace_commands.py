@@ -386,12 +386,13 @@ class RulesWorkspaceCommandService:
         expected_digest: str,
         object_id: str | None,
     ) -> ManagedConfigurationRevision:
-        """Persist one exact non-Active candidate for explicit preview only.
+        """Compose one in-memory candidate for explicit preview only.
 
         This deliberately reuses the same form allowlists, normalization,
         reference validation and optimistic Active fence as Save, but stops
-        before whole-document validation and activation. The resulting Draft is
-        the immutable authority consumed by the requested analysis command.
+        before whole-document validation and activation. The transient revision
+        is consumed by the requested preview command and leaves no repository
+        row; only the returned check evidence is retained for this request.
         """
 
         spec, draft, composed = self._compose_candidate_draft(
@@ -419,14 +420,15 @@ class RulesWorkspaceCommandService:
         expected_digest: str,
         object_id: str | None,
     ) -> ManagedConfigurationRevision:
-        """Persist one exact non-Active candidate for object-scoped analysis.
+        """Compose one in-memory candidate for object-scoped analysis.
 
         It shares the preview composition (allowlists, normalization, reference
         validation, Active fence) and deliberately stops before whole-document
         validation.  An independent object analysis must not require a complete
         managed-runtime load or a downstream resolver merely to explain one
-        submitted object, so this returns the still-DRAFT revision whose document
-        is exactly "current Active + this one normalized object".
+        submitted object, so this returns the transient revision whose document
+        is exactly "current Active + this one normalized object" and persists no
+        Draft or validation evidence.
         """
 
         _spec, draft, _composed = self._compose_candidate_draft(
@@ -455,7 +457,7 @@ class RulesWorkspaceCommandService:
         action: str,
         for_publication: bool,
     ) -> tuple[_FamilySpec, ManagedConfigurationRevision, dict[str, object]]:
-        """Compose and persist one non-Active candidate Draft; never validates the graph."""
+        """Compose one non-Active candidate; never validates or persists the graph."""
 
         spec = self._spec(family, action)
         if not isinstance(candidate, Mapping):
@@ -524,7 +526,7 @@ class RulesWorkspaceCommandService:
             spec, composed, active.document, object_id, for_publication=for_publication
         )
 
-        draft = self._managed.create_successor_draft(
+        draft = self._managed.stage_successor_draft(
             actor=actor,
             expected_active_revision_id=active.revision_id,
             expected_active_version=active.revision_sequence or active.version,

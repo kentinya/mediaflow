@@ -537,6 +537,111 @@ class ConfigurationDraftRetirementTests(unittest.TestCase):
                     active.revision_id,
                 )
 
+    def test_cli_initialize_publish_checks_and_explicit_replacement(self) -> None:
+        from mediaflow.final_cli import final_main
+        from scripts.make_deployment_config import make_deployment_configuration
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "configuration.sqlite3"
+            bootstrap = root / "bootstrap.json"
+            bootstrap.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "persistence": {"databasePath": str(database)},
+                        "api": {"principals": []},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def run(*arguments: str) -> tuple[int, str, str]:
+                stdout, stderr = io.StringIO(), io.StringIO()
+                code = final_main(
+                    ["--config", str(bootstrap), *arguments],
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+                return code, stdout.getvalue(), stderr.getvalue()
+
+            def status() -> dict:
+                code, output, errors = run("config", "status")
+                self.assertEqual(code, 0, errors)
+                return json.loads(output)
+
+            code, output, errors = run("config", "initialize")
+            self.assertEqual(code, 0, errors)
+            self.assertTrue(json.loads(output)["initialized"])
+            self.assertIsNotNone(status()["active"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "configuration.sqlite3"
+            bootstrap = root / "bootstrap.json"
+            bootstrap.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "persistence": {"databasePath": str(database)},
+                        "api": {"principals": []},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            activation = root / "activation.json"
+            document = make_deployment_configuration()
+            document["storages"][0]["rootPath"] = str(root / "incoming")
+            document["storages"][1]["rootPath"] = str(root / "organized")
+            activation.write_text(json.dumps(document), encoding="utf-8")
+
+            def run(*arguments: str) -> tuple[int, str, str]:
+                stdout, stderr = io.StringIO(), io.StringIO()
+                code = final_main(
+                    ["--config", str(bootstrap), *arguments],
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+                return code, stdout.getvalue(), stderr.getvalue()
+
+            def status() -> dict:
+                code, output, errors = run("config", "status")
+                self.assertEqual(code, 0, errors)
+                return json.loads(output)
+
+            # Missing target roots are a real check failure, not a publication.
+            code, _, errors = run("config", "publish", "--file", str(activation))
+            self.assertNotEqual(code, 0)
+            self.assertIn("read-only Storage check did not pass", errors)
+            self.assertIsNone(status()["active"])
+
+            (root / "incoming").mkdir()
+            (root / "organized" / "Movies").mkdir(parents=True)
+            (root / "organized" / "TV Shows").mkdir()
+            code, output, errors = run("config", "publish", "--file", str(activation))
+            self.assertEqual(code, 0, errors)
+            published = json.loads(output)
+            self.assertTrue(published["published"])
+            self.assertEqual(status()["active"]["revisionId"], published["revisionId"])
+
+            # A corrupt/missing Active requires the explicit replacement flag.
+            import sqlite3
+
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "DELETE FROM managed_configuration_revisions WHERE status='active'"
+                )
+            code, _, errors = run("config", "publish", "--file", str(activation))
+            self.assertNotEqual(code, 0)
+            self.assertIn("explicit replacement", errors)
+            self.assertIsNone(status()["active"])
+            code, output, errors = run(
+                "config", "publish", "--file", str(activation), "--replace-active"
+            )
+            self.assertEqual(code, 0, errors)
+            replacement = json.loads(output)
+            self.assertEqual(status()["active"]["revisionId"], replacement["revisionId"])
+
     def test_cli_retired_draft_commands_are_unknown_and_rejected(self) -> None:
         from mediaflow.final_cli import final_main
 

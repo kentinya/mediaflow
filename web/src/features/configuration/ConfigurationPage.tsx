@@ -34,6 +34,7 @@ import {
   fetchRevision,
   fetchRevisionObjects,
   fetchSystemSettings,
+  importConfigurationPackage,
   initializeConfiguration,
   publishConfiguration,
   reconcileSystemSettings,
@@ -242,7 +243,12 @@ const RULE_READINESS_LABELS: Readonly<Record<string, string>> = {
 };
 
 type MutationAction =
-  "create-first-draft" | "save-settings" | "validate" | "activate" | "export";
+  | "create-first-draft"
+  | "save-settings"
+  | "validate"
+  | "activate"
+  | "export"
+  | "import";
 
 export interface ConfigurationMutationFailureView {
   readonly title: string;
@@ -259,6 +265,7 @@ const ACTION_FAILURE_TITLES: Readonly<Record<MutationAction, string>> = {
   validate: "草稿未通过验证",
   activate: "配置未激活",
   export: "配置包未能导出",
+  import: "配置未发布",
 };
 
 /**
@@ -636,7 +643,14 @@ interface Notice {
 
 interface BusyState {
   readonly kind:
-    "create" | "save" | "validate" | "activate" | "export" | "verify" | "check";
+    | "create"
+    | "save"
+    | "validate"
+    | "activate"
+    | "export"
+    | "import"
+    | "verify"
+    | "check";
   readonly revisionId?: string;
   readonly groupId?: string;
   readonly checkId?: string;
@@ -846,6 +860,10 @@ export function ConfigurationPage() {
   const [showInspector, setShowInspector] = useState(false);
   const [replacementText, setReplacementText] = useState("");
   const [replacementError, setReplacementError] = useState<string | null>(null);
+  const [importMode, setImportMode] = useState<"json" | "package">("json");
+  const [jsonImportText, setJsonImportText] = useState("");
+  const [packageImportText, setPackageImportText] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyState | null>(null);
   const busyRef = useRef<BusyState | null>(busy);
   const [inspectorTab, setInspectorTab] = useState<"json" | "package">("json");
@@ -1615,6 +1633,25 @@ export function ConfigurationPage() {
     }
   };
 
+  const refreshAfterPublication = async () => {
+    void client.invalidateQueries({ queryKey: QUERY_KEY });
+    const next = await query.refetch();
+    const activeId = revisionIdOf(asRecord(next.data?.active));
+    if (activeId !== null) {
+      setSelectionId(activeId);
+      await loadRevision(activeId);
+    }
+  };
+
+  const importFailureMessage = (error: unknown): string => {
+    const failure = configurationMutationFailure(error, "import");
+    const nextAction =
+      error instanceof ConfigurationApiError ? error.nextAction : null;
+    return nextAction === null
+      ? failure.message
+      : `${failure.message} ${nextAction}`;
+  };
+
   const applyReplacement = async () => {
     if (busy !== null || awaitingVerification) return;
     let document: unknown;
@@ -1634,7 +1671,7 @@ export function ConfigurationPage() {
       setReplacementError("完整配置必须是一个 JSON 对象；本次没有发布。");
       return;
     }
-    setBusy({ kind: "save" });
+    setBusy({ kind: "import" });
     setReplacementError(null);
     setNotice(null);
     try {
@@ -1652,23 +1689,108 @@ export function ConfigurationPage() {
             : ""
         }；请核对上方表单和诊断中的真实状态。`,
       });
-      void client.invalidateQueries({ queryKey: QUERY_KEY });
-      await query.refetch();
-      const activeId = revisionIdOf(
-        asRecord((await query.refetch()).data?.active),
-      );
-      if (activeId !== null) {
-        setSelectionId(activeId);
-        await loadRevision(activeId);
-      }
+      await refreshAfterPublication();
     } catch (error) {
-      const failure = configurationMutationFailure(error, "save-settings");
+      const message = importFailureMessage(error);
+      setReplacementError(message);
       setNotice({
         tone: "error",
         title: "完整配置未发布",
-        text: failure.message,
+        text: message,
       });
-      if (failure.verifyRequired) setAwaitingVerification(true);
+      if (configurationMutationFailure(error, "import").verifyRequired) {
+        setAwaitingVerification(true);
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const applyConfigurationImport = async () => {
+    if (busy !== null || awaitingVerification) return;
+    const importText =
+      importMode === "json" ? jsonImportText : packageImportText;
+    if (!model.canManage || !model.canActivate) {
+      setImportError("当前账号没有管理并激活配置的权限；本次没有发布。");
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(importText);
+    } catch {
+      setImportError(
+        importMode === "package"
+          ? "配置包必须是合法 JSON；本次没有发送任何导入请求。"
+          : "完整配置必须是合法 JSON；本次没有发送任何发布请求。",
+      );
+      return;
+    }
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      setImportError(
+        importMode === "package"
+          ? "配置包必须是一个 JSON 对象；本次没有导入。"
+          : "完整配置必须是一个 JSON 对象；本次没有发布。",
+      );
+      return;
+    }
+    setBusy({ kind: "import" });
+    setImportError(null);
+    setNotice(null);
+    try {
+      if (importMode === "package") {
+        const imported = await importConfigurationPackage(
+          token,
+          parsed as Record<string, unknown>,
+        );
+        const revision = asRecord(imported.revision);
+        setPackageImportText("");
+        setNotice({
+          tone: "success",
+          title: "脱敏配置包已导入并发布",
+          text: `配置包已通过校验并成为新的生效快照${
+            typeof revision?.revisionId === "string"
+              ? `（${revision.revisionId}）`
+              : ""
+          }；请核对上方表单和诊断中的真实状态。`,
+        });
+      } else {
+        const body: Record<string, unknown> = { document: parsed };
+        if (model.activeHealthy && model.activeId !== null) {
+          body.expectedActiveRevisionId = model.activeId;
+          if (model.activeVersion !== null) {
+            body.expectedActiveVersion = model.activeVersion;
+          }
+          const digest = text(model.activeRecord?.digest, "");
+          if (digest !== "") body.expectedActiveDigest = digest;
+        }
+        const published = await publishConfiguration(token, body);
+        setJsonImportText("");
+        setNotice({
+          tone: "success",
+          title: "完整配置已发布",
+          text: `配置已通过校验并成为新的生效快照${
+            typeof published.revisionId === "string"
+              ? `（${published.revisionId}）`
+              : ""
+          }；请核对上方表单和诊断中的真实状态。`,
+        });
+      }
+      await refreshAfterPublication();
+    } catch (error) {
+      const message = importFailureMessage(error);
+      setImportError(message);
+      setNotice({
+        tone: "error",
+        title: importMode === "package" ? "脱敏配置包未导入" : "完整配置未发布",
+        text: message,
+      });
+      if (configurationMutationFailure(error, "import").verifyRequired) {
+        setAwaitingVerification(true);
+      }
     } finally {
       setBusy(null);
     }
@@ -2418,6 +2540,120 @@ export function ConfigurationPage() {
                     )}
                   </section>
                 </div>
+              )}
+              {!model.activeUnavailable && (
+                <section
+                  className="mf-panel mf-settings-import"
+                  aria-labelledby="settings-import-title"
+                >
+                  <header className="mf-settings-section-head">
+                    <div>
+                      <h2 id="settings-import-title">导入配置</h2>
+                      <p>
+                        粘贴完整配置 JSON
+                        或已导出的脱敏配置包，核对后明确应用；系统只在校验通过时原子发布新的生效快照。
+                      </p>
+                    </div>
+                  </header>
+                  {!showManage || !model.canActivate ? (
+                    <p className="mf-settings-readonly">
+                      当前账号没有管理并激活配置的权限，不能导入配置。
+                    </p>
+                  ) : (
+                    <>
+                      <div
+                        className="mf-settings-inspector-tabs"
+                        role="group"
+                        aria-label="导入配置种类"
+                      >
+                        <button
+                          type="button"
+                          className="mf-settings-inspector-tab"
+                          aria-pressed={importMode === "json"}
+                          onClick={() => {
+                            setImportMode("json");
+                            setImportError(null);
+                          }}
+                        >
+                          完整配置 JSON
+                        </button>
+                        <button
+                          type="button"
+                          className="mf-settings-inspector-tab"
+                          aria-pressed={importMode === "package"}
+                          onClick={() => {
+                            setImportMode("package");
+                            setImportError(null);
+                          }}
+                        >
+                          脱敏配置包
+                        </button>
+                      </div>
+                      <label
+                        className="mf-settings-import-label"
+                        htmlFor="settings-import"
+                      >
+                        {importMode === "json"
+                          ? "完整配置 JSON"
+                          : "脱敏配置包 JSON"}
+                      </label>
+                      <textarea
+                        id="settings-import"
+                        className="mf-settings-json"
+                        aria-label={
+                          importMode === "json"
+                            ? "导入完整配置 JSON"
+                            : "导入脱敏配置包"
+                        }
+                        rows={12}
+                        spellCheck={false}
+                        value={
+                          importMode === "json"
+                            ? jsonImportText
+                            : packageImportText
+                        }
+                        disabled={busy !== null || awaitingVerification}
+                        onChange={(event) => {
+                          if (importMode === "json") {
+                            setJsonImportText(event.target.value);
+                          } else {
+                            setPackageImportText(event.target.value);
+                          }
+                          setImportError(null);
+                        }}
+                      />
+                      {importError !== null && (
+                        <p className="mf-settings-field-error" role="alert">
+                          {importError}
+                        </p>
+                      )}
+                      <div className="mf-actions">
+                        <Button
+                          type="button"
+                          disabled={
+                            busy !== null ||
+                            awaitingVerification ||
+                            (importMode === "json"
+                              ? jsonImportText.trim() === ""
+                              : packageImportText.trim() === "")
+                          }
+                          onClick={() => void applyConfigurationImport()}
+                        >
+                          {busy?.kind === "import"
+                            ? "正在核对并发布…"
+                            : "核对并应用"}
+                        </Button>
+                      </div>
+                      <p className="mf-settings-group-note">
+                        完整配置按当前生效身份核对
+                        {model.activeHealthy
+                          ? "；若其他会话先发布了新快照，本次会被拒绝。"
+                          : "；首次导入会在校验通过后建立新的生效快照。"}
+                        脱敏配置包只能在导出它的同一生效修订上导入。
+                      </p>
+                    </>
+                  )}
+                </section>
               )}
             </section>
             <details className="mf-panel mf-settings-diagnostics">

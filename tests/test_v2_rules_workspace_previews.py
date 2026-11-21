@@ -31,6 +31,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
     def test_naming_preview_is_exact_revision_bound_and_zero_mutation(self) -> None:
         before_active = self.harness.configuration.active()
         assert before_active is not None
+        before_revisions = self.harness.config_repo.list_revisions(limit=100)
         status, body = self.harness.request(
             "POST",
             "/api/operations/rules/previews/naming",
@@ -54,6 +55,13 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         assert after_active is not None
         self.assertEqual(after_active.revision_id, before_active.revision_id)
         self.assertEqual(self.harness.config_repo.activations, self.harness.activations_at_baseline)
+        self.assertEqual(
+            [(item.revision_id, item.status.value) for item in before_revisions],
+            [
+                (item.revision_id, item.status.value)
+                for item in self.harness.config_repo.list_revisions(limit=100)
+            ],
+        )
 
     def test_preview_rejects_stale_identity_and_unknown_fields(self) -> None:
         authority = self.authority()
@@ -150,6 +158,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         self.assertEqual(after.revision_id, before.revision_id)
 
     def test_valid_create_candidate_can_be_previewed_without_activation(self) -> None:
+        before_revisions = self.harness.config_repo.list_revisions(limit=100)
         values = self.candidate("namingPolicies", "A")["values"]
         candidate_values = {**values, "id": "candidate-name", "name": "Candidate Name"}
         status, body = self.harness.request(
@@ -173,10 +182,14 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "completed")
-        self.assertEqual(body["candidateState"], "validated_non_active")
+        self.assertEqual(body["candidateState"], "check_only")
         active = self.harness.configuration.active()
         assert active is not None
         self.assertNotEqual(active.revision_id, body["revisionId"])
+        self.assertEqual(
+            [item.revision_id for item in before_revisions],
+            [item.revision_id for item in self.harness.config_repo.list_revisions(limit=100)],
+        )
 
     def test_matching_metadata_policy_offline_succeeds_and_mismatch_is_rejected(self) -> None:
         request = {

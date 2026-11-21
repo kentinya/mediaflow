@@ -199,7 +199,7 @@ class AnalysisResult:
             "retrySafe": True,
             "providerCalls": self.provider_calls,
             "storageReads": self.storage_reads,
-            "candidateState": "validated_non_active",
+            "candidateState": "check_only",
             "localOnly": self.local_only,
             "identityStatus": self.identity_status,
             "syntheticIdentity": self.synthetic_identity,

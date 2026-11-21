@@ -11246,6 +11246,19 @@ tr[aria-selected="true"] {
   flex-wrap: wrap;
 }
 
+.mf-settings-import {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mf-settings-import-label {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .mf-settings-json {
   width: 100%;
   max-width: 100%;

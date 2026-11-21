@@ -923,9 +923,9 @@ Only a validated and activated managed revision provides runtime business author
 
 Managed Configuration persists current and historical published snapshots only: Active and
 Superseded revisions. Candidate content is validated in one command, bound to the exact current
-Active baseline, checked, and atomically published; a candidate staging row and its revision-bound
-evidence exist only for that command and are discarded on any refusal. Object edits, references,
-evidence and audits remain revision-bound. Publication is an atomic pointer change only after
+Active baseline, checked, and atomically published; the in-memory candidate and its read-only
+evidence exist only for that command and are discarded on any refusal without a repository row.
+Object edits, references, evidence and audits remain revision-bound. Publication is an atomic pointer change only after
 validation and any checked-evidence requirements pass. Checked publication is provider-neutral:
 every enabled Storage referenced by a ResourceLibrary or MediaLibrary needs a current, passed,
 read-only per-Storage check; the Recognition Strategy Test and one read-only destination precheck for

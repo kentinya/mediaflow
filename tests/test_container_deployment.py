@@ -404,6 +404,18 @@ class ContainerArtifactTests(unittest.TestCase):
                 bootstrap_path.write_text(
                     json.dumps(bootstrap, ensure_ascii=False), encoding="utf-8"
                 )
+                # Local publications run the same read-only Storage and
+                # destination checks as the Web form; point the generated
+                # media input at this test's existing temporary roots.
+                configuration = json.loads(configuration_path.read_text(encoding="utf-8"))
+                configuration["storages"][0]["rootPath"] = str(root / "incoming")
+                configuration["storages"][1]["rootPath"] = str(root / "organized")
+                (root / "incoming").mkdir()
+                (root / "organized" / "Movies").mkdir(parents=True)
+                (root / "organized" / "TV Shows").mkdir()
+                configuration_path.write_text(
+                    json.dumps(configuration, ensure_ascii=False), encoding="utf-8"
+                )
 
                 stdout, stderr = io.StringIO(), io.StringIO()
                 code = final_main(
@@ -426,15 +438,15 @@ class ContainerArtifactTests(unittest.TestCase):
         """The shipped OpenList example imports exactly as the guide describes.
 
         An administrator appends the published ``storage`` object to the
-        generated ``mediaflow.activation.json`` and imports it with
-        ``config draft-import --file``.  The retired top-level connection
-        spelling — the shape this example used to ship — must fail closed
-        before anything is persisted, naming the retired field and the current
+        generated ``mediaflow.activation.json`` and publishes it with
+        ``config publish --file``.  The retired top-level connection spelling —
+        the shape this example used to ship — must fail closed before anything
+        is persisted, naming the retired field and the current
         ``Storage.options`` location.  The same instance then accepts the
         corrected input, keeps the two standard Storages and the example's
-        original rootPath/readOnly/token reference, and holds one recoverable
-        Draft.  The example service address is unresolvable, so a passing
-        import also proves the phase never contacts OpenList.
+        original rootPath/readOnly/token reference, and publishes exactly one
+        Active revision.  The OpenList Storage is not referenced by a library,
+        so publication does not contact its unresolvable example address.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -461,6 +473,14 @@ class ContainerArtifactTests(unittest.TestCase):
                 (ROOT / "config" / "alist.example.json").read_text(encoding="utf-8")
             )
             deployment = json.loads(configuration_path.read_text(encoding="utf-8"))
+            deployment["storages"][0]["rootPath"] = str(root / "incoming")
+            deployment["storages"][1]["rootPath"] = str(root / "organized")
+            (root / "incoming").mkdir()
+            (root / "organized" / "Movies").mkdir(parents=True)
+            (root / "organized" / "TV Shows").mkdir()
+            configuration_path.write_text(
+                json.dumps(deployment, ensure_ascii=False), encoding="utf-8"
+            )
 
             def candidate_with(storage: dict) -> Path:
                 document = json.loads(configuration_path.read_text(encoding="utf-8"))
@@ -528,9 +548,9 @@ class ContainerArtifactTests(unittest.TestCase):
                 storages,
                 [*deployment["storages"], example["storage"]],
             )
-            self.assertEqual(storages[0]["rootPath"], "/media/incoming")
+            self.assertEqual(storages[0]["rootPath"], str(root / "incoming"))
             self.assertIs(storages[0]["readOnly"], True)
-            self.assertEqual(storages[1]["rootPath"], "/media/organized")
+            self.assertEqual(storages[1]["rootPath"], str(root / "organized"))
             self.assertIs(storages[1]["readOnly"], False)
             self.assertEqual(storages[2]["rootPath"], "/Media")
             self.assertIs(storages[2]["readOnly"], True)

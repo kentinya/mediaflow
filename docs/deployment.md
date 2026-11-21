@@ -111,17 +111,27 @@ docker compose -f compose.yaml -f compose.media-mounts.yaml run --rm --no-deps -
 
 `-T` keeps stdin available, and the generated file is streamed into the
 container, so it never needs to be mounted. The image entrypoint dispatches the
-`mediaflow` command, so the arguments start at `config`. The command validates
-the document and atomically publishes it as the new Active configuration; it
+`mediaflow` command, so the arguments start at `config`. The command runs the
+same applicable read-only Storage, recognition-strategy and destination checks
+as the Web form, then atomically publishes the new Active configuration; it
 creates no Task, delivery or media mutation, and the running services adopt the
 snapshot without a restart. Without `--file`, `config publish` republishes the
 current Active (or requires `config initialize` on a fresh instance).
 
-The same input can be reviewed and published from `系统设置` → `高级配置` by
-opening the on-demand configuration JSON, replacing it with the complete
-document and applying it explicitly. The
-[configuration guide](configuration.md) uses the same page names and describes
-failed-check recovery.
+If the stored Active revision is missing or corrupt, `config status` reports it
+and the normal publish refuses to guess a replacement. Supply the complete
+document and make the replacement explicit:
+
+```bash
+docker compose -f compose.yaml -f compose.media-mounts.yaml run --rm --no-deps -T api \
+  config publish --file /dev/stdin --replace-active < config/mediaflow.activation.json
+```
+
+The same input can be reviewed and published from `系统设置` → `高级配置` →
+`配置 JSON` (read-only) and `导入配置` (complete JSON or redacted package,
+followed by `核对并应用`). A missing or corrupt Active uses the recovery banner
+with `应用完整替换`. The [configuration guide](configuration.md) uses the same
+page names and describes failed-check recovery.
 
 - A deployment-owned environment file. Copy
   [deploy/mediaflow.env.example](../deploy/mediaflow.env.example) to

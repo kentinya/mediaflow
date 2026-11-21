@@ -124,12 +124,20 @@ def final_main(
     config_commands = config.add_subparsers(dest="config_command", required=True)
     config_commands.add_parser("validate", help="validate configuration without processing media")
     config_commands.add_parser("status", help="show JSON bootstrap/managed Active authority")
-    config_commands.add_parser("initialize", help="publish an empty managed configuration")
+    initialize = config_commands.add_parser(
+        "initialize", help="publish an empty managed configuration"
+    )
+    initialize.add_argument("--actor", default="local-cli")
     publish = config_commands.add_parser(
         "publish", help="check and publish one complete configuration document"
     )
     publish.add_argument("--file", help="JSON file; defaults to the current Active document")
     publish.add_argument("--actor", default="local-cli")
+    publish.add_argument(
+        "--replace-active",
+        action="store_true",
+        help="explicitly replace an unavailable managed Active from --file",
+    )
     analyze = commands.add_parser("analyze", help="analyze one file without planning execution")
     analyze.add_argument("path")
     analyze.add_argument("--offline", action="store_true")
@@ -443,10 +451,20 @@ def final_main(
                         )
                         return 0
                     if arguments.config_command == "publish":
+                        if arguments.replace_active and not arguments.file:
+                            raise ValueError(
+                                "--replace-active requires --file with the complete "
+                                "replacement document"
+                            )
+                        try:
+                            active = service.active()
+                        except RuntimeSnapshotUnavailable:
+                            if not arguments.replace_active:
+                                raise
+                            active = None
                         if arguments.file:
                             document = json.loads(Path(arguments.file).read_text(encoding="utf-8"))
                         else:
-                            active = service.active()
                             if active is None:
                                 raise ValueError(
                                     "no Active configuration exists; use `config initialize` "
@@ -456,7 +474,16 @@ def final_main(
                         revision = objects.publish_document(
                             document,
                             actor=arguments.actor,
-                            run_checks=False,
+                            expected_active_revision_id=(
+                                active.revision_id if active is not None else None
+                            ),
+                            expected_active_version=(
+                                (active.revision_sequence or active.version)
+                                if active is not None
+                                else None
+                            ),
+                            expected_active_digest=(active.digest if active is not None else None),
+                            replace_active=arguments.replace_active,
                         )
                         stdout.write(
                             json.dumps(

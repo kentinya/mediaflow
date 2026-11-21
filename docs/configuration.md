@@ -93,8 +93,9 @@ Managed persistence contains current and historical published snapshots only:
 
 One apply command composes a candidate from the current Active, increments its optimistic edit
 version, recalculates its digest, revalidates references and runs applicable evidence, then
-publishes atomically. The candidate staging revision and its revision-bound evidence exist only for
-that command and are discarded on refusal. Active and Superseded revisions remain immutable. A
+publishes atomically. The in-memory candidate and its read-only evidence exist only for that command
+and are discarded on refusal; no Draft or validated revision row is written. Active and Superseded
+revisions remain immutable. A
 missing or invalid Active revision fails media work closed while status and explicit full-replacement
 recovery remain available through the bootstrap database locator.
 
@@ -118,16 +119,24 @@ The general configuration CLI exposes direct publication:
 mediaflow config status
 mediaflow config initialize
 mediaflow config publish --file config/mediaflow.activation.json
+mediaflow config publish --file config/mediaflow.activation.json --replace-active
 ```
 
 Each command selects the deployment bootstrap with `--config PATH` or `MEDIAFLOW_CONFIG`; the
 example above relies on the `export` in the preceding section. `config initialize` publishes an
-empty Active only when managed activation has never existed. `config publish` validates and
-publishes the supplied document. The retired `draft-import`, `draft-validate` and `activate`
-commands, aliases and parameters are unknown command-line inputs.
+empty Active only when managed activation has never existed. `config publish` runs the same
+applicable read-only checks as the Web form and publishes the supplied document. If a published
+Active revision is missing or corrupt, `--replace-active` is the explicit recovery command; it
+requires `--file` and never infers a replacement from retained history. The optional `--actor`
+labels the audit record for `initialize` and `publish`. The retired `draft-import`,
+`draft-validate` and `activate` commands, aliases and parameters are unknown command-line inputs.
 
-Web settings, business forms and Advanced JSON/import/export share the same direct publication
-services. Imported packages/JSON are validated and published; they never create an inactive draft.
+Web settings, business forms and `系统设置` → `高级配置` → `导入配置` share the same direct
+publication services. The import entry accepts either the complete configuration JSON or a
+previously exported redacted configuration package, checks it against the current Active baseline
+and publishes only after the operator selects `核对并应用`. The read-only `配置 JSON` and
+`脱敏配置包` views remain available on demand. Imported packages/JSON are validated and published;
+they never create an inactive draft.
 
 ## Immutable runtime snapshot
 

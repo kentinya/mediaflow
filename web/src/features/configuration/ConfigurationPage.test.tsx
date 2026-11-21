@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -441,5 +447,188 @@ describe("V2 configuration direct publication", () => {
         expect.anything(),
       ),
     );
+  });
+
+  it("imports a complete document with the exact Active baseline", async () => {
+    const writes: Array<{ input: string; body: unknown }> = [];
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings")) return response(activeSettings());
+      if (input === "/api/configuration/publish" && init?.method === "POST") {
+        writes.push({ input, body: JSON.parse(String(init.body)) });
+        return response({
+          revisionId: "active-2",
+          status: "active",
+          published: true,
+        });
+      }
+      if (init?.method === "POST" || init?.method === "PUT")
+        return response({ error: { code: "unexpected_write" } }, 500);
+      return response(activeStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+    const importPanel = await screen.findByRole("region", {
+      name: "导入配置",
+    });
+    await userEvent.click(
+      within(importPanel).getByRole("button", { name: "完整配置 JSON" }),
+    );
+    fireEvent.change(within(importPanel).getByLabelText("导入完整配置 JSON"), {
+      target: { value: '{"locale":"zh-CN","storages":[]}' },
+    });
+    await userEvent.click(
+      within(importPanel).getByRole("button", { name: "核对并应用" }),
+    );
+    expect(
+      await screen.findByText("完整配置已发布", { exact: false }),
+    ).toBeVisible();
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.body).toMatchObject({
+      document: { locale: "zh-CN", storages: [] },
+      expectedActiveRevisionId: "active-1",
+      expectedActiveVersion: 4,
+      expectedActiveDigest: "digest-1",
+    });
+    expect(writes[0]?.body).not.toHaveProperty("replaceActive");
+    expect(within(importPanel).getByLabelText("导入完整配置 JSON")).toHaveValue(
+      "",
+    );
+  });
+
+  it("keeps failed import input and imports a redacted package on apply", async () => {
+    const writes: Array<{ path: string; body: unknown }> = [];
+    let rejectPublish = true;
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings")) return response(activeSettings());
+      if (input === "/api/configuration/publish" && init?.method === "POST") {
+        writes.push({ path: input, body: JSON.parse(String(init.body)) });
+        if (rejectPublish) {
+          return response(
+            {
+              error: {
+                code: "configuration_check_failed",
+                message: "destination precheck failed",
+                details: {
+                  durableState: "active_preserved",
+                  nextAction:
+                    "create the missing MediaLibrary root, then retry",
+                },
+              },
+            },
+            422,
+          );
+        }
+        return response({
+          revisionId: "active-2",
+          status: "active",
+          published: true,
+        });
+      }
+      if (input === "/api/configuration/packages" && init?.method === "POST") {
+        writes.push({ path: input, body: JSON.parse(String(init.body)) });
+        return response({
+          imported: true,
+          revision: { revisionId: "active-2" },
+          publishedActive: { revisionId: "active-2" },
+        });
+      }
+      if (init?.method === "POST" || init?.method === "PUT")
+        return response({ error: { code: "unexpected_write" } }, 500);
+      return response(activeStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+    const importPanel = await screen.findByRole("region", {
+      name: "导入配置",
+    });
+    const fullJson = within(importPanel).getByLabelText("导入完整配置 JSON");
+    fireEvent.change(fullJson, { target: { value: '{"locale":"zh-CN"}' } });
+    await userEvent.click(
+      within(importPanel).getByRole("button", { name: "核对并应用" }),
+    );
+    expect(
+      await screen.findAllByText("create the missing MediaLibrary root", {
+        exact: false,
+      }),
+    ).not.toHaveLength(0);
+    expect(fullJson).toHaveValue('{"locale":"zh-CN"}');
+    expect(writes).toHaveLength(1);
+
+    rejectPublish = false;
+    await userEvent.click(
+      within(importPanel).getByRole("button", { name: "脱敏配置包" }),
+    );
+    const packageJson = within(importPanel).getByLabelText("导入脱敏配置包");
+    fireEvent.change(packageJson, {
+      target: {
+        value:
+          '{"packageKind":"mediaflow.configuration.v1","document":{"locale":"zh-CN"}}',
+      },
+    });
+    await userEvent.click(
+      within(importPanel).getByRole("button", { name: "核对并应用" }),
+    );
+    expect(
+      await screen.findByText("脱敏配置包已导入并发布", { exact: false }),
+    ).toBeVisible();
+    expect(writes).toHaveLength(2);
+    expect(writes[1]?.path).toBe("/api/configuration/packages");
+    expect(writes[1]?.body).toMatchObject({
+      package: {
+        packageKind: "mediaflow.configuration.v1",
+        document: { locale: "zh-CN" },
+      },
+    });
+  });
+
+  it("imports the first complete document without an invented baseline", async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input === "/api/configuration/publish" && init?.method === "POST") {
+        writes.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        return response({
+          revisionId: "first-active",
+          status: "active",
+          published: true,
+        });
+      }
+      if (init?.method === "POST" || init?.method === "PUT")
+        return response({ error: { code: "unexpected_write" } }, 500);
+      return response(setupStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+    const importPanel = await screen.findByRole("region", {
+      name: "导入配置",
+    });
+    fireEvent.change(within(importPanel).getByLabelText("导入完整配置 JSON"), {
+      target: { value: '{"locale":"zh-CN"}' },
+    });
+    await userEvent.click(
+      within(importPanel).getByRole("button", { name: "核对并应用" }),
+    );
+    expect(
+      await screen.findByText("完整配置已发布", { exact: false }),
+    ).toBeVisible();
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toEqual({
+      document: { locale: "zh-CN" },
+    });
   });
 });

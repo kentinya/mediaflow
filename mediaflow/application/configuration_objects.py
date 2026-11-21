@@ -611,6 +611,27 @@ class ConfigurationObjectService:
         with self._setup_check_state_lock:
             return self._setup_checks_in_flight
 
+    def _save_evidence(
+        self,
+        evidence: object,
+        saver: str,
+        revision: ManagedConfigurationRevision,
+    ) -> object:
+        """Persist evidence only for a durable revision or the publish collector.
+
+        A read-only preview composes its exact candidate in memory; that
+        ephemeral revision has no repository row, so its evidence is returned
+        with the response instead of being written against a nonexistent
+        revision. The checked publication path swaps in the transient collector,
+        which still receives every item for the final atomic transaction.
+        """
+
+        if self._managed.is_transient_revision(revision.revision_id) and not isinstance(
+            self._repository, _TransientEvidenceCollector
+        ):
+            return evidence
+        return getattr(self._repository, saver)(evidence)
+
     def _acquire_setup_check(self) -> bool:
         if not self._setup_check_capacity.acquire(blocking=False):
             return False
@@ -3480,7 +3501,7 @@ class ConfigurationObjectService:
                     "correct the named policy field or sample, then explicitly rerun preview"
                 ),
             )
-        return self._repository.save_naming_preview(evidence)
+        return self._save_evidence(evidence, "save_naming_preview", revision)
 
     @classmethod
     def _section_kind(cls, section: str) -> ConfigurationObjectKind:
@@ -3854,7 +3875,7 @@ class ConfigurationObjectService:
                     "correct the policy or sample, then explicitly rerun classification preview"
                 ),
             )
-        return self._repository.save_classification_preview(evidence)
+        return self._save_evidence(evidence, "save_classification_preview", revision)
 
     def organize_authority(
         self,
@@ -3973,7 +3994,7 @@ class ConfigurationObjectService:
                     "then explicitly rerun organize authority"
                 ),
             )
-        return self._repository.save_organize_authority(evidence)
+        return self._save_evidence(evidence, "save_organize_authority", revision)
 
     def destination_preview(
         self,
@@ -4097,7 +4118,7 @@ class ConfigurationObjectService:
                     "in this Draft, then explicitly rerun destination preview"
                 ),
             )
-        return self._repository.save_destination_preview(evidence)
+        return self._save_evidence(evidence, "save_destination_preview", revision)
 
     def _validate_destination_request(
         self, recognition_type: str, sample: Mapping[str, object], label: str
@@ -4326,7 +4347,7 @@ class ConfigurationObjectService:
                     [],
                 ),
             )
-            return self._repository.save_destination_precheck(evidence)
+            return self._save_evidence(evidence, "save_destination_precheck", revision)
 
         storage_values = {
             str(value.get("id")): value
@@ -4345,7 +4366,7 @@ class ConfigurationObjectService:
                 "destination Storage is unresolved",
                 "add or correct the destination Storage in this Draft, then rerun precheck",
             )
-            return self._repository.save_destination_precheck(evidence)
+            return self._save_evidence(evidence, "save_destination_precheck", revision)
 
         # Provider-neutral pre-flight: a destination Storage that could never be
         # probed read-only fails before any adapter is constructed.
@@ -4364,7 +4385,7 @@ class ConfigurationObjectService:
                         "Storage, then rerun precheck"
                     ),
                 )
-                return self._repository.save_destination_precheck(evidence)
+                return self._save_evidence(evidence, "save_destination_precheck", revision)
             storage_type = str(storage_value.get("type", "")).lower()
             readiness = self._storage_secret_readiness(
                 storage_type, self._storage_options(storage_value)
@@ -4382,7 +4403,7 @@ class ConfigurationObjectService:
                         "reference, then rerun precheck"
                     ),
                 )
-                return self._repository.save_destination_precheck(evidence)
+                return self._save_evidence(evidence, "save_destination_precheck", revision)
         if len(set(storage_ids)) != 1:
             labels = ", ".join(
                 f"{storage_id}:{str(storage_values[storage_id].get('type', '')).lower()}"
@@ -4409,7 +4430,7 @@ class ConfigurationObjectService:
                 ),
                 result=self._destination_multi_result(len(request_samples), rows, []),
             )
-            return self._repository.save_destination_precheck(evidence)
+            return self._save_evidence(evidence, "save_destination_precheck", revision)
         storage_id = storage_ids[0]
         if not self._acquire_setup_check():
             return self._destination_precheck_failure(
@@ -4443,7 +4464,7 @@ class ConfigurationObjectService:
                 "destination precheck worker is unavailable",
                 "inspect service health, then rerun destination precheck",
             )
-            return self._repository.save_destination_precheck(evidence)
+            return self._save_evidence(evidence, "save_destination_precheck", revision)
         lease = _SetupCheckLease(self._release_setup_check)
         future.add_done_callback(lambda _future: lease.worker_finished())
         try:
@@ -4469,7 +4490,7 @@ class ConfigurationObjectService:
                     "destination precheck worker failed (details redacted)",
                     "inspect service health and configuration, then rerun precheck",
                 )
-            return self._repository.save_destination_precheck(evidence)
+            return self._save_evidence(evidence, "save_destination_precheck", revision)
         finally:
             lease.response_finished()
 
@@ -6054,7 +6075,11 @@ class ConfigurationObjectService:
                 next_action=("correct and validate the Draft, then explicitly rerun Strategy Test"),
             )
         if expected_evidence_tested_at is None:
-            return self._repository.save_recognition_strategy_test(evidence)
+            return self._save_evidence(evidence, "save_recognition_strategy_test", revision)
+        if self._managed.is_transient_revision(revision.revision_id) and not isinstance(
+            self._repository, _TransientEvidenceCollector
+        ):
+            return evidence
         return self._repository.replace_recognition_strategy_test(
             evidence,
             expected_revision_version=expected_version,
@@ -6643,7 +6668,7 @@ class ConfigurationObjectService:
                 message="Local setup check worker is unavailable",
                 next_action="inspect service health, then run the check again",
             )
-            return self._repository.save_local_setup_check(evidence)
+            return self._save_evidence(evidence, "save_local_setup_check", revision)
         lease = _SetupCheckLease(self._release_setup_check)
         future.add_done_callback(lambda _future: lease.worker_finished())
         try:
@@ -6684,7 +6709,7 @@ class ConfigurationObjectService:
                         "inspect service health and configuration, then run the check again"
                     ),
                 )
-            return self._repository.save_local_setup_check(evidence)
+            return self._save_evidence(evidence, "save_local_setup_check", revision)
         finally:
             lease.response_finished()
 
@@ -6752,7 +6777,7 @@ class ConfigurationObjectService:
                 progress,
                 "disabled",
             )
-            return self._repository.save_storage_setup_check(evidence)
+            return self._save_evidence(evidence, "save_storage_setup_check", revision)
         if any(entry["state"] == "UNSET" for entry in secret_readiness):
             evidence = self._storage_check_failure(
                 revision,
@@ -6760,7 +6785,7 @@ class ConfigurationObjectService:
                 progress,
                 "missing_secret",
             )
-            return self._repository.save_storage_setup_check(evidence)
+            return self._save_evidence(evidence, "save_storage_setup_check", revision)
         if not self._acquire_setup_check():
             evidence = self._storage_check_failure(
                 revision,
@@ -6768,7 +6793,7 @@ class ConfigurationObjectService:
                 progress,
                 "capacity_unavailable",
             )
-            return self._repository.save_storage_setup_check(evidence)
+            return self._save_evidence(evidence, "save_storage_setup_check", revision)
         started = time.monotonic()
         try:
             try:
@@ -6789,7 +6814,7 @@ class ConfigurationObjectService:
                     "worker_unavailable",
                     started=started,
                 )
-                return self._repository.save_storage_setup_check(evidence)
+                return self._save_evidence(evidence, "save_storage_setup_check", revision)
             lease = _SetupCheckLease(self._release_setup_check)
             future.add_done_callback(lambda _future: lease.worker_finished())
             try:
@@ -6815,7 +6840,7 @@ class ConfigurationObjectService:
                         "unknown",
                         started=started,
                     )
-                return self._repository.save_storage_setup_check(evidence)
+                return self._save_evidence(evidence, "save_storage_setup_check", revision)
             finally:
                 lease.response_finished()
         except Exception:
@@ -6878,7 +6903,7 @@ class ConfigurationObjectService:
                 progress,
                 "disabled",
             )
-            return self._repository.save_storage_setup_check(evidence)
+            return self._save_evidence(evidence, "save_storage_setup_check", revision)
         if any(entry["state"] == "UNSET" for entry in secret_readiness):
             evidence = self._storage_check_failure(
                 revision,
@@ -6886,7 +6911,7 @@ class ConfigurationObjectService:
                 progress,
                 "missing_secret",
             )
-            return self._repository.save_storage_setup_check(evidence)
+            return self._save_evidence(evidence, "save_storage_setup_check", revision)
         if not self._acquire_setup_check():
             evidence = self._storage_check_failure(
                 revision,
@@ -6894,7 +6919,7 @@ class ConfigurationObjectService:
                 progress,
                 "capacity_unavailable",
             )
-            return self._repository.save_storage_setup_check(evidence)
+            return self._save_evidence(evidence, "save_storage_setup_check", revision)
         started = time.monotonic()
         try:
             try:
@@ -6915,7 +6940,7 @@ class ConfigurationObjectService:
                     "worker_unavailable",
                     started=started,
                 )
-                return self._repository.save_storage_setup_check(evidence)
+                return self._save_evidence(evidence, "save_storage_setup_check", revision)
             lease = _SetupCheckLease(self._release_setup_check)
             future.add_done_callback(lambda _future: lease.worker_finished())
             try:
@@ -6941,7 +6966,7 @@ class ConfigurationObjectService:
                         "unknown",
                         started=started,
                     )
-                return self._repository.save_storage_setup_check(evidence)
+                return self._save_evidence(evidence, "save_storage_setup_check", revision)
             finally:
                 lease.response_finished()
         except Exception:

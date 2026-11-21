@@ -7154,8 +7154,7 @@ function normalizeRulesAnalysis(value: unknown): RulesAnalysisModel {
     testedAt: bounded(source.testedAt, 64) ?? "",
     stale: source.stale === true,
     localOnly: source.localOnly === true,
-    candidateState:
-      bounded(source.candidateState, 64) ?? "validated_non_active",
+    candidateState: bounded(source.candidateState, 64) ?? "check_only",
     providerCalls:
       typeof source.providerCalls === "number" ? source.providerCalls : 0,
     storageReads:

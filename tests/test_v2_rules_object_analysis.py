@@ -1059,18 +1059,24 @@ class RulesObjectAnalysisApiTests(unittest.TestCase):
         self.assertEqual(body["status"], "completed")
         self.assertIn("recognition", body["result"])
 
-    def test_analysis_evidence_is_persisted_and_readable_with_its_purpose(self) -> None:
+    def test_analysis_is_read_only_and_bound_to_the_submitted_candidate(self) -> None:
+        before_revisions = self.harness.config_repo.list_revisions(limit=100)
         status, body = self.analyze(
             "recognitionTypes", self.edit_candidate("recognitionTypes", "A")
         )
         self.assertEqual(status, 200)
         revision = self.harness.configuration.require(body["revisionId"])
-        # The analysed revision is a non-Active candidate; the Active is untouched.
-        self.assertNotEqual(revision.status.value, "active")
+        # The analysed revision is an in-memory check candidate; the Active and
+        # the durable revision list are untouched.
+        self.assertEqual(revision.status.value, "draft")
         active = self.harness.configuration.active()
         assert active is not None
         self.assertNotEqual(active.revision_id, revision.revision_id)
-        self.assertEqual(body["candidateState"], "validated_non_active")
+        self.assertEqual(
+            [item.revision_id for item in before_revisions],
+            [item.revision_id for item in self.harness.config_repo.list_revisions(limit=100)],
+        )
+        self.assertEqual(body["candidateState"], "check_only")
 
 
 class RulesObjectAnalysisEngineTests(unittest.TestCase):

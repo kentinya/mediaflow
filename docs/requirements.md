@@ -637,7 +637,7 @@ Candidate
   Storage 或 Organizer，旧在途工作继续使用原快照。
 - 运行时缺失/损坏场景会拒绝工作且不回退 JSON；F1 在完整 runtime 校验成功前不发布 identity，
   runtime-invalid Active 的重复 API 请求持续返回结构化 503 且不创建 Job。
-- Active 缺失、损坏或运行时不兼容时，配置状态、整文档 Draft 替换、校验和显式恢复激活可从
+- Active 缺失、损坏或运行时不兼容时，配置状态、整文档完整替换、校验和显式恢复发布可从
   不可信工作流 JSON 中隔离；API 错误显示 last-known identity、持久状态、副作用、重试安全性和
   下一动作。F2 实现使每个新 API 请求只使用一个完整 old/new binding，新激活的上限与
   execute gate 与 Job pin 一致；这些行为已由当前代码和对应测试覆盖。
@@ -666,8 +666,8 @@ ResourceLibrary 合并、完整配置校验、适用的 checked publication 和�
 
 首次激活允许业务区段完全为空。这取代此前必须先填写 Storage、库和策略的 V2 向导目标，以及
 “无 Active 时各业务页保存 Draft”的提案；不改写已发布 V1 能力或 Slice 39 的历史验收。
-设置页负责首个 Draft、显式激活、完整配置 JSON 查看/导出，以及其他页面未覆盖且后端明确支持
-的高级配置，不要求用户在首次设置中填写媒体业务表单。
+设置页负责空配置初始化、显式发布、只读配置 JSON、完整配置与脱敏包导入以及脱敏导出，以及
+其他页面未覆盖且后端明确支持的高级配置，不要求用户在首次设置中填写媒体业务表单。
 
 - 部署只提供应用配置文件、持久化位置和管理员 API 凭据。进入 V2 系统设置后，由管理员明确
   将空配置初始化并发布；进入、刷新、重连和返回只读取当前 Active 与历史已发布快照。
@@ -718,8 +718,8 @@ MediaLibrary 加安全相对路径的分类输出，以及整理操作、冲突�
 删除媒体、历史快照或 Result。一个识别类型只有一个启用绑定，C 复用 A 下游策略时身份仍为 C。
 
 一次 `保存` 根据读取时的精确 Active 构造聚焦 successor，自动执行完整校验、适用证据、运行时
-准备与 checked atomic activation。页面不要求另行保存 Draft、校验或激活；失败保留旧 Active、
-可修正输入和已持久候选的明确状态，未知结果先读取实际 Active 核实，不自动重发。
+准备与 checked atomic activation。页面不要求另行保存候选、校验或激活；失败保留旧 Active 和
+可修正输入，未知结果先读取实际 Active 核实，不自动重发。
 
 明确测试/预览使用有界 non-Active 候选，提供识别策略、元数据、命名、分类和整理权限/目标解释。
 结果逐项独立，编辑后显示过期。Offline 不调用 Provider；live 元数据访问仅在明确意图下通过
@@ -3526,7 +3526,7 @@ policy resolver、Naming/Classification engine、Planner 共用的组合与路�
 checked activation 对每个被 ResourceLibrary 或 MediaLibrary 引用且启用的 Storage 要求当前、passed
 且绑定精确 revision/version/digest 的只读 Storage check evidence；同时要求当前 Recognition Strategy
 Test 和 MediaLibrary destination 的 provider-neutral destination precheck。missing/stale/failed、
-credential readiness 变化以及 `capability_gap` 均保留 Draft 与之前 Active，并 fail closed。
+credential readiness 变化以及 `capability_gap` 均保留之前 Active，并 fail closed。
 
 写入式能力探测、单次请求的多 RecognitionType/多目标 Storage、已知媒体
 重复检测、附件预检、绝对 mounted-path 显示、通用 Task resume 和超出 Slice 24 有界边界的

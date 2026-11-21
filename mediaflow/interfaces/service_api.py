@@ -15696,7 +15696,7 @@ class MediaFlowApi:
                 sample=document["sample"],
             )
         response_document = evidence if isinstance(evidence, dict) else evidence.document()
-        response_document["candidateState"] = "validated_non_active"
+        response_document["candidateState"] = "check_only"
         if kind in {"strategy", "metadata"} and isinstance(response_document.get("result"), dict):
             response_document["result"]["source"] = {
                 "resourceLibraryId": document["resourceLibraryId"],
