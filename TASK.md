@@ -314,3 +314,25 @@ Authorized bug acceptance complete: NO
 - `TMPDIR=<repo>/.git/smoke-tmp .venv/bin/python scripts/docker_health_smoke_test.py` 已通过共用初始化：真实容器内发布成功并从 `/api/configuration` 读回同一 Active。之后在 `chmod 000` 媒体根目录的降级步骤等待 API `unhealthy` 超时；Colima 的挂载未向容器反映该权限变化，完整健康套件未在本机通过。
 
 剩余风险：T4 全量、重启/发布安全两套完整 Docker 门禁、真实桌面与 390px 截图、Base 数据切换按 Task 分工留给 B。仓库内仍有三个未被现行文档或门禁引用的历史浏览器证明脚本描述已退役草稿界面；它们不是产品入口或当前验证入口，本轮未改。
+
+### B 第十次返工复核
+
+```text
+Reviewed Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Reviewed Head: c4d3b79d6d5d0aa7c0b6dcb87c7da17e323d6058
+Reviewed Implementation: 0ae629b7a3bfb2bd7e0a7a2bfe0dae02409a3385
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+- 上轮两处阻塞已解决。真实 Python 浏览器通知用例 3 项通过。新建 Webhook 应用后即使回包丢失，整页重载并重新连接也会自动核实原请求，打开已发布定义，整个旅程只提交一次。Docker 重启与故障验收、发布安全验收均通过。空配置和媒体挂载旅程通过。
+- **自动化列表仍提供配置草稿筛选，并把生效版本标成一份草稿。** 管理员登录真实 Web，从「任务中心 → Automation」看到两条已发布任务。选择「发布状态 → 仅草稿」后，实际列表请求携带 `state=draft-only`，返回 `200` 和零条结果，页面显示「没有匹配的自动化任务」。清除筛选后两条任务重新出现。打开列表时，后端还给已发布行返回 `draftState.present=true`，其中的修订 ID 与该行的 Active 相同，并把旧的后继草稿创建动作标为可用。首轮退役把现有 Active 放进了原来的草稿合并逻辑，因此实际响应仍暴露退役状态和入口。
+- Python 全量执行 2326 项，跳过 7 项，其余通过。Web 单测 104 个文件、1596 项通过，完整 Node 浏览器套件 276 项通过。真实设置和自动化运行设置浏览器用例 20 项通过。生产 Web 构建、类型检查、Lint、Prettier、Ruff、Python 编译、依赖检查、示例配置验证和治理检查通过。候选 wheel 冒烟及独立安装后的恢复用例通过。
+- 复用先前 B 对真实 Base 库副本的切换证据。数据切换代码、CLI、配置仓库及相关测试自该候选未变。只读查询及未确认的切换不修改旧库，确认后保留已发布版本、审计、任务引用和结果。
+- Developer 的 Docker 健康检查记录显示，容器直接发布及读回成功，媒体挂载权限降级阶段等待 API 变为 `unhealthy` 超时。完整健康旅程仍待验证。其余本轮证据在 `.git/validation-evidence/c4d3b79d6d5d0aa7c0b6dcb87c7da17e323d6058/b-review/`，包含自动化操作截图和实际列表响应摘要。
+
+#### Developer 修复指导
+
+1. 从自动化列表删除「发布状态」中的草稿筛选和对应查询。用当前生效配置直接投影列表，删除把 Active 当草稿合并的逻辑，以及列表和定义详情中的旧草稿状态、计数和创建动作。同步 Web 响应模型与测试夹具。原草稿筛选值按无效输入处理。
+2. 从「任务中心 → Automation」复测有现存任务的列表。验证能通过启用状态筛选、打开详情、编辑并读回已发布值。沿此页面实际发送的列表请求核对响应只有当前发布状态，并用本轮已观察到的旧筛选参数验证拒绝。用现有空配置和历史定义入口验证引导指向初始化或查看记录。
