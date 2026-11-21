@@ -7,7 +7,6 @@ import {
   normalizeAutomationAction,
   normalizeAutomationDefinition,
   normalizeAutomationDefinitionsPage,
-  normalizeAutomationDraftState,
   normalizeAutomationMetrics,
   normalizeAutomationPreview,
   normalizeAutomationRecordsPage,
@@ -19,8 +18,7 @@ import {
  * Focused normalization regressions for the V2 Automation operator documents.
  *
  * Every action transport is bound to its exact owned route, method and
- * URI-safe identity (the draft-save parameter is pinned to the exact
- * definition identity), every contradictory state block fails closed, and the
+ * URI-safe identity, every contradictory state block fails closed, and the
  * whole page is malformed when any embedded evidence disagrees with itself.
  */
 
@@ -34,16 +32,17 @@ function offeredAction(
     path: "/api/automation/task-definitions/auto-task/copy",
     requiresConfirmation: false,
     sideEffects: "none",
-    durableOutcome: "a copied definition is stored inside the open Draft",
-    nextAction: "open the successor Draft and copy the definition inside it",
+    durableOutcome:
+      "the copied definition is validated and published as the new Active",
+    nextAction: "open the copied definition, then apply any wanted change",
     ...overrides,
   };
 }
 
 /**
  * One bounded Active-definition list item exactly as the Operations
- * projection advertises it, parameterized by identity so the combined
- * Active/Draft-only page boundary can be reproduced item by item.
+ * projection advertises it, parameterized by identity so the bounded page
+ * boundary can be reproduced item by item.
  */
 function listDefinitionPayload(
   id: string,
@@ -78,17 +77,6 @@ function listDefinitionPayload(
       lastFailureCategory: null,
       outcomeSummary: null,
     },
-    draftState: {
-      present: false,
-      reason: "no open successor Draft contains this definition",
-      revisionId: null,
-      revisionVersion: null,
-      revisionStatus: null,
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
-    },
     actions: {
       detail: {
         available: true,
@@ -112,17 +100,10 @@ function listDefinitionPayload(
         requiresConfirmation: false,
       },
       copy: {
-        available: false,
-        reason: "an open successor Draft is required to copy this definition",
-        method: "POST",
-        path: `${automationRoute}/copy`,
-        requiresConfirmation: false,
-      },
-      draftCreate: {
         available: true,
         reason: null,
         method: "POST",
-        path: "/api/configuration/revisions/rev-1/successor",
+        path: `${automationRoute}/copy`,
         requiresConfirmation: false,
       },
     },
@@ -166,9 +147,8 @@ function definitionsPagePayload(
       inventory: {
         published: 100,
         enabled: 2,
-        draftOnly: 1,
-        total: 101,
-        basis: "exact_current_active_and_open_drafts",
+        total: 100,
+        basis: "exact_current_active",
         scope: "full_authorized_population",
       },
       noWorkStatement: "skipped files are not organized files",
@@ -178,9 +158,8 @@ function definitionsPagePayload(
     inventoryCounts: {
       published: 100,
       enabled: 2,
-      draftOnly: 1,
-      total: 101,
-      basis: "exact_current_active_and_open_drafts",
+      total: 100,
+      basis: "exact_current_active",
       scope: "full_authorized_population",
     },
     latestAdmittedRuns: {},
@@ -188,7 +167,6 @@ function definitionsPagePayload(
       q: null,
       enabled: null,
       library: null,
-      state: null,
       sort: "name",
       direction: "asc",
       limit: 20,
@@ -197,17 +175,6 @@ function definitionsPagePayload(
     itemsTruncatedByCap: false,
     next_cursor: null,
     previous_cursor: null,
-    draftState: {
-      present: false,
-      reason: "no open successor Draft exists",
-      revisionId: null,
-      revisionVersion: null,
-      revisionStatus: null,
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
-    },
     resourceLibraryOptions: [{ id: "source", name: "Source", enabled: true }],
     actions: {
       create: {
@@ -215,13 +182,6 @@ function definitionsPagePayload(
         reason: null,
         method: "POST",
         path: "/api/automation/task-definitions",
-        requiresConfirmation: false,
-      },
-      createDraft: {
-        available: true,
-        reason: null,
-        method: "POST",
-        path: "/api/configuration/revisions/rev-1/successor",
         requiresConfirmation: false,
       },
     },
@@ -289,19 +249,6 @@ describe("normalizeAutomationAction transport binding", () => {
         kind: "definition-copy",
         identity: "auto-task",
       },
-      {
-        // The draft-save parameter must name the exact definition.
-        path: "/api/configuration/revisions/rev-1/objects/automationTaskDefinitions/other-task",
-        kind: "draft-save",
-        identity: "rev-1",
-        parameter: "auto-task",
-      },
-      {
-        // A non-URI-safe parameter segment is malformed even when unpinned.
-        path: "/api/configuration/revisions/rev-1/objects/automationTaskDefinitions/<task>",
-        kind: "draft-save",
-        identity: "rev-1",
-      },
     ];
     for (const item of cases) {
       expect(() =>
@@ -338,37 +285,6 @@ describe("normalizeAutomationAction transport binding", () => {
         "actions.create",
         "list-create",
       ),
-    ).toThrow(AutomationNormalizationError);
-  });
-});
-
-describe("automation state block fail-closed contracts", () => {
-  it("rejects a draft state that contradicts its own identity", () => {
-    expect(() =>
-      normalizeAutomationDraftState({
-        present: true,
-        reason: null,
-        revisionId: null,
-        revisionVersion: null,
-        revisionStatus: "draft",
-        baseActiveRevisionId: null,
-        updatedAt: null,
-        validatedAt: null,
-        validationErrors: [],
-      }),
-    ).toThrow(AutomationNormalizationError);
-    expect(() =>
-      normalizeAutomationDraftState({
-        present: false,
-        reason: "no draft",
-        revisionId: "rev-1",
-        revisionVersion: 2,
-        revisionStatus: null,
-        baseActiveRevisionId: null,
-        updatedAt: null,
-        validatedAt: null,
-        validationErrors: [],
-      }),
     ).toThrow(AutomationNormalizationError);
   });
 });
@@ -648,7 +564,7 @@ describe("normalizeAutomationMetrics", () => {
 });
 
 describe("normalizeAutomationDefinitionsPage", () => {
-  it("normalizes the bounded page with Active identity, metrics and Draft state", () => {
+  it("normalizes the bounded page with Active identity and metrics", () => {
     const page = normalizeAutomationDefinitionsPage(definitionsPagePayload([]));
     expect(page.activeConfiguration?.revisionId).toBe("rev-1");
     expect(page.resourceLibraryOptions[0]?.id).toBe("source");
@@ -670,18 +586,9 @@ describe("normalizeAutomationDefinitionsPage", () => {
     ).toThrow(AutomationNormalizationError);
   });
 
-  it("accepts the combined 100-Active + 1-Draft-only boundary page", () => {
-    // The backend caps the combined Active + Draft-only page at exactly 100
-    // items and reports the truthful total/truncated semantics when a
-    // Draft-only definition is dropped beyond the deterministic limit —
-    // precisely the page this normalizer must accept.
+  it("accepts the bounded published page", () => {
     const items = Array.from({ length: 100 }, (_unused, index) =>
-      listDefinitionPayload(
-        index === 99 ? "draft-only-task" : `task-${index}`,
-        {
-          definitionState: index === 99 ? "draft-only" : "active",
-        },
-      ),
+      listDefinitionPayload(`task-${index}`),
     );
     const page = normalizeAutomationDefinitionsPage(
       definitionsPagePayload(items),
@@ -689,7 +596,16 @@ describe("normalizeAutomationDefinitionsPage", () => {
     expect(page.items).toHaveLength(100);
     expect(page.total).toBe(101);
     expect(page.truncated).toBe(true);
-    expect(page.items[99]?.definitionState).toBe("draft-only");
+  });
+
+  it("rejects a retired draft-only definition state", () => {
+    expect(() =>
+      normalizeAutomationDefinitionsPage(
+        definitionsPagePayload([
+          listDefinitionPayload("auto-task", { definitionState: "draft-only" }),
+        ]),
+      ),
+    ).toThrow(AutomationNormalizationError);
   });
 
   it("fails closed when the combined page exceeds the deterministic limit", () => {
@@ -723,13 +639,13 @@ describe("normalizeAutomationDefinitionsPage", () => {
       },
       runOnce: {
         available: false,
-        reason: "not Active yet",
+        reason: "this definition was removed; retained history is read-only",
         method: "POST",
         path: "/api/operations/automation/task-definitions/auto-task/run-once",
         sideEffects: "none",
         durableOutcome:
           "a durable bounded discovery of the definition scope is admitted",
-        nextAction: "activate the Draft before starting Run once",
+        nextAction: "inspect retained results; removed work is never restarted",
       },
       copy: {
         available: true,
@@ -737,17 +653,9 @@ describe("normalizeAutomationDefinitionsPage", () => {
         method: "POST",
         path: "/api/automation/task-definitions/auto-task/copy",
         sideEffects: "none",
-        durableOutcome: "a copied definition is stored inside the Draft",
-        nextAction: "copy the definition inside the open successor Draft",
-      },
-      draftCreate: {
-        available: true,
-        reason: null,
-        method: "POST",
-        path: "/api/configuration/revisions/rev-1/successor",
-        sideEffects: "none",
-        durableOutcome: "a successor Draft is stored",
-        nextAction: "create or open the successor Draft",
+        durableOutcome:
+          "the copied definition is validated and published as the new Active",
+        nextAction: "open the copied definition, then apply any wanted change",
       },
     };
     const activeDefinition = {
@@ -776,17 +684,6 @@ describe("normalizeAutomationDefinitionsPage", () => {
         nextAction: null,
         lastFailureCategory: null,
         outcomeSummary: null,
-      },
-      draftState: {
-        present: false,
-        reason: "no open successor Draft contains this definition",
-        revisionId: null,
-        revisionVersion: null,
-        revisionStatus: null,
-        baseActiveRevisionId: null,
-        updatedAt: null,
-        validatedAt: null,
-        validationErrors: [],
       },
       actions,
     };
@@ -825,9 +722,9 @@ describe("normalizeAutomationDefinitionsPage", () => {
         { withReadiness: true },
       ),
     ).toThrow();
-    // A definition whose state marker is missing, hostile or claims Active
-    // while it only lives in a Draft is malformed evidence: the UI renders
-    // no control instead of guessing.
+    // A definition whose state marker is missing, hostile or names a retired
+    // draft-only state is malformed evidence: the UI renders no control
+    // instead of guessing.
     expect(() =>
       normalizeAutomationDefinition(
         { ...activeDefinition, definitionState: undefined },
@@ -842,15 +739,6 @@ describe("normalizeAutomationDefinitionsPage", () => {
         ),
       ).toThrow(AutomationNormalizationError);
     }
-    expect(
-      normalizeAutomationDefinition(
-        {
-          ...activeDefinition,
-          definitionState: "draft-only",
-        },
-        "definition",
-      ).definitionState,
-    ).toBe("draft-only");
     expect(
       normalizeAutomationDefinition(activeDefinition, "definition")
         .definitionState,

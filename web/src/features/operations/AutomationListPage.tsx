@@ -110,12 +110,6 @@ const RECORD_TRIGGER_OPTIONS = [
   ["manual", "手动运行一次"],
 ] as const;
 
-const DEFINITIONS_STATE_OPTIONS = [
-  ["", "全部状态"],
-  ["active", "已生效"],
-  ["draft-only", "仅草稿"],
-] as const;
-
 /** The bounded weekday-free date/time input values the backend accepts (UTC). */
 const RECORD_TIME_TOKEN = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?$/;
 
@@ -159,7 +153,6 @@ const LIST_SEARCH_KEYS = [
   "tab",
   "q",
   "enabled",
-  "state",
   "library",
   "sort",
   "cursor",
@@ -600,7 +593,6 @@ export function AutomationListPage({
     searchText(searchParams, "dir") === "previous" ? "previous" : "next";
   const search = searchText(searchParams, "q");
   const enabledFilter = searchText(searchParams, "enabled");
-  const stateFilter = searchText(searchParams, "state");
   const libraryFilter = searchText(searchParams, "library");
   const sort = searchText(searchParams, "sort") || "name";
   const recordStatus = searchText(searchParams, "rstatus");
@@ -672,7 +664,6 @@ export function AutomationListPage({
             : enabledFilter === "false"
               ? false
               : null,
-        state: stateFilter === "" ? null : stateFilter,
         library: libraryFilter.trim() === "" ? null : libraryFilter.trim(),
         sort,
         limit: 20,
@@ -1537,7 +1528,6 @@ export function AutomationListPage({
       tab: "definitions",
       q: search,
       enabled: enabledFilter,
-      state: stateFilter,
       library: libraryFilter,
       sort,
       cursor: "",
@@ -1729,10 +1719,7 @@ export function AutomationListPage({
   // over the complete authorized population.
   const inventoryCounts = definitionsPage?.inventoryCounts ?? null;
   const definitionFiltered =
-    search.trim() !== "" ||
-    enabledFilter !== "" ||
-    stateFilter !== "" ||
-    libraryFilter.trim() !== "";
+    search.trim() !== "" || enabledFilter !== "" || libraryFilter.trim() !== "";
   const recordFiltered =
     recordStatus !== "" ||
     recordTrigger !== "" ||
@@ -1958,10 +1945,10 @@ export function AutomationListPage({
               return (
                 <DefinitionsTab
                   page={data.model}
+                  initialized={data.model.activeConfiguration !== null}
                   latestRuns={latestRuns}
                   search={searchDraft}
                   enabled={enabledFilter}
-                  state={stateFilter}
                   library={libraryDraft}
                   sort={sort}
                   filtered={definitionFiltered}
@@ -1980,9 +1967,6 @@ export function AutomationListPage({
                   }}
                   onEnabled={(value) =>
                     submitSearch(definitionState({ enabled: value }))
-                  }
-                  onState={(value) =>
-                    submitSearch(definitionState({ state: value }))
                   }
                   onSort={(value) =>
                     submitSearch(definitionState({ sort: value }))
@@ -2130,10 +2114,10 @@ export function AutomationListPage({
 
 function DefinitionsTab({
   page,
+  initialized,
   latestRuns,
   search,
   enabled,
-  state,
   library,
   sort,
   filtered,
@@ -2141,7 +2125,6 @@ function DefinitionsTab({
   onSearchChange,
   onSearchSubmit,
   onEnabled,
-  onState,
   onLibraryChange,
   onLibrarySubmit,
   onSort,
@@ -2170,15 +2153,11 @@ function DefinitionsTab({
     readonly itemsTruncatedByCap: boolean;
     readonly nextCursor: string | null;
     readonly previousCursor: string | null;
-    readonly draftState: {
-      readonly reason: string | null;
-      readonly present: boolean;
-    };
   } | null;
+  readonly initialized: boolean;
   readonly latestRuns: Readonly<Record<string, AutomationLatestRunModel>>;
   readonly search: string;
   readonly enabled: string;
-  readonly state: string;
   readonly library: string;
   readonly sort: string;
   readonly filtered: boolean;
@@ -2189,7 +2168,6 @@ function DefinitionsTab({
   readonly onSearchChange: (value: string) => void;
   readonly onSearchSubmit: (value: string) => void;
   readonly onEnabled: (value: string) => void;
-  readonly onState: (value: string) => void;
   readonly onLibraryChange: (value: string) => void;
   readonly onLibrarySubmit: (value: string) => void;
   readonly onSort: (value: string) => void;
@@ -2263,20 +2241,6 @@ function DefinitionsTab({
             <option value="">全部</option>
             <option value="true">已启用</option>
             <option value="false">未启用</option>
-          </select>
-        </div>
-        <div className="mf-automation-filter-field">
-          <label htmlFor="automation-state">发布状态</label>
-          <select
-            id="automation-state"
-            value={state}
-            onChange={(event) => onState(event.target.value)}
-          >
-            {DEFINITIONS_STATE_OPTIONS.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
           </select>
         </div>
         <div className="mf-automation-filter-field">
@@ -2443,8 +2407,12 @@ function DefinitionsTab({
               ? "当前筛选条件下没有自动化任务。清除筛选可查看全部已授权任务。"
               : "创建后任务默认停用；可在列表中启用或运行一次，创建本身不会扫描或整理媒体文件。"}
           </p>
-          {!filtered && page.draftState.reason && (
-            <p>{page.draftState.reason}</p>
+          {!filtered && !initialized && (
+            <p>
+              尚未初始化配置。请先前往
+              <Link to="/configuration">系统设置</Link>
+              完成初始化，再创建自动化任务。
+            </p>
           )}
         </StatusBanner>
       ) : (

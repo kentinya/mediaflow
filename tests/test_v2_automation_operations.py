@@ -5,12 +5,12 @@ configuration runtime, real LocalStorage roots and the real definition
 occurrence/Run once services. They prove the new
 ``/api/operations/automation/*`` read projections are bounded operator
 documents — no revision digests, definition fingerprints, source fingerprints
-or raw organize plans — with backend-authoritative actions and Draft state;
-that the Draft → Validate → checked-Activate journey composes the existing
-managed-configuration routes atomically and starts no work; that a definition
-Run once keeps its exact admitted scope and zero-mutation analysis; and that
-the existing ``/api/automation`` and configuration surfaces remain
-untouched for V1 clients.
+or raw organize plans — with backend-authoritative actions over the exact
+published Active configuration; that the direct create/update journey
+publishes atomically and starts no work; that a definition Run once keeps its
+exact admitted scope and zero-mutation analysis; and that the existing
+``/api/automation`` and configuration surfaces remain untouched for V1
+clients.
 """
 
 from __future__ import annotations
@@ -189,24 +189,6 @@ class _RecordingStorage(LocalStorage):
         return super().soft_link(*args, **kwargs)
 
 
-class _FailingDraftReadRepository:
-    """Repository double whose open-Draft listing fails like a corrupt read.
-
-    Every other call delegates to the real repository, so only Draft
-    discovery becomes unavailable — the exact failure shape that must be
-    reported as bounded unavailability instead of an empty Draft state.
-    """
-
-    def __init__(self, inner) -> None:
-        self._inner = inner
-
-    def __getattr__(self, name):  # noqa: ANN001
-        return getattr(self._inner, name)
-
-    def list_revisions(self, *, limit: int = 100):
-        raise RuntimeError("simulated configuration repository failure")
-
-
 class AutomationOperatorJourneyTests(unittest.TestCase):
     """Current direct-publication Automation operator journeys."""
 
@@ -338,17 +320,52 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             item = page["items"][0]
             self.assertEqual(item["id"], _DEFINITION["id"])
             self.assertEqual(item["definitionState"], "active")
-            self.assertFalse(page["draftState"]["present"])
-            self.assertFalse(page["actions"]["createDraft"]["available"])
-            self.assertIsNone(page["actions"]["createDraft"]["path"])
+            self.assertNotIn("draftState", page)
+            self.assertNotIn("createDraft", page["actions"])
+            self.assertNotIn("draftOnly", page["inventoryCounts"])
+            self.assertEqual(
+                page["inventoryCounts"],
+                {
+                    "published": 1,
+                    "enabled": 1,
+                    "total": 1,
+                    "basis": "exact_current_active",
+                    "scope": "full_authorized_population",
+                },
+            )
+            self.assertNotIn("state", page["query"])
+            status, enabled = _request(value.api, OPERATIONS_ROUTE, query="enabled=true")
+            self.assertEqual(status, 200, enabled)
+            self.assertEqual([item["id"] for item in enabled["items"]], [_DEFINITION["id"]])
+            status, disabled = _request(value.api, OPERATIONS_ROUTE, query="enabled=false")
+            self.assertEqual(status, 200, disabled)
+            self.assertEqual(disabled["items"], [])
             status, detail = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}")
             self.assertEqual(status, 200)
             _assert_operator_document_clean(detail)
+            self.assertNotIn("draftState", detail["definition"])
+            self.assertNotIn("draftCreate", detail["definition"]["actions"])
             status, viewer = _request(
                 value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}", token=VIEWER_TOKEN
             )
             self.assertEqual(status, 200)
             self.assertNotIn("activate-draft", json.dumps(viewer))
+
+    def test_retired_state_filter_and_draft_fields_are_invalid(self) -> None:
+        with self._journey() as value:
+            for query in ("state=draft-only", "state=active", "state=all", "state=bogus"):
+                status, response = _request(value.api, OPERATIONS_ROUTE, query=query)
+                self.assertEqual(status, 400, (query, response))
+                self.assertEqual(response["error"]["code"], "invalid_request", response)
+            for suffix in (
+                "",
+                f"/{_DEFINITION['id']}",
+            ):
+                status, body = _request(value.api, f"{OPERATIONS_ROUTE}{suffix}")
+                self.assertEqual(status, 200, body)
+                self.assertNotIn("draftState", json.dumps(body))
+                self.assertNotIn("createDraft", json.dumps(body))
+                self.assertNotIn("draftOnly", json.dumps(body))
 
     def test_direct_create_and_update_publish_without_a_draft(self) -> None:
         with self._journey() as value:

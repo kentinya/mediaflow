@@ -41,7 +41,6 @@ export function automationListQueryOptions(
       options.q ?? null,
       options.enabled ?? null,
       options.library ?? null,
-      options.state ?? null,
       options.sort ?? null,
       options.direction ?? null,
       options.limit ?? null,

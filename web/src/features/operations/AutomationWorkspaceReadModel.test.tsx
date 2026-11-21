@@ -112,17 +112,6 @@ function definitionDocument(overrides: Json = {}): Json {
       definitionChangedSinceGrant: false,
       nextAction: "review the exact definition bounds and explicitly grant",
     },
-    draftState: {
-      present: false,
-      reason: "no open successor Draft contains this definition",
-      revisionId: null,
-      revisionVersion: null,
-      revisionStatus: null,
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
-    },
     activeConfiguration: {
       revisionId: ACTIVE_REVISION,
       version: 3,
@@ -156,9 +145,6 @@ function definitionDocument(overrides: Json = {}): Json {
       copy: action({
         method: "POST",
         path: "/api/automation/task-definitions/auto-task/copy",
-      }),
-      draftCreate: action({
-        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
       }),
     },
     ...overrides,
@@ -220,9 +206,8 @@ function inventoryCountsDocument(overrides: Json = {}): Json {
   return {
     published: 27,
     enabled: 11,
-    draftOnly: 3,
-    total: 30,
-    basis: "exact_current_active_and_open_drafts",
+    total: 27,
+    basis: "exact_current_active",
     scope: "full_authorized_population",
     ...overrides,
   };
@@ -262,7 +247,6 @@ function listDocument(overrides: Json = {}): Json {
       q: null,
       enabled: null,
       library: null,
-      state: null,
       sort: "name",
       direction: "asc",
       limit: 20,
@@ -271,25 +255,11 @@ function listDocument(overrides: Json = {}): Json {
     itemsTruncatedByCap: false,
     next_cursor: null,
     previous_cursor: null,
-    draftState: {
-      present: false,
-      reason: "no open successor Draft exists",
-      revisionId: null,
-      revisionVersion: null,
-      revisionStatus: null,
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
-    },
     resourceLibraryOptions: [{ id: "source", name: "Source", enabled: true }],
     actions: {
       create: action({
         method: "POST",
         path: "/api/automation/task-definitions",
-      }),
-      createDraft: action({
-        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
       }),
     },
     ...overrides,
@@ -496,9 +466,9 @@ describe("V2 Automation workspace read model", () => {
     await screen.findByRole("heading", { name: "自动化" });
     await waitFor(() => expect(calls.length).toBeGreaterThan(0));
     // The published count is the backend's published population (27), not the
-    // one row on this page, and Draft-only entries are labelled apart.
+    // one row on this page.
     expect(await screen.findByText("27")).toBeVisible();
-    expect(screen.getByText(/已启用 11 · 待发布 3/)).toBeVisible();
+    expect(screen.getByText(/已启用 11$/)).toBeVisible();
     // The rate explanation names its own completed-plus-failed denominator,
     // separately from the all-ended count that also includes cancellation.
     expect(screen.getByText(/评估 4 次 · 已结束 4 次/)).toBeVisible();
@@ -515,7 +485,7 @@ describe("V2 Automation workspace read model", () => {
     );
     // Filtering did not change the cards.
     expect(screen.getByText("27")).toBeVisible();
-    expect(screen.getByText(/已启用 11 · 待发布 3/)).toBeVisible();
+    expect(screen.getByText(/已启用 11$/)).toBeVisible();
   });
 
   it("labels a successful no-work completion instead of success", async () => {

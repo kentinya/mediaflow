@@ -88,13 +88,6 @@ function definitionDocument(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   const id = typeof overrides.id === "string" ? overrides.id : DEFINITION_ID;
-  const activeOverride = overrides.activeConfiguration;
-  const activeRevisionId =
-    activeOverride !== null &&
-    typeof activeOverride === "object" &&
-    typeof (activeOverride as Record<string, unknown>).revisionId === "string"
-      ? ((activeOverride as Record<string, unknown>).revisionId as string)
-      : ACTIVE_REVISION;
   return {
     id,
     name: "Nightly automation",
@@ -123,17 +116,6 @@ function definitionDocument(
       definitionId: id,
       definitionChangedSinceGrant: false,
       nextAction: "review the exact definition bounds and explicitly grant",
-    },
-    draftState: {
-      present: false,
-      reason: "no open successor Draft contains this definition",
-      revisionId: null,
-      revisionVersion: null,
-      revisionStatus: null,
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
     },
     activeConfiguration: {
       revisionId: ACTIVE_REVISION,
@@ -169,9 +151,6 @@ function definitionDocument(
         method: "POST",
         path: `/api/automation/task-definitions/${id}/copy`,
       }),
-      draftCreate: action({
-        path: `/api/configuration/revisions/${activeRevisionId}/successor`,
-      }),
     },
     ...overrides,
   };
@@ -202,9 +181,8 @@ function metricsDocument(): Record<string, unknown> {
     inventory: {
       published: 1,
       enabled: 0,
-      draftOnly: 0,
       total: 1,
-      basis: "exact_current_active_and_open_drafts",
+      basis: "exact_current_active",
       scope: "full_authorized_population",
     },
     noWorkStatement: "no work is not organizing success",
@@ -230,9 +208,8 @@ function listDocument(
     inventoryCounts: {
       published: items.length,
       enabled: 0,
-      draftOnly: 0,
       total: items.length,
-      basis: "exact_current_active_and_open_drafts",
+      basis: "exact_current_active",
       scope: "full_authorized_population",
     },
     latestAdmittedRuns: {},
@@ -240,7 +217,6 @@ function listDocument(
       q: null,
       enabled: null,
       library: null,
-      state: null,
       sort: "name",
       direction: "asc",
       limit: 20,
@@ -249,25 +225,11 @@ function listDocument(
     itemsTruncatedByCap: false,
     next_cursor: null,
     previous_cursor: null,
-    draftState: {
-      present: false,
-      reason: "no open successor Draft exists",
-      revisionId: null,
-      revisionVersion: null,
-      revisionStatus: null,
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
-    },
     resourceLibraryOptions: [{ id: "source", name: "Source", enabled: true }],
     actions: {
       create: action({
         method: "POST",
         path: "/api/automation/task-definitions",
-      }),
-      createDraft: action({
-        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
       }),
     },
   };

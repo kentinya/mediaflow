@@ -9,17 +9,16 @@ import { renderApp } from "../../../tests/utils";
  *
  * Every document mirrors the exact operator projection the real Python API
  * returns (proved by tests/test_v2_automation_operations.py). The assertions
- * prove the operator journey and its safety properties: Draft/Active
- * distinction, backend-authoritative availability, one confirmed grant action,
- * exact request methods and bodies, no authority material in any request, and
- * no executable control for a state the backend does not advertise.
+ * prove the operator journey and its safety properties: published Active
+ * identity, backend-authoritative availability, exact request methods and
+ * bodies, no authority material in any request, and no executable control for
+ * a state the backend does not advertise.
  */
 
 type Json = Record<string, unknown>;
 
 const TOKEN = "automation-token";
 const ACTIVE_REVISION = "revision-active-1";
-const DRAFT_REVISION = "revision-draft-1";
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -88,8 +87,9 @@ function action(
 function definitionDocument(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
+  const id = typeof overrides.id === "string" ? overrides.id : "auto-task";
   return {
-    id: "auto-task",
+    id,
     name: "Nightly automation",
     definitionState: "active",
     enabled: true,
@@ -124,17 +124,6 @@ function definitionDocument(
       revisionSequence: 2,
       status: "active",
     },
-    draftState: {
-      present: false,
-      reason: "no open successor Draft contains this definition",
-      revisionId: null,
-      revisionVersion: null,
-      revisionStatus: null,
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
-    },
     executionReadiness: {
       state: "enabled",
       explanation:
@@ -166,7 +155,7 @@ function definitionDocument(
       detail: action({
         available: true,
         method: "GET",
-        path: "/api/operations/automation/task-definitions/auto-task",
+        path: `/api/operations/automation/task-definitions/${id}`,
         requiresConfirmation: false,
         durableOutcome: null,
         nextAction: "inspect the durable definition state",
@@ -174,13 +163,13 @@ function definitionDocument(
       occurrences: action({
         available: true,
         method: "GET",
-        path: "/api/operations/automation/task-definitions/auto-task/occurrences",
+        path: `/api/operations/automation/task-definitions/${id}/occurrences`,
         requiresConfirmation: false,
         durableOutcome: null,
         nextAction: "inspect the bounded occurrence history",
       }),
       runOnce: action({
-        path: "/api/operations/automation/task-definitions/auto-task/run-once",
+        path: `/api/operations/automation/task-definitions/${id}/run-once`,
         requiresConfirmation: false,
         durableOutcome:
           "a durable bounded discovery of the definition scope is admitted",
@@ -189,30 +178,24 @@ function definitionDocument(
       grantState: action({
         available: true,
         method: "GET",
-        path: "/api/automation/task-definitions/auto-task/grant-state",
+        path: `/api/automation/task-definitions/${id}/grant-state`,
         durableOutcome: null,
         nextAction: "read the current grant state",
       }),
       grant: action({ requiresConfirmation: true }),
       revoke: action({
-        path: "/api/automation/task-definitions/auto-task/revoke",
+        path: `/api/automation/task-definitions/${id}/revoke`,
         durableOutcome: "the grant is revoked",
         nextAction: "revoke the grant when its bounds are no longer wanted",
       }),
       copy: action({
-        available: false,
+        available: true,
         method: "POST",
-        path: "/api/automation/task-definitions/auto-task/copy",
+        path: `/api/automation/task-definitions/${id}/copy`,
         requiresConfirmation: false,
-        reason: "an open successor Draft is required to copy this definition",
-        durableOutcome: "a copied definition is stored inside the Draft",
-        nextAction: "create or open a successor Draft, then copy",
-      }),
-      draftCreate: action({
-        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
-        requiresConfirmation: false,
-        durableOutcome: "a successor Draft is stored",
-        nextAction: "create or open the successor Draft",
+        durableOutcome:
+          "the copied definition is validated and published as the new Active",
+        nextAction: "open the copied definition, then apply any wanted change",
       }),
     },
     ...overrides,
@@ -286,7 +269,6 @@ function inventoryQueryDocument(
     q: null,
     enabled: null,
     library: null,
-    state: null,
     sort: "name",
     direction: "asc",
     limit: 20,
@@ -301,9 +283,8 @@ function inventoryCountsDocument(
   return {
     published: 1,
     enabled: 1,
-    draftOnly: 0,
     total: 1,
-    basis: "exact_current_active_and_open_drafts",
+    basis: "exact_current_active",
     scope: "full_authorized_population",
     ...overrides,
   };
@@ -329,31 +310,15 @@ function listDocument(
     itemsTruncatedByCap: false,
     next_cursor: null,
     previous_cursor: null,
-    draftState: {
-      present: false,
-      reason: "no open successor Draft exists",
-      revisionId: null,
-      revisionVersion: null,
-      revisionStatus: null,
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
-    },
     resourceLibraryOptions: [{ id: "source", name: "Source", enabled: true }],
     actions: {
       create: action({
         method: "POST",
         path: "/api/automation/task-definitions",
         requiresConfirmation: false,
-        durableOutcome: "the bounded definition is stored inside the Draft",
-        nextAction: "start or open a successor Draft, then create",
-      }),
-      createDraft: action({
-        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
-        requiresConfirmation: false,
-        durableOutcome: "a successor Draft is stored",
-        nextAction: "create or open the successor Draft",
+        durableOutcome:
+          "the bounded definition is validated and published as the new Active",
+        nextAction: "apply the definition; it becomes effective immediately",
       }),
     },
     ...overrides,
@@ -402,138 +367,6 @@ function recordsDocument(
       "definition/name/scope/version from the durable admission, never backfilled from the current Active configuration",
     next_cursor: null,
     previous_cursor: null,
-    ...overrides,
-  };
-}
-
-/**
- * A definition that lives only inside the open successor Draft (newly
- * created or copied): draft-only state, empty occurrence history, no grant
- * and no Active-definition actions until checked activation.
- */
-function draftOnlyDefinitionDocument(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
-  const notActiveReason =
-    "this definition exists only inside an open successor Draft; " +
-    "activate the Draft to make it the Active definition";
-  return {
-    id: "created-task",
-    name: "Created automation",
-    definitionState: "draft-only",
-    executionReadiness: {
-      state: "draft-only",
-      explanation: "Not consumed by runtime.",
-      nextAction: "Review the Draft.",
-    },
-    enabled: false,
-    resourceLibraryId: "source",
-    mode: "automatic-organization",
-    itemLimit: 9,
-    sourceScope: null,
-    intervalSeconds: null,
-    cron: "0 8 * * *",
-    timezone: "UTC",
-    occurrenceState: {
-      enabled: false,
-      nextRunAt: null,
-      lastOccurrenceAt: null,
-      lastJobId: null,
-      lastTaskId: null,
-      lastOutcome: null,
-      lastReason: null,
-      nextAction: null,
-      lastFailureCategory: null,
-      outcomeSummary: null,
-    },
-    unattendedExecutionGrant: {
-      status: "none",
-      active: false,
-      grantId: null,
-      definitionId: "created-task",
-      definitionChangedSinceGrant: false,
-      nextAction: "review the exact definition bounds and explicitly grant",
-    },
-    activeConfiguration: {
-      revisionId: ACTIVE_REVISION,
-      version: 3,
-      revisionSequence: 2,
-      status: "active",
-    },
-    draftState: {
-      present: true,
-      reason: null,
-      revisionId: DRAFT_REVISION,
-      revisionVersion: 2,
-      revisionStatus: "draft",
-      baseActiveRevisionId: ACTIVE_REVISION,
-      updatedAt: "2026-01-01T00:00:00+00:00",
-      validatedAt: null,
-      validationErrors: [],
-    },
-    actions: {
-      detail: action({
-        available: true,
-        method: "GET",
-        path: "/api/operations/automation/task-definitions/created-task",
-        requiresConfirmation: false,
-        durableOutcome: null,
-        nextAction: "inspect the durable definition state",
-      }),
-      occurrences: action({
-        available: true,
-        method: "GET",
-        path: "/api/operations/automation/task-definitions/created-task/occurrences",
-        requiresConfirmation: false,
-        durableOutcome: null,
-        nextAction: "inspect the bounded occurrence history",
-      }),
-      runOnce: action({
-        available: false,
-        reason: notActiveReason,
-        path: "/api/operations/automation/task-definitions/created-task/run-once",
-        requiresConfirmation: false,
-        durableOutcome:
-          "a durable bounded discovery of the definition scope is admitted",
-        nextAction: "activate the Draft before starting Run once",
-      }),
-      grantState: action({
-        available: true,
-        method: "GET",
-        path: "/api/automation/task-definitions/created-task/grant-state",
-        durableOutcome: null,
-        nextAction: "read the current grant state",
-      }),
-      grant: action({
-        available: false,
-        reason: notActiveReason,
-        path: "/api/automation/task-definitions/created-task/grant",
-        requiresConfirmation: true,
-        durableOutcome:
-          "a persistent scoped unattended execution grant is stored",
-        nextAction: "activate the Draft before granting unattended authority",
-      }),
-      revoke: action({
-        available: false,
-        reason: notActiveReason,
-        path: "/api/automation/task-definitions/created-task/revoke",
-        durableOutcome: "the grant is revoked",
-        nextAction: "activate the Draft before granting unattended authority",
-      }),
-      copy: action({
-        method: "POST",
-        path: "/api/automation/task-definitions/created-task/copy",
-        requiresConfirmation: false,
-        durableOutcome: "a copied definition is stored inside the Draft",
-        nextAction: "copy the definition inside the open successor Draft",
-      }),
-      draftCreate: action({
-        path: `/api/configuration/revisions/${ACTIVE_REVISION}/successor`,
-        requiresConfirmation: false,
-        durableOutcome: "a successor Draft is stored",
-        nextAction: "create or open the successor Draft",
-      }),
-    },
     ...overrides,
   };
 }
@@ -587,6 +420,46 @@ describe("V2 Automation journey", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("guides an uninitialized deployment to System Settings", async () => {
+    recordingFetch((call) => {
+      if (
+        call.url ===
+        "/api/operations/automation/task-definitions?sort=name&limit=20"
+      ) {
+        return jsonResponse(
+          listDocument({
+            activeConfiguration: null,
+            items: [],
+            total: 0,
+            truncated: false,
+            actions: {
+              create: action({
+                available: false,
+                reason:
+                  "no Active configuration exists; initialize configuration in System Settings first",
+                method: "POST",
+                path: "/api/automation/task-definitions",
+              }),
+            },
+          }),
+        );
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations/automation");
+
+    await screen.findByRole("heading", { name: "自动化" });
+    expect(await screen.findByText(/尚未初始化配置/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "系统设置" })).toHaveAttribute(
+      "href",
+      "/configuration",
+    );
+    expect(
+      screen.queryByRole("link", { name: "新建自动化任务" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders an explicit unavailable card value instead of a fabricated zero", async () => {
     recordingFetch((call) => {
       if (
@@ -629,7 +502,13 @@ describe("V2 Automation journey", () => {
       ) {
         return jsonResponse(
           listDocument({
-            items: [definitionDocument(), draftOnlyDefinitionDocument()],
+            items: [
+              definitionDocument(),
+              definitionDocument({
+                id: "second-task",
+                name: "Second automation",
+              }),
+            ],
             total: 3,
             truncated: true,
             next_cursor: "page-2",
@@ -642,7 +521,12 @@ describe("V2 Automation journey", () => {
       ) {
         return jsonResponse(
           listDocument({
-            items: [draftOnlyDefinitionDocument({ name: "Third automation" })],
+            items: [
+              definitionDocument({
+                id: "third-task",
+                name: "Third automation",
+              }),
+            ],
             total: 3,
             truncated: false,
             previous_cursor: "page-1",
@@ -657,7 +541,7 @@ describe("V2 Automation journey", () => {
     await screen.findByRole("heading", { name: "自动化" });
     // The count is the full population total, not the rows on this page.
     expect(await screen.findByText(/共 3 个自动化任务/)).toBeVisible();
-    expect(screen.getByText(/Created automation/)).toBeVisible();
+    expect(screen.getByText(/Second automation/)).toBeVisible();
     const next = screen.getByRole("button", { name: "下一页" });
     expect(next).toBeEnabled();
     await userEvent.setup().click(next);
@@ -677,8 +561,9 @@ describe("V2 Automation journey", () => {
       requiresConfirmation: false,
       reason:
         "the connected API principal cannot create Automation Task Definitions",
-      durableOutcome: "the bounded definition is stored inside the Draft",
-      nextAction: "start or open a successor Draft, then create",
+      durableOutcome:
+        "the bounded definition is validated and published as the new Active",
+      nextAction: "apply the definition; it becomes effective immediately",
     });
     recordingFetch((call) => {
       if (

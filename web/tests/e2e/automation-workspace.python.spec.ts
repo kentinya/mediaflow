@@ -203,12 +203,28 @@ test("the inventory reads full-population cards, filters and pages from the serv
       call.url.includes("q=no-such-definition"),
   );
   expect(filtered.length).toBeGreaterThan(0);
+  const inventoryResponse = await page.request.get(
+    "/api/operations/automation/task-definitions",
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(inventoryResponse.status()).toBe(200);
+  const inventory = (await inventoryResponse.json()) as Record<string, unknown>;
+  expect(inventory).not.toHaveProperty("draftState");
+  expect(inventory["inventoryCounts"]).not.toHaveProperty("draftOnly");
+  expect(inventory["query"]).not.toHaveProperty("state");
+  for (const item of inventory["items"] as Array<Record<string, unknown>>) {
+    expect(item).not.toHaveProperty("draftState");
+    expect(item["definitionState"]).toBe("active");
+    expect(item["actions"]).not.toHaveProperty("draftCreate");
+  }
+  const retiredFilter = await page.request.get(
+    "/api/operations/automation/task-definitions?state=draft-only",
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(retiredFilter.status()).toBe(400);
 
   await page.getByLabel("搜索", { exact: true }).fill("");
   await page.getByLabel("搜索", { exact: true }).press("Enter");
-  // Compare the published definition population: an earlier lifecycle proof
-  // deliberately retains an enabled, unpublished Draft in this shared store.
-  await page.getByLabel("发布状态").selectOption("active");
   // The definition is published disabled, so the enablement filter is a real
   // server partition: `true` excludes it, `false` includes it.
   await page.getByLabel("启用状态").selectOption("true");

@@ -358,9 +358,9 @@ class _ApiRuntimeBinding:
 class MediaFlowApi:
     """Small WSGI transport over persistence and queue application boundaries."""
 
-    #: Deterministic combined page limit for the Operations Automation list:
-    #: Active and Draft-only definitions share one bounded page that matches
-    #: the frontend normalizer contract (more than 100 items fails closed).
+    #: Deterministic page limit for the Operations Automation list: the exact
+    #: published definitions share one bounded page that matches the frontend
+    #: normalizer contract (more than 100 items fails closed).
     AUTOMATION_DEFINITIONS_PAGE_LIMIT = 100
 
     #: Deterministic combined page limit for the Operations Notification list:
@@ -9698,21 +9698,16 @@ class MediaFlowApi:
     def _automation_definition_resolution(self, definition_id: str, start_response: Callable):
         """Resolve a definition from the Active revision, then durable history.
 
-        Returns ``(active, raw, definition, draft, in_active, historical)``.
-        Newly created or copied definitions exist only inside an open successor
-        Draft until activation, so the Draft document remains available for
-        explicit correction through the draft route; it is never presented as
-        the Active configuration and — for a removed definition's retained
-        history — its unpublished candidate is never substituted as the run's
-        historical context.  A removed definition resolves last from the newest
-        published non-Active revision backed by durable activation evidence
-        (pinned by the retained occurrence when one exists), so retained
-        occurrence/history links stay readable after removal and restart —
-        always labelled historical and never substituted for today's
-        configuration or revived as authority.
-        Returns the bounded 503 response when the configuration or Draft read
-        fails (callers must return it unchanged); a definition found in no
-        source raises ``LookupError`` exactly as the Active-only context did.
+        Returns ``(active, raw, definition, in_active, historical)``.  The
+        current Active configuration is the only source for a live definition;
+        a removed definition resolves from the newest published non-Active
+        revision backed by durable activation evidence (pinned by the retained
+        occurrence when one exists), so retained occurrence/history links stay
+        readable after removal and restart — always labelled historical and
+        never substituted for today's configuration or revived as authority.
+        Returns the bounded 503 response when the configuration read fails
+        (callers must return it unchanged); a definition found in no source
+        raises ``LookupError`` exactly as the Active-only context did.
         """
 
         if self._configuration_service is None or self._configuration_objects is None:
@@ -9724,9 +9719,6 @@ class MediaFlowApi:
             )
         try:
             active = self._configuration_service.active()
-            draft = self._configuration_service.latest_open_draft_containing(
-                "automationTaskDefinitions", definition_id
-            )
             raw = None
             definition = None
             detail = None
@@ -9755,38 +9747,13 @@ class MediaFlowApi:
                 raw,
                 **({"resource_libraries": resources} if resources is not None else {}),
             )
-        if raw is None and draft is not None and active is not None:
-            section = (
-                draft.document.get("automationTaskDefinitions", [])
-                if isinstance(draft.document, dict)
-                else []
-            )
-            draft_candidate = next(
-                (
-                    item
-                    for item in section
-                    if isinstance(item, dict) and item.get("id") == definition_id
-                ),
-                None,
-            )
-            if draft_candidate is not None and not (
-                self._automation_workspace is not None
-                and self._automation_workspace.definition_was_published(definition_id)
-            ):
-                # A definition that exists only inside an open Draft is a
-                # draft-only candidate for explicit correction.  A definition
-                # that was once published and is no longer Active is removed:
-                # its retained history resolves from published evidence below
-                # and the Draft candidate is never substituted for it.
-                raw = draft_candidate
         if raw is None:
             # Last resort: the durable historical evidence.  A removed
             # definition's newest published revision keeps its exact name,
             # scope, mode and schedule readable so retained occurrences and
             # linked results resolve without substituting current
-            # configuration or an unpublished Draft candidate.  This is a
-            # bounded read-only fallback; it grants no authority and creates
-            # nothing.
+            # configuration.  This is a bounded read-only fallback; it grants
+            # no authority and creates nothing.
             historical_projection = (
                 self._automation_workspace.historical_definition(
                     definition_id,
@@ -9801,7 +9768,7 @@ class MediaFlowApi:
                 in_active = False
         if raw is None:
             raise LookupError(f"automationTaskDefinitions {definition_id!r} was not found")
-        return active, raw, definition, draft, in_active, historical
+        return active, raw, definition, in_active, historical
 
     @staticmethod
     def _file_stats_query(environ: dict) -> tuple[str | None, str | None]:
@@ -10862,23 +10829,20 @@ class MediaFlowApi:
         principal: ResolvedApiPrincipal,
         *,
         active,
-        draft_present: bool,
         in_active: bool = True,
     ) -> dict:
-        """Backend-authoritative action metadata for one definition document.
+        """Backend-authoritative action metadata for one Active definition.
 
-        A Draft-only definition (newly created or copied) is editable but not
-        yet consumed by runtime, so Active-definition actions such as Preview
-        or unattended authority are unavailable until its Draft is activated.
+        Every advertised command consumes the current published definition
+        directly; retained history is read-only and is never substituted for a
+        definition that can still be copied or run.
         """
 
         permissions = principal.permissions
         manage = ApiPermission.MANAGE_CONFIGURATION in permissions
         dry_run = ApiPermission.EXECUTE_MANUAL_ORGANIZE in permissions
-        active_revision_id = active.revision_id if active is not None else None
         not_active_reason = (
-            "this definition exists only inside an open successor Draft; "
-            "activate the Draft to make it the Active definition"
+            "this definition was removed; retained history is read-only and cannot be run"
         )
         return {
             "detail": {
@@ -10905,7 +10869,7 @@ class MediaFlowApi:
                 # Definition-bound Run once.  The backend derives the manifest
                 # from the published definition's own ResourceLibrary/sub-scope,
                 # so no file picker is involved.  A *disabled* published schedule
-                # is explicitly runnable once; a Draft-only definition is not.
+                # is explicitly runnable once; retained history is not.
                 "available": dry_run and in_active,
                 "reason": (
                     not_active_reason
@@ -10929,7 +10893,7 @@ class MediaFlowApi:
                 ),
             },
             "copy": {
-                "available": manage and draft_present,
+                "available": manage and in_active,
                 "reason": (
                     self._organize_unavailable_reason(
                         manage,
@@ -10939,58 +10903,29 @@ class MediaFlowApi:
                     if not manage
                     else (
                         None
-                        if draft_present
-                        else "an open successor Draft is required to copy this definition"
+                        if in_active
+                        else "this definition was removed; retained history is read-only"
                     )
                 ),
                 "method": "POST",
                 "path": f"/api/automation/task-definitions/{definition_id}/copy",
                 "sideEffects": "none",
-                "durableOutcome": ("a copied definition is stored inside the open successor Draft"),
-                "nextAction": (
-                    "create or open a successor Draft, then copy the definition inside it"
-                ),
-            },
-            "draftCreate": {
-                "available": manage and active is not None,
-                "reason": (
-                    self._organize_unavailable_reason(
-                        manage,
-                        ApiPermission.MANAGE_CONFIGURATION,
-                        "the connected API principal cannot create a successor Draft",
-                    )
-                    if not manage
-                    else (
-                        None
-                        if active is not None
-                        else "no Active configuration exists; managed "
-                        "configuration setup owns the first Draft"
-                    )
-                ),
-                "method": "POST",
-                "path": (
-                    f"/api/configuration/revisions/{active_revision_id}/successor"
-                    if active_revision_id is not None
-                    else None
-                ),
-                "sideEffects": "none",
                 "durableOutcome": (
-                    "a successor Draft seeded from the immutable Active configuration is stored"
+                    "the copied definition is validated and published as the new Active"
                 ),
-                "nextAction": (
-                    "create or open the successor Draft, edit the definition, then validate "
-                    "and explicitly activate"
-                ),
+                "nextAction": "open the copied definition, then apply any wanted change",
             },
         }
 
     @staticmethod
-    def _automation_operator_execution_state(operator, *, in_active, historical):
-        state = "enabled" if operator.get("enabled") is True else "disabled"
-        if historical:
-            state = "historical"
-        elif not in_active:
-            state = "draft-only"
+    def _automation_operator_execution_state(operator, *, historical):
+        state = (
+            "historical"
+            if historical
+            else "enabled"
+            if operator.get("enabled") is True
+            else "disabled"
+        )
         operator["executionReadiness"] = {
             "state": state,
             "explanation": {
@@ -10998,9 +10933,6 @@ class MediaFlowApi:
                 "execution permission, source availability and its actual plans before effects.",
                 "disabled": "The saved schedule is disabled; it emits no new scheduled work.",
                 "historical": "This definition was removed; retained history is read-only.",
-                "draft-only": (
-                    "This definition is saved only in a Draft and is not consumed by runtime."
-                ),
                 "unavailable": "The saved definition cannot currently be consumed safely.",
             }[state],
             "nextAction": (
@@ -11017,7 +10949,6 @@ class MediaFlowApi:
         *,
         principal: ResolvedApiPrincipal,
         active=None,
-        draft=None,
         in_active: bool = True,
         historical: bool = False,
     ) -> dict:
@@ -11027,46 +10958,26 @@ class MediaFlowApi:
         operator = self._strip_automation_operator_evidence(document)
         if historical:
             # A removed definition is retained history: truthful labelling,
-            # never Active/Draft state, never revived authority.
+            # never Active state, never revived authority.
             operator["definitionState"] = "historical"
             operator["historicalState"] = "removed"
             operator["activeConfiguration"] = self._automation_active_configuration(active)
-            operator["draftState"] = self._automation_draft_state(
-                None,
-                empty_reason=(
-                    "this definition was removed; its retained history is read-only and "
-                    "no Draft can revive it"
-                ),
-            )
             operator["actions"] = self._automation_definition_actions(
                 definition_id,
                 principal,
                 active=active,
-                draft_present=False,
                 in_active=False,
             )
-            return self._automation_operator_execution_state(
-                operator, in_active=False, historical=True
-            )
-        operator["definitionState"] = "active" if in_active else "draft-only"
+            return self._automation_operator_execution_state(operator, historical=True)
+        operator["definitionState"] = "active"
         operator["activeConfiguration"] = self._automation_active_configuration(active)
-        draft_state = self._automation_draft_state(
-            draft,
-            empty_reason=(
-                "no open successor Draft contains this definition; create one to edit it"
-            ),
-        )
-        operator["draftState"] = draft_state
         operator["actions"] = self._automation_definition_actions(
             definition_id,
             principal,
             active=active,
-            draft_present=bool(draft_state["present"]),
             in_active=in_active,
         )
-        return self._automation_operator_execution_state(
-            operator, in_active=in_active, historical=False
-        )
+        return self._automation_operator_execution_state(operator, historical=False)
 
     def _automation_occurrence_operator_document(self, document: dict) -> dict:
         """Bounded occurrence projection with exact linked-work transports."""
@@ -12631,7 +12542,6 @@ class MediaFlowApi:
             "library",
             "sort",
             "direction",
-            "state",
         }
     )
     _AUTOMATION_RUNS_QUERY_FIELDS = frozenset(
@@ -13821,262 +13731,6 @@ class MediaFlowApi:
             return self._response(start_response, 201, payload)
         return self._error(start_response, 404, "not_found", "route was not found")
 
-    def _automation_definition_activate_checked_draft(
-        self,
-        definition_id: str,
-        environ: dict,
-        start_response: Callable,
-        principal: ResolvedApiPrincipal,
-    ) -> None:
-        """Checked-activate the exact open successor Draft that owns this definition.
-
-        The browser supplies the Draft's exact advertised revision identity and
-        optimistic version — never a digest. The action is bound to that exact
-        Draft revision, the Active base is pinned, and the Draft's changes are
-        compared with the Active document so a revision that touches anything
-        outside the Automation Task Definition boundary is rejected before any
-        activation, and so the section changes only at the reviewed
-        definition's exact identity — a sibling definition can never be added,
-        removed or modified while riding along. Because the confinement
-        comparison proves every other section and every other definition is
-        byte-identical to the live Active configuration, the published
-        configuration carries no new Storage, strategy or destination
-        semantics. No Scan, Job, Task or occurrence is started by activation,
-        and a Draft-only definition (newly created or copied) is activatable
-        exactly like an edited Active definition.
-        """
-
-        if self._configuration_service is None or self._configuration_objects is None:
-            return self._error(
-                start_response,
-                503,
-                "service_unavailable",
-                "managed configuration service is unavailable",
-            )
-        self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
-        self._require_empty_query(environ, "operations automation draft activation")
-        document = self._document(environ)
-        if set(document) != {"expectedRevisionId", "expectedVersion"}:
-            raise ValueError(
-                "automation draft activation requires expectedRevisionId and expectedVersion only"
-            )
-        expected_revision_id = document["expectedRevisionId"]
-        if not isinstance(expected_revision_id, str) or not expected_revision_id.strip():
-            raise ValueError(
-                "automation draft activation expectedRevisionId must be a non-empty string"
-            )
-        expected = document["expectedVersion"]
-        if isinstance(expected, bool) or not isinstance(expected, int):
-            raise ValueError("automation draft activation expectedVersion must be an integer")
-        active = self._configuration_service.active()
-        try:
-            draft = self._configuration_service.latest_open_draft_containing(
-                "automationTaskDefinitions", definition_id
-            )
-        except Exception:
-            return self._error(
-                start_response,
-                503,
-                "service_unavailable",
-                "managed configuration service is unavailable",
-            )
-        if active is None:
-            raise AutomationExecutionIntentError(
-                "no Active configuration exists; managed configuration setup owns the first Draft",
-                code="automation_active_missing",
-                status=409,
-                durable_state="no configuration was activated",
-                next_action="complete managed configuration setup, then stage a successor Draft",
-            )
-        if draft is None:
-            raise AutomationExecutionIntentError(
-                "no open successor Draft contains this definition",
-                code="automation_draft_required",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action="create a successor Draft, edit the definition, then activate",
-            )
-        if draft.revision_id != expected_revision_id:
-            raise ConfigurationVersionConflict(
-                "the submitted Draft identity does not match the current open successor "
-                "Draft; reload the Draft",
-                revision_id=draft.revision_id,
-                current_version=draft.version,
-                durable_state="draft_preserved",
-                next_action="reload the Draft document, then activate the exact advertised "
-                "Draft revision again",
-            )
-        if draft.version != expected:
-            raise ConfigurationVersionConflict(
-                "the successor Draft changed before activation; reload the Draft",
-                revision_id=draft.revision_id,
-                current_version=draft.version,
-                durable_state="draft_preserved",
-                next_action="reload the Draft, then activate the current version again",
-            )
-        if draft.base_active_revision_id != active.revision_id:
-            raise ConfigurationVersionConflict(
-                "the Active configuration changed after this Draft was created; "
-                "stage a fresh successor Draft",
-                revision_id=draft.revision_id,
-                current_version=draft.version,
-                durable_state="draft_preserved",
-                next_action="create a fresh successor Draft from the current Active "
-                "configuration, then edit, validate and activate it",
-            )
-        changed = self._automation_draft_changed_sections(draft.document, active.document)
-        if changed - {"automationTaskDefinitions"}:
-            raise AutomationExecutionIntentError(
-                "this Draft changes configuration outside the Automation Task Definition boundary",
-                code="automation_activation_out_of_scope",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action=(
-                    "remove the unrelated configuration changes from the Draft, or use the "
-                    "managed configuration activation journey with explicit review"
-                ),
-            )
-        self._require_automation_definition_only_change(
-            active.document, draft.document, definition_id
-        )
-        # The exact-revision binding, Active-base pin and Automation-only
-        # confinement above prove every non-Automation section and every other
-        # Automation definition is byte-identical to the live Active
-        # configuration, so no new Storage, strategy or destination semantics
-        # are published by this activation. The managed activation revalidates
-        # the exact revision digest, optimistic version and document loader
-        # atomically before publishing.
-        activated = self._configuration_service.activate(
-            draft.revision_id,
-            expected_version=draft.version,
-            actor=principal.principal_id,
-        )
-        self._refresh_configuration_binding()
-        active_after = self._configuration_service.active()
-        definition_after = next(
-            (
-                item
-                for item in activated.document.get("automationTaskDefinitions", [])
-                if isinstance(item, dict) and item.get("id") == definition_id
-            ),
-            None,
-        )
-        return self._response(
-            start_response,
-            200,
-            {
-                "activatedRevisionId": activated.revision_id,
-                "activatedVersion": activated.version,
-                "revisionSequence": activated.revision_sequence,
-                "activeConfiguration": self._automation_active_configuration(active_after),
-                "definition": (
-                    self._strip_automation_operator_evidence(definition_after)
-                    if definition_after is not None
-                    else None
-                ),
-            },
-        )
-
-    @staticmethod
-    def _automation_definition_identity_map(document: object) -> dict[str, object] | None:
-        """Definition id → entry map for the automationTaskDefinitions section.
-
-        Returns ``None`` when the section is missing or any entry is malformed
-        (not an object, a non-string id, or a duplicated id), so the caller can
-        fail closed instead of activating an unverifiable boundary.
-        """
-
-        if not isinstance(document, dict):
-            return None
-        section = document.get("automationTaskDefinitions")
-        if not isinstance(section, list):
-            return None
-        definitions: dict[str, object] = {}
-        for entry in section:
-            if not (isinstance(entry, dict) and isinstance(entry.get("id"), str)):
-                return None
-            entry_id = entry["id"]
-            if entry_id in definitions:
-                return None
-            definitions[entry_id] = entry
-        return definitions
-
-    @staticmethod
-    def _automation_draft_changed_sections(
-        draft_document: object, active_document: object
-    ) -> set[str]:
-        """Top-level configuration sections the Draft changes versus Active.
-
-        A successor Draft is seeded as an exact copy of the Active document,
-        so any differing top-level section is a Draft change. Comparing whole
-        sections keeps the boundary exact without interpreting nested object
-        semantics.
-        """
-
-        draft = draft_document if isinstance(draft_document, dict) else {}
-        base = active_document if isinstance(active_document, dict) else {}
-        return {
-            key
-            for key in set(draft) | set(base)
-            if key not in draft or key not in base or draft[key] != base[key]
-        }
-
-    def _require_automation_definition_only_change(
-        self,
-        active_document: object,
-        draft_document: object,
-        definition_id: str,
-    ) -> None:
-        """Fail closed unless the Draft's only Automation change is this definition.
-
-        The section-level confinement proves no other configuration section
-        changed; this comparison proves the ``automationTaskDefinitions``
-        section changed only at the reviewed definition's exact identity. Every
-        other definition must be present in both documents and byte-identical,
-        so a sibling definition cannot be added, removed or modified while
-        riding along with the reviewed activation — including the create/copy
-        case, where the new or copied definition must be the sole Automation
-        change. Malformed sections fail closed: an unverifiable boundary is
-        never activated.
-        """
-
-        active_definitions = self._automation_definition_identity_map(active_document)
-        draft_definitions = self._automation_definition_identity_map(draft_document)
-        if active_definitions is None or draft_definitions is None:
-            raise AutomationExecutionIntentError(
-                "the Automation Task Definition section is malformed; activation "
-                "cannot verify its exact boundary",
-                code="automation_activation_out_of_scope",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action=(
-                    "create a fresh successor Draft from the current Active "
-                    "configuration, then edit, validate and activate it"
-                ),
-            )
-        unexpected = sorted(
-            candidate_id
-            for candidate_id in set(active_definitions) | set(draft_definitions)
-            if candidate_id != definition_id
-            and (
-                candidate_id not in active_definitions
-                or candidate_id not in draft_definitions
-                or draft_definitions[candidate_id] != active_definitions[candidate_id]
-            )
-        )
-        if unexpected:
-            raise AutomationExecutionIntentError(
-                "this Draft changes other Automation Task Definitions beyond the "
-                "reviewed definition",
-                code="automation_activation_definition_scope",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action=(
-                    "remove the other definition changes from this Draft, then edit, "
-                    "validate and activate one definition per Draft"
-                ),
-            )
-
     def _automation_definition_focused_projection(
         self,
         parts: list[str],
@@ -14092,7 +13746,7 @@ class MediaFlowApi:
         * ``GET  /``                     — form authority (fields/references/bounds)
         * ``POST /``                     — one checked create Save
         * ``POST /schedule-preview``     — zero-mutation upcoming-run calculation
-        * ``GET  /{id}``                 — typed edit prefill (published or Draft-only)
+        * ``GET  /{id}``                 — typed edit prefill from the published Active
         * ``PUT  /{id}``                 — one checked edit Save
         * ``POST /{id}/copy``            — one checked copy publication (disabled, no authority)
         * ``GET  /{id}/copy-candidate``  — read-only copy candidate
@@ -14704,11 +14358,10 @@ class MediaFlowApi:
         """Submitted Automation inventory filters plus their principal-bound cursor.
 
         The inventory is a bounded, server-side query over **every** authorized
-        Active and Draft-only definition: search, enablement/source filters,
-        a stable total ordering and a page cursor that is bound to the exact
-        filter state and reading principal.  A cursor minted for one filter
-        state or principal is therefore refused instead of silently returning a
-        different population.
+        Active definition: search, enablement/source filters, a stable total
+        ordering and a page cursor that is bound to the exact filter state and
+        reading principal.  A cursor minted for one filter state or principal is
+        therefore refused instead of silently returning a different population.
         """
 
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
@@ -14717,7 +14370,7 @@ class MediaFlowApi:
         ):
             raise ValueError(
                 "automation definitions query accepts limit, cursor, q, enabled, library, "
-                "sort, direction, and state once"
+                "sort, and direction once"
             )
         limit = cls._parse_bounded_limit(values.get("limit", ["20"])[0], "automation definition")
         raw_search = values.get("q", [""])[0].strip()
@@ -14737,13 +14390,6 @@ class MediaFlowApi:
         library = None if raw_library in {"", "all"} else raw_library
         if library is not None and not _AUTOMATION_DEFINITION_FILTER.fullmatch(library):
             raise ValueError("automation definition library filter is invalid")
-        raw_state = values.get("state", [""])[0]
-        if raw_state in {"", "all"}:
-            state = None
-        elif raw_state in {"active", "draft-only"}:
-            state = raw_state
-        else:
-            raise ValueError("automation definition state filter is invalid")
         sort = values.get("sort", ["name"])[0]
         if sort not in cls._AUTOMATION_DEFINITION_SORTS:
             raise ValueError("automation definition sort is invalid")
@@ -14763,7 +14409,6 @@ class MediaFlowApi:
                 f"q={search or ''}",
                 f"enabled={'all' if enabled is None else str(enabled).lower()}",
                 f"library={library or 'all'}",
-                f"state={state or 'all'}",
                 f"sort={sort}",
                 f"direction={direction}",
             )
@@ -14779,7 +14424,6 @@ class MediaFlowApi:
             "search": search,
             "enabled": enabled,
             "library": library,
-            "state": state,
             "sort": sort,
             "direction": direction,
             "cursor": cursor,
@@ -14842,13 +14486,6 @@ class MediaFlowApi:
                     "itemsTruncatedByCap": False,
                     "previous_cursor": None,
                     "next_cursor": None,
-                    "draftState": self._automation_draft_state(
-                        None,
-                        empty_reason=(
-                            "no Active configuration exists; managed configuration "
-                            "setup owns the first Draft"
-                        ),
-                    ),
                     "resourceLibraryOptions": [],
                     "actions": {
                         "create": {
@@ -14861,42 +14498,19 @@ class MediaFlowApi:
                                     "Automation Task Definitions",
                                 )
                                 if not manage
-                                else "no Active configuration exists; managed "
-                                "configuration setup owns the first Draft"
+                                else "no Active configuration exists; initialize "
+                                "configuration in System Settings first"
                             ),
                             "method": "POST",
                             "path": "/api/automation/task-definitions",
                             "sideEffects": "none",
                             "durableOutcome": (
-                                "the bounded definition is stored inside the open successor Draft"
+                                "the bounded definition is validated and published as "
+                                "the new Active"
                             ),
                             "nextAction": (
-                                "complete managed configuration setup, then create "
-                                "definitions inside a successor Draft"
-                            ),
-                        },
-                        "createDraft": {
-                            "available": False,
-                            "reason": (
-                                self._organize_unavailable_reason(
-                                    manage,
-                                    ApiPermission.MANAGE_CONFIGURATION,
-                                    "the connected API principal cannot create a successor Draft",
-                                )
-                                if not manage
-                                else "no Active configuration exists; managed "
-                                "configuration setup owns the first Draft"
-                            ),
-                            "method": "POST",
-                            "path": None,
-                            "sideEffects": "none",
-                            "durableOutcome": (
-                                "a successor Draft seeded from the immutable Active "
-                                "configuration is stored"
-                            ),
-                            "nextAction": (
-                                "complete managed configuration setup before staging "
-                                "a successor Draft"
+                                "complete configuration initialization in System Settings, "
+                                "then create the definition"
                             ),
                         },
                     },
@@ -14904,40 +14518,8 @@ class MediaFlowApi:
             )
         detail = self._configuration_objects.revision_detail(active.revision_id)
         all_items = detail["objects"].get("automationTaskDefinitions", [])
-        drafts = (active,)
-        active_ids = {
-            str(candidate.get("id"))
-            for candidate in all_items
-            if isinstance(candidate, dict) and isinstance(candidate.get("id"), str)
-        }
-        draft_by_id: dict[str, object] = {}
-        draft_only: list[tuple[object, dict]] = []
-        seen_draft_only: set[str] = set()
-        draft_only_total = 0
-        # One deterministic combined page limit for Active and Draft-only
-        # definitions: the Active document order fills the page first and
-        # draft-only definitions take the remaining capacity. The frontend
-        # normalizer fails closed on any page above this limit, so the merged
-        # response must never exceed it; dropped definitions stay counted in
-        # the truthful total and the truncated flag.
-        active_page = all_items
-        for draft in drafts:
-            document = draft.document if isinstance(draft.document, dict) else {}
-            section = document.get("automationTaskDefinitions")
-            if not isinstance(section, list):
-                continue
-            for candidate in section:
-                if not (isinstance(candidate, dict) and isinstance(candidate.get("id"), str)):
-                    continue
-                if candidate["id"] not in draft_by_id:
-                    draft_by_id[candidate["id"]] = draft
-                if candidate["id"] in active_ids or candidate["id"] in seen_draft_only:
-                    continue
-                seen_draft_only.add(candidate["id"])
-                draft_only_total += 1
-                draft_only.append((draft, candidate))
         projected = self._automation_occurrences.project_definitions(
-            active_page,
+            all_items,
             configuration=active.summary(),
         )
         items = [
@@ -14945,38 +14527,19 @@ class MediaFlowApi:
                 value,
                 principal=principal,
                 active=active,
-                draft=draft_by_id.get(str(value.get("id", ""))),
             )
             for value in projected
         ]
-        # Newly created or copied definitions live only inside an open Draft
-        # until activation; listing them as draft-only keeps the create/copy
-        # journey reachable without presenting a Draft as Active.
-        for draft, candidate in draft_only:
-            items.append(
-                self._automation_definition_operator_document(
-                    self._automation_occurrences.project_definition(
-                        candidate,
-                        configuration=active.summary(),
-                    ),
-                    principal=principal,
-                    active=active,
-                    draft=draft,
-                    in_active=False,
-                )
-            )
-        # The complete authorized inventory is the filter/search/sort basis; the
-        # bounded page below is only a window over it, so no definition is
-        # hidden behind a hidden prefix and every authorized Draft-only
-        # correction stays reachable.
+        # The complete published inventory is the filter/search/sort basis; the
+        # bounded page below is only a window over it, so no published
+        # definition is hidden behind a hidden prefix.
         capped = len(items) > self._AUTOMATION_INVENTORY_CAP
         if capped:
             items = items[: self._AUTOMATION_INVENTORY_CAP]
         # The full-population inventory aggregates are computed from the complete
-        # authorized definition population the backend holds, *before* the
+        # published definition population the backend holds, *before* the
         # submitted filters and the page window.  A filtered or paged read
-        # therefore never changes the cards, and a Draft-only correction entry is
-        # counted separately instead of inflating the published/enabled counts.
+        # therefore never changes the cards.
         inventory_counts = self._automation_inventory_counts(items)
         # The latest processing outcome/time is the newest *original admitted* run
         # per definition, whether scheduled or manual, so a manual-only history is
@@ -15016,12 +14579,6 @@ class MediaFlowApi:
                 "next_cursor": self._automation_inventory_cursor(
                     page, has_next, CursorDirection.NEXT, scope, query["sort"]
                 ),
-                "draftState": self._automation_draft_state(
-                    None,
-                    empty_reason=(
-                        "definitions are published directly; no recoverable draft exists"
-                    ),
-                ),
                 "resourceLibraryOptions": self._automation_resource_library_options(
                     detail["objects"]
                 ),
@@ -15041,15 +14598,6 @@ class MediaFlowApi:
                         ),
                         "nextAction": "apply the definition; it becomes effective immediately",
                     },
-                    "createDraft": {
-                        "available": False,
-                        "reason": "definitions are published directly; no draft exists",
-                        "method": "POST",
-                        "path": None,
-                        "sideEffects": "none",
-                        "durableOutcome": "none",
-                        "nextAction": "apply the definition from its form",
-                    },
                 },
             },
         )
@@ -15058,21 +14606,14 @@ class MediaFlowApi:
     def _automation_inventory_counts(items: list[dict]) -> dict[str, object]:
         """Full-population definition aggregates, independent of any filter.
 
-        ``published`` counts only definitions that exist in the exact current
-        Active configuration; ``enabled`` counts only published definitions whose
-        schedule is enabled; ``draftOnly`` counts correction entries that exist
-        solely inside an open Draft.  A Draft-only row is never counted as
-        published or enabled, and none of these numbers is derived from a page.
+        ``published`` counts the definitions that exist in the exact current
+        Active configuration; ``enabled`` counts those whose schedule is
+        enabled. None of these numbers is derived from a page.
         """
 
         published = 0
         enabled = 0
-        draft_only = 0
         for item in items:
-            state = item.get("definitionState")
-            if state == "draft-only":
-                draft_only += 1
-                continue
             published += 1
             document = item.get("document")
             body = document if isinstance(document, dict) else item
@@ -15081,9 +14622,8 @@ class MediaFlowApi:
         return {
             "published": published,
             "enabled": enabled,
-            "draftOnly": draft_only,
-            "total": published + draft_only,
-            "basis": "exact_current_active_and_open_drafts",
+            "total": published,
+            "basis": "exact_current_active",
             "scope": "full_authorized_population",
         }
 
@@ -15138,9 +14678,7 @@ class MediaFlowApi:
 
         The predicate is the exact server-side filter basis: the same fields the
         page renders (name, id, source library, scope, schedule text) form the
-        search text, and enablement/source/state are the published document
-        values.  A Draft-only definition is never matched by an ``active``
-        state filter and never contributes to published/enabled counts.
+        search text, and enablement/source are the published document values.
         """
 
         body = document
@@ -15149,9 +14687,6 @@ class MediaFlowApi:
             return False
         library = query["library"]
         if library is not None and body.get("resourceLibraryId") != library:
-            return False
-        state = query["state"]
-        if state is not None and document.get("definitionState") != state:
             return False
         search = query["search"]
         if search is not None:
@@ -15231,7 +14766,6 @@ class MediaFlowApi:
             "q": query["search"],
             "enabled": query["enabled"],
             "library": query["library"],
-            "state": query["state"],
             "sort": query["sort"],
             "direction": query["direction"],
             "limit": query["limit"],
@@ -15244,7 +14778,7 @@ class MediaFlowApi:
         resolution = self._automation_definition_resolution(definition_id, start_response)
         if not isinstance(resolution, tuple):
             return resolution
-        active, raw, definition, draft, in_active, historical = resolution
+        active, raw, _definition, in_active, historical = resolution
         projected = self._automation_occurrences.project_definition(
             raw,
             configuration=active.summary(),
@@ -15253,7 +14787,6 @@ class MediaFlowApi:
             projected,
             principal=principal,
             active=active,
-            draft=draft,
             in_active=in_active,
             historical=historical,
         )
@@ -15263,178 +14796,6 @@ class MediaFlowApi:
             {
                 "definition": operator,
                 "activeConfiguration": self._automation_active_configuration(active),
-            },
-        )
-
-    def _automation_definition_operator_draft(
-        self, definition_id: str, start_response: Callable, principal: ResolvedApiPrincipal
-    ) -> None:
-        resolution = self._automation_definition_resolution(definition_id, start_response)
-        if not isinstance(resolution, tuple):
-            return resolution
-        active, _raw, _definition, draft, _in_active, _historical = resolution
-        draft_definition = None
-        if draft is not None:
-            section = (
-                draft.document.get("automationTaskDefinitions", [])
-                if isinstance(draft.document, dict)
-                else []
-            )
-            draft_definition = next(
-                (
-                    item
-                    for item in section
-                    if isinstance(item, dict) and item.get("id") == definition_id
-                ),
-                None,
-            )
-        # Edits are stored inside the open Draft, so the authoritative form
-        # options come from that exact Draft document when one is open.
-        if draft is not None and isinstance(draft.document, dict):
-            options_source = {"resourceLibraries": draft.document.get("resourceLibraries")}
-        elif active is not None:
-            options_source = self._configuration_objects.revision_detail(active.revision_id)[
-                "objects"
-            ]
-        else:
-            options_source = {}
-        permissions = principal.permissions
-        manage = ApiPermission.MANAGE_CONFIGURATION in permissions
-        activate_permitted = ApiPermission.ACTIVATE_CONFIGURATION in permissions
-        draft_revision_id = draft.revision_id if draft is not None else None
-        return self._response(
-            start_response,
-            200,
-            {
-                "definitionId": definition_id,
-                "activeConfiguration": self._automation_active_configuration(active),
-                "draft": (
-                    None
-                    if draft is None or draft_definition is None
-                    else {
-                        "revisionId": draft.revision_id,
-                        "revisionVersion": draft.version,
-                        "revisionStatus": draft.status.value,
-                        "baseActiveRevisionId": draft.base_active_revision_id,
-                        "updatedAt": draft.updated_at.isoformat(),
-                        "validatedAt": (
-                            draft.validated_at.isoformat() if draft.validated_at else None
-                        ),
-                        "validationErrors": list(draft.validation_errors),
-                        "definition": self._strip_automation_operator_evidence(draft_definition),
-                    }
-                ),
-                "resourceLibraryOptions": self._automation_resource_library_options(options_source),
-                "actions": {
-                    "createDraft": {
-                        "available": manage,
-                        "reason": self._organize_unavailable_reason(
-                            manage,
-                            ApiPermission.MANAGE_CONFIGURATION,
-                            "the connected API principal cannot create a successor Draft",
-                        ),
-                        "method": "POST",
-                        "path": (f"/api/configuration/revisions/{active.revision_id}/successor"),
-                        "sideEffects": "none",
-                        "durableOutcome": (
-                            "a successor Draft seeded from the immutable Active "
-                            "configuration is stored"
-                        ),
-                        "nextAction": (
-                            "create the successor Draft, then edit this definition inside it"
-                        ),
-                    },
-                    "save": {
-                        "available": manage and draft is not None,
-                        "reason": (
-                            self._organize_unavailable_reason(
-                                manage,
-                                ApiPermission.MANAGE_CONFIGURATION,
-                                "the connected API principal cannot edit Automation "
-                                "Task Definitions",
-                            )
-                            if not manage
-                            else (
-                                None
-                                if draft is not None
-                                else "an open successor Draft is required to edit this definition"
-                            )
-                        ),
-                        "method": "PUT",
-                        "path": (
-                            f"/api/configuration/revisions/{draft_revision_id}/objects/"
-                            f"automationTaskDefinitions/{definition_id}"
-                            if draft_revision_id is not None
-                            else None
-                        ),
-                        "sideEffects": "none",
-                        "durableOutcome": (
-                            "the bounded definition form is stored in the open successor "
-                            "Draft at a new optimistic revision version"
-                        ),
-                        "nextAction": (
-                            "save the bounded form, then validate and explicitly activate"
-                        ),
-                    },
-                    "validate": {
-                        "available": manage and draft is not None,
-                        "reason": (
-                            self._organize_unavailable_reason(
-                                manage,
-                                ApiPermission.MANAGE_CONFIGURATION,
-                                "the connected API principal cannot validate configuration",
-                            )
-                            if not manage
-                            else (
-                                None
-                                if draft is not None
-                                else "an open successor Draft is required before validation"
-                            )
-                        ),
-                        "method": "POST",
-                        "path": (
-                            f"/api/configuration/revisions/{draft_revision_id}/validate"
-                            if draft_revision_id is not None
-                            else None
-                        ),
-                        "sideEffects": "none",
-                        "durableOutcome": (
-                            "the open Draft is validated without any runtime or Storage effect"
-                        ),
-                        "nextAction": "validate the Draft, then review the validation evidence",
-                    },
-                    "activate": {
-                        "available": activate_permitted and draft is not None,
-                        "reason": (
-                            self._organize_unavailable_reason(
-                                activate_permitted,
-                                ApiPermission.ACTIVATE_CONFIGURATION,
-                                "the connected API principal cannot activate configuration",
-                            )
-                            if not activate_permitted
-                            else (
-                                None
-                                if draft is not None
-                                else "an open successor Draft is required before activation"
-                            )
-                        ),
-                        "method": "POST",
-                        "path": (
-                            f"/api/operations/automation/task-definitions/{definition_id}"
-                            "/activate-draft"
-                            if draft_revision_id is not None
-                            else None
-                        ),
-                        "requiresConfirmation": True,
-                        "sideEffects": "none",
-                        "durableOutcome": (
-                            "the exact Draft becomes the immutable Active configuration after "
-                            "the exact-revision binding and Automation-only boundary checks; "
-                            "no Scan, Job, Task or occurrence is started"
-                        ),
-                        "nextAction": ("confirm one explicit activation of the validated Draft"),
-                    },
-                },
             },
         )
 
@@ -15448,7 +14809,7 @@ class MediaFlowApi:
         resolution = self._automation_definition_resolution(definition_id, start_response)
         if not isinstance(resolution, tuple):
             return resolution
-        active, _raw, _definition, _draft, _in_active, historical = resolution
+        active, _raw, _definition, _in_active, historical = resolution
         limit, cursor = self._scoped_page_query(
             environ,
             "automation_definition_occurrences",

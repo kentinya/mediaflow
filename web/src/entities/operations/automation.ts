@@ -51,15 +51,11 @@ export function describeAutomationRunMode(value: string): string {
 
 /**
  * Where the definition durably lives: in the immutable Active configuration,
- * or only inside an open successor Draft (newly created or copied). A
- * document without this exact state marker is malformed so no Draft can ever
- * be rendered as Active.
+ * or in retained published history after removal. A document without this
+ * exact state marker is malformed so retained history can never be rendered as
+ * a live definition.
  */
-export const AUTOMATION_DEFINITION_STATES = [
-  "active",
-  "draft-only",
-  "historical",
-] as const;
+export const AUTOMATION_DEFINITION_STATES = ["active", "historical"] as const;
 
 export const AUTOMATION_PREVIEW_STATUSES = [
   "previewed",
@@ -97,22 +93,14 @@ export type AutomationScheduleType = (typeof AUTOMATION_SCHEDULE_TYPES)[number];
 /**
  * The exact action kinds the Automation journey documents may advertise. Each
  * kind is bound to one method, one owned route and one exact suffix; the
- * draft-save contract carries a single `*` segment pinned to the exact
- * definition identity, and the collection-level create action is the only
- * identity-less transport.
+ * collection-level create action is the only identity-less transport.
  */
 export type AutomationActionKind =
   | "definition-detail"
   | "definition-occurrences"
   | "definition-run-once"
   | "definition-copy"
-  | "definition-draft-create"
   | "list-create"
-  | "list-create-draft"
-  | "draft-create"
-  | "draft-save"
-  | "draft-validate"
-  | "draft-activate"
   | "preview-detail"
   | "preview-items"
   | "preview-definition"
@@ -121,7 +109,6 @@ export type AutomationActionKind =
 const AUTOMATION_DEFINITIONS_ROUTE = "/api/automation/task-definitions/";
 const OPERATIONS_DEFINITIONS_ROUTE =
   "/api/operations/automation/task-definitions/";
-const CONFIGURATION_REVISIONS_ROUTE = "/api/configuration/revisions/";
 const OPERATIONS_TASKS_ROUTE = "/api/operations/tasks/";
 
 type AutomationActionContract = ActionTransportContract;
@@ -164,14 +151,6 @@ export const AUTOMATION_ACTION_CONTRACTS: Readonly<
     offeredWithoutTransport: false,
     objectBound: true,
   },
-  "definition-draft-create": {
-    method: "POST",
-    routePrefix: CONFIGURATION_REVISIONS_ROUTE,
-    suffix: "successor",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
   "list-create": {
     method: "POST",
     routePrefix: "/api/automation/task-definitions",
@@ -179,47 +158,6 @@ export const AUTOMATION_ACTION_CONTRACTS: Readonly<
     requiresConfirmation: false,
     offeredWithoutTransport: false,
     objectBound: false,
-  },
-  "list-create-draft": {
-    method: "POST",
-    routePrefix: CONFIGURATION_REVISIONS_ROUTE,
-    suffix: "successor",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "draft-create": {
-    method: "POST",
-    routePrefix: CONFIGURATION_REVISIONS_ROUTE,
-    suffix: "successor",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "draft-save": {
-    method: "PUT",
-    routePrefix: CONFIGURATION_REVISIONS_ROUTE,
-    // One URI-safe parameter segment pinned to the exact definition identity.
-    suffix: "objects/automationTaskDefinitions/*",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "draft-validate": {
-    method: "POST",
-    routePrefix: CONFIGURATION_REVISIONS_ROUTE,
-    suffix: "validate",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "draft-activate": {
-    method: "POST",
-    routePrefix: OPERATIONS_DEFINITIONS_ROUTE,
-    suffix: "activate-draft",
-    requiresConfirmation: true,
-    offeredWithoutTransport: false,
-    objectBound: true,
   },
   "preview-detail": {
     method: "GET",
@@ -480,48 +418,6 @@ export function normalizeAutomationActiveConfiguration(
   };
 }
 
-export interface AutomationDraftStateModel {
-  readonly present: boolean;
-  readonly reason: string | null;
-  readonly revisionId: string | null;
-  readonly revisionVersion: number | null;
-  readonly revisionStatus: string | null;
-  readonly baseActiveRevisionId: string | null;
-  readonly updatedAt: string | null;
-  readonly validatedAt: string | null;
-  readonly validationErrors: readonly string[];
-}
-
-export function normalizeAutomationDraftState(
-  value: unknown,
-  field = "draftState",
-): AutomationDraftStateModel {
-  const source = readRecord(value, field);
-  const present = flag(source, "present");
-  const revisionId = optionalText(source, "revisionId");
-  const revisionVersion = optionalCount(source, "revisionVersion");
-  const reason = optionalText(source, "reason");
-  if (present && (revisionId === null || revisionVersion === null)) {
-    // An open Draft is a durable revision: an offered Draft without its
-    // exact optimistic identity is malformed evidence.
-    return fail(`${field}.revisionId`);
-  }
-  if (!present && (revisionId !== null || revisionVersion !== null)) {
-    return fail(`${field}.present`);
-  }
-  return {
-    present,
-    reason,
-    revisionId,
-    revisionVersion,
-    revisionStatus: optionalText(source, "revisionStatus"),
-    baseActiveRevisionId: optionalText(source, "baseActiveRevisionId"),
-    updatedAt: optionalText(source, "updatedAt"),
-    validatedAt: optionalText(source, "validatedAt"),
-    validationErrors: stringList(source, "validationErrors"),
-  };
-}
-
 export interface AutomationOutcomeAttentionModel {
   readonly taskId: string;
   readonly itemId: string;
@@ -720,19 +616,16 @@ export interface AutomationDefinitionModel {
   readonly lastFailureCategory: string | null;
   readonly outcomeSummary: AutomationOutcomeSummaryModel | null;
   readonly executionReadiness: {
-    readonly state:
-      "enabled" | "disabled" | "unavailable" | "historical" | "draft-only";
+    readonly state: "enabled" | "disabled" | "unavailable" | "historical";
     readonly explanation: string;
     readonly nextAction: string;
   } | null;
-  readonly draftState: AutomationDraftStateModel;
   readonly activeConfiguration: AutomationActiveConfigurationModel | null;
   readonly actions: {
     readonly detail: AutomationActionModel;
     readonly occurrences: AutomationActionModel;
     readonly runOnce: AutomationActionModel;
     readonly copy: AutomationActionModel;
-    readonly draftCreate: AutomationActionModel;
   };
 }
 
@@ -749,10 +642,6 @@ export function normalizeAutomationDefinition(
   const occurrence = readRecord(
     source["occurrenceState"],
     `${field}.occurrenceState`,
-  );
-  const draftState = normalizeAutomationDraftState(
-    source["draftState"],
-    `${field}.draftState`,
   );
   const actions = readRecord(source["actions"], `${field}.actions`);
   const identity = document.id;
@@ -774,7 +663,6 @@ export function normalizeAutomationDefinition(
       occurrence["outcomeSummary"],
       `${field}.occurrenceState.outcomeSummary`,
     ),
-    draftState,
     activeConfiguration: normalizeAutomationActiveConfiguration(
       source["activeConfiguration"],
       `${field}.activeConfiguration`,
@@ -791,7 +679,6 @@ export function normalizeAutomationDefinition(
               "disabled",
               "unavailable",
               "historical",
-              "draft-only",
             ] as const),
             explanation: text(readiness, "explanation"),
             nextAction: text(readiness, "nextAction"),
@@ -822,15 +709,6 @@ export function normalizeAutomationDefinition(
         `${field}.actions.copy`,
         "definition-copy",
         identity,
-      ),
-      draftCreate: normalizeAutomationAction(
-        actions["draftCreate"],
-        `${field}.actions.draftCreate`,
-        "definition-draft-create",
-        normalizeAutomationActiveConfiguration(
-          source["activeConfiguration"],
-          `${field}.activeConfiguration`,
-        )?.revisionId ?? null,
       ),
     },
   };
@@ -1138,15 +1016,12 @@ function normalizeResourceLibraryOption(
 /**
  * The full-population definition aggregates the inventory cards publish.
  *
- * They are computed by the backend over the exact current Active configuration
- * and every open Draft, never from the current page or the submitted filters:
- * a Draft-only correction entry is counted separately and is never counted as a
- * published or enabled definition.
+ * They are computed by the backend over the exact current Active configuration,
+ * never from the current page or the submitted filters.
  */
 export interface AutomationInventoryCountsModel {
   readonly published: number;
   readonly enabled: number;
-  readonly draftOnly: number;
   readonly total: number;
   readonly basis: string;
   readonly scope: string;
@@ -1163,7 +1038,6 @@ export function normalizeInventoryCounts(
   return {
     published: count(source, "published"),
     enabled: count(source, "enabled"),
-    draftOnly: count(source, "draftOnly"),
     total: count(source, "total"),
     basis: text(source, "basis"),
     scope: text(source, "scope"),
@@ -1381,7 +1255,6 @@ export interface AutomationInventoryQueryModel {
   readonly q: string | null;
   readonly enabled: boolean | null;
   readonly library: string | null;
-  readonly state: string | null;
   readonly sort: string;
   readonly direction: string;
   readonly limit: number;
@@ -1404,7 +1277,6 @@ function normalizeInventoryQuery(
     q: optionalText(source, "q"),
     enabled,
     library: optionalText(source, "library"),
-    state: optionalText(source, "state"),
     sort: text(source, "sort"),
     direction: text(source, "direction"),
     limit: count(source, "limit"),
@@ -1428,11 +1300,9 @@ export interface AutomationDefinitionsPage {
   readonly itemsTruncatedByCap: boolean;
   readonly nextCursor: string | null;
   readonly previousCursor: string | null;
-  readonly draftState: AutomationDraftStateModel;
   readonly resourceLibraryOptions: readonly AutomationResourceLibraryOptionModel[];
   readonly actions: {
     readonly create: AutomationActionModel;
-    readonly createDraft: AutomationActionModel;
   };
 }
 
@@ -1473,7 +1343,6 @@ export function normalizeAutomationDefinitionsPage(
     itemsTruncatedByCap: flag(source, "itemsTruncatedByCap"),
     nextCursor: optionalText(source, "next_cursor"),
     previousCursor: optionalText(source, "previous_cursor"),
-    draftState: normalizeAutomationDraftState(source["draftState"]),
     resourceLibraryOptions: rawOptions.map((option, index) =>
       normalizeResourceLibraryOption(
         option,
@@ -1485,13 +1354,6 @@ export function normalizeAutomationDefinitionsPage(
         actions["create"],
         "actions.create",
         "list-create",
-      ),
-      createDraft: normalizeAutomationAction(
-        actions["createDraft"],
-        "actions.createDraft",
-        "list-create-draft",
-        normalizeAutomationActiveConfiguration(source["activeConfiguration"])
-          ?.revisionId ?? null,
       ),
     },
   };

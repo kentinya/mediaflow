@@ -4867,7 +4867,6 @@ export interface AutomationInventoryQueryOptions {
   readonly q?: string | null;
   readonly enabled?: boolean | null;
   readonly library?: string | null;
-  readonly state?: string | null;
   readonly sort?: string | null;
   readonly direction?: string | null;
   readonly limit?: number;
@@ -4883,7 +4882,6 @@ export function automationDefinitionsUrl(
     params.set("enabled", options.enabled ? "true" : "false");
   }
   if (options.library) params.set("library", options.library);
-  if (options.state) params.set("state", options.state);
   if (options.sort) params.set("sort", options.sort);
   if (options.direction) params.set("direction", options.direction);
   if (options.limit !== undefined) params.set("limit", String(options.limit));

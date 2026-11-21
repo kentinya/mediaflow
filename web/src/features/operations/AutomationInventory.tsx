@@ -97,11 +97,7 @@ export function AutomationMetricCards({
         <span className="mf-count-label">
           {inventoryCounts === null
             ? "已启用数量不可用"
-            : `已启用 ${inventoryCounts.enabled}${
-                inventoryCounts.draftOnly === 0
-                  ? ""
-                  : ` · 待发布 ${inventoryCounts.draftOnly}`
-              }`}
+            : `已启用 ${inventoryCounts.enabled}`}
         </span>
       </li>
       <li className="mf-count-card">
@@ -280,7 +276,6 @@ export function AutomationDefinitionRow({
   readonly highlighted?: boolean;
   readonly highlightedLabel?: string;
 }) {
-  const draftOnly = definition.definitionState === "draft-only";
   const latest = latestRunCell(latestRun);
   const runOncePending =
     runOnceFeedback?.state === "pending" ||
@@ -305,14 +300,12 @@ export function AutomationDefinitionRow({
         )}
         <p className="mf-dashboard-meta">
           {definition.document.sourceScope ?? "资源库根目录"}
-          {draftOnly ? " · 仅存在于草稿" : ""}
         </p>
       </td>
       <td>
         <span className="mf-status-badge">
           {definition.document.enabled ? "启用" : "停用"}
         </span>
-        {draftOnly && <span className="mf-status-badge">草稿</span>}
       </td>
       <td>自动整理</td>
       <td>{definition.document.resourceLibraryId}</td>

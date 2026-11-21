@@ -5325,8 +5325,7 @@ function automationDefinitionActions(state, token) {
     }),
     runOnce: automationAction({
       // The current published definition advertises its own definition-bound
-      // Run once; the retired standalone Preview action is gone.  A Draft-only
-      // definition advertises it as withheld with the activation reason.
+      // Run once; the retired standalone Preview action is gone.
       available: execute,
       reason: execute
         ? null
@@ -5338,58 +5337,20 @@ function automationDefinitionActions(state, token) {
         "start Run once and inspect progress, independent results and recovery in its linked task",
     }),
     copy: automationAction({
-      available: manage && state.draftCreated,
-      reason: manage
-        ? state.draftCreated
-          ? null
-          : "an open successor Draft is required to copy this definition"
-        : "the connected API principal cannot copy Automation Task Definitions",
-      path: `/api/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/copy`,
-      durableOutcome:
-        "a copied definition is stored inside the open successor Draft",
-      nextAction:
-        "create or open a successor Draft, then copy the definition inside it",
-    }),
-    draftCreate: automationAction({
       available: manage,
       reason: manage
         ? null
-        : "the connected API principal cannot create a successor Draft",
-      path: `/api/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
+        : "the connected API principal cannot copy Automation Task Definitions",
+      path: `/api/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/copy`,
       durableOutcome:
-        "a successor Draft seeded from the immutable Active configuration is stored",
-      nextAction:
-        "create or open the successor Draft, edit the definition, then validate and explicitly activate",
+        "the copied definition is validated and published as the new Active",
+      nextAction: "open the copied definition, then apply any wanted change",
     }),
   };
 }
 
 function automationDefinitionDocument(state, token) {
   const eligible = state.previewCreated && !state.previewStale;
-  const draftState = state.draftCreated
-    ? {
-        present: true,
-        reason: null,
-        revisionId: AUTOMATION_DRAFT_REVISION,
-        revisionVersion: state.draftVersion,
-        revisionStatus: state.draftStatus,
-        baseActiveRevisionId: AUTOMATION_ACTIVE_REVISION,
-        updatedAt: MANUAL_RECORDED_AT,
-        validatedAt:
-          state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
-        validationErrors: [],
-      }
-    : {
-        present: false,
-        reason: "no open successor Draft contains this definition",
-        revisionId: null,
-        revisionVersion: null,
-        revisionStatus: null,
-        baseActiveRevisionId: null,
-        updatedAt: null,
-        validatedAt: null,
-        validationErrors: [],
-      };
   return automationExecutionDefinition({
     id: AUTOMATION_DEFINITION_ID,
     name: "Nightly automation",
@@ -5432,122 +5393,10 @@ function automationDefinitionDocument(state, token) {
       revisionSequence: state.activated ? 3 : 2,
       status: "active",
     },
-    draftState,
     actions: automationDefinitionActions(state, token),
   });
 }
 
-/**
- * A definition that exists only inside the open successor Draft (newly
- * created or copied): truthful draft-only state, empty occurrence history and
- * no Active-definition actions until checked activation.
- */
-function automationDraftOnlyDefinitionDocument(state, token, definition) {
-  const { manage } = automationPermissions(token);
-  const notActiveReason =
-    "this definition exists only inside an open successor Draft; " +
-    "activate the Draft to make it the Active definition";
-  return automationExecutionDefinition({
-    id: definition.id,
-    name: definition.name,
-    definitionState: "draft-only",
-    enabled: definition.enabled === true,
-    resourceLibraryId: definition.resourceLibraryId,
-    mode: definition.mode,
-    itemLimit: definition.itemLimit,
-    sourceScope: null,
-    intervalSeconds: definition.intervalSeconds ?? null,
-    cron: definition.cron ?? null,
-    timezone: definition.timezone ?? null,
-    occurrenceState: {
-      enabled: definition.enabled === true,
-      nextRunAt: null,
-      lastOccurrenceAt: null,
-      lastTaskId: null,
-      lastOutcome: null,
-      lastReason: null,
-      nextAction: null,
-      lastFailureCategory: null,
-      outcomeSummary: null,
-    },
-    activeConfiguration: {
-      revisionId: state.activated
-        ? AUTOMATION_DRAFT_REVISION
-        : AUTOMATION_ACTIVE_REVISION,
-      version: state.activated ? 4 : 3,
-      revisionSequence: state.activated ? 3 : 2,
-      status: "active",
-    },
-    draftState: {
-      present: true,
-      reason: null,
-      revisionId: AUTOMATION_DRAFT_REVISION,
-      revisionVersion: state.draftVersion,
-      revisionStatus: state.draftStatus,
-      baseActiveRevisionId: AUTOMATION_ACTIVE_REVISION,
-      updatedAt: MANUAL_RECORDED_AT,
-      validatedAt:
-        state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
-      validationErrors: [],
-    },
-    actions: {
-      detail: automationAction({
-        available: true,
-        method: "GET",
-        path: `/api/operations/automation/task-definitions/${definition.id}`,
-        durableOutcome: null,
-        nextAction:
-          "inspect the durable definition, schedule and occurrence state",
-      }),
-      occurrences: automationAction({
-        available: true,
-        method: "GET",
-        path: `/api/operations/automation/task-definitions/${definition.id}/occurrences`,
-        durableOutcome: null,
-        nextAction:
-          "inspect the bounded occurrence history and its linked work",
-      }),
-      runOnce: automationAction({
-        available: false,
-        reason: notActiveReason,
-        path: `/api/operations/automation/task-definitions/${definition.id}/run-once`,
-        durableOutcome:
-          "a durable organizing task for the saved scope is admitted and executed through the existing Worker after complete scope and plan checks",
-        nextAction: "activate the Draft before starting Run once",
-      }),
-      copy: automationAction({
-        available: manage && state.draftCreated,
-        reason: manage
-          ? state.draftCreated
-            ? null
-            : "an open successor Draft is required to copy this definition"
-          : "the connected API principal cannot copy Automation Task Definitions",
-        path: `/api/automation/task-definitions/${definition.id}/copy`,
-        durableOutcome:
-          "a copied definition is stored inside the open successor Draft",
-        nextAction: "copy the definition inside the open successor Draft",
-      }),
-      draftCreate: automationAction({
-        available: manage,
-        reason: manage
-          ? null
-          : "the connected API principal cannot create a successor Draft",
-        path: `/api/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
-        durableOutcome:
-          "a successor Draft seeded from the immutable Active configuration is stored",
-        nextAction:
-          "create or open the successor Draft, then edit this definition inside it",
-      }),
-    },
-  });
-}
-
-/**
- * The full-population Automation metric cards, exactly as the real backend
- * publishes them for this fake population: one terminal admitted run is not
- * claimed, so the success denominator is empty and the rate is explicit
- * `null` instead of a fabricated percentage.
- */
 function automationMetricsDocument(inventoryCounts) {
   return {
     available: true,
@@ -5602,19 +5451,12 @@ function automationMetricsDocument(inventoryCounts) {
 
 /**
  * The full-population definition aggregates the backend computes over the
- * exact current Active configuration and every open Draft, before any filter
- * or page window. A Draft-only correction entry is counted separately and is
- * never counted as published or enabled.
+ * exact current Active configuration, before any filter or page window.
  */
 function automationInventoryCounts(items) {
   let published = 0;
   let enabled = 0;
-  let draftOnly = 0;
   for (const item of items) {
-    if (item.definitionState === "draft-only") {
-      draftOnly += 1;
-      continue;
-    }
     published += 1;
     if (item.enabled === true) {
       enabled += 1;
@@ -5623,9 +5465,8 @@ function automationInventoryCounts(items) {
   return {
     published,
     enabled,
-    draftOnly,
-    total: published + draftOnly,
-    basis: "exact_current_active_and_open_drafts",
+    total: published,
+    basis: "exact_current_active",
     scope: "full_authorized_population",
   };
 }
@@ -5633,16 +5474,6 @@ function automationInventoryCounts(items) {
 function automationListDocument(state, token) {
   const { manage } = automationPermissions(token);
   const items = [automationDefinitionDocument(state, token)];
-  // Newly created or copied definitions live only inside the open Draft
-  // until activation; the list mirrors the real backend projection by
-  // serving them as draft-only items.
-  for (const definition of [state.createdDefinition, state.copiedDefinition]) {
-    if (definition !== null && definition !== undefined) {
-      items.push(
-        automationDraftOnlyDefinitionDocument(state, token, definition),
-      );
-    }
-  }
   const inventoryCounts = automationInventoryCounts(items);
   return {
     activeConfiguration: {
@@ -5668,7 +5499,6 @@ function automationListDocument(state, token) {
       q: null,
       enabled: null,
       library: null,
-      state: null,
       sort: "name",
       direction: "asc",
       limit: 20,
@@ -5677,31 +5507,6 @@ function automationListDocument(state, token) {
     itemsTruncatedByCap: false,
     next_cursor: null,
     previous_cursor: null,
-    draftState: state.draftCreated
-      ? {
-          present: true,
-          reason: null,
-          revisionId: AUTOMATION_DRAFT_REVISION,
-          revisionVersion: state.draftVersion,
-          revisionStatus: state.draftStatus,
-          baseActiveRevisionId: AUTOMATION_ACTIVE_REVISION,
-          updatedAt: MANUAL_RECORDED_AT,
-          validatedAt:
-            state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
-          validationErrors: [],
-        }
-      : {
-          present: false,
-          reason:
-            "no open successor Draft exists; create one to add or edit definitions",
-          revisionId: null,
-          revisionVersion: null,
-          revisionStatus: null,
-          baseActiveRevisionId: null,
-          updatedAt: null,
-          validatedAt: null,
-          validationErrors: [],
-        },
     resourceLibraryOptions: [{ id: "source", name: "Source", enabled: true }],
     actions: {
       create: automationAction({
@@ -5711,20 +5516,8 @@ function automationListDocument(state, token) {
           : "the connected API principal cannot create Automation Task Definitions",
         path: "/api/automation/task-definitions",
         durableOutcome:
-          "the bounded definition is stored inside the open successor Draft",
-        nextAction:
-          "start or open a successor Draft, then create the definition inside it",
-      }),
-      createDraft: automationAction({
-        available: manage,
-        reason: manage
-          ? null
-          : "the connected API principal cannot create a successor Draft",
-        path: `/api/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
-        durableOutcome:
-          "a successor Draft seeded from the immutable Active configuration is stored",
-        nextAction:
-          "create or open the successor Draft, then add or edit definitions inside it",
+          "the bounded definition is validated and published as the new Active",
+        nextAction: "apply the definition; it becomes effective immediately",
       }),
     },
   };
