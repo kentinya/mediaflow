@@ -637,7 +637,17 @@ export function NotificationEditorPage() {
   }, [awaitingVerification, pendingApply, draftQuery.refetch]);
 
   const closeCard = () => {
-    void navigate({ to: "/operations/notifications" });
+    const reconciled = reconciliation?.committed === true;
+    void navigate({ to: "/operations/notifications" }).then(() => {
+      if (reconciled) {
+        // A reconciled apply changed the published identity while the list was
+        // mounted behind the editor. Re-read it after the transition so the
+        // list presents the same current definition the editor just reported.
+        void queryClient.invalidateQueries({
+          queryKey: [notificationListQueryKey],
+        });
+      }
+    });
   };
   const guard = useNotificationCardGuard({
     busy,

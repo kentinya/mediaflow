@@ -4474,6 +4474,12 @@ test("the Notification editor verifies a lost apply response after reconnect wit
   expect(publishRequests).toBe(1);
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  const card = page
+    .locator(".mf-notification-list-card")
+    .filter({ hasText: "operations-webhook" })
+    .first();
+  await card.locator("summary", { hasText: "诊断信息" }).click();
+  await expect(card.getByText(/最大尝试 8 次/)).toBeVisible();
 });
 
 test("a settled Task publishes one outbox delivery the delivery pages read", async ({
