@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: DEVELOPER FIXES TASK57.1
+Next Action: B REVIEW TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: DEVELOPER FIXES TASK57.1
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -335,6 +335,43 @@ Next: SAME TASK FIX LOOP
 
 Slice 57 的 RO-1 已通过本轮设置、会话恢复、改密和账号切换定向验证。RO-2 的用户管理与
 脚本令牌待后续 Task。RO-3 的本机启动校验已通过，后台执行和部署验收待完成。
+
+
+**Developer 回归修正交付记录（READY FOR B REVIEW）**
+
+- 实现候选：`4eaeace9b1fba53691f232d26c7e0a85875a4981`（源码修正
+  `924847ceec0f4d0e5d58125cc7b16a872e5d7124`，本轮起点 `4181183f`，Task Base
+  `4566a74055c698aec704215dd431eb8521bcfedb`）。保留原 Slice 合同、原评审记录和
+  未授权范围；本记录只覆盖 B 本轮回归修正指导。
+- Python 回归修正：新增 `tests/account_fixtures.py`，通过真实 repository 创建账号并用
+  `AccountService.login` 签发会话；迁移 B 点名的 12 个失败模块及共享媒体发现 fixture，
+  删除测试配置中的 `api.principals`，业务请求改用数据库账号 Cookie 和当前角色。
+  执行权限用例通过隔离夹具更新同一持久账号的角色，验证授权、撤权和明确拒绝；旧字段只
+  保留在专门的退役拒绝输入。账号管理入口属于后续 Slice，fixture 的角色变更不是产品入口。
+- 浏览器任务中心修正：任务中心只读回归先完成真实登录再记录请求；刷新保留原目录、任务和
+  允许的查询参数，显式退出后重新登录核对原任务及原请求，执行次数和效果断言保持。
+  `reconnectAtCurrentRoute` 同时支持有效会话直接恢复和失效后的登录表单。harness 的托管
+  配置去除了退役身份字段，真实 Worker 的自动执行重新读取当前 Active。
+- 同步测试夹具到现行入口：共享真实 Python harness 使用账号会话，保留直接 API 断言所需的
+  focused principal；修正退役 `/ui` 为当前入口文档、非 GET 静态请求、资源库引用计数、
+  双 Webhook 投递和 definition-bound Worker 等过期夹具断言。Unicode 主身份浏览器用例
+  也改为有效会话刷新后直接恢复。
+- 文档：`docs/deployment.md` 的前置步骤改为 locator-only 生成、主机设置码、首页创建首位
+  管理员再初始化系统设置；README 现行入口已一致，无额外改动。
+- 实际验证：
+  - 定向 Python：12 个回归模块 209 项、`test_automation_settings_resident` 25 项、
+    `test_web_account_auth`／`test_api_credentials`／`test_management_setup`／
+    `test_api_security`／`test_execution_authorization`／`test_resident_services`／
+    `test_container_deployment`／`test_container_probe`／`test_configuration_snapshot`
+    160 项，共 394 项通过。
+  - Web：身份与入口定向单测 43 项通过；`npm run typecheck`、`npm run build`、Prettier
+    与 ESLint 改动文件检查通过。
+  - 真实 Python/SQLite：`operations-inventory.python.spec.ts` 51 项通过（含登录后记录、
+    刷新、显式退出重登、深链和原请求核对）；Unicode 主身份浏览器用例 1 项通过。
+  - `ruff check`、`ruff format --check`、`compileall`、`git diff --check`、治理检查 PASS。
+- 剩余风险：完整 T4 Python、真实 Compose、候选镜像、wheel、真实 Scheduler／Worker
+  账号权限执行验收仍由 B 执行；本轮未重跑其余真实 Python 浏览器 spec。真实 harness 仍保留
+  仅供直接 API 夹具断言使用的 focused principal，浏览器旅程已全部使用数据库账号会话。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
