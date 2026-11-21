@@ -254,7 +254,7 @@ Slice 57 的 RO-1 已验证上述设置、登录恢复与改密旅程，账号�
 
 **Developer 返工交付记录（READY FOR B REVIEW）**
 
-- 实现候选：`5028fa595cc5d3cfb557a020225ab43651201518`（Task Base
+- 实现候选：`cae11b421552293be43a0159d73f860825872fc0`（Task Base
   `4566a74055c698aec704215dd431eb8521bcfedb`）。保留原 Slice 合同、原评审记录和
   未授权范围；本记录只覆盖 B 本轮的两项 P1 返工指导。
 - P1 多标签账号切换修复：新增同源 `BroadcastChannel` 的非秘密会话变更信号；登录、退出、
@@ -272,7 +272,7 @@ Slice 57 的 RO-1 已验证上述设置、登录恢复与改密旅程，账号�
   删除指引和数据库未创建。真实 Python harness 增加隔离只读账号夹具控制；
   `web-account-auth.python.spec.ts` 新增「标签 A 管理员打开任务中心 → 标签 B 退出并以
   只读账号登录 → 标签 A 返回、账号更新为 readonly 并刷新任务中心」的真实浏览器场景，
-  同时核对 `/api/auth/session` 归属只读账号。
+  同时核对 `/api/auth/session` 的账号、`viewer` 角色和只读权限归属。
 - 实际验证：
   - `test_resident_services` 29 项、`test_api_credentials` 8 项、
     `test_web_account_auth` 15 项、`test_api_security` 13 项、
