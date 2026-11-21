@@ -5,6 +5,7 @@ import {
   type Route,
   type TestInfo,
 } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 const ADMIN_TOKEN = "harness-admin-token";
 
@@ -19,8 +20,7 @@ async function openFiles(
       ? "/resourcelib/files?resourceLibraryId=source"
       : "/medialib/files?mediaLibraryId=movies";
   await page.goto(origin === undefined ? url : new URL(url, origin).toString());
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(
     page.getByRole("heading", {
       name: kind === "resource" ? "文件" : "媒体库",
@@ -190,8 +190,7 @@ async function deleteOverInsecureLanHttp(
     await page.goto(
       new URL(recoveryPath, "http://mediaflow.review.test:4185").toString(),
     );
-    await page.getByLabel("API token").fill(ADMIN_TOKEN);
-    await page.getByRole("button", { name: "Connect" }).click();
+    await submitSignIn(page, accountForToken(ADMIN_TOKEN));
     await expect(
       page.getByRole("heading", {
         name: kind === "resource" ? "文件" : "媒体库",
@@ -767,8 +766,7 @@ async function readOperationStatus(
   expect(await restart.json()).toMatchObject({ restarted: true });
 
   await page.reload();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(
     page.getByRole("heading", {
       name: kind === "resource" ? "文件" : "媒体库",
@@ -923,8 +921,7 @@ async function mixedBatchLocalEvidence(
   const restart = await page.request.post("/__harness__/restart");
   expect(restart.ok()).toBe(true);
   await page.reload();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(
     page.getByRole("heading", {
       name: kind === "resource" ? "文件" : "媒体库",
@@ -1116,8 +1113,7 @@ async function bulkDirectoryLocalEvidence(
   const restart = await page.request.post("/__harness__/restart");
   expect(restart.ok()).toBe(true);
   await page.reload();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(
     page.getByRole("heading", {
       name: kind === "resource" ? "文件" : "媒体库",
@@ -1667,8 +1663,7 @@ test.describe("disabled origin stays inspectable", () => {
     // The live page no longer offers the library, but its durable history is
     // intact and the origin index still names it.
     await page.reload();
-    await page.getByLabel("API token").fill(ADMIN_TOKEN);
-    await page.getByRole("button", { name: "Connect" }).click();
+    await submitSignIn(page, accountForToken(ADMIN_TOKEN));
     await expect(
       page.getByRole("heading", { name: "文件", exact: true }),
     ).toBeVisible();
@@ -1744,8 +1739,7 @@ test.describe("disabled origin stays inspectable", () => {
     });
     const deepLink = `/resourcelib/files?resourceLibraryId=${origin}&operationTaskId=${taskId}`;
     await page.goto(new URL(deepLink, "http://127.0.0.1:4185").toString());
-    await page.getByLabel("API token").fill(ADMIN_TOKEN);
-    await page.getByRole("button", { name: "Connect" }).click();
+    await submitSignIn(page, accountForToken(ADMIN_TOKEN));
     const reopened = page.getByRole("dialog", { name: /当前页面操作状态/ });
     await expect(reopened).toBeVisible();
     await expect(
@@ -1819,8 +1813,7 @@ test("both library edit cards accept a legal Active with an unnamed Storage and 
         ? `/resourcelib/files?resourceLibraryId=${scenario.libraryId}`
         : `/medialib/files?mediaLibraryId=${scenario.libraryId}`;
     await page.goto(url);
-    await page.getByLabel("API token").fill(ADMIN_TOKEN);
-    await page.getByRole("button", { name: "Connect" }).click();
+    await submitSignIn(page, accountForToken(ADMIN_TOKEN));
     await expect(
       page.getByRole("heading", {
         name: scenario.kind === "resource" ? "文件" : "媒体库",
@@ -1968,8 +1961,7 @@ async function openRecoveryLibraryPage(
       ? `?resourceLibraryId=${selectedId}`
       : `?mediaLibraryId=${selectedId}`;
   await page.goto(basePath + search);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(
     page.getByRole("heading", {
       name: RECOVERY_KINDS[kind].heading,

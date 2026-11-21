@@ -152,6 +152,46 @@ class ApiCredentialTests(unittest.TestCase):
             self.assertEqual("", output.getvalue())
             self.assertIn("first administrator already exists", error.getvalue())
 
+    def test_retired_principals_are_rejected_by_startup_and_config_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = self._configuration(directory)
+            document = json.loads(config.read_text(encoding="utf-8"))
+            document["api"] = {
+                "principals": [
+                    {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"]}
+                ]
+            }
+            config.write_text(json.dumps(document), encoding="utf-8")
+
+            for argv, expected in (
+                (["config", "validate"], "api.principals is retired"),
+                (
+                    ["api", "serve", "--host", "127.0.0.1", "--port", "0"],
+                    "api.principals is retired",
+                ),
+            ):
+                with self.subTest(argv=argv):
+                    error = io.StringIO()
+                    status = final_main(
+                        ["--config", str(config), *argv],
+                        stdout=io.StringIO(),
+                        stderr=error,
+                    )
+                    self.assertEqual(2, status)
+                    self.assertIn(expected, error.getvalue())
+                    self.assertIn("remove it", error.getvalue())
+
+            document["api"] = {"tokenEnv": "MEDIAFLOW_API_TOKEN"}
+            config.write_text(json.dumps(document), encoding="utf-8")
+            error = io.StringIO()
+            status = final_main(
+                ["--config", str(config), "config", "validate"],
+                stdout=io.StringIO(),
+                stderr=error,
+            )
+            self.assertEqual(2, status)
+            self.assertIn("api.tokenEnv is retired", error.getvalue())
+
     def test_accounts_command_leaves_a_foreign_database_untouched(self) -> None:
         import hashlib
         import sqlite3

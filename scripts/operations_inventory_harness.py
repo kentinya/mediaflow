@@ -114,6 +114,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from mediaflow.application.accounts import AccountService, hash_password  # noqa: E402
 from mediaflow.application.classification_review import ClassificationReviewService  # noqa: E402
 from mediaflow.application.configuration_objects import ConfigurationObjectService  # noqa: E402
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService  # noqa: E402
@@ -134,6 +135,7 @@ from mediaflow.application.strategy_test import (  # noqa: E402
     strategy_runner_from_configuration,
 )
 from mediaflow.application.task_runtime import PersistentTaskCoordinator  # noqa: E402
+from mediaflow.domain.accounts import Account  # noqa: E402
 from mediaflow.domain.classification import (  # noqa: E402
     ClassificationPolicy,
     ClassificationResult,
@@ -182,7 +184,11 @@ from mediaflow.domain.recognition import (  # noqa: E402
     RecognitionStatus,
     RecognitionType,
 )
-from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal  # noqa: E402
+from mediaflow.domain.security import (  # noqa: E402
+    ApiPermission,
+    ApiRole,
+    ResolvedApiPrincipal,
+)
 from mediaflow.domain.source_evidence import (  # noqa: E402
     OccurrenceState,
     occurrence_id_for,
@@ -222,6 +228,7 @@ from tests.task_engine_test_helpers import (  # noqa: E402
 
 HARNESS_TOKEN = "harness-viewer-token"
 HARNESS_ADMIN_TOKEN = "harness-admin-token"
+E2E_ACCOUNT_PASSWORD = "e2e-password"
 WORKER_ID = "harness-inventory-worker"
 
 
@@ -300,6 +307,45 @@ class ManagedHarnessContext:
     config_path: Path | None = None
 
 
+def seed_web_accounts(repository) -> None:
+    """Create the browser accounts for this isolated harness run.
+
+    The browser uses the shipped account login and session cookie; the legacy
+    harness Bearer identities remain only for direct fixture assertions so a
+    background permission check sees the same account identity.
+    """
+
+    if repository.count_accounts() > 0:
+        return
+    now = datetime.now(UTC)
+    for username, role in (
+        ("viewer", ApiRole.OPERATOR),
+        ("admin", ApiRole.ADMIN),
+        ("readonly", ApiRole.VIEWER),
+        ("limited", ApiRole.VIEWER),
+        ("expired", ApiRole.VIEWER),
+    ):
+        account_id = (
+            "harness-admin"
+            if username == "admin"
+            else "harness"
+            if username == "viewer"
+            else f"harness-account-{username}"
+        )
+        repository.create_account(
+            Account(
+                account_id,
+                username,
+                (role,),
+                True,
+                now,
+                now,
+                now,
+            ),
+            hash_password(E2E_ACCOUNT_PASSWORD),
+        )
+
+
 def build_api(
     repository: SQLiteTaskRepository,
     *,
@@ -327,6 +373,7 @@ def build_api(
     api = MediaFlowApi(
         repository,
         principals=(PRINCIPAL, ADMIN_PRINCIPAL),
+        account_service=AccountService(repository),
         webhook_transport=_HarnessWebhookTransport(),
         **managed_options,
     )
@@ -1116,6 +1163,7 @@ def build_managed_fixture(
     configuration_service = ManagedConfigurationService(
         configuration_repository,
         bootstrap_database_path=str(database),
+        bootstrap_document=document,
     )
     objects = ConfigurationObjectService(
         configuration_service,
@@ -1174,6 +1222,7 @@ def build_managed_fixture(
         version=active.version,
     )
     repository = SQLiteTaskRepository(database)
+    seed_web_accounts(repository)
     # The fixture records one real observation of the configured scope so a
     # stability policy with a non-zero interval can be proven on a later read.
     scan = StorageScanner(

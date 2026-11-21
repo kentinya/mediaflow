@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Files browse/context built-artifact browser proof for the library workspace.
@@ -25,7 +26,10 @@ const LIMITED_TOKEN = "e2e-limited-token";
 function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
   const seen: Array<{ url: string; method: string }> = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       seen.push({ url: request.url(), method: request.method() });
     }
   });
@@ -33,8 +37,7 @@ function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
 }
 
 async function connectAs(page: Page, token = VIEWER_TOKEN): Promise<void> {
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 async function resetResourceLibrary(page: Page): Promise<void> {
@@ -136,11 +139,13 @@ test("direct Files deep link and refresh retain memory-only auth continuation", 
   await expect(page.getByRole("table")).toBeVisible();
 
   await page.reload();
-  await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
-  // Memory-only authority: no Web storage and no bearer token ever lands in
-  // a cookie. The fake's own evidence-session cookie is the only value a
-  // browser test can observe, and it never carries the token.
+  await expect(page).toHaveURL(
+    /\/resourcelib\/files\?resourceLibraryId=resources&path=Movies/,
+  );
+  await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
+  await expect(page.getByRole("table")).toBeVisible();
+  // The session credential is HttpOnly: no Web storage and no script-readable
+  // cookie exposes it, and no bearer token is rendered anywhere.
   const storage = await page.evaluate(() => ({
     local: window.localStorage.length,
     session: window.sessionStorage.length,
@@ -148,12 +153,8 @@ test("direct Files deep link and refresh retain memory-only auth continuation", 
   }));
   expect(storage.local).toBe(0);
   expect(storage.session).toBe(0);
-  expect(storage.cookie).not.toContain(VIEWER_TOKEN);
-  await connectAs(page);
-  await expect(page).toHaveURL(
-    /\/resourcelib\/files\?resourceLibraryId=resources&path=Movies/,
-  );
-  await expect(page.getByRole("table")).toBeVisible();
+  expect(storage.cookie).not.toContain("mediaflow_session");
+  await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
 });
 
 test("an empty ResourceLibrary shows the bounded empty state with no mutation", async ({
@@ -178,17 +179,23 @@ test("Files failure, 401 and 403 states remain bounded", async ({ page }) => {
   // A limited principal is refused by the backend authority, not by a hidden
   // control, and the token is never rendered.
   await page.goto("/resourcelib/files");
-  await page.getByLabel("API token").fill(LIMITED_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(LIMITED_TOKEN));
   await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
   await expect(page.getByText(LIMITED_TOKEN)).toHaveCount(0);
 
-  // An unknown token restarts at the memory-only entry without an API read.
+  // Signing out makes the next protected entry anonymous. Only the public
+  // session-state probe runs before the root sign-in boundary; no business
+  // read or hidden retry starts.
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   const apiRequests = apiRequestsOf(page);
   await page.goto("/resourcelib/files?resourceLibraryId=resources");
-  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
-  await expect(
-    apiRequests.filter((request) => request.url.includes("/api/")),
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  expect(
+    apiRequests.filter(
+      (request) =>
+        request.url.includes("/api/") && !request.url.includes("/api/auth/"),
+    ),
   ).toHaveLength(0);
 });
 
@@ -211,7 +218,7 @@ test("retired FileIndex catalog and detail routes render the bounded not-found s
   await expect(
     page.getByRole("link", { name: "Open physical location" }),
   ).toHaveCount(0);
-  await expect(page.getByLabel("API token")).toHaveCount(0);
+  await expect(page.getByLabel("Login name")).toHaveCount(0);
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
   expect(page.url()).not.toContain("fingerprint");
   expect(page.url()).not.toContain("token");

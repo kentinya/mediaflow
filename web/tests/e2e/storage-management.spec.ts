@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Built-artifact browser proof for the V2 Storage management journey
@@ -18,8 +19,7 @@ const READ_ONLY_TOKEN = "e2e-readonly-token";
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
   await page.goto("/");
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
@@ -324,7 +324,7 @@ test.describe("Storage management", () => {
     const topbar = page.locator(".mf-shell-topbar");
     await expect(topbar.getByRole("searchbox")).toHaveCount(0);
     await expect(
-      topbar.getByRole("button", { name: "Disconnect" }),
+      topbar.getByRole("button", { name: "Account menu" }),
     ).toBeVisible();
 
     // The provider card remains the inventory-narrowing control.
@@ -591,10 +591,12 @@ test.describe("Storage management", () => {
   }) => {
     const mutations: string[] = [];
     page.on("request", (request) => {
-      if (["POST", "PUT", "DELETE", "PATCH"].includes(request.method())) {
-        mutations.push(
-          `${request.method()} ${new URL(request.url()).pathname}`,
-        );
+      const path = new URL(request.url()).pathname;
+      if (
+        ["POST", "PUT", "DELETE", "PATCH"].includes(request.method()) &&
+        !path.startsWith("/api/auth/")
+      ) {
+        mutations.push(`${request.method()} ${path}`);
       }
     });
     await resetStorage(page, "?noActive=1");
@@ -668,8 +670,7 @@ test.describe("Storage management", () => {
     await resetStorage(page);
     await page.goto("/storage");
     await expect(page).toHaveURL(/\/$/);
-    await page.getByLabel("API token").fill(VIEWER_TOKEN);
-    await page.getByRole("button", { name: "Connect" }).click();
+    await submitSignIn(page, accountForToken(VIEWER_TOKEN));
     await expect(page).toHaveURL(/\/storage$/);
     await expect(page.getByRole("heading", { name: "存储管理" })).toBeVisible();
   });

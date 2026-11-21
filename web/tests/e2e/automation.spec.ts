@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Built-artifact browser proof for the V2 Automation workspace.
@@ -23,8 +24,7 @@ const ACTIVE_REVISION = "automation-active-rev-e2e-001";
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
   await page.goto("/");
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
@@ -39,8 +39,7 @@ async function connectOn(
   token: string = VIEWER_TOKEN,
 ) {
   await page.goto(path);
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 async function openAutomation(page: Page) {
@@ -253,7 +252,7 @@ test("the retired Automation create address is an ordinary not-found page", asyn
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
-  await expect(page.getByLabel("API token")).toHaveCount(0);
+  await expect(page.getByLabel("Login name")).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
   ).toHaveCount(0);
@@ -344,7 +343,7 @@ test("the retired definition and editor addresses are ordinary not-found pages",
     await expect(page.getByText("Back to the definition")).toHaveCount(0);
     // A retired, unsupported address is not an authentication continuation
     // target; it shows the ordinary not-found page directly.
-    await expect(page.getByLabel("API token")).toHaveCount(0);
+    await expect(page.getByLabel("Login name")).toHaveCount(0);
   }
   // Viewing an old address issues no retired detail/Draft read, configuration
   // command or work admission.

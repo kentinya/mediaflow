@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Built-artifact browser proof for the V2 Operations workspace journey.
@@ -52,8 +53,9 @@ const COMPLETED_ENDED_ROW = new RegExp(
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
   await page.goto("/");
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  if (await page.getByRole("heading", { name: "Sign in" }).isVisible()) {
+    await submitSignIn(page, accountForToken(token));
+  }
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
@@ -65,13 +67,9 @@ async function openOperations(page: Page) {
 /** Open one exact run in the Task Center through its own URL state. */
 async function openCenterRun(page: Page, runId: string) {
   await connect(page);
-  // A direct reload of a selected-run URL drops the memory-only token, so the
-  // exact selection is re-entered through the real reconnect boundary.
+  // The server session persists, so the exact selected-run URL is a normal
+  // supported deep link with no memory-only credential to re-enter.
   await page.goto(`/operations?run=${encodeURIComponent(runId)}`);
-  if (await page.getByLabel("API token").isVisible()) {
-    await page.getByLabel("API token").fill(VIEWER_TOKEN);
-    await page.getByRole("button", { name: "Connect" }).click();
-  }
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 }
 
@@ -128,12 +126,10 @@ test("the submitted creation-date range survives reload and re-authentication", 
   await expect(page).not.toHaveURL(/status=/);
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
 
-  // Reload loses the memory-only token but preserves the route for explicit
-  // auth continuation. Disconnect deliberately clears that navigation intent.
+  // Reload keeps the server session and the submitted route state; no
+  // re-authentication or request replay is needed.
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toHaveCount(0);
   await expect(page).toHaveURL(new RegExp(`from=${FAILED_CREATED_DAY}`));
   await expect(page).toHaveURL(new RegExp(`to=${FAILED_CREATED_DAY}`));
   await expect(page.getByRole("row", { name: FAILED_ROW })).toBeVisible();
@@ -143,9 +139,8 @@ test("an unauthenticated deep entry reconnects to the same filtered center view"
   page,
 }) => {
   await page.goto("/operations?view=ended&status=failed");
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   await expect(page).toHaveURL(/\/operations\?/);
   await expect(page).toHaveURL(/view=ended/);
   await expect(page).not.toHaveURL(/status=/);
@@ -154,13 +149,17 @@ test("an unauthenticated deep entry reconnects to the same filtered center view"
   expect(html).not.toContain(VIEWER_TOKEN);
 });
 
-test("a reload drops the memory-only token and returns to the connection boundary", async ({
+test("a reload keeps the server session on the same task-center view", async ({
   page,
 }) => {
   await connect(page);
   await openOperations(page);
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
+  await expect(page).toHaveURL(/\/operations$/);
+  await expect(page.getByLabel("Login name")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "任务中心", exact: true }),
+  ).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain(VIEWER_TOKEN);
 });
@@ -170,7 +169,11 @@ test("the retired Task/Job collections and identities are ordinary not-found rou
 }) => {
   const apiRequests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) apiRequests.push(request.url());
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    )
+      apiRequests.push(request.url());
   });
   for (const path of [
     "/operations/tasks",
@@ -184,7 +187,7 @@ test("the retired Task/Job collections and identities are ordinary not-found rou
     await expect(
       page.getByRole("heading", { name: "Route not found" }),
     ).toBeVisible();
-    await expect(page.getByLabel("API token")).toHaveCount(0);
+    await expect(page.getByLabel("Login name")).toHaveCount(0);
     await expect(page.getByText("任务列表已并入任务中心")).toHaveCount(0);
     await expect(page.getByText("旧列表已并入任务中心")).toHaveCount(0);
     await expect(page.getByText("该旧记录已不可用")).toHaveCount(0);
@@ -270,7 +273,11 @@ test("a terminal run exposes no control and no request is sent", async ({
 }) => {
   const posts: string[] = [];
   page.on("request", (request) => {
-    if (request.method() === "POST" && request.url().includes("/api/")) {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       posts.push(request.url());
     }
   });
@@ -292,13 +299,17 @@ test("a retired Task identity is never resolved into a guessed current context",
 }) => {
   const apiRequests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) apiRequests.push(request.url());
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    )
+      apiRequests.push(request.url());
   });
   await page.goto("/operations/tasks/does-not-exist");
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
-  await expect(page.getByLabel("API token")).toHaveCount(0);
+  await expect(page.getByLabel("Login name")).toHaveCount(0);
   await expect(page.getByText(/没有提交任何命令/)).toHaveCount(0);
   expect(apiRequests).toEqual([]);
 });
@@ -378,10 +389,9 @@ test("dropping credential-like Operations search state on reconnect", async ({
   // A deep entry carrying an unknown, credential-like key must be reduced to
   // the allowlisted route before the reconnect continuation replays it.
   await page.goto("/operations?view=ended&status=failed&token=secret");
-  await expect(page.getByLabel("API token")).toBeVisible();
+  await expect(page.getByLabel("Login name")).toBeVisible();
   expect(page.url()).not.toContain("token=secret");
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   await expect(page).toHaveURL(/\/operations\?/);
   await expect(page).toHaveURL(/view=ended/);
   await expect(page).not.toHaveURL(/status=/);
@@ -617,9 +627,8 @@ test("an unauthenticated deep entry reconnects to the selected run overview", as
   page,
 }) => {
   await page.goto("/operations?view=ended&status=failed&run=job-005");
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   // The view and exact selection survive; the removed hidden filter does not.
   await expect(page).toHaveURL(/\/operations\?/);
   await expect(page).not.toHaveURL(/status=/);
@@ -721,14 +730,11 @@ test("item and record filters page on the server and survive a reload", async ({
     )
     .toBe(true);
 
-  // A reload drops the memory-only token, so the next connect continues back
-  // to the exact deep URL: the tab, both filters and the selection all
-  // survive authentication continuation.
+  // A reload keeps the server session, so the exact deep URL restores the
+  // tab, both filters and the selection without an authentication detour.
   const deepUrl = page.url();
   await page.goto(deepUrl);
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toHaveCount(0);
   await expect(page).toHaveURL(/tab=records/);
   await expect(page).toHaveURL(/rkind=log/);
   await expect(page).toHaveURL(/istat=success/);
@@ -1043,7 +1049,11 @@ test("PATCH-20261113-1 keeps equal-status attempts as two complete history entri
   await openCenterRun(page, "task-001");
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/") && request.method() !== "GET") {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/") &&
+      request.method() !== "GET"
+    ) {
       writes.push(request.method());
     }
   });

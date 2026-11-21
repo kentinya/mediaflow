@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 import { readFileSync } from "node:fs";
 
 const prestartRecords = JSON.parse(
@@ -22,8 +23,7 @@ for (const width of [1536, 390]) {
       },
     );
     await page.goto("/operations/automation");
-    await page.getByLabel("API token").fill("e2e-viewer-token");
-    await page.getByRole("button", { name: "Connect" }).click();
+    await submitSignIn(page, accountForToken("e2e-viewer-token"));
     const main = page.getByRole("main");
     const title = main.getByRole("heading", { name: "自动化", exact: true });
     await expect(title).toBeVisible();
@@ -198,13 +198,15 @@ test("PATCH-20261107-1 removes the header refresh entry without skipping the cre
   await page.request.post("/__test__/reset-automation");
   const requests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       requests.push(`${request.method()} ${new URL(request.url()).pathname}`);
     }
   });
   await page.goto("/operations/automation");
-  await page.getByLabel("API token").fill("e2e-viewer-token");
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken("e2e-viewer-token"));
   const title = page.getByRole("heading", { name: "自动化", exact: true });
   await expect(title).toBeVisible();
   const header = page.locator(".mf-dashboard-head");

@@ -181,7 +181,27 @@ optional `compose.media-mounts.yaml` overlay. Defaults are shown in
 `compose.yaml` and `compose.media-mounts.yaml`.
 The default host API bind is `127.0.0.1`; set `MEDIAFLOW_API_BIND=0.0.0.0` only
 when the host network is a trusted LAN or the port is behind an HTTPS reverse
-proxy. MediaFlow does not provide TLS.
+proxy. MediaFlow does not provide TLS. A TLS proxy must forward the original
+scheme, for example:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+The production Waitress entry preserves that trusted forwarded scheme from a
+loopback/private proxy peer, so sign-in, change-password and reset responses set
+the session cookie with `Secure` over HTTPS. Direct loopback HTTP keeps the
+cookie usable without `Secure`. Same-origin write protection still compares the
+browser `Origin`/`Referer` with the forwarded `Host`; do not rewrite the host to
+a different name. `X-Forwarded-Proto` never grants an account, role or request
+authority. Startup and every new configuration input, including `config
+validate`, `config publish` and System Settings, reject `api.principals` and
+`api.tokenEnv`; remove those keys and create the first administrator through the
+Web sign-in page with `mediaflow accounts issue-setup-code`.
 
 The container entrypoint performs a bounded preflight before each command: it
 verifies the config file and `/data` are present and writable, checks every

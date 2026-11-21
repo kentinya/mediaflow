@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -7024,8 +7025,22 @@ class MediaFlowApi:
 
     @staticmethod
     def _secure_cookie_request(environ: dict) -> bool:
+        if str(environ.get("wsgi.url_scheme", "")).casefold() == "https":
+            return True
         forwarded = str(environ.get("HTTP_X_FORWARDED_PROTO", "")).split(",", 1)[0].strip()
-        return forwarded.casefold() == "https" or environ.get("wsgi.url_scheme") == "https"
+        if forwarded.casefold() != "https":
+            return False
+        # The production Waitress adapter forwards X-Forwarded-Proto from the
+        # deployment's TLS reverse proxy. Only a loopback/private proxy peer is
+        # treated as that trusted boundary; a direct public client cannot make
+        # its own cookie Secure (which would only break its own sign-in) or
+        # claim another identity.
+        remote = str(environ.get("REMOTE_ADDR", "")).split(",", 1)[0].strip()
+        try:
+            address = ipaddress.ip_address(remote)
+        except ValueError:
+            return False
+        return address.is_loopback or address.is_private or address.is_link_local
 
     @staticmethod
     def _same_origin_request(environ: dict) -> bool:

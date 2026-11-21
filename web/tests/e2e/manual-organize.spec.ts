@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Manual Organize journey built-artifact browser proof.
@@ -69,8 +70,7 @@ async function manualEvidence(page: Page): Promise<ManualRequestEvidence[]> {
 
 /** Deep-link first, then connect: the API token lives in memory only. */
 async function connect(page: Page, token: string): Promise<void> {
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 /**
@@ -297,14 +297,13 @@ test.describe("manual organize journey", () => {
     ).toBeVisible();
     await expect(execute).toBeDisabled();
 
-    // Reload clears component state and the memory-only API token. Re-running
+    // Reload keeps the server session but clears component state. Re-running
     // the shared analysis returns the same durable fixed plan, whose bounded
     // execution read must still keep Execute closed and expose the existing
     // record for inspection without claiming it is equivalent to a selection
     // the reloaded page no longer holds.
     await page.reload();
-    await expect(page.getByLabel("API token")).toBeVisible();
-    await connect(page, VIEWER_TOKEN);
+    await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
     await page.getByRole("button", { name: "生成分析摘要" }).click();
     await expect(
       page.getByRole("heading", { name: "该计划已有持久执行记录" }),
@@ -425,15 +424,12 @@ test.describe("manual organize journey", () => {
       page.getByRole("heading", { name: "Route not found" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "Connect API token" }),
-    ).toBeVisible();
-    await expect(
       page.getByRole("heading", { name: "整理执行情况" }),
     ).toHaveCount(0);
 
-    // Connecting from the shell's reconnection affordance lands on the
-    // supported default surface; the retired address is never revived.
-    await page.getByRole("link", { name: "Connect API token" }).click();
+    // Reconnecting from the root lands on the supported default surface; the
+    // retired address is never revived.
+    await page.goto("/");
     await connect(page, VIEWER_TOKEN);
     await expect(
       page.getByRole("heading", { name: "整理执行情况" }),
@@ -447,17 +443,14 @@ test.describe("manual organize journey", () => {
     expect(page.url()).not.toMatch(/token|digest|fingerprint|authorization/i);
 
     await page.reload();
-    // Bearer material is memory-only, so a reload returns to the shared
-    // connection boundary on the same unknown route; reconnecting still
-    // never revives the old page.
+    // The still-valid server session keeps the ordinary not-found view on the
+    // same unknown route; it never revives the retired execution page.
     await expect(
       page.getByRole("heading", { name: "Route not found" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "Connect API token" }),
+      page.getByRole("button", { name: "Account menu" }),
     ).toBeVisible();
-    await page.getByRole("link", { name: "Connect API token" }).click();
-    await connect(page, VIEWER_TOKEN);
     await expect(
       page.getByRole("heading", { name: "整理执行情况" }),
     ).toHaveCount(0);
@@ -489,7 +482,7 @@ test.describe("manual organize journey", () => {
     page,
   }) => {
     await page.goto(`/operations/organize/intent/${INTENT_ID}`);
-    await expect(page.getByRole("button", { name: "Connect" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   });
 
   test("renders no Execute control for a malformed bounded document", async ({

@@ -418,7 +418,10 @@ class ManagedConfigurationService:
         source: str = "manual",
     ) -> ManagedConfigurationRevision:
         normalized = _canonical_document(document)
-        reject_retired_configuration_input(normalized)
+        reject_retired_configuration_input(
+            normalized,
+            baseline=self._bootstrap_document,
+        )
         # Portable exports and displayed JSON omit deployment startup
         # authority; bind whatever was omitted back to this deployment before
         # the Draft is persisted so an imported/recovered document can never
@@ -721,7 +724,13 @@ class ManagedConfigurationService:
             reject_retired_configuration_input(normalized, baseline=active.document)
             _reject_unsafe_webhook_urls(normalized, current=active.document)
         else:
-            reject_retired_configuration_input(normalized)
+            # The first published document may carry the receiving bootstrap's
+            # own historical deployment identity unchanged, but a newly
+            # supplied api.principals remains retired input.
+            reject_retired_configuration_input(
+                normalized,
+                baseline=self._bootstrap_document,
+            )
             _reject_unsafe_webhook_urls(normalized, current=None)
         if active is None and self._has_managed_activation() and not replace_active:
             marker = self._last_known_active() or {}

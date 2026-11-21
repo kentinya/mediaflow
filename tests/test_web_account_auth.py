@@ -269,6 +269,56 @@ class WebAccountAuthTests(unittest.TestCase):
             self.service.login(username="admin", password="another-correct-horse").account.username,
         )
 
+    def test_chinese_password_change_uses_utf8_and_revokes_sessions(self) -> None:
+        code, _ = self.service.issue_first_admin_code()
+        grant = self.service.bootstrap(
+            code=code,
+            username="admin",
+            password="旧密码正确12345",
+            remember=False,
+        )
+        other = self.service.login(username="admin", password="旧密码正确12345")
+        status, document, headers = request(
+            self.api,
+            "POST",
+            "/api/auth/password",
+            document={
+                "currentPassword": "旧密码正确12345",
+                "newPassword": "新密码正确67890",
+            },
+            cookie=cookie_for(grant),
+            origin=ORIGIN,
+        )
+        self.assertEqual(200, status, document)
+        self.assertTrue(document["signedOut"])
+        self.assertIn("Max-Age=0", set_cookie(headers) or "")
+        self.assertIsNone(self.service.authenticate(grant.token))
+        self.assertIsNone(self.service.authenticate(other.token))
+        with self.assertRaises(AccountAuthenticationError):
+            self.service.login(username="admin", password="旧密码正确12345")
+        self.assertEqual(
+            "admin",
+            self.service.login(username="admin", password="新密码正确67890").account.username,
+        )
+
+        # Submitting the same non-ASCII value is a bounded input error, never a
+        # server failure, and leaves the password and sessions unchanged.
+        fresh = self.service.login(username="admin", password="新密码正确67890")
+        status, document, _ = request(
+            self.api,
+            "POST",
+            "/api/auth/password",
+            document={
+                "currentPassword": "新密码正确67890",
+                "newPassword": "新密码正确67890",
+            },
+            cookie=cookie_for(fresh),
+            origin=ORIGIN,
+        )
+        self.assertEqual(422, status, document)
+        self.assertEqual("password_unchanged", document["error"]["code"])
+        self.assertIsNotNone(self.service.authenticate(fresh.token))
+
     def test_reset_code_is_bound_and_revokes_only_its_account_sessions(self) -> None:
         admin = self._admin()
         viewer = Account(
@@ -402,6 +452,31 @@ class WebAccountAuthTests(unittest.TestCase):
         )
         self.assertEqual(200, status)
         self.assertIn("Secure", set_cookie(headers) or "")
+        # A direct public peer cannot obtain the Secure attribute by spoofing a
+        # forwarded scheme; only the trusted loopback/private proxy boundary is
+        # accepted, and the cookie stays usable on that deployment's HTTP edge.
+        status, _, headers = request(
+            self.api,
+            "POST",
+            "/api/auth/login",
+            document={
+                "username": "admin",
+                "password": "correct-horse",
+                "remember": False,
+            },
+            origin=ORIGIN,
+            source="8.8.8.8",
+            forwarded_proto="https",
+        )
+        self.assertEqual(200, status)
+        self.assertNotIn("Secure", set_cookie(headers) or "")
+
+    def test_production_waitress_preserves_forwarded_protocol_for_secure_cookie(self) -> None:
+        from mediaflow import production_wsgi
+
+        with patch("waitress.serve") as serve:
+            production_wsgi.serve(object(), host="127.0.0.1", port=8080, threads=2)
+        self.assertIs(False, serve.call_args.kwargs["clear_untrusted_proxy_headers"])
 
     def test_session_expiry_after_absolute_boundary_and_audit_has_no_secrets(self) -> None:
         grant = self._admin()

@@ -47,6 +47,33 @@ afterEach(() => {
 });
 
 describe("EntryPage", () => {
+  it("reads the server state before choosing first-administrator setup", async () => {
+    const fetchMock = stubFetch(async (input) => {
+      if (String(input) === "/api/auth/status") {
+        return jsonResponse({
+          authenticated: false,
+          firstAdministratorRequired: true,
+          configurationRequired: true,
+          account: null,
+        });
+      }
+      return jsonResponse({}, 503);
+    });
+    authStore.beginSessionRestore();
+    renderApp("/");
+    expect(
+      await screen.findByRole("heading", {
+        name: "Create first administrator",
+      }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("One-time setup code")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/status",
+      expect.objectContaining({ method: "GET", credentials: "same-origin" }),
+    );
+  });
+
   it("shows the ordinary sign-in form for an initialized anonymous instance", async () => {
     anonymous();
     renderApp("/");

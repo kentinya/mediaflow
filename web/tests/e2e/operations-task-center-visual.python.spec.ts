@@ -19,6 +19,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 import { mkdirSync } from "node:fs";
 
 const TOKEN = "harness-viewer-token";
@@ -39,8 +40,7 @@ const VIEWS: readonly { readonly view: string; readonly label: string }[] = [
 
 async function connect(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(TOKEN));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
@@ -173,9 +173,8 @@ test("capture the eight task-center views and the problem-file states", async ({
     .click();
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(TOKEN));
   await expect(page).toHaveURL(/problemCursor=/);
   const restoredPanel = page.getByRole("region", { name: "问题文件处理" });
   await expect(
@@ -225,8 +224,7 @@ test("capture the in-context creation summary and confirmation journey", async (
   mkdirSync(OUTPUT, { recursive: true });
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await page.goto("/");
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.getByRole("link", { name: "任务中心", exact: true }).click();

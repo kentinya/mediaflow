@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * MediaLibrary bounded direct file maintenance browser proof for Slice 38
@@ -20,8 +21,7 @@ const VIEWER_TOKEN = "e2e-viewer-token";
 const READ_ONLY_TOKEN = "e2e-readonly-token";
 
 async function connectAs(page: Page, token = VIEWER_TOKEN): Promise<void> {
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 /** Fresh per-session MediaLibrary/command state for one deterministic journey. */
@@ -66,7 +66,11 @@ async function commandPosts(page: Page) {
 function apiRequestsOf(page: Page): string[] {
   const seen: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) seen.push(request.url());
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    )
+      seen.push(request.url());
   });
   return seen;
 }

@@ -42,9 +42,11 @@ export function AuthBoundary() {
   // signed out.
   useEffect(() => {
     if (status !== "restoring") return;
-    if (pathname !== "/" && destinationForPath(pathname) === undefined) {
-      return;
-    }
+    // Every page load resolves the one server session state, including an
+    // unknown route where only the shell is shown. This keeps the account
+    // control truthful instead of leaving it in "checking" forever; the
+    // redirect/continuation decision below still applies only to supported
+    // product destinations.
     let cancelled = false;
     void fetchAuthStatus()
       .then((value) => {

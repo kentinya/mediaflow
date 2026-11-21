@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Real-Python browser proof for the current System Settings direct-publication
@@ -32,8 +33,7 @@ interface SettingsProjection {
 
 async function connectOn(page: Page, path: string): Promise<void> {
   await page.goto(path);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
 }
 
 async function activeSettings(

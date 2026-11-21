@@ -8,6 +8,7 @@ import {
   type Response as PlaywrightResponse,
   type Page,
 } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Real-Python browser proof for the unified run inventory (Task 42.1) and the
@@ -62,8 +63,7 @@ const RICH_RUN_SCOPE = "Movies/Harness/Failed";
 
 async function connect(page: Page, token = TOKEN): Promise<void> {
   await page.goto("/");
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
@@ -71,9 +71,8 @@ async function reconnectAtCurrentRoute(
   page: Page,
   token: string,
 ): Promise<void> {
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(token));
 }
 
 /** Record every product API request the page issues (methods included). */
@@ -1221,9 +1220,8 @@ test("the detail tab and filter context survives a reload through auth continuat
   // entry boundary while the exact detail context (run, tab and record kind
   // filter) travels as the allowlisted auth-continuation destination.
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(TOKEN));
 
   await expect(page).toHaveURL(/\/operations/);
   await expect(page).toHaveURL(/view=ended/);
@@ -1460,9 +1458,8 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   const restart = await request.post(`${BASE}/__harness__/restart`);
   expect(restart.ok()).toBeTruthy();
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(TOKEN));
   await expect(page).toHaveURL(new RegExp(`run=${run.runId}`));
   await expect(page).toHaveURL(new RegExp(`item=${run.itemId}`));
   const reloadedDetail = page.getByRole("dialog", { name: "运行详情" });
@@ -1635,9 +1632,8 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   // An auth continuation after a full reload returns to the same bounded
   // Operations context and exact selected run without replaying Execute.
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 
@@ -1693,9 +1689,8 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   const restart = await request.post(`${BASE}/__harness__/restart`);
   expect(restart.ok()).toBeTruthy();
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
   const restored = page.getByRole("dialog", { name: "运行详情" });
   await expect(restored).toBeVisible();
@@ -2454,9 +2449,8 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   const restart = await request.post(`${BASE}/__harness__/restart`);
   expect(restart.ok()).toBeTruthy();
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(TOKEN));
   await expect(page).toHaveURL(new RegExp(`run=${run.runId}`));
   await expect(page).toHaveURL(new RegExp(`item=${run.itemId}`));
   const reloadedEvidence = page
@@ -2613,9 +2607,8 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
 
   // Reconnect preserves the explicitly selected run without replay.
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 
@@ -2674,9 +2667,8 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   const restart = await request.post(`${BASE}/__harness__/restart`);
   expect(restart.ok()).toBeTruthy();
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
   const restored = page.getByRole("dialog", { name: "运行详情" });
   await expect(restored).toBeVisible();
@@ -3195,9 +3187,8 @@ test("dated views and 21-file recovery pages preserve exact evidence context", a
   // A memory-only-token reload must restore the exact source, Task/type,
   // cursor and file page rather than returning to page one or the full list.
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(TOKEN));
   await expect(page).toHaveURL(/view=metadata/);
   await expect(page).toHaveURL(/view=metadata/);
   await expect(page).toHaveURL(/problemCursor=/);
@@ -3249,9 +3240,8 @@ test("the eight views survive authentication continuation and a real restart", a
   // while the exact view and problem-run context travels as the allowlisted
   // continuation destination.
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(TOKEN));
   await expect(page).toHaveURL(/view=conflict/);
   await expect(page).toHaveURL(/problemRun=/);
   await expect(
@@ -3265,9 +3255,8 @@ test("the eight views survive authentication continuation and a real restart", a
   const restart = await request.post(`${BASE}/__harness__/restart`);
   expect(restart.ok()).toBeTruthy();
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(TOKEN));
   await expect(page).toHaveURL(/problemRun=/);
   const panel = page.getByRole("region", { name: "问题文件处理" });
   await expect(panel).toBeVisible();
@@ -3383,9 +3372,8 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
         fullPage: true,
       });
       await page.getByRole("link", { name: "Connect API token" }).click();
-      await expect(page.getByLabel("API token")).toBeVisible();
-      await page.getByLabel("API token").fill(ADMIN_TOKEN);
-      await page.getByRole("button", { name: "Connect" }).click();
+      await expect(page.getByLabel("Login name")).toBeVisible();
+      await submitSignIn(page, accountForToken(ADMIN_TOKEN));
       await expect(page).toHaveURL(/\/explore$/);
     }
   }
@@ -3580,7 +3568,7 @@ test("Task55.1 retired Web addresses are ordinary not-found while current entrie
     await expect(
       page.getByRole("heading", { name: "Route not found" }),
     ).toBeVisible();
-    await expect(page.getByLabel("API token")).toHaveCount(0);
+    await expect(page.getByLabel("Login name")).toHaveCount(0);
     await expect(page.getByText("此页面已迁移")).toHaveCount(0);
     await expect(page.getByText(/没有提交任何命令/)).toHaveCount(0);
   }
@@ -3604,7 +3592,7 @@ test("Task55.1 retired Web addresses are ordinary not-found while current entrie
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
   await page.goBack();
-  if (await page.getByLabel("API token").isVisible()) {
+  if (await page.getByLabel("Login name").isVisible()) {
     await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   }
   await expect(page).toHaveURL(/\/operations$/);

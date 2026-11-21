@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Browser proof for the two Files browse surfaces' presentation controls:
@@ -15,7 +16,10 @@ const VIEWER_TOKEN = "e2e-viewer-token";
 function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
   const seen: Array<{ url: string; method: string }> = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       seen.push({ url: request.url(), method: request.method() });
     }
   });
@@ -24,8 +28,7 @@ function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
 
 async function openFiles(page: Page, mediaLibrary = false): Promise<void> {
   await page.goto(mediaLibrary ? "/medialib/files" : "/resourcelib/files");
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   await expect(
     page.getByRole("heading", {
       name: mediaLibrary ? "媒体库" : "文件",

@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 const BASE = "http://127.0.0.1:4184";
 const ADMIN_TOKEN = "harness-admin-token";
@@ -45,8 +46,7 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   expect(registered.ok()).toBeTruthy();
 
   await page.goto(`${BASE}/`);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
   await page.getByRole("link", { name: "Files", exact: true }).click();
   await expect(page).toHaveURL(/\/resourcelib\/files/);
@@ -135,9 +135,8 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   // selected run. The token stays memory-only and the admission is not
   // replayed.
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   expect(

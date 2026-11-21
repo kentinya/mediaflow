@@ -14,6 +14,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 const ADMIN_TOKEN = "harness-admin-token";
@@ -82,8 +83,7 @@ async function providerState(page: Page): Promise<ProviderState> {
 async function openFiles(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 960 });
   await page.goto("/resourcelib/files?resourceLibraryId=source");
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
   ).toBeVisible();

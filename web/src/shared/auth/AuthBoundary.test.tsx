@@ -47,6 +47,54 @@ afterEach(() => {
 });
 
 describe("AuthBoundary", () => {
+  it("restores a valid cookie session on a deep route before deciding auth", async () => {
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/auth/status") {
+        return jsonResponse({
+          authenticated: true,
+          firstAdministratorRequired: false,
+          configurationRequired: false,
+          account: {
+            principalId: "account-1",
+            accountId: "account-1",
+            username: "admin",
+            roles: ["admin"],
+            permissions: ["read"],
+          },
+        });
+      }
+      if (url === "/api/media-libraries") {
+        return jsonResponse({
+          surface: "media_libraries",
+          items: [],
+          total: 0,
+          sideEffects: "none",
+        });
+      }
+      if (url === "/api/system/status") {
+        return jsonResponse({
+          system: {
+            configuration_valid: true,
+            configuration_authority: "MANAGED",
+            configuration_snapshot_id: "active-1",
+          },
+          storages: { total: 0, truncated: false, items: [] },
+          resource_libraries: { total: 0, truncated: false, items: [] },
+        });
+      }
+      throw new Error(`unexpected test request: ${url}`);
+    });
+    authStore.beginSessionRestore();
+    const { router } = renderApp("/medialib/files");
+    expect(
+      await screen.findByRole("heading", { name: "尚未添加媒体库" }),
+    ).toBeVisible();
+    expect(router.state.location.pathname).toBe("/medialib/files");
+    expect(screen.queryByLabelText("Login name")).toBeNull();
+    expect(authStore.getAccount()?.username).toBe("admin");
+  });
+
   it("redirects an unauthenticated deep route to entry and preserves the intended path", async () => {
     anonymous();
     renderApp("/medialib/files");

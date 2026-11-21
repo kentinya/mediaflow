@@ -74,7 +74,7 @@ export function createMemoryAuthStore(): MemoryAuthStore {
   let intendedSearch: string | null = null;
   let rejected = false;
   let account: AuthAccount | null = null;
-  let status: "restoring" | "anonymous" | "authenticated" = "anonymous";
+  let status: "restoring" | "anonymous" | "authenticated" = "restoring";
   let firstAdministratorRequired = false;
   let configurationRequired = true;
   let restoreError: "unavailable" | null = null;

@@ -5,6 +5,7 @@ import {
   type Locator,
   type Page,
 } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Slice53 real-Python browser proof: Files → one admitted preparation card →
@@ -43,8 +44,7 @@ interface RecordedCommand {
 
 async function connect(page: Page): Promise<void> {
   await page.goto(`${BASE}/`);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
@@ -530,8 +530,7 @@ test("a Task reopened after a lost Execute reconciles its original accepted subm
   // names the admitted Task; the removed card and manual button never return.
   blockAdmission = false;
   await page.goto(`${BASE}/operations?run=${workerBody.taskId}`);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible({ timeout: 30_000 });
   await expect(detail.getByText(/已受理/)).toBeVisible({ timeout: 30_000 });
@@ -662,8 +661,7 @@ test("a second confirmation on the same Task is reconciled from its own durable 
   // The Task Center's own continuation entry reopens the same preparation on
   // the same Task after the first subset completed.
   await page.goto(`${BASE}/operations?run=${taskId}`);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible({ timeout: 30_000 });
   await detail.getByRole("link", { name: "继续整理" }).click();
@@ -782,8 +780,7 @@ test("a second confirmation on the same Task is reconciled from its own durable 
   // confirmations remain readable through the API, while the Task detail
   // keeps its progress/results and no submission card or manual button.
   await page.goto(`${BASE}/operations?run=${taskId}`);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   const reopenedDetail = page.getByRole("dialog", { name: "运行详情" });
   await expect(reopenedDetail).toBeVisible({ timeout: 30_000 });
   await expect(reopenedDetail).toContainText("已完成");
@@ -1388,9 +1385,8 @@ test("keeps the exact admitted preparation across a cancelled browser Back and a
   // returns to the same Files address and reopens the same preparation/summary
   // instead of admitting a second one or landing on a guessed route.
   await page.reload();
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByLabel("Login name")).toBeVisible();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(card).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(() => new URL(page.url()).searchParams.get("organizeDiscovery"))
@@ -1802,8 +1798,7 @@ test("a 101-file directory settles as a failed preparation and the same source r
   // The Task Center keeps the same ended flow status and next action, but no
   // new preparation section and no continuation entry.
   await page.goto(`${BASE}/operations?run=${taskId}`);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible({ timeout: 30_000 });
   await expect(detail.getByText("失败／准备阶段超限")).toBeVisible();
@@ -1818,8 +1813,7 @@ test("a 101-file directory settles as a failed preparation and the same source r
   // The old hosted preparation address now opens only the read-only ended
   // facts; it neither claims a saved summary nor offers any command.
   await page.goto(`${BASE}/operations?run=${taskId}&dialog=organize`);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   const historical = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(historical).toBeVisible({ timeout: 30_000 });
   await expect(
@@ -1851,8 +1845,7 @@ test("a 101-file directory settles as a failed preparation and the same source r
   await page.goto(
     `${BASE}/resourcelib/files?resourceLibraryId=source&path=${PRIMARY_LIMIT_DIRECTORY}`,
   );
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page.getByRole("table")).toBeVisible({ timeout: 30_000 });
   // The real directory holds 101 entries and the Files page is bounded to 50,
   // so the named source is on the final page.

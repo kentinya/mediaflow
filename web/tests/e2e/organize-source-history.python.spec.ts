@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Real-Python browser proof for Slice 47 RO-6: a recorded failed/partial
@@ -54,8 +55,7 @@ interface FileState {
 
 async function connect(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 const VIEWER_TOKEN = "e2e-viewer-token";
 const LIMITED_TOKEN = "e2e-limited-token";
@@ -6,7 +7,10 @@ const LIMITED_TOKEN = "e2e-limited-token";
 function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
   const seen: Array<{ url: string; method: string }> = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       seen.push({ url: request.url(), method: request.method() });
     }
   });
@@ -15,8 +19,7 @@ function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
 
 async function connectAs(page: Page, token: string): Promise<void> {
   await page.goto("/");
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 async function openFiles(
@@ -26,8 +29,7 @@ async function openFiles(
   expectTable = true,
 ): Promise<void> {
   await page.goto("/resourcelib/files" + search);
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
   ).toBeVisible();
@@ -241,8 +243,7 @@ test("Files route rejects limited principals without leaking the token", async (
 }) => {
   const apiRequests = apiRequestsOf(page);
   await page.goto("/resourcelib/files");
-  await page.getByLabel("API token").fill(LIMITED_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(LIMITED_TOKEN));
   await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
   await expect(page.getByText(LIMITED_TOKEN)).toHaveCount(0);
   expect(apiRequests.every((request) => request.method === "GET")).toBe(true);
@@ -635,14 +636,11 @@ test("the Files URL preparation identity reconnects the same card with no duplic
     /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
 
-  // A full browser reload clears memory-only auth and lands on the V2
-  // entry; the Files route carried the exact durable preparation identity,
-  // so reconnecting reopens that same preparation instead of the Explore home
-  // — and never re-submits the admission.
+  // A full browser reload keeps the server session; the Files route carried
+  // the exact durable preparation identity, so the same preparation reopens
+  // without the Explore home and without re-submitting the admission.
   await page.reload();
-  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(
     /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
@@ -867,8 +865,7 @@ test("unavailable and malformed reads keep page context and safe retry", async (
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "重试" })).toBeVisible();
   await page.goto("/resourcelib/files?path=malformed");
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
   ).toBeVisible();
@@ -1167,8 +1164,7 @@ test("normal entry keeps the Add ResourceLibrary drawer closed", async ({
 }) => {
   const apiRequests = apiRequestsOf(page);
   await page.goto("/resourcelib/files");
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
   ).toBeVisible();
@@ -1384,7 +1380,11 @@ test("referenced ResourceLibrary removal stays blocked with bounded evidence", a
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/") && request.method() !== "GET") {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/") &&
+      request.method() !== "GET"
+    ) {
       writes.push(`${request.method()} ${request.url()}`);
     }
   });
@@ -1430,7 +1430,11 @@ test("automation-only ResourceLibrary references open the current Automation man
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/") && request.method() !== "GET") {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/") &&
+      request.method() !== "GET"
+    ) {
       writes.push(`${request.method()} ${request.url()}`);
     }
   });
@@ -1479,7 +1483,11 @@ test("mixed ResourceLibrary references expose both current management entries", 
   await expect(page.getByText("路径: /media/incoming")).toBeVisible();
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/") && request.method() !== "GET") {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/") &&
+      request.method() !== "GET"
+    ) {
       writes.push(`${request.method()} ${request.url()}`);
     }
   });

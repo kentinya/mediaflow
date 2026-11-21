@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Built-artifact browser proof for the V2 Notification journey.
@@ -23,8 +24,7 @@ const DELIVERY_ID = "delivery-e2e-001";
 
 async function connect(page: Page, token: string = VIEWER_TOKEN) {
   await page.goto("/");
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
@@ -34,8 +34,7 @@ async function connectOn(
   token: string = VIEWER_TOKEN,
 ) {
   await page.goto(path);
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 async function openNotifications(page: Page) {
@@ -449,10 +448,9 @@ test("a stale recovery is rejected once and never replayed automatically", async
 test("unauthorized principals see bounded states and no executable controls", async ({
   page,
 }) => {
-  // Unknown token: the entry boundary rejects the connection entirely.
+  // An expired server session cannot read the protected route.
   await page.goto("/operations/notifications");
-  await page.getByLabel("API token").fill("wrong-token");
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken("e2e-expired-token"));
   await expect(
     page.getByRole("heading", { name: "Not authorized" }),
   ).toBeVisible();

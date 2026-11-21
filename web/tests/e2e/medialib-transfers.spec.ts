@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * MediaLibrary bounded Copy/Move browser proof for Slice 38 (RO-5/RO-6/RO-7,
@@ -18,8 +19,7 @@ const VIEWER_TOKEN = "e2e-viewer-token";
 const READ_ONLY_TOKEN = "e2e-readonly-token";
 
 async function connectAs(page: Page, token = VIEWER_TOKEN): Promise<void> {
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 /** Fresh per-session MediaLibrary/transfer state for one deterministic journey. */
@@ -54,7 +54,10 @@ async function transferPosts(page: Page) {
 function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
   const seen: Array<{ url: string; method: string }> = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       seen.push({ url: request.url(), method: request.method() });
     }
   });
@@ -322,13 +325,17 @@ test("a cancelled transfer's retired Task deep link is an ordinary not-found wit
   const taskId = await admitCancelledMediaTransfer(page);
   const apiRequests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) apiRequests.push(request.url());
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    )
+      apiRequests.push(request.url());
   });
   await page.goto(`/operations/tasks/${taskId}`);
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
-  await expect(page.getByLabel("API token")).toHaveCount(0);
+  await expect(page.getByLabel("Login name")).toHaveCount(0);
   expect(apiRequests).toEqual([]);
   const [transfer] = await durableMediaTransfers(page);
   expect(transfer.status).toBe("CANCELLED");

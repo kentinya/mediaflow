@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * MediaLibrary page-local configuration lifecycle browser proof for Slice 38
@@ -17,8 +18,7 @@ const VIEWER_TOKEN = "e2e-viewer-token";
 const LIMITED_TOKEN = "e2e-limited-token";
 
 async function connectAs(page: Page, token = VIEWER_TOKEN): Promise<void> {
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 /** The MediaLibrary card selected by its visible library identity. */
@@ -395,7 +395,12 @@ test("a rejected Save preserves the prior Active and retains correctable input",
 }) => {
   const posts: string[] = [];
   page.on("request", (request) => {
-    if (request.method() === "POST") posts.push(request.url());
+    if (
+      request.method() === "POST" &&
+      !new URL(request.url()).pathname.startsWith("/api/auth/")
+    ) {
+      posts.push(request.url());
+    }
   });
   await resetMediaLibrary(page, "?failOnce=1");
   await openMediaLibrary(page);
@@ -597,7 +602,12 @@ test("a limited principal cannot save or remove a MediaLibrary", async ({
 }) => {
   const mutations: string[] = [];
   page.on("request", (request) => {
-    if (request.method() !== "GET") mutations.push(request.url());
+    if (
+      request.method() !== "GET" &&
+      !new URL(request.url()).pathname.startsWith("/api/auth/")
+    ) {
+      mutations.push(request.url());
+    }
   });
   await page.goto("/medialib/files");
   await connectAs(page, LIMITED_TOKEN);

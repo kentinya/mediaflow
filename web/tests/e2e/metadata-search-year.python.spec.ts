@@ -5,6 +5,7 @@ import {
   type Locator,
   type Page,
 } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * PATCH-20261111-1 real-Python browser proof: both Web entries of the
@@ -40,8 +41,7 @@ interface RecordedCommand {
 
 async function connect(page: Page): Promise<void> {
   await page.goto(`${BASE}/`);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 

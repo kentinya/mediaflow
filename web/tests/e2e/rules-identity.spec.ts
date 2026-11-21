@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Rules object-identity browser journey for Slice 41, Task 41.6.
@@ -26,8 +27,7 @@ import { expect, test, type Page } from "@playwright/test";
 const VIEWER_TOKEN = "e2e-viewer-token";
 
 async function connectAs(page: Page, token = VIEWER_TOKEN): Promise<void> {
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 async function resetRules(page: Page, query = ""): Promise<void> {
@@ -42,7 +42,10 @@ async function resetRules(page: Page, query = ""): Promise<void> {
 function recordApiTraffic(page: Page): string[] {
   const traffic: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       traffic.push(`${request.method()} ${request.url()}`);
     }
   });
@@ -134,7 +137,8 @@ test.describe("Rules object identity", () => {
     });
     await openEditCard.getByRole("button", { name: "取消" }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await page.getByRole("button", { name: "Disconnect" }).click();
+    await page.getByRole("button", { name: "Account menu" }).click();
+    await page.getByRole("menuitem", { name: "Sign out" }).click();
     await page.goto("/rules/edit/recognitionTypes/proof.type");
     await connectAs(page);
     await expect(

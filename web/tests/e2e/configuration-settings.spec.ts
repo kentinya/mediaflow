@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Current Settings direct-publication journey against the built V2 artifact and
@@ -10,8 +11,7 @@ import { expect, test, type Page } from "@playwright/test";
 const TOKEN = "e2e-viewer-token";
 
 async function connect(page: Page): Promise<void> {
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(TOKEN));
 }
 
 async function resetSettings(

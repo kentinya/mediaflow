@@ -1701,15 +1701,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 json.dumps(
                     {
                         "persistence": {"databasePath": str(runtime)},
-                        "api": {
-                            "principals": [
-                                {
-                                    "id": "admin",
-                                    "tokenEnv": "MEDIAFLOW_API_TOKEN",
-                                    "roles": ["admin"],
-                                }
-                            ]
-                        },
                         "staleWorkflowContent": {"invalid": True},
                     }
                 ),
@@ -1728,7 +1719,6 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 return server
 
             with (
-                patch.dict("os.environ", {"MEDIAFLOW_API_TOKEN": "admin-token"}, clear=True),
                 patch("wsgiref.simple_server.make_server", side_effect=make_server),
             ):
                 output, error = io.StringIO(), io.StringIO()
@@ -2004,17 +1994,23 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             document["historyPath"] = str(root / "history.jsonl")
             config = root / "bootstrap.json"
             config.write_text(json.dumps(document), encoding="utf-8")
-            document["api"] = {
-                "principals": [
-                    {
-                        "id": "local-admin",
-                        "tokenEnv": "MEDIAFLOW_API_TOKEN",
-                        "roles": ["admin"],
-                    }
-                ]
-            }
-            disabled_document = json.loads(json.dumps(document))
-            disabled_document["api"]["principals"][0]["enabled"] = False
+            from mediaflow.application.accounts import hash_password
+
+            now = datetime.now(UTC)
+            with SQLiteTaskRepository(runtime) as seeded_repository:
+                seeded_repository.create_account(
+                    Account(
+                        "local-admin",
+                        "local-admin",
+                        (ApiRole.ADMIN,),
+                        True,
+                        now,
+                        now,
+                        now,
+                    ),
+                    hash_password("local-admin-password"),
+                )
+            account_repository = SQLiteTaskRepository(runtime)
 
             with SQLiteConfigurationRepository(runtime) as configuration_repository:
                 managed = ManagedConfigurationService(
@@ -2028,8 +2024,13 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 # Publish as the real configured remote principal so the
                 # Worker proves the publisher's current permission instead of
                 # mistaking a trusted local publication for that proof.
+                from mediaflow.application.accounts import AccountService
+
                 managed.bind_automation_publication_authority(
-                    _ConfiguredPermissionAuthority(lambda: _configuration(str(config)))
+                    _ConfiguredPermissionAuthority(
+                        lambda: _configuration(str(config)),
+                        AccountService(account_repository),
+                    )
                 )
                 active = activate_document(managed, document, actor="local-admin")
             pinned = _configuration(
@@ -2039,23 +2040,19 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             )
             now = datetime.now(UTC)
 
-            def disable_current_principal() -> None:
-                with SQLiteConfigurationRepository(runtime) as configuration_repository:
-                    activate_document(
-                        ManagedConfigurationService(
-                            configuration_repository, bootstrap_database_path=str(runtime)
-                        ),
-                        disabled_document,
+            def set_current_principal_enabled(enabled: bool) -> None:
+                with sqlite3.connect(runtime) as connection:
+                    connection.execute(
+                        "UPDATE accounts SET enabled = ? WHERE username = 'local-admin'",
+                        (1 if enabled else 0,),
                     )
+                    connection.commit()
+
+            def disable_current_principal() -> None:
+                set_current_principal_enabled(False)
 
             def restore_current_principal() -> None:
-                with SQLiteConfigurationRepository(runtime) as configuration_repository:
-                    activate_document(
-                        ManagedConfigurationService(
-                            configuration_repository, bootstrap_database_path=str(runtime)
-                        ),
-                        document,
-                    )
+                set_current_principal_enabled(True)
 
             with SQLiteTaskRepository(runtime) as repository:
                 emitted = IntervalScheduler(
@@ -2139,6 +2136,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(status, 0)
                 self.assertIn("No pending work", output.getvalue())
                 self.assertEqual(len(effect_calls), 1)
+            account_repository.close()
 
     def test_checked_local_setup_organize_keeps_original_pin_after_second_activation(
         self,

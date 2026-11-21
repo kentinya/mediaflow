@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Built-artifact proof for the shared V2 sidebar main-page transition
@@ -41,8 +42,7 @@ const WAITING_READ_MARKERS =
 
 async function connect(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
@@ -336,6 +336,7 @@ test("all nine sidebar main pages transition once and keep the shell stable", as
   page.on("request", (request) => {
     if (
       request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/") &&
       request.method() !== "GET" &&
       request.method() !== "HEAD"
     ) {
@@ -576,6 +577,7 @@ test("unsaved automation input holds the current page until the operator discard
   page.on("request", (request) => {
     if (
       request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/") &&
       request.method() !== "GET" &&
       request.method() !== "HEAD"
     ) {
@@ -650,6 +652,7 @@ test("same-page card open and close never replays the main-page entry", async ({
   page.on("request", (request) => {
     if (
       request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/") &&
       request.method() !== "GET" &&
       request.method() !== "HEAD"
     ) {
@@ -727,8 +730,7 @@ test("authentication continuation, narrow keyboard and reduced motion land on th
   // continues there as one new main page, not as a flash of a parent list.
   await page.goto("/medialib/files?mediaLibraryId=movies");
   await expect(page).toHaveURL(/\/$/);
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   await expect(page).toHaveURL(/\/medialib\/files\?mediaLibraryId=movies$/);
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
@@ -832,8 +834,7 @@ test("sidebar handoff keeps the storage and both library bodies steady through f
   await openSidebarLink(page, "Explore");
   await expect.poll(() => currentPath(page)).toBe("/explore");
   await page.reload();
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
   const slowContentRead = async (route: Route) => {
     const response = await route.fetch();
@@ -1016,6 +1017,7 @@ test("settings handoff keeps the engine wait hidden through a fast read and a ca
   page.on("request", (request) => {
     if (
       request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/") &&
       request.method() !== "GET" &&
       request.method() !== "HEAD"
     ) {
@@ -1141,6 +1143,7 @@ test("a failed engine read lands on the existing recovery without a wait flash",
   page.on("request", (request) => {
     if (
       request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/") &&
       request.method() !== "GET" &&
       request.method() !== "HEAD"
     ) {

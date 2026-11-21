@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Real-Python/CLI/Web parity proof for Task45.5 (RO-7).
@@ -102,8 +103,7 @@ async function openWebFiles(
       ? `/resourcelib/files?resourceLibraryId=${library}&path=${encodeURIComponent(path)}`
       : `/medialib/files?mediaLibraryId=${library}&path=${encodeURIComponent(path)}`;
   await page.goto(route);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   await expect(
     page.getByRole("heading", {
       name: kind === "resource" ? "文件" : "媒体库",

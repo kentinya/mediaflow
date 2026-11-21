@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Real-Python browser proof for the V2 Automation workspace read model
@@ -31,8 +32,7 @@ let DEFINITION_ID = "harness-workspace-definition";
 
 async function connectOn(page: Page, path: string): Promise<void> {
   await page.goto(path);
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
 }
 
 interface LifecycleState {

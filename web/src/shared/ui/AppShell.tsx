@@ -134,7 +134,7 @@ export function AppShell({ children }: AppShellProps) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const pageTitle =
     destination?.title ??
-    (pathname === "/" ? "Connect | MediaFlow" : "MediaFlow");
+    (pathname === "/" ? "Sign in | MediaFlow" : "MediaFlow");
   const isNotificationSurface =
     pathname === "/operations/notifications" ||
     pathname.startsWith("/operations/notifications/");

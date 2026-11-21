@@ -3337,8 +3337,11 @@ def _configuration(
     snapshot_digest: str | None = None,
 ) -> RuntimeConfiguration:
     raw_document = _configuration_document(path)
+    # The current startup boundary applies equally to the development
+    # listener, production Waitress, residents and `config validate`: a
+    # retired deployment identity must not become live authority again.
+    reject_retired_configuration_input(raw_document)
     if not use_managed:
-        reject_retired_configuration_input(raw_document)
         return load_runtime_configuration(raw_document)
     bootstrap_database_path = _bootstrap_database_path(raw_document)
     try:

@@ -23,6 +23,11 @@ def serve(
         raise ValueError("production WSGI port must be between 1 and 65535")
     from waitress import serve as waitress_serve
 
+    # Waitress removes X-Forwarded-* headers by default. The WSGI application
+    # itself decides whether a forwarded HTTPS scheme may mark the session
+    # cookie Secure, so the deployment's trusted reverse proxy must be able to
+    # pass that header through. Authentication still requires the account
+    # session; a forwarded header alone grants no identity or authority.
     waitress_serve(
         app,
         host=host,
@@ -30,4 +35,5 @@ def serve(
         threads=threads,
         ident="MediaFlow",
         channel_timeout=120,
+        clear_untrusted_proxy_headers=False,
     )

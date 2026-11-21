@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Built-artifact proof for task-center presentation corrections, including
@@ -82,8 +83,7 @@ async function installRepresentativeScopes(page: Page): Promise<void> {
 
 async function connect(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
@@ -312,9 +312,8 @@ test("an explicit Files return context still works and same-route sidebar Files 
   await page.goto(
     "/resourcelib/files?returnOps=view%3Dended%26status%3Dfailed%26run%3Dtask-source",
   );
-  if (await page.getByLabel("API token").isVisible()) {
-    await page.getByLabel("API token").fill(VIEWER_TOKEN);
-    await page.getByRole("button", { name: "Connect" }).click();
+  if (await page.getByLabel("Login name").isVisible()) {
+    await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   }
 
   const returnLink = page.getByRole("link", { name: "返回任务中心" });
@@ -649,8 +648,7 @@ test("the detail card item table keeps every column in its own reading area", as
   await page.emulateMedia({ reducedMotion: "reduce" });
   // The exact selected-run link is one of the card's real entrances.
   await page.goto("/operations?run=task-001");
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });
@@ -709,8 +707,7 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/operations?run=task-001");
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });

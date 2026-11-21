@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Manual Scan/Preview operations built-artifact browser proof.
@@ -72,8 +73,7 @@ function requestsTo(
 
 /** Enter the memory-only API principal token exactly as an operator would. */
 async function connect(page: Page, token: string): Promise<void> {
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 test("Operations directs new manual work to Files without a scope picker or action-matrix read", async ({
@@ -108,7 +108,10 @@ test("the retired standalone Preview entry is an ordinary not-found route", asyn
   // journey, covered by manual-organize.spec.ts.
   const apiRequests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       apiRequests.push(request.url());
     }
   });
@@ -120,12 +123,9 @@ test("the retired standalone Preview entry is an ordinary not-found route", asyn
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
 
-  // The shared connection boundary is the only action on that page; there is
-  // no retired-page notice and no plan data.
-  await expect(
-    page.getByRole("link", { name: "Connect API token" }),
-  ).toBeVisible();
-  await expect(page.getByLabel("API token")).toHaveCount(0);
+  // The unknown route owns no product data and shows the ordinary not-found
+  // view; there is no retired-page notice at all.
+  await expect(page.getByText("此页面已迁移")).toHaveCount(0);
   expect(
     apiRequests.filter((url) => url.includes("/api/previews")),
   ).toHaveLength(0);
@@ -140,7 +140,10 @@ test("removed Scan deep links render the ordinary not-found route", async ({
 }) => {
   const apiRequests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       apiRequests.push(request.url());
     }
   });
@@ -149,9 +152,6 @@ test("removed Scan deep links render the ordinary not-found route", async ({
   await expect(
     page.getByRole("heading", { name: "Route not found" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Connect API token" }),
-  ).toBeVisible();
   expect(
     apiRequests.filter((url) => url.includes("/api/manual-actions")),
   ).toHaveLength(0);
@@ -159,9 +159,8 @@ test("removed Scan deep links render the ordinary not-found route", async ({
     0,
   );
 
-  await page.getByRole("link", { name: "Connect API token" }).click();
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await page.goto("/");
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   await expect(page).toHaveURL(/\/explore$/);
   expect(
     apiRequests.filter((url) => url.includes("/api/manual-actions")).length,

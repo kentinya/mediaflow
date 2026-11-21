@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Real-Python Explore journey proof (Task 51.1 / Slice 51).
@@ -109,8 +110,7 @@ async function servePosters(page: Page): Promise<PosterControls> {
 async function connect(page: Page): Promise<PosterControls> {
   const posters = await servePosters(page);
   await page.goto("/");
-  await page.getByLabel("API token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(TOKEN));
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "探索", exact: true }),

@@ -4464,6 +4464,95 @@ function bearerToken(req) {
   return header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
 }
 
+/**
+ * Session/account fixture for the browser path.
+ *
+ * The product no longer accepts a browser-entered Bearer token. This fake
+ * exposes the same account login and HttpOnly-ish session cookie shape as the
+ * real API; the cookie value is only an opaque fixture identity, never a
+ * credential the page can read. Direct API requests in the suite may still
+ * present the legacy harness Bearer, which the fake maps to the same identity
+ * so the fixture exercises one permission model.
+ */
+const ACCOUNT_PASSWORD = "e2e-password";
+const ACCOUNT_IDENTITIES = {
+  viewer: {
+    token: "e2e-viewer-token",
+    principalId: "account-viewer",
+    username: "viewer",
+    roles: ["admin"],
+    permissions: ["read", "manage_configuration", "cancel_job"],
+  },
+  readonly: {
+    token: "e2e-readonly-token",
+    principalId: "account-readonly",
+    username: "readonly",
+    roles: ["viewer"],
+    permissions: ["read"],
+  },
+  limited: {
+    token: "e2e-limited-token",
+    principalId: "account-limited",
+    username: "limited",
+    roles: ["viewer"],
+    permissions: ["read"],
+  },
+  expired: {
+    token: "e2e-expired-token",
+    principalId: "account-expired",
+    username: "expired",
+    roles: ["viewer"],
+    permissions: ["read"],
+  },
+};
+const ACCOUNT_BY_TOKEN = new Map(
+  Object.values(ACCOUNT_IDENTITIES).map((account) => [account.token, account]),
+);
+const ACCOUNT_BY_USERNAME = new Map(
+  Object.entries(ACCOUNT_IDENTITIES).map(([name, account]) => [name, account]),
+);
+
+function sessionToken(req) {
+  const header = req.headers.cookie;
+  if (typeof header !== "string" || header.length === 0) {
+    return "";
+  }
+  for (const part of header.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === "mediaflow_session") {
+      return decodeURIComponent(rest.join("="));
+    }
+  }
+  return "";
+}
+
+function authAccount(token) {
+  if (token === "e2e-expired-token") return null;
+  return ACCOUNT_BY_TOKEN.get(token) ?? null;
+}
+
+function accountDocument(account) {
+  return {
+    principalId: account.principalId,
+    accountId: account.principalId,
+    username: account.username,
+    roles: account.roles,
+    permissions: account.permissions,
+  };
+}
+
+function sessionCookie(token, remember = true) {
+  return [
+    `mediaflow_session=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    remember ? "Max-Age=2592000" : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
 /** Read the per-test session id the browser context carries as a cookie. */
 function manualSession(req) {
   const header = req.headers.cookie;
@@ -7728,7 +7817,122 @@ function storageDetailDocument(storage, state, canManage) {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
-  const token = bearerToken(req);
+  const token = bearerToken(req) || sessionToken(req);
+  // Account/session endpoints of the real product. The browser uses only the
+  // HttpOnly session cookie; the cookie value is a fixture identity, not a
+  // user-visible credential.
+  if (url.pathname === "/api/auth/status" && req.method === "GET") {
+    const account = authAccount(token);
+    sendJson(res, 200, {
+      authenticated: account !== null,
+      firstAdministratorRequired: false,
+      configurationRequired: false,
+      account: account === null ? null : accountDocument(account),
+      expiresAt: null,
+      absoluteExpiresAt: null,
+    });
+    return;
+  }
+  if (url.pathname === "/api/auth/session" && req.method === "GET") {
+    const account = authAccount(token);
+    if (account === null) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    sendJson(res, 200, {
+      account: accountDocument(account),
+      expiresAt: null,
+      absoluteExpiresAt: null,
+    });
+    return;
+  }
+  if (url.pathname === "/api/auth/login" && req.method === "POST") {
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) return;
+    const document = parsed.document ?? {};
+    const account = ACCOUNT_BY_USERNAME.get(String(document.username ?? ""));
+    if (account === undefined || document.password !== ACCOUNT_PASSWORD) {
+      sendJson(res, 401, {
+        error: {
+          code: "invalid_credentials",
+          message: "The login name or password is incorrect.",
+          details: {
+            durableState: "no session was created",
+            retrySafe: true,
+            nextAction: "correct the account or password and try again",
+          },
+        },
+      });
+      return;
+    }
+    res.setHeader(
+      "Set-Cookie",
+      sessionCookie(account.token, document.remember === true),
+    );
+    sendJson(res, 200, { account: accountDocument(account) });
+    return;
+  }
+  if (url.pathname === "/api/auth/logout" && req.method === "POST") {
+    res.setHeader(
+      "Set-Cookie",
+      "mediaflow_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+    );
+    sendJson(res, 200, { signedOut: true });
+    return;
+  }
+  if (url.pathname === "/api/auth/password" && req.method === "POST") {
+    const account = authAccount(token);
+    if (account === null) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) return;
+    const document = parsed.document ?? {};
+    if (document.currentPassword !== ACCOUNT_PASSWORD) {
+      sendJson(res, 401, {
+        error: {
+          code: "current_password_invalid",
+          message: "The current password is incorrect.",
+          details: {
+            durableState: "the password and all sessions are unchanged",
+            retrySafe: true,
+            nextAction:
+              "enter the current password again; no session was changed",
+          },
+        },
+      });
+      return;
+    }
+    if (
+      typeof document.newPassword !== "string" ||
+      document.newPassword.length < 8 ||
+      document.newPassword === document.currentPassword
+    ) {
+      sendJson(res, 422, {
+        error: {
+          code: "invalid_password",
+          message: "Choose a valid new password.",
+          details: {
+            durableState: "the password and all sessions are unchanged",
+            retrySafe: true,
+            nextAction: "correct the new password and submit again",
+          },
+        },
+      });
+      return;
+    }
+    res.setHeader(
+      "Set-Cookie",
+      "mediaflow_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+    );
+    sendJson(res, 200, {
+      passwordChanged: true,
+      signedOut: true,
+      nextAction: "sign in again with the new password",
+    });
+    return;
+  }
   // One evidence/state bucket per browser session so parallel Playwright
   // workers never erase or observe another test's fake state.
   const session = manualSession(req);

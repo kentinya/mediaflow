@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Real-Python browser proof for the native Automation definition lifecycle
@@ -38,8 +39,7 @@ async function connectOn(
   token = ADMIN_TOKEN,
 ): Promise<void> {
   await page.goto(path);
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 interface HarnessState {

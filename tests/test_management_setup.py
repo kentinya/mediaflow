@@ -7,18 +7,18 @@ import os
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
-from mediaflow.application.accounts import AccountService, hash_password
+from mediaflow.application.accounts import AccountService, hash_password, hash_secret
 from mediaflow.application.configuration_snapshot import (
     ManagedConfigurationService,
     build_first_setup_starter_document,
 )
-from mediaflow.domain.accounts import Account
+from mediaflow.domain.accounts import Account, AccountSessionRecord
 from mediaflow.domain.configuration_integrity import (
     MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
     canonical_document_digest,
@@ -55,11 +55,17 @@ def request(api, path, *, method="GET", token="admin-token", body=None, cookie=N
         "REMOTE_ADDR": "127.0.0.1",
         "wsgi.input": io.BytesIO(raw),
     }
-    if token is not None:
-        environ["HTTP_AUTHORIZATION"] = f"Bearer {token}"
+    # The current entry is the account session cookie.  The helper keeps the
+    # historical token parameter as the fixture's session-token name so the
+    # existing RBAC assertions still address the same account identity.
     if cookie is not None:
         environ["HTTP_COOKIE"] = cookie
-    if origin is not None:
+    elif token is not None:
+        environ["HTTP_COOKIE"] = f"mediaflow_session={token}"
+    environ["HTTP_HOST"] = "127.0.0.1"
+    if method in {"POST", "PUT", "PATCH", "DELETE"}:
+        environ["HTTP_ORIGIN"] = origin or "http://127.0.0.1"
+    elif origin is not None:
         environ["HTTP_ORIGIN"] = origin
     value = b"".join(api(environ, lambda status, headers: statuses.append(status)))
     return int(statuses[0].split()[0]), json.loads(value)
@@ -72,12 +78,6 @@ class ManagementSetupTests(unittest.TestCase):
         self.bootstrap = {
             "version": 1,
             "persistence": {"databasePath": self.database},
-            "api": {
-                "principals": [
-                    {"id": "admin", "tokenEnv": "MF_ADMIN_TOKEN", "roles": ["admin"]},
-                    {"id": "viewer", "tokenEnv": "MF_VIEWER_TOKEN", "roles": ["viewer"]},
-                ]
-            },
         }
         self.configuration_repository = SQLiteConfigurationRepository(self.database)
         self.task_repository = SQLiteTaskRepository(self.database)
@@ -91,9 +91,29 @@ class ManagementSetupTests(unittest.TestCase):
         self.viewer = ResolvedApiPrincipal(
             "viewer", "viewer-token", frozenset({ApiPermission.READ})
         )
+        now = datetime.now(UTC)
+        for account_id, username, role, token in (
+            ("admin", "admin", ApiRole.ADMIN, "admin-token"),
+            ("viewer", "viewer", ApiRole.VIEWER, "viewer-token"),
+        ):
+            self.task_repository.create_account(
+                Account(account_id, username, (role,), True, now, now, now),
+                hash_password(f"{username}-password"),
+            )
+            self.task_repository.create_account_session(
+                AccountSessionRecord(
+                    f"session-{account_id}",
+                    account_id,
+                    hash_secret(token),
+                    now,
+                    now,
+                    now + timedelta(hours=12),
+                    now + timedelta(hours=24),
+                )
+            )
         self.api = MediaFlowApi(
             self.task_repository,
-            principals=(self.admin, self.viewer),
+            account_service=AccountService(self.task_repository),
             configuration_service=self.service,
             bootstrap_document=self.bootstrap,
             management_only=True,
@@ -108,7 +128,7 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertTrue(is_minimal_management_bootstrap(self.bootstrap))
         loaded = load_minimal_management_bootstrap(self.bootstrap)
         self.assertEqual(loaded.database_path, self.database)
-        self.assertEqual(loaded.api_principals[0].token_env, "MF_ADMIN_TOKEN")
+        self.assertEqual(loaded.api_principals, ())
 
         workflow = json.loads(json.dumps(self.bootstrap))
         workflow["storages"] = []
@@ -117,7 +137,16 @@ class ManagementSetupTests(unittest.TestCase):
             load_minimal_management_bootstrap(workflow)
 
         literal_secret = json.loads(json.dumps(self.bootstrap))
-        literal_secret["api"]["principals"][0]["token"] = "must-not-persist"
+        literal_secret["api"] = {
+            "principals": [
+                {
+                    "id": "admin",
+                    "tokenEnv": "MF_ADMIN_TOKEN",
+                    "roles": ["admin"],
+                    "token": "must-not-persist",
+                }
+            ]
+        }
         with self.assertRaises(ValueError):
             load_minimal_management_bootstrap(literal_secret)
 
@@ -395,8 +424,7 @@ class ManagementSetupTests(unittest.TestCase):
         revision = self.service.require(created["revisionId"])
         document = revision.document
         self.assertEqual(document["persistence"], self.bootstrap["persistence"])
-        self.assertEqual(document["api"]["principals"][0]["tokenEnv"], "MF_ADMIN_TOKEN")
-        self.assertEqual(document["api"]["principals"][1]["tokenEnv"], "MF_VIEWER_TOKEN")
+        self.assertNotIn("principals", document.get("api", {}))
         self.assertEqual(document["setup"]["kind"], "first_runtime_setup")
         self.assertFalse(document["setup"]["runtimeReady"])
         self.assertEqual(document["storages"], [])
@@ -479,15 +507,12 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertEqual(active_detail["status"], "active")
         self.assertEqual(active_detail["revisionId"], revision_id)
 
-    def test_supplied_deployment_authority_is_validated_and_conflicts_rejected(self) -> None:
-        """The shared boundary validates supplied authority instead of normalizing it.
+    def test_retired_principal_authority_is_rejected_for_every_submission(self) -> None:
+        """Current deployments have no JSON principal authority.
 
-        Deployment bootstrap authority is immutable: a managed edit/import may
-        omit it (and then receives this deployment's own identity) or repeat it
-        verbatim, but it must never be able to replace the principal/role/token
-        identity that the next runtime startup reads, and malformed ``api``
-        types must stay correctable errors rather than becoming a different,
-        apparently valid document.
+        A whole-document round trip may omit deployment authority, and the
+        receiving locator is rebound. Any newly supplied ``api.principals`` or
+        ``api.tokenEnv`` is retired input and fails before persistence.
         """
 
         status, created = request(
@@ -498,9 +523,9 @@ class ManagementSetupTests(unittest.TestCase):
         status, detail = request(self.api, f"/api/configuration/revisions/{revision_id}")
         self.assertEqual(status, 200)
         projected = detail["document"]
+        self.assertNotIn("principals", projected.get("api", {}))
+        self.assertNotIn("persistence", projected)
 
-        # Omitted authority (the supported projected round trip) is bound to
-        # this deployment and stays validatable.
         status, saved = request(
             self.api,
             "/api/configuration/publish",
@@ -509,78 +534,22 @@ class ManagementSetupTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         stored = self.service.require(revision_id).document
-        self.assertEqual(
-            [item["tokenEnv"] for item in stored["api"]["principals"]],
-            ["MF_ADMIN_TOKEN", "MF_VIEWER_TOKEN"],
-        )
+        self.assertEqual(stored["persistence"]["databasePath"], self.database)
+        self.assertNotIn("principals", stored.get("api", {}))
 
-        # Authority that repeats this deployment's own identity verbatim is
-        # accepted, so a whole-document round trip keeps working.
-        status, detail = request(self.api, f"/api/configuration/revisions/{revision_id}")
-        self.assertEqual(status, 200)
-        matching = json.loads(json.dumps(detail["document"]))
-        matching.setdefault("api", {})["principals"] = json.loads(
-            json.dumps(self.bootstrap["api"]["principals"])
-        )
-        status, saved = request(
-            self.api,
-            "/api/configuration/publish",
-            method="POST",
-            body={"document": matching},
-        )
-        self.assertEqual(status, 200)
-
-        # Conflicting principal/role/token authority is rejected: a Viewer
-        # token environment must not be able to claim the admin role.
-        for label, conflicting in (
+        for label, retired in (
             (
-                "escalated-role",
+                "principals",
                 {
                     "api": {
                         "principals": [
-                            {"id": "viewer", "tokenEnv": "MF_VIEWER_TOKEN", "roles": ["admin"]}
+                            {"id": "admin", "tokenEnv": "MF_ADMIN_TOKEN", "roles": ["admin"]}
                         ]
                     }
                 },
             ),
-            (
-                "emptied-principals",
-                {"api": {"principals": []}},
-            ),
-            (
-                "foreign-token-env",
-                {
-                    "api": {
-                        "principals": [
-                            {"id": "admin", "tokenEnv": "OTHER_ADMIN_TOKEN", "roles": ["admin"]}
-                        ]
-                    }
-                },
-            ),
-            (
-                "legacy-token-env",
-                {"api": {"tokenEnv": "MF_ADMIN_TOKEN"}},
-            ),
-            (
-                "malformed-api-list",
-                {"api": []},
-            ),
-            (
-                "malformed-api-string",
-                {"api": "MF_ADMIN_TOKEN"},
-            ),
-            (
-                "malformed-principals-object",
-                {"api": {"principals": {"id": "admin"}}},
-            ),
-            (
-                "malformed-roles",
-                {
-                    "api": {
-                        "principals": [{"id": "admin", "tokenEnv": "MF_ADMIN_TOKEN", "roles": []}]
-                    }
-                },
-            ),
+            ("emptied-principals", {"api": {"principals": []}}),
+            ("token-env", {"api": {"tokenEnv": "MF_ADMIN_TOKEN"}}),
             (
                 "literal-secret",
                 {
@@ -601,9 +570,8 @@ class ManagementSetupTests(unittest.TestCase):
                 before = self.service.require(revision_id)
                 status, detail = request(self.api, f"/api/configuration/revisions/{revision_id}")
                 self.assertEqual(status, 200)
-                self.assertEqual(detail["version"], before.version)
                 attempt = json.loads(json.dumps(detail["document"]))
-                attempt.update(json.loads(json.dumps(conflicting)))
+                attempt.update(json.loads(json.dumps(retired)))
                 status, rejected = request(
                     self.api,
                     "/api/configuration/publish",
@@ -612,22 +580,11 @@ class ManagementSetupTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 400, rejected)
                 self.assertEqual(rejected["error"]["code"], "invalid_request")
-                # The Draft is preserved unchanged and still correctable.
+                self.assertRegex(rejected["error"]["message"], "retired|forbidden")
                 current = self.service.require(revision_id)
                 self.assertEqual(current.version, before.version)
                 self.assertEqual(current.digest, before.digest)
                 self.assertEqual(current.document, before.document)
-
-        # The escalation attempt never reached persisted authority, so the
-        # stored document still carries the bootstrap identity.
-        stored = self.service.require(revision_id).document
-        self.assertEqual(
-            [(item["id"], item["tokenEnv"], item["roles"]) for item in stored["api"]["principals"]],
-            [
-                ("admin", "MF_ADMIN_TOKEN", ["admin"]),
-                ("viewer", "MF_VIEWER_TOKEN", ["viewer"]),
-            ],
-        )
 
     def test_managed_edits_cannot_change_startup_bootstrap_permissions(self) -> None:
         """A real API restart proves managed edits cannot repoint authority.
@@ -835,10 +792,7 @@ class ManagementSetupTests(unittest.TestCase):
         imported_id = imported["revision"]["revisionId"]
         bound = self.service.require(imported_id).document
         self.assertEqual(bound["persistence"]["databasePath"], self.database)
-        self.assertEqual(
-            [item["tokenEnv"] for item in bound["api"]["principals"]],
-            ["MF_ADMIN_TOKEN", "MF_VIEWER_TOKEN"],
-        )
+        self.assertNotIn("principals", bound.get("api", {}))
 
         # The round trip published a complete Active snapshot directly.
         published = self.service.require(imported_id)
@@ -878,10 +832,7 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertEqual(status, 200)
         stored = self.service.require(revision_id).document
         self.assertEqual(stored["persistence"]["databasePath"], self.database)
-        self.assertEqual(
-            [item["tokenEnv"] for item in stored["api"]["principals"]],
-            ["MF_ADMIN_TOKEN", "MF_VIEWER_TOKEN"],
-        )
+        self.assertNotIn("principals", stored.get("api", {}))
 
     def test_read_only_and_workflow_admission_are_safe(self) -> None:
         status, denied = request(

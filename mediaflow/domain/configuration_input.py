@@ -82,7 +82,7 @@ def reject_retired_configuration_input(document: object, *, baseline: object = N
         return
     base = baseline if isinstance(baseline, Mapping) else {}
 
-    _reject_authority(document)
+    _reject_authority(document, base)
 
     automation = document.get("automation")
     if isinstance(automation, Mapping):
@@ -137,23 +137,59 @@ def reject_retired_configuration_input(document: object, *, baseline: object = N
     _reject_webhook_events(document, base)
 
 
-def _reject_authority(document: Mapping[str, Any]) -> None:
+def _reject_authority(document: Mapping[str, Any], baseline: Mapping[str, Any]) -> None:
     api = document.get("api")
-    if isinstance(api, Mapping) and "tokenEnv" in api:
+    if not isinstance(api, Mapping):
+        return
+    if "tokenEnv" in api:
         raise ValueError(
-            "api.tokenEnv is retired and cannot grant an implicit administrator; "
-            "declare api.principals with explicit roles instead"
+            "api.tokenEnv is retired; remove it from the submitted configuration. "
+            "Web accounts and server-side sessions authenticate every current entry"
         )
-    for index, principal in enumerate(
-        api.get("principals", ()) if isinstance(api, Mapping) else ()
-    ):
-        if isinstance(principal, Mapping) and any(
-            field in principal for field in ("token", "secret", "password", "authorization")
-        ):
-            raise ValueError(
-                f"api.principals[{index}] must reference an environment variable, "
-                "not a literal credential"
+    if "principals" not in api:
+        return
+    base_api = baseline.get("api")
+    base_api = base_api if isinstance(base_api, Mapping) else {}
+    # An immutable historical Active carries the deployment authority it was
+    # published with. Carrying that exact object forward unchanged stays valid
+    # for read compatibility, but a new submission may not introduce, edit or
+    # keep an independently supplied principal list: current deployments
+    # create Web accounts through the host one-time setup code.
+    if isinstance(base_api, Mapping) and _principal_identity(
+        api.get("principals")
+    ) == _principal_identity(base_api.get("principals")):
+        return
+    raise ValueError(
+        "api.principals is retired; remove it from the submitted configuration. "
+        "Create the first administrator through the Web sign-in page with a "
+        "one-time code from `mediaflow accounts issue-setup-code`"
+    )
+
+
+def _principal_identity(value: object):
+    """The deployment-authority identity of one principal list.
+
+    A stored first-setup document may spell the default ``enabled: true``
+    explicitly while the bootstrap object omits it. That is the same authority,
+    not a new principal declaration, so the comparison uses only the stable
+    identity fields and the effective enabled state.
+    """
+
+    if not isinstance(value, list):
+        return None
+    identity = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            return value
+        identity.append(
+            (
+                item.get("id"),
+                item.get("tokenEnv"),
+                tuple(item.get("roles", ())),
+                bool(item.get("enabled", True)),
             )
+        )
+    return tuple(identity)
 
 
 def _reject_storage_fields(document: Mapping[str, Any], base: Mapping[str, Any]) -> None:

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * MediaLibrary read-only browser proof for Slice 38 (RO-1/RO-3/RO-7).
@@ -18,7 +19,10 @@ const LIMITED_TOKEN = "e2e-limited-token";
 function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
   const seen: Array<{ url: string; method: string }> = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       seen.push({ url: request.url(), method: request.method() });
     }
   });
@@ -26,8 +30,7 @@ function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
 }
 
 async function connectAs(page: Page, token = VIEWER_TOKEN): Promise<void> {
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 async function openMediaLibrary(
@@ -149,11 +152,10 @@ test("directory navigation, return to root and library switching keep the route 
     /\/medialib\/files\?mediaLibraryId=movies&path=Breaking\+Bad$/,
   );
 
-  // A reload followed by authentication reconnect restores that same
+  // A reload with the still-valid server session restores that same
   // directory. The root listing must not silently replace it.
   await page.reload();
-  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
-  await connectAs(page);
+  await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
   await expect(page).toHaveURL(
     /\/medialib\/files\?mediaLibraryId=movies&path=Breaking\+Bad$/,
   );

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Rules readiness and Settings handoff browser proof for Slice 41, Task 41.5.
@@ -30,8 +31,7 @@ const VIEWER_TOKEN = "e2e-viewer-token";
 const READ_ONLY_TOKEN = "e2e-readonly-token";
 
 async function connectAs(page: Page, token = VIEWER_TOKEN): Promise<void> {
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 /** Reset the per-session rules fixture used by the fake API. */
@@ -75,7 +75,10 @@ async function openDiagnostics(page: Page): Promise<void> {
 function recordApiTraffic(page: Page): string[] {
   const traffic: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       traffic.push(`${request.method()} ${request.url()}`);
     }
   });
@@ -158,6 +161,10 @@ test.describe("Rules readiness and Settings handoff", () => {
       "Bearer%20abc",
       "sha256%3Aabcdef",
     ]) {
+      // Sign out first so the hostile query is processed by the real
+      // authentication continuation allowlist instead of a still-valid session.
+      await page.getByRole("button", { name: "Account menu" }).click();
+      await page.getByRole("menuitem", { name: "Sign out" }).click();
       await page.goto(`/rules?section=${hostile}`);
       await connectAs(page);
       await expect(
@@ -414,7 +421,7 @@ test.describe("Rules reference-aligned workspace presentation", () => {
     await expect(
       page
         .locator(".mf-shell-topbar")
-        .getByRole("button", { name: "Disconnect" }),
+        .getByRole("button", { name: "Account menu" }),
     ).toBeVisible();
     await expect(
       page.getByText("管理识别类型、规则和整理策略。"),
@@ -487,9 +494,7 @@ test.describe("Rules reference-aligned workspace presentation", () => {
     // leaves no hidden focus target behind.
     const topbar = page.locator(".mf-shell-topbar");
     await expect(topbar.locator('button[aria-label="通知"]')).toHaveCount(0);
-    await expect(
-      topbar.getByRole("link", { name: "Connect API token" }),
-    ).toBeVisible();
+    await expect(topbar.getByRole("link", { name: "Sign in" })).toBeVisible();
 
     await connectAs(page);
     await expect(
@@ -510,7 +515,7 @@ test.describe("Rules reference-aligned workspace presentation", () => {
       await expect(
         page.getByRole("searchbox", { name: "搜索类型名称或描述" }),
       ).toBeVisible();
-      const account = topbar.getByRole("button", { name: "Disconnect" });
+      const account = topbar.getByRole("button", { name: "Account menu" });
       await expect(account).toBeVisible();
       const accountBox = await account.boundingBox();
       const topbarBox = await topbar.boundingBox();
@@ -550,7 +555,7 @@ test.describe("Rules reference-aligned workspace presentation", () => {
       });
       await expect(topbar.locator('button[aria-label="通知"]')).toHaveCount(0);
       await expect(topbar.getByRole("searchbox")).toHaveCount(0);
-      const account = topbar.getByRole("button", { name: "Disconnect" });
+      const account = topbar.getByRole("button", { name: "Account menu" });
       await expect(account).toBeVisible();
       await account.focus();
       await expect(account).toBeFocused();
@@ -571,13 +576,12 @@ test.describe("Rules reference-aligned workspace presentation", () => {
 
     // Disconnecting returns to the entry boundary; the topbar still has no
     // notification node and offers the actual account entry.
-    await topbar.getByRole("button", { name: "Disconnect" }).click();
+    await topbar.getByRole("button", { name: "Account menu" }).click();
+    await topbar.getByRole("menuitem", { name: "Sign out" }).click();
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
     await expect(topbar.locator('button[aria-label="通知"]')).toHaveCount(0);
-    await expect(
-      topbar.getByRole("link", { name: "Connect API token" }),
-    ).toBeVisible();
+    await expect(topbar.getByRole("link", { name: "Sign in" })).toBeVisible();
   });
 
   test("every family keeps its purpose-built Add form, applicable enable switch and pinned card actions", async ({

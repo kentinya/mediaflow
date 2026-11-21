@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Real-Python browser proof for the native Automation engine settings journey
@@ -34,8 +35,7 @@ async function connectOn(
   token = ADMIN_TOKEN,
 ): Promise<void> {
   await page.goto(path);
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 interface SettingsDocument {
@@ -592,8 +592,7 @@ test("a lost same-field conflict stays an explicit choice until the operator sav
   );
 
   await page.reload();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   const reloaded = page.getByRole("region", { name: "系统运行设置" });
   await reloaded.getByRole("button", { name: "核实上次提交" }).click();
   await expect(reloaded.getByText(/本次提交没有发布/)).toBeVisible({
@@ -781,8 +780,7 @@ test("a lost rejection response reconciles into a correctable form, across a rel
   // Reloading while unresolved keeps the block in place *and* keeps the typed
   // value; the operator then reconciles it from durable evidence.
   await page.reload();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   const reloaded = page.getByRole("region", { name: "系统运行设置" });
   await expect(reloaded.getByText(/上一次保存结果未知/)).toBeVisible({
     timeout: 20_000,
@@ -887,8 +885,7 @@ test("a lost invalid-input rejection reconciles into a correctable integer", asy
 
   // Reload while unresolved, then reconcile the exact refused submission.
   await page.reload();
-  await page.getByLabel("API token").fill(ADMIN_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   const reloaded = page.getByRole("region", { name: "系统运行设置" });
   await expect(reloaded.getByText(/上一次保存结果未知/)).toBeVisible({
     timeout: 20_000,

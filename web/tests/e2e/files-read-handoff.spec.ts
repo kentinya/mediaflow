@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Files page read handoff (PATCH-20261109-1).
@@ -20,7 +21,10 @@ const VIEWER_TOKEN = "e2e-viewer-token";
 function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
   const seen: Array<{ url: string; method: string }> = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) {
+    if (
+      request.url().includes("/api/") &&
+      !request.url().includes("/api/auth/")
+    ) {
       seen.push({ url: request.url(), method: request.method() });
     }
   });
@@ -32,8 +36,7 @@ async function connectAndOpenFiles(
   expectTable = true,
 ): Promise<void> {
   await page.goto("/resourcelib/files");
-  await page.getByLabel("API token").fill(VIEWER_TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(VIEWER_TOKEN));
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
   ).toBeVisible();

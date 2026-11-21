@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 
 /**
  * Real-Python browser proof for Slice 48 Task 48.1: the Task flow status and
@@ -46,8 +47,7 @@ async function connectOn(
   token = ADMIN_TOKEN,
 ): Promise<void> {
   await page.goto(path);
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 async function runOnceState(

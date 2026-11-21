@@ -19,6 +19,7 @@
  */
 
 import { expect, test, type Page, type Locator } from "@playwright/test";
+import { accountForToken, submitSignIn } from "./auth";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 const ADMIN_TOKEN = "harness-admin-token";
@@ -245,8 +246,7 @@ async function expectSurfaceReadable(
 }
 
 async function connect(page: Page, token = ADMIN_TOKEN): Promise<void> {
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await submitSignIn(page, accountForToken(token));
 }
 
 /**
@@ -268,7 +268,7 @@ async function focusByKeyboard(
 
 async function openSurface(page: Page, path: string): Promise<void> {
   await page.goto(`${path}`);
-  if ((await page.getByLabel("API token").count()) > 0) {
+  if ((await page.getByLabel("Login name").count()) > 0) {
     await connect(page);
   }
   await expect(page.locator("#main-content")).toBeVisible();
@@ -317,7 +317,7 @@ test.describe("readable V2 actions", () => {
       "Entry Connect",
     );
     // Entry has no placeholder or asynchronous submitting state in production.
-    await expect(page.getByLabel("API token")).not.toHaveAttribute(
+    await expect(page.getByLabel("Login name")).not.toHaveAttribute(
       "placeholder",
     );
     await page.setViewportSize({ width: 390, height: 844 });
@@ -338,7 +338,7 @@ test.describe("readable V2 actions", () => {
     const alert = page.getByRole("alert");
     await expect(alert).toBeVisible();
     await expect(alert).toContainText("Enter an API principal token");
-    await expect(page.getByLabel("API token")).toBeVisible();
+    await expect(page.getByLabel("Login name")).toBeVisible();
     const alertTitle = await alert
       .locator("h2")
       .first()
@@ -348,7 +348,7 @@ test.describe("readable V2 actions", () => {
 
     // A valid temporary token connects and continues to the recorded route.
     await page.goto("/operations");
-    await expect(page.getByLabel("API token")).toBeVisible();
+    await expect(page.getByLabel("Login name")).toBeVisible();
     await connect(page);
     await expect(page).toHaveURL(/\/operations$/);
     // The credential is memory only: no browser storage carries it.
@@ -383,7 +383,7 @@ test.describe("readable V2 actions", () => {
       .locator(".mf-status-success")
       .getByRole("button", { name: "Disconnect", exact: true })
       .click();
-    await expect(page.getByLabel("API token")).toBeVisible();
+    await expect(page.getByLabel("Login name")).toBeVisible();
     const afterDisconnect = await measure(page, "#api-token");
     expectReadable("Entry field after disconnect", afterDisconnect);
   });

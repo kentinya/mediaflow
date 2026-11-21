@@ -417,7 +417,7 @@ class AccountService:
                 durable_state="the password and all sessions are unchanged",
                 field="currentPassword",
             )
-        if hmac.compare_digest(current_value, new_value):
+        if hmac.compare_digest(current_value.encode("utf-8"), new_value.encode("utf-8")):
             raise AccountAuthenticationError(
                 "password_unchanged",
                 "Choose a password different from the current one.",
