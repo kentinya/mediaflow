@@ -1,161 +1,128 @@
-# Slice 56 — V2 正式入口与 API 去版本前缀
+# Slice 57 — Web 登录、用户管理与旧认证切换
 
 ```text
-Slice ID: 56
-Name: Canonical Web and API Routes
+Slice ID: 57
+Name: Web Accounts, Sessions and Authentication Cutover
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
-Base SHA: 33c70735e0a8f45426dde614587ea3d43af94e9b
-Implementation Head: 472759665a42a73d24910464e903382adeb37e56
+Status: PLANNED
+Base SHA: ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab
+Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: TASK56.1 IMPLEMENTATION AUTHORIZED
+Development Authorization: PLANNING ONLY
 Risk: High
 Target Test Level: T4
-Next Action: A SELECTS THE NEXT LARGE SLICE
+Next Action: USER ACTIVATES SLICE / B THEN PLANS THE FIRST TASK
 ```
 
 ## 授权与基线
 
-用户以文件页 `/resourcelib/files` 和 `/api/v1/tasks → /api/tasks` 为例，先授权调查，
-随后要求规划 Slice。本合同将两个示例应用到全部当前 Web 和 API 路由。用户授权激活
-Slice 56，并由 A 代 B 规划首个 Task。用户随后授权激活 Task 56.1，由 Developer
-按该 Task 的既定范围实施。A 代 B 的角色例外仅适用于规划，验收由 B 独立执行，A 负责终审。
-[Development Workflow](docs/development-workflow.md)
+用户要求退役 `api.principals` 与环境变量令牌的认证方式，直接切换到新方案，并授权规划
+Slice。本合同记录目标和验收，激活及 Task 规划按工作流进行。[Development Workflow](docs/development-workflow.md)
 
-规划前治理检查通过。仓库位于 main，HEAD 为上述 Base，暂存区及工作区干净，文档和 Git 可写。
-Base 是产品实施前的基线，规划／激活检查点沿用该 Base。介入的产品变更由 A 审核范围和集成。
-Slice 55 仍为 PASS / CLOSED，原 Base、实施 Head、最终审查及验证限制可查阅
-[固定终审](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed)
-与 [Progress](docs/progress.md)。
+规划基线为上面的 Base，规划前治理检查 PASS，工作区与暂存区干净。Slice 56 的关闭事实、
+原验收范围和验证证据见固定终审。配置草稿退役的 B PASS 见当前 Task 指针。
+[Slice 56 A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed) · [TASK.md](TASK.md)
 
-## 目标与调查基线
+## 用户目标与范围
 
-用户从服务根地址进入，连接后进入探索，也可用 `/resourcelib/files` 打开文件页。
-打开带资源库和目录参数的文件链接、重连或刷新后，用户看到原目录及适用的操作。
-切换前已有的任务可通过新地址继续查看，恢复时核对原请求及可执行范围。外部客户端可用
-`GET /api/tasks` 查询任务，也可通过新地址调用现有详情、取消和逐项恢复接口。
+部署者从主机领取一次性设置码，在网页创建首位管理员。用户用自己的账号和密码登录，刷新、
+新开标签页和打开书签可沿用有效会话，过期后登录回到原位置。管理员在网页创建、授权或
+停用用户，需要脚本接入时另行签发 API 令牌。只使用网页的实例可以直接完成部署和业务配置。
 
-部署的匿名 GET 验证了旧文件页及构建的 JS/CSS 返回 200，新文件页返回 404，旧任务 API
-返回 401、新任务 API 返回 404。本机开发端口连接被拒绝。用 Base 源码、临时 SQLite 和测试
-身份验证了 `/api/v1/tasks`、`/api/v1/operations/tasks` 返回 200，`/api/tasks`、
-`/api/v2/tasks` 返回 404。静态入口和 API 安全测试共通过 24 项。这些是规划基线，
-候选产物须依下方标准验收。
+现行代码有三处直接依赖旧身份。部署生成器与预检处理环境变量凭证，Web 把令牌放在页面内存，
+自动化的权限检查从 Active 的运行配置读身份。切换需覆盖启动、页面和后端运行权限。
+[部署生成器](scripts/make_deployment_config.py) · [Web 登录入口](web/src/features/entry/EntryPage.tsx) · [执行权限检查](mediaflow/interfaces/service_api.py)
 
-Slice 55 的 `V2-RETIRE-001/006/008/009/010` 和 `V2-MIG-001/002` 定义当前基线。
-本 Slice 通过 [V2-ROUTE-001–004](docs/v2-requirements.md#current--canonical-web-and-api-routes-slice56-pass--closed)
-调整 V2 的公开路径，涵盖 `REQ-WEB-001/003/004/005`、`REQ-API-001–003` 的传输入口。
-旅程与服务分界见 [Product Experience](docs/product-experience.md#current--canonical-entry-journey-slice56-pass--closed)
-和 [Architecture](docs/architecture.md#current--root-web-and-unversioned-api-slice56-pass--closed)。
-
-## 正式入口切换决策
-
-全站 Web 和 API 在同一候选产物中一次性切换。所有当前 Web 页面及深链使用根路径，
-例如 `/ui-v2/resourcelib/files` 切换为 `/resourcelib/files`。所有当前 API 统一使用
-`/api/*`，例如 `GET /api/v1/tasks` 切换为 `GET /api/tasks`。
-
-旧前缀自切换起直接退役。`/ui-v2` 及其页面和静态资源使用普通未知路由处理，
-页面导航可先经过现有通用认证边界。`/api/v1`、`/api/v2` 及其子路由返回 JSON `404`。
-产品仅注册正式业务路由。旧前缀的读写请求在未知路由阶段结束，业务变更为零。
-书签和外部调用方须改用正式地址。
-Slice 55 已退役的业务入口在新命名空间下同样拒绝。
+验收后以 `V2-AUTH-004–009` 取代 V2 的 `V2-AUTH-001/002` 身份和认证要求，更新
+`V2-ROUTE-001/002/004` 的认证和恢复表述。后端业务裁决与 Storage 安全义务继续适用。
+[目标要求](docs/v2-requirements.md#target--web-accounts-and-authentication-cutover-slice57-planned) · [目标旅程](docs/product-experience.md#target--web-accounts-and-authentication-cutover-slice57-planned) · [目标架构](docs/architecture.md#target--web-accounts-and-authentication-cutover-slice57-planned)
 
 ## Required Outcomes and Surfaces
 
-### RO-1 — Web 从根路径提供当前全部旅程
+### RO-1 — 首位管理员、日常登录和恢复
 
-- `/` 作为现有连接入口，连接后进入 `/explore`。保留现有九个主页面和相关深链的后缀，
-  包括 `/resourcelib/files`、`/medialib/files`、`/operations?run=<Task>&dialog=organize`、
-  `/rules/edit/<family>/<id>`、自动化 lifecycle、通知及设置。首页、菜单、后端跳转指引、
-  静态资源、前端校验与浏览器地址使用同一正式路径。
-- 直达、导航、刷新和重认证沿用当前查询语义及权限边界。例如打开
-  `/resourcelib/files?resourceLibraryId=source&path=Movies`，连接后进入 `source` 库的
-  `Movies` 目录，刷新后重连或从设置返回时恢复原目录。保留有效分页和弹窗来源。
-  规则 Edit 的合法带点 ID 仍可直达，缺失静态资源按普通 404 处理。
-- 由 Python 同源提供构建产物，应用现有安全头和方法限制，构建产物缺失时返回普通错误。
-  `/health`、API 和静态资源分别分派。API 按路径段识别并统一返回 JSON 错误，
-  SPA 回退限于 Web 导航。
+- 新实例和完成切换的旧实例可用最小部署配置启动。部署者凭主机上的本地管理权限取得短期
+  一次性设置码，经根入口创建首位管理员。设置码与实例、用途绑定，领取与使用可审计。
+  首位创建和消耗码在同一事务内完成，并发提交只接受一次。已初始化实例从根入口显示登录。
+- 登录页提供账号、密码、可选「在此设备保持登录」，支持密码管理器。服务端验证成功后
+  才进入原站内目标，根入口默认进入探索。凭证不正确时保留账号并清空密码，网络或服务
+  不可用时提供原地恢复动作。会话有效时刷新和新开标签页直接进入目标页。
+- 过期、管理员撤销或退出后，页面展示实际的登录状态。重新登录时恢复当前权限允许的
+  站内深链和查询参数，先核对原提交结果，再由用户决定后续操作。账号菜单显示真实账号
+  与退出操作，退出立即撤销当前会话。同一浏览器的其他标签页在下次受保护请求时反映状态。
+- 保持登录的规划默认值为连续 7 天未使用到期、最长 30 天。未勾选时使用浏览器会话
+  Cookie，仍受服务端到期边界约束。已登录用户可改自己的密码。部署者从主机为管理员
+  发放一次性重置码。重置或改密码后撤销该账号的现有 Web 会话，并要求重新登录。
 
-### RO-2 — 当前 API 统一使用 `/api/*`
+### RO-2 — 用户管理和按需签发 API 令牌
 
-- 全部当前 API 移除路径中的 `v1` 段。端点后缀、方法、请求结构、响应投影、错误和分页遵循
-  当前契约，响应内用于继续操作的路径值随正式地址更新。`/api/tasks`、
-  `/api/operations/tasks` 和 `/api/operations/runs` 各自沿用其职责及字段投影。
-  请求和响应字段名、配置键、权限名及业务数据版本沿用当前契约。
-- 分发、认证、RBAC、Active 检查、错误分类、安全审计与只读审计例外覆盖新路径。新审计
-  使用新路由模板，仍按现行规则隐藏受保护的标识和秘密。Web 客户端和后端生成的设置指引、
-  checkpoint、取消、恢复、配置发布、包交换、自动化及通知操作链接均使用正式地址。
+- 管理员在系统设置的「用户管理」创建用户、授予现有角色、发放初设或重置码、启用或
+  停用账号。新用户以初设码自行设密码。账号具备独立、不可复用的内部 ID，审计使用
+  该 ID，登录名用于用户界面。账号重名、无管理权限和最后一位可用管理员保护有明确
+  的反馈与恢复入口。保护最后管理员的判断与变更使用同一事务，并发变更同样受约束。
+- 管理员按用途为指定账号签发或吊销新 API 令牌。签发时只展示一次明文，之后可查看
+  用途、状态与权限。令牌权限是该账号当前权限的子集。停用账号会撤销 Web 会话及
+  其令牌，重新启用后经新会话或新签发令牌恢复访问。权限收回在下一次请求和适用的
+  后台执行检查可见。
+- 浏览器以会话 Cookie 调用现有业务 API，脚本以新签发的 Bearer 令牌调用相同业务 API。
+  后端按现有权限模型裁决，并记录实际身份。缺失或失效凭证为 `401`，有效身份但操作
+  不获授权为 `403`。请求显式携带 Authorization 时以该凭证的验证结果为准。
 
-### RO-3 — 切换前的有效工作可以继续
+### RO-3 — 旧认证退役与存量工作的安全交接
 
-- 用户继续使用 Base 建立的有效配置、Draft／Active、任务、请求、结果和审计。保留 ID、
-  原快照 digest／pins、任务状态、证据和效果。用既有对象身份生成新的可操作链接，历史审计
-  原样呈现当时的路由。已有配置和运行库可以原地打开，验收使用隔离实例建立及重开可复核的副本。
-- 用户在新地址核对受支持的原请求，包括已提交但响应丢失的场景。回读仍基于原请求身份和权限，
-  由用户显式触发合法继续。读取、换地址或重启均不得重复受理或重放已完成／不确定的效果。
-  原 Task 内四类恢复、普通文件页内进度和结果、失败与可采取的下一步保持可用。
+- 生产入口、随仓示例、配置生成器、预检及运维指引切换到新启动方式。启动配置或新配置
+  输入提供已退役的认证字段时明确拒绝，并指出删除位置。旧环境变量失去认证作用，旧
+  Bearer 令牌一律返回 `401`。旧身份以历史记录留存，升级首位管理员使用新内部 ID。
+- 用 Base 的真实数据验证升级。保留业务配置、任务、原请求、结果、审计和被固定引用的
+  快照身份及摘要。若当前运行版本内嵌旧认证字段，以原子方式发布等价业务配置的新版，
+  历史快照及原任务引用按原文保留。预检报告变更和受影响的自动化，失败时保持原数据
+  与 Active。当前支持的 Base 数据库是升级验证基线。
+- 管理员在现有页面按权限查看历史任务、审计及待核对结果。依赖旧身份的未完成任务
+  在需要新的执行授权时展示当前状态和适用恢复入口。管理员凭有权查看的原任务或原请求
+  标识核对已知结果，回读记录保留旧操作者。授权接续记录执行确认的新账号。接续以明确
+  确认、当前权限及既有条目恢复规则为准。已完成和结果不确定的文件效果保持非重放保护。
+- 绑定旧身份的自动化在下一次授权检查时失败关闭，页面说明原因。管理员检查当前定义
+  和作用域后，经现有 checked Enabled 路径建立新授权。已经受理的记录保留原身份、
+  pin、claim/fence 和效果证据，继续执行以既有安全检查为准。
 
-### RO-4 — 源码、产物和随仓消费者一起切换
+## 架构与交付边界
 
-- Vite 开发代理、测试假服务及匹配表达式、Playwright、部署 smoke、CI、样例命令和运维
-  指引都随正式路径切换。候选镜像中的 Python 与 Web 资源来自同一候选，验证构建的资源、
-  wheel／源码外安装及生产 Compose 入口。记录仓库内受影响的调用方，提供维护方可以执行的
-  外部脚本换址指引。外部接入范围目前未确认，现场接入方核对与切换属于部署授权。
-- 当前 README、部署指引、要求、旅程与架构按验收结果更新。冻结的 V1 基线、Git 历史、
-  历史审计、历史关闭与旧路径负向测试保留其原始含义。
-
-## 交付边界
-
-工作限于当前 V2 的 HTTP 路径和随仓消费者。沿用现有应用服务、前端页面、任务引擎、
-配置格式、数据结构和部署拓扑。发布版本号、标签、容器发布、实机部署及第三方接入方改造
-另行授权。稳定 V2 继续使用从本 Slice Base 验证，历史版本的通用迁移在范围外。
-原认证、RBAC、同源安全、Storage 约束、读取零业务变更、精确确认、原子发布、作用域和
-审计、Worker claim／fence、独立结果与不确定效果保护均为验收义务。
+- SQLite 持有账号、角色、会话及令牌状态。Web、API、Scheduler 与 Worker 的当前
+  权限检查采用同一份有效账号状态。已受理任务使用原固定的业务上下文，执行权限检查
+  继续按当前边界判断。读和重连触发的业务变更数为零。
+- 凭证使用成熟的密码哈希、服务端会话和短期一次性码。跨设备部署走 HTTPS，回环
+  HTTP 按本机入口单独验收。会话 Cookie 由服务端设置，限制脚本访问和跨站发送，
+  HTTPS 下启用 Secure。Cookie 认证的写入做显式跨站请求防护。失败尝试限流。
+  审计、日志、配置导出和 API 错误只记录脱敏信息。
+- 生产 Compose 的健康检查区分服务在线、等待首位管理员和等待业务配置。交付覆盖
+  配置生成、启动验证、设置与密码恢复、将脚本切到新令牌、旧库升级预检与故障恢复。
+  业务配置包导入导出与账号存储分离。
+- 延期能力包括自助注册、邮件找回、OIDC、反向代理身份接入、Passkey、多因素认证、
+  自定义角色以及专用服务账号体系。
 
 ## Acceptance Criteria
 
-- [x] AC-01 / RO-1 验证真实构建与浏览器中的根入口、九个主页面及关键深链，包含两种库、
-  设置、Task card、Rules Edit、自动化与通知。两种库验证带参数直达、刷新／重连及原来源返回。
-  带点合法规则 ID 和直接加载的生产静态资源可用。未知资源、非法资源路径、API 及健康检查
-  得到对应分派，按现行规则保留安全头和静态读取隔离。
-- [x] AC-02 / RO-2 用认证客户端覆盖新路径下的公共 API 路由族，重点核对任务三种投影、
-  认证 401、权限 403、查询校验、分页及只读审计。验证实际返回的操作链接能在原权限下
-  到达对应动作，新的审计模板分类正确且保持脱敏。旧 API 用有效身份仍返回 JSON 404，
-  包含有写语义的方法且无业务效果。旧 Web 实际呈现未知路由或其通用认证边界。
-  核对旧入口没有重定向目标、旧页面和旧资源均不可达，已退役业务能力仍拒绝。
-- [x] AC-03 / RO-3 由 Base 真实代码在隔离库创建合法配置、任务、请求、结果及审计。
-  验证候选重开该库并重启后，读回原数据、生成对应操作链接，在权限范围内取消任务和执行
-  逐项恢复。四类恢复均验证新入口及原权限。用 Base 受理一项整理请求并模拟响应丢失。
-  切换后，从新任务中心只读核对原请求、原 Task ID 和逐项结果。显式继续仅处理当前确认可
-  安全恢复的条目。原请求的 Task 受理次数保持一次，切换前已完成或结果不确定的条目保持原执行次数。
-  历史审计显示请求当时的路由，当前操作链接指向新路由。同时用空实例验证首次设置及合法业务操作。
-- [x] AC-04 / RO-4 确认随仓开发、假服务、发布验证和当前指引均使用正式地址，
-  扫描普通字符串和路径匹配表达式。全量 Python/Web 回归、真实浏览器、源码外安装、
-  候选 Docker 的空实例／发布安全／重启证明达到 T4。以真实产物验证 API、页面、静态资源
-  和 `/health` 的一致性，冷启动与重开使用隔离配置和数据。所需结果由 B 写入 Closure Packet，
-  由 A 按工作流核对。
+- [ ] AC-01 / RO-1 从空库、无媒体挂载及无旧 API 令牌的真实 Compose 安装开始，
+  验证建首位管理员、系统设置初始化、Web 改密、主机侧管理员重置、重启后的状态。
+  验证过期、错用及并发使用设置／重置码，以及一次有效提交最多改变一次账号状态。
+- [ ] AC-02 / RO-1 用生产 Web 产物在桌面和窄屏验证正常登录、表单错误与不可用状态、
+  同站深链回跳、刷新、新标签、超时、退出与账号切换。验证会话隔离、跨站写入防护、
+  权限变动和恢复后的原请求核对。写请求受理次数和效果计数符合原契约。
+- [ ] AC-03 / RO-2 验证管理员从网页创建只读用户、用户设密、管理员改角色／重置／停用。
+  用新令牌调用正式 API，验证同一 RBAC、权限上限、单独吊销、停用、最后管理员并发保护、
+  `401/403` 和安全审计。安全检查覆盖日志、配置包及浏览器可读数据中的凭证脱敏。
+- [ ] AC-04 / RO-3 用隔离的 Base 真实库，验证升级后相同业务配置和历史记录可读，
+  旧字段拒绝、旧令牌为 `401`（包括旧环境变量仍存在的场景）、新账号和新令牌可按
+  权限使用。用隔离脚本验证签发和换用新令牌。对照升级前后请求、Task、结果、pins、
+  审计、效果计数与旧任务归属。选取绑定旧身份的自动化验证受阻、说明、重新确认与
+  后续合法运行。验证失败切换
+  保持原库可恢复，并完成 T4、构建、wheel 及真实 Compose 验收。
 
-## Closure Packet
+## Final validation and closure
 
-B 独立验收通过，四项结果齐备。见 [B Closure Packet](https://github.com/kentinya/mediaflow/blob/38f9b407a63509580a205209139ddc424ae54666/TASK.md#b-复核与-slice-56-交接)。
+高风险范围采用 T4。B 独立复核数据库升级及回滚、认证并发、浏览器与 API 权限、
+Worker/Scheduler 执行边界和生产部署，保留各项实际结果及限制。A 在独立终审核对
+完整 Base..Implementation Head 与 Closure Packet 后决定关闭。
+[测试级别及验收分工](docs/development-workflow.md#6-test-levels)
 
-## A Final Review — PASS / CLOSED
-
-独立终审于 2026-11-19 完成。审查原始 Base `33c70735e0a8f45426dde614587ea3d43af94e9b`
-到实施 Head `472759665a42a73d24910464e903382adeb37e56` 的完整范围。
-实施之后至 B 交接仅更新 Slice 和 Task 记录。
-
-| 验收 | A 终审结果 |
-|---|---|
-| AC-01 正式 Web 入口 | 通过。复跑生产构建及真实浏览器的两库入口、自动化生命周期和通知证明。核对 B 的九页导航、带参深链、带点 Rules ID 的重连及静态资源分派。 |
-| AC-02 正式 API 与退役 | 通过。审查路由分派、校验、权限、审计模板及动作链接，复跑 API 安全和静态分派测试。旧 API 的已有读写入口返回 JSON 404，旧 Web 地址按普通未知导航或资源处理。 |
-| AC-03 切换前的有效工作 | 通过。核对 B 的 Base 隔离库重开、四类原 Task 恢复、取消权限及原 pin／checkpoint／历史审计证据。独立复跑真实浏览器两种丢响应核对场景和同 Task 第二次确认。各次核对读取原摘要与范围，Task 与效果计数按原工作记录保留。 |
-| AC-04 随仓消费者与制品 | 通过。核对当前源码调用方、测试匹配和运维指引。构建 HTML、JS、CSS 及 wheel 的 SHA-256 和四个本地镜像 ID 均与 B 记录一致。B 的全量、源码外安装和隔离 Docker 门禁覆盖实施候选。 |
-
-A 复跑的 Python 静态入口、API 安全和手工整理受理共 62 项通过。使用真实 Python 服务的
-Playwright 用例共 7 项通过，随仓 Notification 浏览器证明及生产 Web 构建通过。
-B 记录 Python 2313 项中 2306 项通过，Web 单测 1641 项、默认 E2E 286 项通过。
-本地证据在 `.git/validation-evidence/47275966/slice56-a/` 和
-`.git/validation-evidence/47275966/task56-1-b/`。
-
-保留 7 项可选外部服务／耐久跳过。Rules 旧证明在 Base 与候选均停于同一过时文案断言，
-B 另以实际控件通过带点 ID、重连及静态分派证明。外部接入方核对与生产切换属于后续部署授权。
+Closure Packet 和 A Final Review 待交付。

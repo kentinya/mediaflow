@@ -8,6 +8,21 @@ in [`requirements.md`](requirements.md). Slice-specific architecture and proof d
 remain in [`SLICE.md`](../SLICE.md) and the architecture document; this file records only durable
 product and authority boundaries.
 
+## TARGET — Web accounts and authentication cutover (Slice57 PLANNED)
+
+验收后以 `V2-AUTH-004–009` 取代 V2 的 `V2-AUTH-001/002`，并更新 `V2-ROUTE-001/002/004`
+的认证和恢复语义。V1 历史基线、`V2-AUTH-003` 与现行后端安全要求继续适用。
+[Slice 57](../SLICE.md)
+
+| ID | 目标 | 完成条件 |
+|---|---|---|
+| V2-AUTH-004 | 通过主机授权初始化首位管理员和找回访问。 | 空库可启动。短期一次性码只用于明确的初始化或重置，原子消耗。 |
+| V2-AUTH-005 | 使用个人账号完成登录、保持登录、回跳和退出。 | 刷新和新标签延续有效会话。过期后恢复允许的页面，恢复写操作先核对原请求。 |
+| V2-AUTH-006 | 管理员在 Web 管理本地账号及现有角色。 | 创建、初设、改角色、重置和启停有明确结果和安全恢复。账号 ID 独立，最后管理员受保护。 |
+| V2-AUTH-007 | 对外脚本按需使用独立可撤销的令牌。 | Web 会话和 API 令牌共用后端身份与角色。令牌权限受当前账号权限限制，原业务 API 继续提供相同契约。 |
+| V2-AUTH-008 | 退役配置中的身份和部署环境中的 API 令牌。 | 启动配置和新配置输入拒绝 `api.principals`，旧令牌返回 `401`。新实例无需令牌即可完成 Web 设置。 |
+| V2-AUTH-009 | 安全交接旧身份相关的存量工作。 | 保留业务数据、审计和任务固定引用。旧身份只用于历史显示，重新授权按现有权限与效果安全规则处理。 |
+
 ## CURRENT — Canonical Web and API routes (Slice56 PASS / CLOSED)
 
 Slice56 amended the public V2 paths in `V2-RETIRE-001/006` and `V2-MIG-001/002`. A accepted
