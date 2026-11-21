@@ -6,7 +6,6 @@ import {
   normalizeNotificationDeliveriesPage,
   normalizeNotificationDeliveryDetail,
   normalizeNotificationDraftState,
-  normalizeNotificationActivation,
   normalizeNotificationRecoveryResult,
   normalizeWebhookDefinition,
   normalizeWebhookDefinitionMutation,
@@ -65,7 +64,7 @@ function definitionPayload(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   const operationsRoute = `/api/operations/notifications/webhooks/${id}`;
-  const draftRoute = `/api/configuration/revisions/rev-draft/objects/webhooks/${id}`;
+  const publishedRoute = `/api/configuration/revisions/rev-1/objects/webhooks/${id}`;
   return {
     ...webhookDocumentPayload(id),
     definitionState: "active",
@@ -76,13 +75,13 @@ function definitionPayload(
       status: "active",
     },
     draftState: {
-      present: true,
-      reason: null,
-      revisionId: "rev-draft",
-      revisionVersion: 4,
-      revisionStatus: "draft",
-      baseActiveRevisionId: "rev-1",
-      updatedAt: "2026-09-12T00:00:00+00:00",
+      present: false,
+      reason: "Webhook definitions are published directly; no draft exists",
+      revisionId: null,
+      revisionVersion: null,
+      revisionStatus: null,
+      baseActiveRevisionId: null,
+      updatedAt: null,
       validatedAt: null,
       validationErrors: [],
     },
@@ -101,17 +100,17 @@ function definitionPayload(
         available: true,
         reason: null,
         method: "PUT",
-        path: draftRoute,
+        path: publishedRoute,
         requiresConfirmation: false,
         sideEffects: "none",
-        durableOutcome: "the bounded definition form is stored",
-        nextAction: "save the bounded form",
+        durableOutcome: "the tested definition is published",
+        nextAction: "apply the tested form",
       },
       copy: {
         available: true,
         reason: null,
         method: "POST",
-        path: `${draftRoute}/copy`,
+        path: `${publishedRoute}/copy`,
         requiresConfirmation: false,
         sideEffects: "none",
         durableOutcome: "a copied definition is stored",
@@ -121,41 +120,22 @@ function definitionPayload(
         available: true,
         reason: null,
         method: "POST",
-        path: `${draftRoute}/enable`,
+        path: `${publishedRoute}/enable`,
         requiresConfirmation: false,
         sideEffects: "none",
-        durableOutcome: "the definition is enabled in the Draft",
-        nextAction: "review the Draft",
+        durableOutcome: "the definition is enabled in the Active configuration",
+        nextAction: "review the published state",
       },
       disable: {
         available: true,
         reason: null,
         method: "POST",
-        path: `${draftRoute}/disable`,
+        path: `${publishedRoute}/disable`,
         requiresConfirmation: false,
         sideEffects: "none",
-        durableOutcome: "the definition is disabled in the Draft",
-        nextAction: "review the Draft",
-      },
-      draftCreate: {
-        available: true,
-        reason: null,
-        method: "POST",
-        path: "/api/configuration/revisions/rev-1/successor",
-        requiresConfirmation: false,
-        sideEffects: "none",
-        durableOutcome: "a successor Draft is stored",
-        nextAction: "create the successor Draft",
-      },
-      activate: {
-        available: true,
-        reason: null,
-        method: "POST",
-        path: `${operationsRoute}/activate-draft`,
-        requiresConfirmation: true,
-        sideEffects: "none",
-        durableOutcome: "the reviewed Draft becomes Active",
-        nextAction: "activate the reviewed Draft",
+        durableOutcome:
+          "the definition is disabled in the Active configuration",
+        nextAction: "review the published state",
       },
     },
     ...overrides,
@@ -227,7 +207,10 @@ describe("webhook definition", () => {
     expect(model.document.id).toBe("ops");
     expect(model.document.events).toEqual(["task.completed"]);
     expect(model.definitionState).toBe("active");
-    expect(model.actions.activate.requiresConfirmation).toBe(true);
+    expect(model.actions.edit.available).toBe(true);
+    expect(model.actions.edit.path).toBe(
+      "/api/configuration/revisions/rev-1/objects/webhooks/ops",
+    );
     expect(model.actions.detail.path).toBe(
       "/api/operations/notifications/webhooks/ops",
     );
@@ -311,23 +294,14 @@ describe("notification definitions page", () => {
       actions: {
         create: {
           available: false,
-          reason: "an open successor Draft is required",
+          reason:
+            "the connected API principal cannot publish configuration changes",
           method: "POST",
           path: null,
           requiresConfirmation: false,
           sideEffects: "none",
-          durableOutcome: "the definition is stored in the Draft",
-          nextAction: "start a successor Draft",
-        },
-        createDraft: {
-          available: true,
-          reason: null,
-          method: "POST",
-          path: "/api/configuration/revisions/rev-1/successor",
-          requiresConfirmation: false,
-          sideEffects: "none",
-          durableOutcome: "a successor Draft is stored",
-          nextAction: "create the successor Draft",
+          durableOutcome: "none",
+          nextAction: "ask a configuration publisher to apply the definition",
         },
       },
       ...overrides,
@@ -339,7 +313,7 @@ describe("notification definitions page", () => {
     expect(page.items).toHaveLength(1);
     expect(page.supportedEvents).toEqual(["task.completed", "task.failed"]);
     expect(page.actions.create.available).toBe(false);
-    expect(page.actions.create.reason).toContain("successor Draft");
+    expect(page.actions.create.reason).toContain("publish");
   });
 
   it("fails closed above the deterministic page limit", () => {
@@ -916,26 +890,6 @@ describe("draft-only list item", () => {
           durableOutcome: "disabled in draft",
           nextAction: "review",
         },
-        draftCreate: {
-          available: true,
-          reason: null,
-          method: "POST",
-          path: "/api/configuration/revisions/rev-1/successor",
-          requiresConfirmation: false,
-          sideEffects: "none",
-          durableOutcome: "successor draft",
-          nextAction: "create",
-        },
-        activate: {
-          available: true,
-          reason: null,
-          method: "POST",
-          path: "/api/operations/notifications/webhooks/draft-only-webhook/activate-draft",
-          requiresConfirmation: true,
-          sideEffects: "none",
-          durableOutcome: "published",
-          nextAction: "activate",
-        },
       },
     };
     const model = normalizeWebhookDefinition(
@@ -943,123 +897,6 @@ describe("draft-only list item", () => {
     );
     expect(model.definitionState).toBe("draft-only");
     expect(model.document.id).toBe("draft-only-webhook");
-  });
-});
-
-describe("notification activation result", () => {
-  const REQUESTED = { webhookId: "ops", revisionId: "rev-draft", version: 4 };
-
-  function activationPayload(
-    overrides: Record<string, unknown> = {},
-  ): Record<string, unknown> {
-    return {
-      // The managed activation preserves the reviewed Draft revision identity
-      // as the new Active identity: same revision id, same version.
-      activatedRevisionId: "rev-draft",
-      activatedVersion: 4,
-      revisionSequence: 4,
-      publishedFromRevisionId: "rev-draft",
-      publishedFromVersion: 4,
-      activeConfiguration: {
-        revisionId: "rev-draft",
-        version: 4,
-        revisionSequence: 4,
-        status: "active",
-      },
-      webhook: webhookDocumentPayload("ops"),
-      ...overrides,
-    };
-  }
-
-  it("normalizes a success bound to the requested mutation", () => {
-    const model = normalizeNotificationActivation(
-      activationPayload(),
-      REQUESTED,
-    );
-    expect(model.activatedRevisionId).toBe("rev-draft");
-    expect(model.activatedVersion).toBe(4);
-    expect(model.webhook?.id).toBe("ops");
-  });
-
-  it("fails closed when the response names another webhook", () => {
-    expect(() =>
-      normalizeNotificationActivation(
-        activationPayload({ webhook: webhookDocumentPayload("other") }),
-        REQUESTED,
-      ),
-    ).toThrow(NotificationNormalizationError);
-  });
-
-  it("fails closed when the response answers another reviewed revision", () => {
-    expect(() =>
-      normalizeNotificationActivation(
-        activationPayload({ publishedFromRevisionId: "rev-older" }),
-        REQUESTED,
-      ),
-    ).toThrow(NotificationNormalizationError);
-    expect(() =>
-      normalizeNotificationActivation(
-        activationPayload({ publishedFromVersion: 3 }),
-        REQUESTED,
-      ),
-    ).toThrow(NotificationNormalizationError);
-  });
-
-  it("fails closed when the activated identity is split from the reviewed Draft", () => {
-    // A success document whose Active revision/version differs from the exact
-    // reviewed Draft identity never renders as this activation.
-    expect(() =>
-      normalizeNotificationActivation(
-        activationPayload({
-          activatedRevisionId: "rev-active-2",
-          activatedVersion: 5,
-          activeConfiguration: {
-            revisionId: "rev-active-2",
-            version: 5,
-            revisionSequence: 4,
-            status: "active",
-          },
-        }),
-        REQUESTED,
-      ),
-    ).toThrow(NotificationNormalizationError);
-    expect(() =>
-      normalizeNotificationActivation(
-        activationPayload({ activatedVersion: 5 }),
-        REQUESTED,
-      ),
-    ).toThrow(NotificationNormalizationError);
-  });
-
-  it("fails closed when the reported Active identity is inconsistent", () => {
-    expect(() =>
-      normalizeNotificationActivation(
-        activationPayload({
-          activeConfiguration: {
-            revisionId: "rev-draft",
-            version: 6,
-            revisionSequence: 4,
-            status: "active",
-          },
-        }),
-        REQUESTED,
-      ),
-    ).toThrow(NotificationNormalizationError);
-    expect(() =>
-      normalizeNotificationActivation(
-        activationPayload({ activeConfiguration: null }),
-        REQUESTED,
-      ),
-    ).toThrow(NotificationNormalizationError);
-  });
-
-  it("fails closed when the activated definition is missing", () => {
-    expect(() =>
-      normalizeNotificationActivation(
-        activationPayload({ webhook: null }),
-        REQUESTED,
-      ),
-    ).toThrow(NotificationNormalizationError);
   });
 });
 

@@ -11,7 +11,6 @@
 import type {
   NotificationActiveConfigurationModel,
   NotificationDeliveryStatus,
-  NotificationDraftStateModel,
   WebhookDefinitionDocumentModel,
   WebhookSecretReadinessModel,
 } from "../../entities/operations/notification";
@@ -51,6 +50,7 @@ export function definitionStateLabel(state: string): string {
 }
 
 export const DRAFT_STATUS_LABELS: Readonly<Record<string, string>> = {
+  active: "已生效",
   draft: "草稿",
   validated: "已检查",
 };
@@ -127,15 +127,6 @@ export function activeConfigurationSummary(
     return "尚未完成托管配置设置";
   }
   return `已生效修订 · 版本 ${active.version}`;
-}
-
-export function draftStateSummary(draft: NotificationDraftStateModel): string {
-  if (!draft.present) {
-    return "没有打开的草稿；创建后继草稿后才能添加或编辑 Webhook。";
-  }
-  return `草稿 · 版本 ${draft.revisionVersion ?? "未知"} · ${draftStatusLabel(
-    draft.revisionStatus,
-  )}`;
 }
 
 /**

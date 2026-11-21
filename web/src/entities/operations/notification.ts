@@ -133,7 +133,7 @@ export const DELIVERY_RECOVERY_ACTIONS = [
  * Each kind is bound to one method, one owned route and one exact suffix; the
  * definition-edit contract carries a single `*` segment pinned to the exact
  * Webhook identity, and the collection-level create action is bound to the
- * exact open-Draft revision.
+ * exact published Active revision.
  */
 export type NotificationActionKind =
   | "webhook-detail"
@@ -142,15 +142,7 @@ export type NotificationActionKind =
   | "webhook-copy"
   | "webhook-enable"
   | "webhook-disable"
-  | "webhook-draft-create"
-  | "webhook-activate"
   | "list-create"
-  | "list-create-draft"
-  | "draft-create"
-  | "draft-save"
-  | "draft-validate"
-  | "draft-activate"
-  | "draft-test"
   | "delivery-detail"
   | "delivery-requeue"
   | "delivery-resolve-stale";
@@ -214,76 +206,11 @@ export const NOTIFICATION_ACTION_CONTRACTS: Readonly<
     offeredWithoutTransport: false,
     objectBound: true,
   },
-  "webhook-draft-create": {
-    method: "POST",
-    routePrefix: CONFIGURATION_REVISIONS_ROUTE,
-    suffix: "successor",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "webhook-activate": {
-    method: "POST",
-    routePrefix: OPERATIONS_WEBHOOKS_ROUTE,
-    suffix: "activate-draft",
-    requiresConfirmation: true,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
   "list-create": {
     method: "POST",
     routePrefix: CONFIGURATION_REVISIONS_ROUTE,
-    // The create transport is bound to the exact open-Draft revision.
+    // The create transport is bound to the exact published Active revision.
     suffix: "objects/webhooks",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "list-create-draft": {
-    method: "POST",
-    routePrefix: CONFIGURATION_REVISIONS_ROUTE,
-    suffix: "successor",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "draft-create": {
-    method: "POST",
-    routePrefix: CONFIGURATION_REVISIONS_ROUTE,
-    suffix: "successor",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "draft-save": {
-    method: "PUT",
-    routePrefix: CONFIGURATION_REVISIONS_ROUTE,
-    // One URI-safe parameter segment pinned to the exact Webhook identity.
-    suffix: "objects/webhooks/*",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "draft-validate": {
-    method: "POST",
-    routePrefix: CONFIGURATION_REVISIONS_ROUTE,
-    suffix: "validate",
-    requiresConfirmation: false,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "draft-activate": {
-    method: "POST",
-    routePrefix: OPERATIONS_WEBHOOKS_ROUTE,
-    suffix: "activate-draft",
-    requiresConfirmation: true,
-    offeredWithoutTransport: false,
-    objectBound: true,
-  },
-  "draft-test": {
-    method: "POST",
-    routePrefix: OPERATIONS_WEBHOOKS_ROUTE,
-    suffix: "test",
     requiresConfirmation: false,
     offeredWithoutTransport: false,
     objectBound: true,
@@ -624,8 +551,6 @@ export interface WebhookDefinitionModel {
     readonly copy: NotificationActionModel;
     readonly enable: NotificationActionModel;
     readonly disable: NotificationActionModel;
-    readonly draftCreate: NotificationActionModel;
-    readonly activate: NotificationActionModel;
   };
 }
 
@@ -697,18 +622,6 @@ export function normalizeWebhookDefinition(
         revisionIdentity,
         identity,
       ),
-      draftCreate: normalizeNotificationAction(
-        actions["draftCreate"],
-        `${field}.actions.draftCreate`,
-        "webhook-draft-create",
-        activeConfiguration?.revisionId ?? null,
-      ),
-      activate: normalizeNotificationAction(
-        actions["activate"],
-        `${field}.actions.activate`,
-        "webhook-activate",
-        identity,
-      ),
     },
   };
 }
@@ -722,7 +635,6 @@ export interface NotificationDefinitionsPage {
   readonly supportedEvents: readonly NotificationEventType[];
   readonly actions: {
     readonly create: NotificationActionModel;
-    readonly createDraft: NotificationActionModel;
   };
 }
 
@@ -753,12 +665,6 @@ export function normalizeNotificationDefinitionsPage(
         "list-create",
         activeConfiguration?.revisionId ?? null,
       ),
-      createDraft: normalizeNotificationAction(
-        actions["createDraft"],
-        "actions.createDraft",
-        "list-create-draft",
-        activeConfiguration?.revisionId ?? null,
-      ),
     },
   };
 }
@@ -780,10 +686,7 @@ export interface NotificationDraftDocumentModel {
   } | null;
   readonly supportedEvents: readonly NotificationEventType[];
   readonly actions: {
-    readonly createDraft: NotificationActionModel;
     readonly save: NotificationActionModel;
-    readonly validate: NotificationActionModel;
-    readonly activate: NotificationActionModel;
     readonly test: NotificationActionModel;
   };
 }
@@ -836,35 +739,17 @@ export function normalizeNotificationDraftDocument(
     draft,
     supportedEvents: eventList(source, "supportedEvents", 16),
     actions: {
-      createDraft: normalizeNotificationAction(
-        actions["createDraft"],
-        "actions.createDraft",
-        "draft-create",
-        activeConfiguration?.revisionId ?? null,
-      ),
       save: normalizeNotificationAction(
         actions["save"],
         "actions.save",
-        "draft-save",
+        "webhook-edit",
         draft?.revisionId ?? null,
         draft?.webhook.id ?? webhookId,
-      ),
-      validate: normalizeNotificationAction(
-        actions["validate"],
-        "actions.validate",
-        "draft-validate",
-        draft?.revisionId ?? null,
-      ),
-      activate: normalizeNotificationAction(
-        actions["activate"],
-        "actions.activate",
-        "draft-activate",
-        webhookId,
       ),
       test: normalizeNotificationAction(
         actions["test"],
         "actions.test",
-        "draft-test",
+        "webhook-test",
         webhookId,
       ),
     },
@@ -945,59 +830,6 @@ export function normalizeWebhookTestResult(
   ) {
     // A response about another Webhook or another revision never renders as
     // the outcome of this explicit test.
-    return fail("webhook");
-  }
-  return model;
-}
-
-export interface NotificationActivationModel {
-  readonly activatedRevisionId: string;
-  readonly activatedVersion: number;
-  readonly revisionSequence: number;
-  readonly activeConfiguration: NotificationActiveConfigurationModel | null;
-  readonly webhook: WebhookDefinitionDocumentModel | null;
-}
-
-export interface NotificationActivationRequestBinding {
-  readonly webhookId: string;
-  readonly revisionId: string;
-  readonly version: number;
-}
-
-export function normalizeNotificationActivation(
-  payload: unknown,
-  requested: NotificationActivationRequestBinding,
-): NotificationActivationModel {
-  const source = readRecord(payload, "notification_activation");
-  const rawWebhook = optionalRecord(source["webhook"], "webhook");
-  const model = {
-    activatedRevisionId: text(source, "activatedRevisionId", 128),
-    activatedVersion: count(source, "activatedVersion"),
-    revisionSequence: count(source, "revisionSequence"),
-    activeConfiguration: normalizeNotificationActiveConfiguration(
-      source["activeConfiguration"],
-    ),
-    webhook:
-      rawWebhook === null
-        ? null
-        : normalizeWebhookDefinitionDocument(rawWebhook, "webhook"),
-  };
-  if (
-    model.webhook === null ||
-    model.webhook.id !== requested.webhookId ||
-    text(source, "publishedFromRevisionId", 128) !== requested.revisionId ||
-    count(source, "publishedFromVersion") !== requested.version ||
-    model.activatedRevisionId !== requested.revisionId ||
-    model.activatedVersion !== requested.version ||
-    model.activeConfiguration === null ||
-    model.activeConfiguration.revisionId !== model.activatedRevisionId ||
-    model.activeConfiguration.version !== model.activatedVersion
-  ) {
-    // The managed activation preserves the reviewed Draft revision identity as
-    // the new Active identity: the activated pair, the published-from echo,
-    // the request binding and the Active configuration must all describe that
-    // same exact revision and version. A success document that splits these
-    // identities never renders as this activation.
     return fail("webhook");
   }
   return model;

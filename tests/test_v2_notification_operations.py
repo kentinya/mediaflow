@@ -318,8 +318,6 @@ class WebhookDefinitionsPageTests(unittest.TestCase):
                     "copy",
                     "enable",
                     "disable",
-                    "draftCreate",
-                    "activate",
                 ):
                     action = item["actions"][name]
                     self.assertIn("available", action)
@@ -327,8 +325,16 @@ class WebhookDefinitionsPageTests(unittest.TestCase):
                 self.assertEqual(
                     item["actions"]["detail"]["path"], f"{OPERATIONS_ROUTE}/{WEBHOOK_ID}"
                 )
-                self.assertEqual(item["actions"]["activate"]["available"], False)
-                self.assertIsNone(item["actions"]["activate"]["path"])
+                self.assertTrue(item["actions"]["edit"]["available"])
+                self.assertEqual(
+                    item["actions"]["edit"]["path"],
+                    f"/api/configuration/revisions/"
+                    f"{harness.configuration.active().revision_id}/objects/"
+                    f"webhooks/{WEBHOOK_ID}",
+                )
+                for retired in ("draftCreate", "createDraft", "activate"):
+                    self.assertNotIn(retired, item["actions"])
+                self.assertNotIn("createDraft", page["actions"])
             finally:
                 harness.close()
 
@@ -342,14 +348,57 @@ class WebhookDefinitionsPageTests(unittest.TestCase):
                 self.assertFalse(item["actions"]["test"]["available"])
                 self.assertIn("permission", item["actions"]["test"]["reason"])
                 self.assertFalse(item["actions"]["edit"]["available"])
-                self.assertFalse(item["actions"]["draftCreate"]["available"])
-                self.assertFalse(item["actions"]["activate"]["available"])
+                self.assertFalse(item["actions"]["copy"]["available"])
+                self.assertFalse(item["actions"]["test"]["available"])
+                for retired in ("draftCreate", "activate"):
+                    self.assertNotIn(retired, item["actions"])
+                self.assertNotIn("createDraft", page["actions"])
                 self.assertTrue(item["actions"]["detail"]["available"])
 
                 status, denied = _request(
                     harness.api, OPERATIONS_ROUTE, method="POST", token=VIEWER_TOKEN
                 )
                 self.assertEqual(status, 405)
+            finally:
+                harness.close()
+
+    def test_manager_without_publish_permission_only_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            harness = NotificationHarness(directory)
+            try:
+                status, page = _request(harness.api, OPERATIONS_ROUTE, token=MANAGER_TOKEN)
+                self.assertEqual(status, 200)
+                self.assertFalse(page["actions"]["create"]["available"])
+                self.assertIn("activate_configuration", page["actions"]["create"]["reason"])
+                item = page["items"][0]
+                self.assertTrue(item["actions"]["detail"]["available"])
+                for name in ("test", "edit", "copy", "enable", "disable"):
+                    self.assertFalse(item["actions"][name]["available"], name)
+                    self.assertIn("activate_configuration", item["actions"][name]["reason"])
+
+                status, detail = _request(
+                    harness.api, f"{OPERATIONS_ROUTE}/{WEBHOOK_ID}", token=MANAGER_TOKEN
+                )
+                self.assertEqual(status, 200)
+                self.assertFalse(detail["webhook"]["actions"]["edit"]["available"])
+                self.assertIn(
+                    "activate_configuration",
+                    detail["webhook"]["actions"]["edit"]["reason"],
+                )
+
+                active = harness.configuration.active()
+                status, denied = _request(
+                    harness.api,
+                    f"{OPERATIONS_ROUTE}/{WEBHOOK_ID}/test",
+                    method="POST",
+                    token=MANAGER_TOKEN,
+                    body={
+                        "expectedRevisionId": active.revision_id,
+                        "expectedVersion": active.version,
+                    },
+                )
+                self.assertEqual(status, 403)
+                self.assertEqual(len(harness.transport.requests), 0)
             finally:
                 harness.close()
 

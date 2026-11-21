@@ -5068,42 +5068,6 @@ function webhookActions(state, token, webhookId = NOTIFICATION_WEBHOOK_ID) {
       durableOutcome: "the definition is disabled in the new Active snapshot",
       nextAction: "apply the disabled definition",
     }),
-    draftCreate: notificationAction({
-      available: false,
-      reason: "definitions are published directly; no draft exists",
-      path: null,
-      durableOutcome: "none",
-      nextAction: "apply the Webhook form",
-    }),
-    activate: notificationAction({
-      available: false,
-      reason:
-        "the definition is already Active; applying publishes a new snapshot",
-      path: null,
-      requiresConfirmation: true,
-      durableOutcome: "none",
-      nextAction: "apply the tested form",
-    }),
-  };
-}
-
-function notificationDraftActions(state, token) {
-  const definitionActions = webhookActions(state, token);
-  return {
-    createDraft: definitionActions.draftCreate,
-    save: definitionActions.edit,
-    validate: notificationAction({
-      available: notificationPermissions(token).manage && state.draftCreated,
-      reason: notificationPermissions(token).manage
-        ? null
-        : "the connected API principal cannot validate configuration (required permission: manage_configuration)",
-      path: `/api/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/validate`,
-      durableOutcome:
-        "the open Draft is validated without any runtime or Storage effect",
-      nextAction: "validate the Draft, then review the validation evidence",
-    }),
-    activate: definitionActions.activate,
-    test: definitionActions.test,
   };
 }
 
@@ -5167,13 +5131,6 @@ function notificationListDocument(state, token) {
           "the bounded Webhook definition is validated and published as the new Active",
         nextAction: "apply the tested definition",
       }),
-      createDraft: notificationAction({
-        available: false,
-        reason: "definitions are published directly; no draft exists",
-        path: null,
-        durableOutcome: "none",
-        nextAction: "apply the tested definition",
-      }),
     },
   };
 }
@@ -5194,39 +5151,6 @@ function notificationDetailDocument(state, token, webhookId) {
       revisionSequence: state.activated ? 4 : 2,
       status: "active",
     },
-  };
-}
-
-function notificationDraftDocument(state, token) {
-  return {
-    webhookId: NOTIFICATION_WEBHOOK_ID,
-    activeConfiguration: {
-      revisionId: NOTIFICATION_ACTIVE_REVISION,
-      version: state.activated ? 5 : 3,
-      revisionSequence: state.activated ? 4 : 2,
-      status: "active",
-    },
-    webhook: webhookDocument(state, token),
-    draft: state.draftCreated
-      ? {
-          revisionId: NOTIFICATION_DRAFT_REVISION,
-          revisionVersion: state.draftVersion,
-          revisionStatus: state.draftStatus,
-          baseActiveRevisionId: NOTIFICATION_ACTIVE_REVISION,
-          updatedAt: MANUAL_RECORDED_AT,
-          validatedAt:
-            state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
-          validationErrors: [],
-          webhook: webhookDocument(state, token),
-        }
-      : null,
-    supportedEvents: [
-      "task.completed",
-      "task.failed",
-      "task.cancelled",
-      "schedule.emitted",
-    ],
-    actions: notificationDraftActions(state, token),
   };
 }
 
@@ -15919,18 +15843,6 @@ const server = createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, notificationDetailDocument(state, token, webhookId));
-    return;
-  }
-  if (
-    url.pathname ===
-      `/api/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/draft` &&
-    req.method === "GET"
-  ) {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    const state = notificationState(session);
-    sendJson(res, 200, notificationDraftDocument(state, token));
     return;
   }
   if (

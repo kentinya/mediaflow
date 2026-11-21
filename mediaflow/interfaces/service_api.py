@@ -16928,6 +16928,7 @@ class MediaFlowApi:
             return self._error(start_response, 404, "not_found", "route was not found")
         if len(parts) == 6 and method == "POST" and parts[5] == "test":
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
             return self._notification_webhook_operator_test(
                 parts[4], environ, start_response, principal
             )
@@ -16954,16 +16955,14 @@ class MediaFlowApi:
         return self._error(start_response, 404, "not_found", "route was not found")
 
     def _notification_webhook_resolution(self, webhook_id: str, start_response: Callable):
-        """Resolve a Webhook definition from the Active revision, then the open Draft.
+        """Resolve a Webhook definition from the current published revision.
 
-        Returns ``(active, draft, raw, in_active)`` where ``raw`` is the
-        bounded projected definition (secret-readiness metadata, redacted
-        endpoint) from the exact revision that contains it. Newly created or
-        copied definitions exist only inside an open successor Draft until
-        activation, so Draft-only resolution keeps them reachable and editable
-        without presenting them as Active. Returns the bounded 503 response
-        when the configuration or Draft read fails (callers must return it
-        unchanged); a definition found in neither source raises ``LookupError``
+        Returns ``(active, None, raw, in_active)`` where ``raw`` is the
+        bounded projected definition from the immutable Active configuration.
+        Webhook definitions are published directly, so there is no open
+        successor Draft to resolve. Returns the bounded 503 response when the
+        configuration read fails (callers must return it unchanged); a
+        definition that is not in the Active revision raises ``LookupError``
         exactly as the Automation resolution does.
         """
 
@@ -16983,8 +16982,6 @@ class MediaFlowApi:
                 "service_unavailable",
                 "managed configuration service is unavailable",
             )
-        # The current object form edits the Active definition and publishes a
-        # checked successor directly.  There is no separate open draft.
         raw = None
         in_active = False
         if active is not None:
@@ -17002,7 +16999,31 @@ class MediaFlowApi:
             in_active = raw is not None
         if raw is None:
             raise LookupError(f"webhooks {webhook_id!r} was not found")
-        return active, active, raw, in_active
+        return active, None, raw, in_active
+
+    def _notification_webhook_publish_reason(
+        self,
+        principal: ResolvedApiPrincipal,
+        *,
+        in_active: bool,
+    ) -> str | None:
+        """The one reason a definition mutation is unavailable, if any."""
+
+        if ApiPermission.MANAGE_CONFIGURATION not in principal.permissions:
+            return self._organize_unavailable_reason(
+                False,
+                ApiPermission.MANAGE_CONFIGURATION,
+                "the connected API principal cannot manage Webhook Definitions",
+            )
+        if ApiPermission.ACTIVATE_CONFIGURATION not in principal.permissions:
+            return self._organize_unavailable_reason(
+                False,
+                ApiPermission.ACTIVATE_CONFIGURATION,
+                "the connected API principal cannot publish configuration changes",
+            )
+        if not in_active:
+            return "the current Webhook definition is not in the published configuration"
+        return None
 
     def _notification_webhook_actions(
         self,
@@ -17010,24 +17031,20 @@ class MediaFlowApi:
         principal: ResolvedApiPrincipal,
         *,
         active,
-        draft,
+        in_active: bool = True,
     ) -> dict:
-        """Backend-authoritative action metadata for one Webhook document.
+        """Backend-authoritative actions for one published Webhook document.
 
-        Draft-bound definition mutations compose the existing managed
-        configuration object routes; the test and checked activation are the
-        bounded operations transports owned by this projection. A Draft-only
-        definition is editable and activatable exactly like an edited Active
-        definition, but it is never presented as runtime truth.
+        Every mutation is bound to the exact published Active revision and
+        requires both configuration-management and publication permission.
+        The signed test is the one bounded probe; it never publishes. The
+        retired draft creation, validation and activation actions are absent.
         """
 
-        permissions = principal.permissions
-        manage = ApiPermission.MANAGE_CONFIGURATION in permissions
-        activate_permitted = ApiPermission.ACTIVATE_CONFIGURATION in permissions
-        draft_revision_id = draft.revision_id if draft is not None else None
-        apply_permitted = manage and activate_permitted
-        no_draft_reason = "the current Webhook definition is unavailable"
-        manage_reason = "the connected API principal cannot manage Webhook Definitions"
+        publish_reason = self._notification_webhook_publish_reason(principal, in_active=in_active)
+        published = active is not None and in_active
+        revision_id = active.revision_id if published else None
+        test_reason = publish_reason
         return {
             "detail": {
                 "available": True,
@@ -17039,12 +17056,8 @@ class MediaFlowApi:
                 "nextAction": "inspect the exact bounded Webhook definition state",
             },
             "test": {
-                "available": manage,
-                "reason": self._organize_unavailable_reason(
-                    manage,
-                    ApiPermission.MANAGE_CONFIGURATION,
-                    manage_reason,
-                ),
+                "available": test_reason is None,
+                "reason": test_reason,
                 "method": "POST",
                 "path": f"/api/operations/notifications/webhooks/{webhook_id}/test",
                 "sideEffects": "one_signed_test_request",
@@ -17052,126 +17065,72 @@ class MediaFlowApi:
                     "no durable change; only the bounded test outcome category is returned"
                 ),
                 "nextAction": (
-                    "test the exact displayed revision after reviewing its endpoint and "
-                    "secret readiness"
+                    "test the exact current form after reviewing its endpoint and secret readiness"
                 ),
             },
             "edit": {
-                "available": apply_permitted and draft is not None,
-                "reason": (
-                    self._organize_unavailable_reason(
-                        manage,
-                        ApiPermission.MANAGE_CONFIGURATION,
-                        manage_reason,
-                    )
-                    if not manage
-                    else (None if draft is not None else no_draft_reason)
-                ),
+                "available": publish_reason is None,
+                "reason": publish_reason,
                 "method": "PUT",
                 "path": (
-                    f"/api/configuration/revisions/{draft_revision_id}/objects/"
-                    f"webhooks/{webhook_id}"
-                    if draft_revision_id is not None
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/{webhook_id}"
+                    if revision_id is not None
                     else None
                 ),
                 "sideEffects": "none",
                 "durableOutcome": (
-                    "the bounded definition form is stored in the open successor Draft at "
-                    "a new optimistic revision version"
+                    "the tested definition is validated and published as the new "
+                    "immutable Active configuration"
                 ),
-                "nextAction": "save the bounded form, then validate and explicitly activate",
+                "nextAction": "apply the tested form; it becomes effective immediately",
             },
             "copy": {
-                "available": apply_permitted and draft is not None,
-                "reason": (
-                    self._organize_unavailable_reason(
-                        manage,
-                        ApiPermission.MANAGE_CONFIGURATION,
-                        manage_reason,
-                    )
-                    if not manage
-                    else (None if draft is not None else no_draft_reason)
-                ),
+                "available": publish_reason is None,
+                "reason": publish_reason,
                 "method": "POST",
                 "path": (
-                    f"/api/configuration/revisions/{draft_revision_id}/objects/"
-                    f"webhooks/{webhook_id}/copy"
-                    if draft_revision_id is not None
+                    f"/api/configuration/revisions/{revision_id}/objects/webhooks/{webhook_id}/copy"
+                    if revision_id is not None
                     else None
                 ),
                 "sideEffects": "none",
                 "durableOutcome": (
-                    "a copied, disabled Webhook definition is stored inside the open "
-                    "successor Draft"
+                    "a copied, disabled Webhook definition is validated and published "
+                    "as the new immutable Active configuration"
                 ),
-                "nextAction": "open the copied definition, edit it, then validate and activate",
+                "nextAction": "open the copied definition, test it, then apply",
             },
             "enable": {
-                "available": apply_permitted and draft is not None,
-                "reason": (
-                    self._organize_unavailable_reason(
-                        manage,
-                        ApiPermission.MANAGE_CONFIGURATION,
-                        manage_reason,
-                    )
-                    if not manage
-                    else (None if draft is not None else no_draft_reason)
-                ),
+                "available": publish_reason is None,
+                "reason": publish_reason,
                 "method": "POST",
                 "path": (
-                    f"/api/configuration/revisions/{draft_revision_id}/objects/"
+                    f"/api/configuration/revisions/{revision_id}/objects/"
                     f"webhooks/{webhook_id}/enable"
-                    if draft_revision_id is not None
+                    if revision_id is not None
                     else None
                 ),
                 "sideEffects": "none",
                 "durableOutcome": (
-                    "the definition is enabled inside the open successor Draft only"
+                    "the definition is enabled in the new immutable Active configuration"
                 ),
-                "nextAction": "review the Draft, validate it, then explicitly activate",
+                "nextAction": "review the published state; the change is already effective",
             },
             "disable": {
-                "available": apply_permitted and draft is not None,
-                "reason": (
-                    self._organize_unavailable_reason(
-                        manage,
-                        ApiPermission.MANAGE_CONFIGURATION,
-                        manage_reason,
-                    )
-                    if not manage
-                    else (None if draft is not None else no_draft_reason)
-                ),
+                "available": publish_reason is None,
+                "reason": publish_reason,
                 "method": "POST",
                 "path": (
-                    f"/api/configuration/revisions/{draft_revision_id}/objects/"
+                    f"/api/configuration/revisions/{revision_id}/objects/"
                     f"webhooks/{webhook_id}/disable"
-                    if draft_revision_id is not None
+                    if revision_id is not None
                     else None
                 ),
                 "sideEffects": "none",
                 "durableOutcome": (
-                    "the definition is disabled inside the open successor Draft only"
+                    "the definition is disabled in the new immutable Active configuration"
                 ),
-                "nextAction": "review the Draft, validate it, then explicitly activate",
-            },
-            "draftCreate": {
-                "available": False,
-                "reason": "Webhook definitions are published directly; no draft exists",
-                "method": "POST",
-                "path": None,
-                "sideEffects": "none",
-                "durableOutcome": "none",
-                "nextAction": "apply the Webhook form; validation and publication are atomic",
-            },
-            "activate": {
-                "available": False,
-                "reason": "the definition is already Active; saving applies a new Active snapshot",
-                "method": "POST",
-                "path": None,
-                "requiresConfirmation": False,
-                "sideEffects": "none",
-                "durableOutcome": "none",
-                "nextAction": "save the Webhook form to publish a checked successor",
+                "nextAction": "review the published state; the change is already effective",
             },
         }
 
@@ -17181,7 +17140,6 @@ class MediaFlowApi:
         *,
         principal: ResolvedApiPrincipal,
         active,
-        draft,
         in_active: bool = True,
     ) -> dict:
         """Bounded, digest-free V2 operator projection for one Webhook definition."""
@@ -17191,13 +17149,11 @@ class MediaFlowApi:
         operator["definitionState"] = "active" if in_active else "draft-only"
         operator["activeConfiguration"] = self._automation_active_configuration(active)
         operator["draftState"] = self._automation_draft_state(
-            draft,
-            empty_reason=(
-                "no open successor Draft contains this Webhook definition; create one to edit it"
-            ),
+            None,
+            empty_reason="Webhook definitions are published directly; no draft exists",
         )
         operator["actions"] = self._notification_webhook_actions(
-            webhook_id, principal, active=active, draft=draft
+            webhook_id, principal, active=active, in_active=in_active
         )
         return operator
 
@@ -17205,8 +17161,26 @@ class MediaFlowApi:
         self, environ: dict, start_response: Callable, principal: ResolvedApiPrincipal
     ) -> None:
         active = self._configuration_service.active()
+        manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+        activate_permitted = ApiPermission.ACTIVATE_CONFIGURATION in principal.permissions
         if active is None:
-            manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+            if not manage:
+                create_reason = self._organize_unavailable_reason(
+                    False,
+                    ApiPermission.MANAGE_CONFIGURATION,
+                    "the connected API principal cannot create Webhook Definitions",
+                )
+            elif not activate_permitted:
+                create_reason = self._organize_unavailable_reason(
+                    False,
+                    ApiPermission.ACTIVATE_CONFIGURATION,
+                    "the connected API principal cannot publish configuration changes",
+                )
+            else:
+                create_reason = (
+                    "no Active configuration exists; managed configuration setup owns "
+                    "the first publication"
+                )
             return self._response(
                 start_response,
                 200,
@@ -17217,59 +17191,20 @@ class MediaFlowApi:
                     "truncated": False,
                     "draftState": self._automation_draft_state(
                         None,
-                        empty_reason=(
-                            "no Active configuration exists; managed configuration "
-                            "setup owns the first Draft"
-                        ),
+                        empty_reason="no Active configuration exists",
                     ),
                     "supportedEvents": list(webhook_events_supported()),
                     "actions": {
                         "create": {
                             "available": False,
-                            "reason": (
-                                self._organize_unavailable_reason(
-                                    manage,
-                                    ApiPermission.MANAGE_CONFIGURATION,
-                                    "the connected API principal cannot create Webhook Definitions",
-                                )
-                                if not manage
-                                else "no Active configuration exists; managed "
-                                "configuration setup owns the first Draft"
-                            ),
+                            "reason": create_reason,
                             "method": "POST",
                             "path": None,
                             "sideEffects": "none",
-                            "durableOutcome": (
-                                "the bounded Webhook definition is stored inside the open "
-                                "successor Draft"
-                            ),
+                            "durableOutcome": "none",
                             "nextAction": (
-                                "complete managed configuration setup, then create Webhook "
-                                "definitions inside a successor Draft"
-                            ),
-                        },
-                        "createDraft": {
-                            "available": False,
-                            "reason": (
-                                self._organize_unavailable_reason(
-                                    manage,
-                                    ApiPermission.MANAGE_CONFIGURATION,
-                                    "the connected API principal cannot create a successor Draft",
-                                )
-                                if not manage
-                                else "no Active configuration exists; managed "
-                                "configuration setup owns the first Draft"
-                            ),
-                            "method": "POST",
-                            "path": None,
-                            "sideEffects": "none",
-                            "durableOutcome": (
-                                "a successor Draft seeded from the immutable Active "
-                                "configuration is stored"
-                            ),
-                            "nextAction": (
-                                "complete managed configuration setup before staging "
-                                "a successor Draft"
+                                "complete managed configuration setup, then create and "
+                                "apply Webhook definitions"
                             ),
                         },
                     },
@@ -17277,114 +17212,57 @@ class MediaFlowApi:
             )
         detail = self._configuration_objects.revision_detail(active.revision_id)
         all_items = detail["objects"].get("webhooks", [])
-        try:
-            drafts = self._configuration_service.open_draft_revisions()
-        except Exception:
-            return self._error(
-                start_response,
-                503,
-                "service_unavailable",
-                "managed configuration service is unavailable",
-            )
-        active_ids = {
-            str(candidate.get("id"))
-            for candidate in all_items
-            if isinstance(candidate, dict) and isinstance(candidate.get("id"), str)
-        }
-        draft_by_id: dict[str, object] = {}
-        draft_only: list[tuple[object, dict]] = []
-        seen_draft_only: set[str] = set()
-        draft_only_total = 0
-        # One deterministic combined page limit for Active and Draft-only
-        # definitions: the Active document order fills the page first and
-        # draft-only definitions take the remaining capacity. The frontend
-        # normalizer fails closed on any page above this limit, so the merged
-        # response must never exceed it; dropped definitions stay counted in
-        # the truthful total and the truncated flag.
         active_page = all_items[: self.NOTIFICATION_DEFINITIONS_PAGE_LIMIT]
-        draft_capacity = self.NOTIFICATION_DEFINITIONS_PAGE_LIMIT - len(active_page)
-        for draft in drafts:
-            for candidate in ConfigurationObjectService._webhooks_projection(draft.document):
-                if not (isinstance(candidate, dict) and isinstance(candidate.get("id"), str)):
-                    continue
-                if candidate["id"] not in draft_by_id:
-                    draft_by_id[candidate["id"]] = draft
-                if candidate["id"] in active_ids or candidate["id"] in seen_draft_only:
-                    continue
-                seen_draft_only.add(candidate["id"])
-                draft_only_total += 1
-                if len(draft_only) >= draft_capacity:
-                    continue
-                draft_only.append((draft, candidate))
         items = [
             self._notification_webhook_operator_document(
                 value,
                 principal=principal,
                 active=active,
-                draft=draft_by_id.get(str(value.get("id", ""))),
             )
             for value in active_page
             if isinstance(value, dict)
         ]
-        # Newly created or copied definitions live only inside an open Draft
-        # until activation; listing them as draft-only keeps the create/copy
-        # journey reachable without presenting a Draft as Active.
-        for draft, candidate in draft_only:
-            items.append(
-                self._notification_webhook_operator_document(
-                    candidate,
-                    principal=principal,
-                    active=active,
-                    draft=draft,
-                    in_active=False,
-                )
+        if not manage:
+            create_reason = self._organize_unavailable_reason(
+                False,
+                ApiPermission.MANAGE_CONFIGURATION,
+                "the connected API principal cannot create Webhook Definitions",
             )
-        manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+        elif not activate_permitted:
+            create_reason = self._organize_unavailable_reason(
+                False,
+                ApiPermission.ACTIVATE_CONFIGURATION,
+                "the connected API principal cannot publish configuration changes",
+            )
+        else:
+            create_reason = None
         return self._response(
             start_response,
             200,
             {
                 "activeConfiguration": self._automation_active_configuration(active),
                 "items": items,
-                "total": len(all_items) + draft_only_total,
-                "truncated": (
-                    len(all_items) > len(active_page) or draft_only_total > len(draft_only)
-                ),
+                "total": len(all_items),
+                "truncated": len(all_items) > len(active_page),
                 "draftState": self._automation_draft_state(
-                    drafts[0] if drafts else None,
-                    empty_reason=(
-                        "no open successor Draft exists; create one to add or edit "
-                        "Webhook definitions"
-                    ),
+                    None,
+                    empty_reason=("Webhook definitions are published directly; no draft exists"),
                 ),
                 "supportedEvents": list(webhook_events_supported()),
                 "actions": {
                     "create": {
-                        "available": manage,
-                        "reason": self._organize_unavailable_reason(
-                            manage,
-                            ApiPermission.MANAGE_CONFIGURATION,
-                            "the connected API principal cannot create Webhook Definitions",
-                        ),
+                        "available": create_reason is None,
+                        "reason": create_reason,
                         "method": "POST",
                         "path": (
                             f"/api/configuration/revisions/{active.revision_id}/objects/webhooks"
                         ),
                         "sideEffects": "none",
                         "durableOutcome": (
-                            "the bounded Webhook definition is validated and published "
+                            "the tested Webhook definition is validated and published "
                             "as a new immutable Active configuration"
                         ),
                         "nextAction": "apply the definition; it becomes effective immediately",
-                    },
-                    "createDraft": {
-                        "available": False,
-                        "reason": "Webhook definitions are published directly; no draft exists",
-                        "method": "POST",
-                        "path": None,
-                        "sideEffects": "none",
-                        "durableOutcome": "none",
-                        "nextAction": "apply the definition from the Webhook form",
                     },
                 },
             },
@@ -17396,7 +17274,7 @@ class MediaFlowApi:
         resolution = self._notification_webhook_resolution(webhook_id, start_response)
         if not isinstance(resolution, tuple):
             return resolution
-        active, draft, raw, in_active = resolution
+        active, _draft, raw, in_active = resolution
         return self._response(
             start_response,
             200,
@@ -17405,7 +17283,6 @@ class MediaFlowApi:
                     raw,
                     principal=principal,
                     active=active,
-                    draft=draft,
                     in_active=in_active,
                 ),
                 "activeConfiguration": self._automation_active_configuration(active),
@@ -17477,18 +17354,15 @@ class MediaFlowApi:
             )
         # A valid historical revision with a matching version is still not the
         # displayed revision: only the exact currently advertised Active
-        # revision (for a definition it contains) or the eligible open
-        # successor Draft may be tested, and the rejection happens before any
-        # transport invocation.
+        # revision that contains this definition may be tested, and the
+        # rejection happens before any transport invocation.
         resolution = self._notification_webhook_resolution(webhook_id, start_response)
         if not isinstance(resolution, tuple):
             return resolution
-        active, draft, _raw, in_active = resolution
+        active, _draft, _raw, in_active = resolution
         advertised = set()
         if active is not None and in_active:
             advertised.add(active.revision_id)
-        if draft is not None:
-            advertised.add(draft.revision_id)
         if expected_revision_id not in advertised:
             return self._error(
                 start_response,
@@ -17496,8 +17370,7 @@ class MediaFlowApi:
                 "configuration_version_conflict",
                 (
                     "the selected revision is not the currently advertised Active revision "
-                    "or the open successor Draft for this Webhook definition; no test "
-                    "request was sent"
+                    "for this Webhook definition; no test request was sent"
                 ),
                 details={
                     "durableState": "no test request was sent",

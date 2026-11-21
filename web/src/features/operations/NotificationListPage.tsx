@@ -45,7 +45,7 @@ export function NotificationListPage() {
         if (data === undefined) {
           return showLoadingWait ? (
             <StatusBanner variant="info" title="正在读取通知定义">
-              <p>读取精确的已生效 Webhook 和打开的草稿。</p>
+              <p>读取当前已生效的 Webhook 定义。</p>
             </StatusBanner>
           ) : null;
         }
@@ -106,8 +106,8 @@ export function NotificationListPage() {
                 </strong>
               </div>
               <div className="mf-notification-summary-item">
-                <span>未发布内容</span>
-                <strong>无</strong>
+                <span>发布方式</span>
+                <strong>直接发布</strong>
               </div>
               <div className="mf-notification-summary-item">
                 <span>定义数量</span>
@@ -148,7 +148,7 @@ export function NotificationListPage() {
                 <p className="mf-notification-inline-reason">
                   {notificationReasonLabel(
                     create.reason,
-                    "当前不能新建 Webhook；请先处理草稿或权限。",
+                    "当前不能新建 Webhook；请先处理权限或完成配置初始化。",
                   )}
                 </p>
               )}
@@ -265,12 +265,8 @@ export function NotificationListPage() {
                                 ? "无"
                                 : `${item.activeConfiguration.revisionId} · 版本 ${item.activeConfiguration.version}`}
                             </dd>
-                            <dt>草稿修订</dt>
-                            <dd>
-                              {item.draftState.present
-                                ? `${item.draftState.revisionId} · 版本 ${item.draftState.revisionVersion} · ${item.draftState.revisionStatus}`
-                                : (item.draftState.reason ?? "无")}
-                            </dd>
+                            <dt>发布方式</dt>
+                            <dd>校验并直接发布为生效配置</dd>
                             <dt>投递边界</dt>
                             <dd>
                               超时 {document.timeoutSeconds} 秒 · 最大尝试{" "}

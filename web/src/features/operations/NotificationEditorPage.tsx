@@ -1,18 +1,13 @@
 /**
  * V2 Webhook definition editor card.
  *
- * The card reads the exact open draft with its optimistic version and keeps
- * three states visibly separate:
- *
- * - saved draft: the durable revision/version and its stored form;
- * - unsaved input: local values that are not the saved revision;
- * - checked/published: validation evidence and an explicit publish decision.
- *
- * Save, validate, signed test and checked activation are separate explicit
- * actions bound to the exact saved revision identity and version. Unsaved
- * input is never submitted as if it were the saved revision, stale test or
- * validation evidence is discarded when the input or version changes, and a
- * late response never replaces a newer context.
+ * The card reads the exact published Active definition with its optimistic
+ * version and keeps the saved baseline, unsaved input and the signed-test
+ * evidence visibly separate. Applying the tested form validates and publishes
+ * one new Active configuration directly; there is no draft save or activation
+ * step. Unsaved input is never submitted as if it were the baseline, stale test
+ * evidence is discarded when the input or version changes, and a late response
+ * never replaces a newer context.
  */
 
 import { useEffect, useRef, useState } from "react";

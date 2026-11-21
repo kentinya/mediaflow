@@ -5766,16 +5766,6 @@ export async function fetchNotificationDefinitionDraft(
       },
       supportedEvents: definition["supportedEvents"] ?? [],
       actions: {
-        createDraft: {
-          available: false,
-          reason: "Webhook definitions are published directly; no draft exists",
-          method: "POST",
-          path: null,
-          requiresConfirmation: false,
-          sideEffects: "none",
-          durableOutcome: "none",
-          nextAction: "apply the Webhook form",
-        },
         save: {
           available: editAction["available"] === true,
           reason:
@@ -5783,32 +5773,14 @@ export async function fetchNotificationDefinitionDraft(
               ? editAction["reason"]
               : null,
           method: "PUT",
-          path: `/api/configuration/revisions/${encodeURIComponent(revisionId)}/objects/webhooks/${encodeURIComponent(webhookId)}`,
+          path:
+            typeof editAction["path"] === "string"
+              ? editAction["path"]
+              : `/api/configuration/revisions/${encodeURIComponent(revisionId)}/objects/webhooks/${encodeURIComponent(webhookId)}`,
           requiresConfirmation: false,
           sideEffects: "none",
           durableOutcome: "the definition is validated and published directly",
           nextAction: "apply the reviewed form",
-        },
-        validate: {
-          available: false,
-          reason: "validation is part of direct publication",
-          method: "POST",
-          path: null,
-          requiresConfirmation: false,
-          sideEffects: "none",
-          durableOutcome: "none",
-          nextAction: "apply the form",
-        },
-        activate: {
-          available: false,
-          reason:
-            "the definition is already Active; saving publishes a successor",
-          method: "POST",
-          path: null,
-          requiresConfirmation: true,
-          sideEffects: "none",
-          durableOutcome: "none",
-          nextAction: "apply the form",
         },
         test: actions["test"],
       },

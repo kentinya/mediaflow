@@ -281,7 +281,7 @@ describe("V2 Notification direct publication", () => {
       await screen.findByText(/https:\/\/example\.invalid\/hooks\/mediaflow/),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: /创建后继草稿/ })).toBeNull();
-    expect(screen.getByText("无", { selector: "strong" })).toBeVisible();
+    expect(screen.getByText("直接发布", { selector: "strong" })).toBeVisible();
     await userEvent.click(screen.getByRole("link", { name: "新建 Webhook" }));
     const view = within(await dialog());
     expect(await view.findByLabelText("标识符")).toBeVisible();

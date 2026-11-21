@@ -4278,15 +4278,45 @@ test("PATCH-20261111-2 policy-permitted overwrite still needs exact same-page de
   );
 });
 
-test("the Notifications page reads the real Task event contract end to end", async ({
+test("the Notifications page edits the real published Webhook and reads it back", async ({
   page,
+  browser,
 }) => {
-  // B47.4-01: the production Notification page must accept the real Python
-  // response. The existing example configuration still spells the already
-  // supported Task events with their historical job.* literals; the API
-  // advertises task.* and the page must render both the catalog and the
-  // definition by their canonical Task meaning.
   const api = recordApiCalls(page);
+  const testBodies: Array<Record<string, unknown>> = [];
+  // The real backend owns the form publication. Only the external signed
+  // probe is fulfilled locally: production Playwright must not send an
+  // arbitrary HTTPS request to example.invalid. The test still proves the
+  // browser submits the exact current form once and never publishes during
+  // the probe.
+  await page.route(
+    "**/api/operations/notifications/webhooks/operations-webhook/test",
+    async (route) => {
+      const body = route.request().postDataJSON() as {
+        webhook?: Record<string, unknown>;
+      };
+      testBodies.push(body);
+      const webhook = body.webhook ?? {};
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          testId: "harness-webhook-test-1",
+          webhook,
+          revision: null,
+          outcome: "success",
+          category: "http_204",
+          responseStatus: 204,
+          message: "the endpoint accepted the signed probe",
+          durableState: "no_delivery_created_no_configuration_change",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "apply the tested form",
+        }),
+      });
+    },
+  );
+
   await connect(page, ADMIN_TOKEN);
   const definitionsRead = page.waitForResponse(
     (response) =>
@@ -4300,6 +4330,9 @@ test("the Notifications page reads the real Task event contract end to end", asy
   expect(response.status()).toBe(200);
   const document = (await response.json()) as {
     readonly supportedEvents: readonly string[];
+    readonly items: readonly {
+      readonly actions: { readonly edit: { readonly available: boolean } };
+    }[];
   };
   expect(document.supportedEvents).toEqual([
     "task.completed",
@@ -4307,62 +4340,83 @@ test("the Notifications page reads the real Task event contract end to end", asy
     "task.cancelled",
     "schedule.emitted",
   ]);
+  expect(document.items[0].actions.edit.available).toBe(true);
   await expect(
     page.getByRole("heading", { name: "通知", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("通知定义暂时不可用")).toHaveCount(0);
   await expect(page.getByText("operations-webhook").first()).toBeVisible();
-  // The historical persisted job.* literals are presented as their canonical
-  // Task events; the same card keeps the exact technical identity reachable.
-  const definitionCard = page
+
+  await page.getByRole("link", { name: "编辑定义" }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "编辑 Webhook operations-webhook",
+  });
+  await expect(dialog).toBeVisible();
+  const attempts = dialog.getByLabel("最大尝试次数");
+  await expect(attempts).toBeVisible();
+  await attempts.fill("7");
+  await dialog.getByRole("button", { name: "发送签名测试" }).click();
+  await expect(dialog.getByText(/签名测试成功/)).toBeVisible();
+  expect(testBodies).toHaveLength(1);
+  expect(testBodies[0].webhook).toMatchObject({
+    id: "operations-webhook",
+    maxAttempts: 7,
+  });
+
+  const publish = page.waitForResponse(
+    (candidate) =>
+      candidate.request().method() === "PUT" &&
+      new URL(candidate.url()).pathname.startsWith(
+        "/api/configuration/revisions/",
+      ) &&
+      new URL(candidate.url()).pathname.endsWith(
+        "/objects/webhooks/operations-webhook",
+      ),
+  );
+  await dialog.getByRole("button", { name: "应用更改" }).click();
+  expect((await publish).status()).toBe(200);
+  await expect(
+    dialog.getByText(/更改已通过检查并发布为新的生效配置/),
+  ).toBeVisible();
+  expect(testBodies).toHaveLength(1);
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "PUT" &&
+        entry.path.endsWith("/objects/webhooks/operations-webhook"),
+    ),
+  ).toHaveLength(1);
+
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const card = page
     .locator(".mf-notification-list-card")
     .filter({ hasText: "operations-webhook" })
     .first();
-  await expect(definitionCard.getByText("任务完成")).toBeVisible();
-  await expect(definitionCard.getByText("任务失败")).toBeVisible();
-  await expect(definitionCard.getByText("任务已取消")).toBeVisible();
-  await expect(definitionCard.getByText("计划触发")).toBeVisible();
-  await definitionCard.locator("summary", { hasText: "诊断信息" }).click();
-  await expect(
-    definitionCard.getByText(
-      "task.completed, task.failed, task.cancelled, schedule.emitted",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  await card.locator("summary", { hasText: "诊断信息" }).click();
+  await expect(card.getByText(/最大尝试 7 次/)).toBeVisible();
 
-  // The real Draft boundary is reachable and the resolved editor advertises
-  // the Task event names, so an operator can select and save them.
-  const draftRead = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      response.url().endsWith("/successor"),
-  );
-  await page.getByRole("button", { name: "创建后继草稿", exact: true }).click();
-  expect((await draftRead).status()).toBe(201);
-  await page.getByRole("link", { name: "查看定义" }).first().click();
-  const definitionDialog = page.getByRole("dialog", {
-    name: "Webhook operations-webhook",
-  });
-  await expect(definitionDialog).toBeVisible();
-  const editDraft = definitionDialog.getByRole("button", {
-    name: "编辑草稿",
-    exact: true,
-  });
-  await expect(editDraft).toBeEnabled();
-  const draftDocumentRead = page.waitForResponse(
-    (response) =>
-      response.request().method() === "GET" &&
-      new URL(response.url()).pathname ===
-        "/api/operations/notifications/webhooks/operations-webhook/draft",
-  );
-  await editDraft.click();
-  expect((await draftDocumentRead).status()).toBe(200);
-  await expect(
-    page.getByRole("checkbox", { name: /task\.completed/ }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("checkbox", { name: /job\.completed/ }),
-  ).toHaveCount(0);
+  // A read-only principal sees the same published definition but no edit
+  // entry; the browser cannot render an action the backend did not offer.
+  const viewerContext = await browser.newContext();
+  const viewerPage = await viewerContext.newPage();
+  try {
+    await connect(viewerPage, TOKEN);
+    await viewerPage
+      .getByRole("link", { name: "Notifications", exact: true })
+      .click();
+    await expect(
+      viewerPage.getByRole("heading", { name: "通知", exact: true }),
+    ).toBeVisible();
+    await expect(
+      viewerPage.getByRole("link", { name: "编辑定义" }),
+    ).toHaveCount(0);
+    await expect(
+      viewerPage.getByRole("button", { name: "编辑定义（不可用）" }),
+    ).toBeVisible();
+  } finally {
+    await viewerContext.close();
+  }
   expect(api.filter((entry) => entry.path.startsWith("/api/jobs"))).toEqual([]);
 });
 

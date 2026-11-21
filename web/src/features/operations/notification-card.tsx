@@ -186,7 +186,7 @@ export function NotificationDiscardPrompt({
           ? "在操作完成前不能离开。请等待结果；结果会保留在卡片中。"
           : clean
             ? "没有未保存的输入。可以离开，也可以继续查看当前卡片。"
-            : "离开会丢弃本次尚未保存的输入。已经保存到草稿的内容不受影响。"}
+            : "离开会丢弃本次尚未保存的输入。当前生效配置不会被修改。"}
       </p>
       <div className="mf-actions">
         <Button

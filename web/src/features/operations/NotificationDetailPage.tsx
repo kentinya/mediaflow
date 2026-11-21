@@ -29,8 +29,6 @@ import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
 import {
   activeConfigurationSummary,
-  draftStateSummary,
-  formatNotificationTime,
   notificationEventLabel,
   notificationReasonLabel,
   secretReadinessDetail,
@@ -119,13 +117,9 @@ export function NotificationDetailPage() {
   const definition = useLastSuccessfulRead(liveDefinition);
   const readDegraded = liveDefinition === null && definition !== null;
   const document = definition?.document ?? null;
-  const draft = definition?.draftState ?? null;
+  const active = definition?.activeConfiguration ?? null;
   const displayedTestContext =
-    definition === null
-      ? ""
-      : definition.definitionState === "active"
-        ? `active:${definition.activeConfiguration?.revisionId ?? ""}:${definition.activeConfiguration?.version ?? ""}`
-        : `draft:${draft?.revisionId ?? ""}:${draft?.revisionVersion ?? ""}`;
+    active === null ? "" : `active:${active.revisionId}:${active.version}`;
 
   const testMutation = useMutation({
     mutationFn: (input: {
@@ -173,9 +167,9 @@ export function NotificationDetailPage() {
       kind: "copy" | "enable" | "disable";
       expectedVersion: number;
     }) => {
-      const revisionId = definition?.draftState.revisionId ?? null;
+      const revisionId = definition?.activeConfiguration?.revisionId ?? null;
       if (revisionId === null) {
-        return Promise.reject(new Error("no draft"));
+        return Promise.reject(new Error("no published definition"));
       }
       if (input.kind === "copy") {
         return copyWebhookDefinition(token, {
@@ -262,9 +256,7 @@ export function NotificationDetailPage() {
       description={
         definition === null
           ? "读取精确的 Webhook 定义。"
-          : definition.definitionState === "active"
-            ? "这个定义属于不可变的已生效配置。"
-            : "这个定义只存在于打开的定义中；发布后才会生效。"
+          : "这个定义属于当前不可变的已生效配置。"
       }
       closeDisabled={busy}
       onRequestClose={guard.attemptClose}
@@ -360,7 +352,7 @@ export function NotificationDetailPage() {
             </div>
           </NotificationCardStatus>
         )}
-      {definition !== null && document !== null && draft !== null && (
+      {definition !== null && document !== null && (
         <div className="mf-notification-card-scroll">
           {readDegraded && (
             <StatusBanner variant="warning" title="最新读取失败">
@@ -457,18 +449,8 @@ export function NotificationDetailPage() {
                 <dd>
                   {activeConfigurationSummary(definition.activeConfiguration)}
                 </dd>
-                <dt>打开的定义</dt>
-                <dd>{draftStateSummary(draft)}</dd>
-                {draft.updatedAt !== null && (
-                  <>
-                    <dt>定义更新时间</dt>
-                    <dd>
-                      <time dateTime={draft.updatedAt}>
-                        {formatNotificationTime(draft.updatedAt)}
-                      </time>
-                    </dd>
-                  </>
-                )}
+                <dt>发布方式</dt>
+                <dd>直接校验并发布为生效配置</dd>
               </dl>
             </details>
           </section>
@@ -489,14 +471,8 @@ export function NotificationDetailPage() {
                   type="button"
                   disabled={busy || readDegraded}
                   onClick={() => {
-                    const revisionId =
-                      definition.definitionState === "active"
-                        ? (definition.activeConfiguration?.revisionId ?? null)
-                        : draft.revisionId;
-                    const version =
-                      definition.definitionState === "active"
-                        ? (definition.activeConfiguration?.version ?? null)
-                        : draft.revisionVersion;
+                    const revisionId = active?.revisionId ?? null;
+                    const version = active?.version ?? null;
                     if (revisionId !== null && version !== null) {
                       testMutation.mutate({
                         context: displayedTestContext,
@@ -538,10 +514,13 @@ export function NotificationDetailPage() {
                   "当前不能复制定义",
                 )}
                 onClick={() => {
-                  if (draft.revisionVersion !== null) {
+                  if (
+                    active?.version !== null &&
+                    active?.version !== undefined
+                  ) {
                     draftMutation.mutate({
                       kind: "copy",
-                      expectedVersion: draft.revisionVersion,
+                      expectedVersion: active.version,
                     });
                   }
                 }}
@@ -557,10 +536,13 @@ export function NotificationDetailPage() {
                   "当前不能启用定义",
                 )}
                 onClick={() => {
-                  if (draft.revisionVersion !== null) {
+                  if (
+                    active?.version !== null &&
+                    active?.version !== undefined
+                  ) {
                     draftMutation.mutate({
                       kind: "enable",
-                      expectedVersion: draft.revisionVersion,
+                      expectedVersion: active.version,
                     });
                   }
                 }}
@@ -576,10 +558,13 @@ export function NotificationDetailPage() {
                   "当前不能停用定义",
                 )}
                 onClick={() => {
-                  if (draft.revisionVersion !== null) {
+                  if (
+                    active?.version !== null &&
+                    active?.version !== undefined
+                  ) {
                     draftMutation.mutate({
                       kind: "disable",
-                      expectedVersion: draft.revisionVersion,
+                      expectedVersion: active.version,
                     });
                   }
                 }}
