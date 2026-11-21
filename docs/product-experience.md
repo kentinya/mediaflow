@@ -11,18 +11,18 @@ points to the current implementation state and immutable review packet.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
-## TARGET — Web accounts and authentication cutover (Slice57 PLANNED)
+## TARGET — Web accounts and sessions for fresh deployments (Slice57 PLANNED)
 
-- **首次访问。** 打开根地址，页面指引部署者从主机领取一次性设置码。创建管理员成功后，
-  新实例进入系统设置初始化，升级实例进入现有业务界面。设置码失效时显示重新领取的入口。
+- **首次访问。** 从空库启动并打开根地址，页面指引部署者从主机领取一次性设置码。创建管理
+  员成功后进入系统设置初始化业务配置。设置码失效时，页面指引部署者在主机上重新领取。
 - **日常访问。** 账号密码通过校验后，进入书签所指页面或默认的探索页。可信设备可保持
   登录。输错留在登录页，服务不可用提供原地重试。会话过期后登录回到原位置，原请求
   的结果可按权限核对。右上角显示真实账号，菜单提供改密码和退出。
 - **用户与脚本。** 管理员在系统设置创建用户、分配角色和重置密码，用户自行设置密码。
   需要脚本访问时，管理员从用户管理签发令牌，复制一次后可随时吊销。停用后页面和脚本
   都会在下一次访问时收到会话失效或凭证失效的状态。
-- **切换后继续工作。** 管理员打开原任务核对进度和已知效果，查看受旧身份影响的自动化，
-  并在核对作用域后重新启用。找回管理员访问通过主机侧一次性重置流程。
+- **重启后继续工作。** 同版本重启后，用户按当前权限打开已创建的任务、结果和审计。
+  管理员忘记密码时从主机领取一次性重置码。
 
 [Slice 57](../SLICE.md)
 

@@ -11,16 +11,15 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Web accounts and authentication cutover (Slice57 PLANNED)
+## TARGET — Web accounts and sessions for fresh deployments (Slice57 PLANNED)
 
 SQLite 成为当前账号、角色和凭证状态的唯一来源。HTTP 认证把服务端会话或新签发的
 Bearer 令牌解析为同一类账号身份。现有 API、Scheduler 与 Worker 按当前权限判断；
 已受理业务使用原任务的固定快照和效果证据。Web 会话维护与业务命令分离。
 
-部署 bootstrap 仅提供启动所需信息。认证字段从生效业务配置移除。升级在明确的检查与
-切换边界内更新落库数据，旧历史和被固定的快照保持原身份及摘要。现行启动入口拒绝
-已退役的认证配置，历史记录只作回读。重新授权通过现有 Task 或 checked Enabled
-入口产生可审计的新决定。
+最小部署 bootstrap 提供数据库路径等启动信息，账号由空库初始化，认证状态独立于业务
+配置。启动配置和新配置输入拒绝已退役的认证字段。同版本重启时重新读取数据库的账号和
+权限。后台工作继续遵循既有授权检查、快照固定引用与效果保护。
 
 [Slice 57](../SLICE.md)
 

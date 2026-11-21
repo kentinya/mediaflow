@@ -1,8 +1,8 @@
-# Slice 57 — Web 登录、用户管理与旧认证切换
+# Slice 57 — 纯净部署的 Web 登录与用户管理
 
 ```text
 Slice ID: 57
-Name: Web Accounts, Sessions and Authentication Cutover
+Name: Web Accounts and Sessions for Fresh Deployments
 Owner: A — Slice Owner / Architect / Final Reviewer
 Status: PLANNED
 Base SHA: ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab
@@ -16,8 +16,9 @@ Next Action: USER ACTIVATES SLICE / B THEN PLANS THE FIRST TASK
 
 ## 授权与基线
 
-用户要求退役 `api.principals` 与环境变量令牌的认证方式，直接切换到新方案，并授权规划
-Slice。本合同记录目标和验收，激活及 Task 规划按工作流进行。[Development Workflow](docs/development-workflow.md)
+用户要求从第一次纯净部署设计 Web 登录，退役 `api.principals` 与部署环境变量令牌认证。
+Slice 的数据范围从空数据库开始，覆盖本版本创建的配置、账号和工作，以及同版本重启后的
+使用。本合同记录目标和验收，激活及 Task 规划按工作流进行。[Development Workflow](docs/development-workflow.md)
 
 规划基线为上面的 Base，规划前治理检查 PASS，工作区与暂存区干净。Slice 56 的关闭事实、
 原验收范围和验证证据见固定终审。配置草稿退役的 B PASS 见当前 Task 指针。
@@ -30,20 +31,21 @@ Slice。本合同记录目标和验收，激活及 Task 规划按工作流进行
 停用用户，需要脚本接入时另行签发 API 令牌。只使用网页的实例可以直接完成部署和业务配置。
 
 现行代码有三处直接依赖旧身份。部署生成器与预检处理环境变量凭证，Web 把令牌放在页面内存，
-自动化的权限检查从 Active 的运行配置读身份。切换需覆盖启动、页面和后端运行权限。
+自动化的权限检查从 Active 的运行配置读身份。新认证需覆盖启动、页面和后端运行权限。
 [部署生成器](scripts/make_deployment_config.py) · [Web 登录入口](web/src/features/entry/EntryPage.tsx) · [执行权限检查](mediaflow/interfaces/service_api.py)
 
 验收后以 `V2-AUTH-004–009` 取代 V2 的 `V2-AUTH-001/002` 身份和认证要求，更新
 `V2-ROUTE-001/002/004` 的认证和恢复表述。后端业务裁决与 Storage 安全义务继续适用。
-[目标要求](docs/v2-requirements.md#target--web-accounts-and-authentication-cutover-slice57-planned) · [目标旅程](docs/product-experience.md#target--web-accounts-and-authentication-cutover-slice57-planned) · [目标架构](docs/architecture.md#target--web-accounts-and-authentication-cutover-slice57-planned)
+[目标要求](docs/v2-requirements.md#target--web-accounts-and-sessions-for-fresh-deployments-slice57-planned) · [目标旅程](docs/product-experience.md#target--web-accounts-and-sessions-for-fresh-deployments-slice57-planned) · [目标架构](docs/architecture.md#target--web-accounts-and-sessions-for-fresh-deployments-slice57-planned)
 
 ## Required Outcomes and Surfaces
 
 ### RO-1 — 首位管理员、日常登录和恢复
 
-- 新实例和完成切换的旧实例可用最小部署配置启动。部署者凭主机上的本地管理权限取得短期
+- 空实例可用最小部署配置启动。部署者凭主机上的本地管理权限取得短期
   一次性设置码，经根入口创建首位管理员。设置码与实例、用途绑定，领取与使用可审计。
-  首位创建和消耗码在同一事务内完成，并发提交只接受一次。已初始化实例从根入口显示登录。
+  首位创建和消耗码在同一事务内完成，并发提交只接受一次。创建成功后进入系统设置初始化
+  业务配置。此后的未登录访问从根入口进入登录页。
 - 登录页提供账号、密码、可选「在此设备保持登录」，支持密码管理器。服务端验证成功后
   才进入原站内目标，根入口默认进入探索。凭证不正确时保留账号并清空密码，网络或服务
   不可用时提供原地恢复动作。会话有效时刷新和新开标签页直接进入目标页。
@@ -68,22 +70,14 @@ Slice。本合同记录目标和验收，激活及 Task 规划按工作流进行
   后端按现有权限模型裁决，并记录实际身份。缺失或失效凭证为 `401`，有效身份但操作
   不获授权为 `403`。请求显式携带 Authorization 时以该凭证的验证结果为准。
 
-### RO-3 — 旧认证退役与存量工作的安全交接
+### RO-3 — 最小部署与同版本重启
 
-- 生产入口、随仓示例、配置生成器、预检及运维指引切换到新启动方式。启动配置或新配置
-  输入提供已退役的认证字段时明确拒绝，并指出删除位置。旧环境变量失去认证作用，旧
-  Bearer 令牌一律返回 `401`。旧身份以历史记录留存，升级首位管理员使用新内部 ID。
-- 用 Base 的真实数据验证升级。保留业务配置、任务、原请求、结果、审计和被固定引用的
-  快照身份及摘要。若当前运行版本内嵌旧认证字段，以原子方式发布等价业务配置的新版，
-  历史快照及原任务引用按原文保留。预检报告变更和受影响的自动化，失败时保持原数据
-  与 Active。当前支持的 Base 数据库是升级验证基线。
-- 管理员在现有页面按权限查看历史任务、审计及待核对结果。依赖旧身份的未完成任务
-  在需要新的执行授权时展示当前状态和适用恢复入口。管理员凭有权查看的原任务或原请求
-  标识核对已知结果，回读记录保留旧操作者。授权接续记录执行确认的新账号。接续以明确
-  确认、当前权限及既有条目恢复规则为准。已完成和结果不确定的文件效果保持非重放保护。
-- 绑定旧身份的自动化在下一次授权检查时失败关闭，页面说明原因。管理员检查当前定义
-  和作用域后，经现有 checked Enabled 路径建立新授权。已经受理的记录保留原身份、
-  pin、claim/fence 和效果证据，继续执行以既有安全检查为准。
+- 生产入口、随仓示例、配置生成器、预检及运维指引统一使用新启动方式。最小 bootstrap
+  提供数据库路径等启动信息。启动配置和新配置输入拒绝已退役的 `api.principals`，并提示
+  删除位置。环境变量 `MEDIAFLOW_API_TOKEN` 不能创建账号或为请求授权。
+- 从空实例初始化业务配置后，使用新账号受理任务和启用自动化。使用同版本重启后，用户按
+  当前权限访问原任务、结果和审计。Scheduler 和 Worker 从数据库校验账号与权限，采用原
+  业务快照及现有执行保护处理符合条件的工作。权限收回后，后续检查应拒绝执行并显示原因。
 
 ## 架构与交付边界
 
@@ -95,8 +89,10 @@ Slice。本合同记录目标和验收，激活及 Task 规划按工作流进行
   HTTPS 下启用 Secure。Cookie 认证的写入做显式跨站请求防护。失败尝试限流。
   审计、日志、配置导出和 API 错误只记录脱敏信息。
 - 生产 Compose 的健康检查区分服务在线、等待首位管理员和等待业务配置。交付覆盖
-  配置生成、启动验证、设置与密码恢复、将脚本切到新令牌、旧库升级预检与故障恢复。
+  配置生成、启动验证、设置与密码恢复、新签发令牌的使用及同版本重启。
   业务配置包导入导出与账号存储分离。
+- 支持的部署数据限于空库和本版本创建的库。预检发现不受支持的数据库时，停止启动、
+  保留原文件，并提示使用新的数据目录进行纯净部署。
 - 延期能力包括自助注册、邮件找回、OIDC、反向代理身份接入、Passkey、多因素认证、
   自定义角色以及专用服务账号体系。
 
@@ -111,17 +107,15 @@ Slice。本合同记录目标和验收，激活及 Task 规划按工作流进行
 - [ ] AC-03 / RO-2 验证管理员从网页创建只读用户、用户设密、管理员改角色／重置／停用。
   用新令牌调用正式 API，验证同一 RBAC、权限上限、单独吊销、停用、最后管理员并发保护、
   `401/403` 和安全审计。安全检查覆盖日志、配置包及浏览器可读数据中的凭证脱敏。
-- [ ] AC-04 / RO-3 用隔离的 Base 真实库，验证升级后相同业务配置和历史记录可读，
-  旧字段拒绝、旧令牌为 `401`（包括旧环境变量仍存在的场景）、新账号和新令牌可按
-  权限使用。用隔离脚本验证签发和换用新令牌。对照升级前后请求、Task、结果、pins、
-  审计、效果计数与旧任务归属。选取绑定旧身份的自动化验证受阻、说明、重新确认与
-  后续合法运行。验证失败切换
-  保持原库可恢复，并完成 T4、构建、wheel 及真实 Compose 验收。
+- [ ] AC-04 / RO-3 用随仓配置生成器和空库部署，验证退役字段拒绝，设置旧令牌环境变量也
+  不能取得业务权限。用新建账号发布业务配置、受理任务、启用自动化，验证同版本重启前后
+  的任务、结果与审计，以及权限收回后 Scheduler 和 Worker 的拒绝行为。使用不受支持的
+  测试库验证预检停止且原文件保持完整。完成 T4、构建、wheel 及真实 Compose 验收。
 
 ## Final validation and closure
 
-高风险范围采用 T4。B 独立复核数据库升级及回滚、认证并发、浏览器与 API 权限、
-Worker/Scheduler 执行边界和生产部署，保留各项实际结果及限制。A 在独立终审核对
+高风险范围采用 T4。B 独立复核纯净部署与同版本重启、认证并发、浏览器与 API 权限、
+Worker/Scheduler 执行边界，保留各项实际结果及限制。A 在独立终审核对
 完整 Base..Implementation Head 与 Closure Packet 后决定关闭。
 [测试级别及验收分工](docs/development-workflow.md#6-test-levels)
 
