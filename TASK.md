@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: DEVELOPER FIXES TASK57.1
+Next Action: B REVIEW TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: DEVELOPER FIXES TASK57.1
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -166,6 +166,45 @@ Next: SAME TASK FIX LOOP
 Slice 57 的 RO-1 首位设置、会话恢复、改密和 HTTPS 会话尚未达标。RO-2 的用户管理、
 角色与脚本令牌后续交付。RO-3 已提供空库在线入口，退役配置字段验收未达标，同版本重启和
 后台按当前账号权限处理原工作待实测。
+
+**Developer 返工交付记录（READY FOR B REVIEW）**
+
+- 实现候选：`0847a1d918aca6e98930181e7e0f5d4ac8d3746c`（Task Base
+  `4566a74055c698aec704215dd431eb8521bcfedb`）。保留原 Slice 合同、原评审记录和
+  未授权范围；本记录只覆盖 B 的 P0/P1 返工指导。
+- P0 修复：认证 store 从 `restoring` 开始，共享认证边界在根入口、受保护路由和未知路由
+  每次加载都先读取 `/api/auth/status`；空库先显示首位设置，有效 Cookie 刷新和新标签
+  直接恢复深链。未知路由也显示真实账号状态，不再永久停在「Checking sign-in」。
+- P1 修复：改密的新旧密码相等比较改为 UTF-8 字节，中文旧密码到中文新密码、同密码
+  提示、新密码登录和旧会话撤销均有服务端与真实浏览器用例。
+- P1 修复：生产 Waitress 保留可信代理转发的 `X-Forwarded-Proto`，应用只对回环/私有
+  代理 peer 采信 HTTPS，签发 `HttpOnly; SameSite=Lax; Secure` 会话 Cookie；回环 HTTP
+  不标记 Secure。部署指南补充 `Host` 与 `X-Forwarded-Proto` 反向代理配置。
+- P1 修复：启动、`config validate`、`config publish`、系统设置完整配置输入统一拒绝
+  `api.principals` 与 `api.tokenEnv`，提示具体删除键和主机设置码入口；拒绝不创建
+  数据库、不改变 Active。历史不可变 Active 的既有权威仍只读兼容。
+- 测试夹具：Node fake 与真实 Python harness 都改为真实账号登录和 HttpOnly 会话；
+  `deep-link.spec.ts` 覆盖空库/登录/深链/刷新/新标签/退出/401/403/恢复/无重放。
+  新增 `scripts/web_account_auth_harness.py` 与
+  `web/tests/e2e/web-account-auth.python.spec.ts`，从隔离空 SQLite 首页开始，覆盖
+  首位设置、深链、重启、中文改密、主机重置码和旧会话撤销。
+- 实际验证：
+  - `test_web_account_auth` 15 项、`test_api_security` 13 项、
+    `test_container_deployment` 15 项、`test_container_probe` 12 项、
+    `test_execution_authorization` 10 项、`test_api_credentials` 8 项、
+    `test_management_setup` 17 项、`test_configuration_snapshot` 41 项通过。
+  - Web 单测 1599 项、完整 Node E2E 278 项通过；`npm run typecheck`、`lint`、
+    `format:check`、`build` 通过。
+  - `web/tests/e2e/deep-link.spec.ts` 15 项通过；真实 Python/SQLite
+    `web-account-auth.python.spec.ts` 4 项通过。
+  - 真实 Waitress 监听器加 `X-Forwarded-Proto: https` 登录返回带 `Secure` 的会话
+    Cookie；`ruff format --check`、`ruff check`、`compileall`、`pip check`、
+    `git diff --check`、治理检查 PASS；两份示例配置 `config validate` 通过。
+- 剩余风险：其他真实 Python 浏览器 spec 的独立 harness/config 组合未在本轮逐个重跑；
+  Docker 多角色发布安全脚本和部分诊断脚本仍按已退役的多角色环境令牌模型编写，属 Slice
+  后续账号管理范围。B 应按本 Task 新链路使用隔离空库、真实 Compose 和候选镜像验收，
+  不应以旧多角色脚本作为本 Task 的通过条件。真实 Compose、wheel、Scheduler/Worker
+  账号权限实测仍由 B 完成。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
