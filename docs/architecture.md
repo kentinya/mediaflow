@@ -53,14 +53,14 @@ minimal deployment bootstrap + api.principals
   旧恢复子 Task 链。内部 discovery、intent、summary、一次性授权、execution/effect 记录
   继续是当前工作证据，不成为另一队列。普通文件／通知职责保持原边界。
 - **Configuration：** 最小管理 bootstrap 仅定位数据与部署身份，无完整 JSON 业务权威、
-  legacy-admin、默认业务策略或旧字段转换。当前 Draft/Validate/check/Activate、typed
-  focused Save 与配置／结果交换继续。纯 V1／废弃迁移形式退出，当前正式 V2 字段及
+  legacy-admin、默认业务策略或旧字段转换。当前 in-memory check/publish、typed focused
+  Save 与配置／结果交换继续。纯 V1／废弃迁移形式退出，当前正式 V2 字段及
   有效配置／pins 的读取和原业务语义保持，不能按实现年代删除。分类新写入以
   MediaLibrary＋path 表达，现有正常 V2 规则／pin 的目标路径不改写。当前容量键
   automation.maximumActiveJobs 和取消权限 CANCEL_JOB/cancel_job 保留，不作无关改名／
   替代键；容量／取消／实际采用规则不变。纯迁移事件映射退出，当前事件契约保持。
 - **Persistence：** 新库直接完整创建当前必需结构，清除仅服务废弃版本的ALTER／重建／
-  回填／接管和升级工具。Base 已接受的稳定 V2 库、Draft／Active、配置／业务对象、合法
+  回填／接管和升级工具。Base 已接受的稳定 V2 库、已发布修订／Active、配置／业务对象、合法
   Task／请求／结果／审计继续使用，保留 IDs／关系、digest／pins、状态／目标语义／效果。
   必要最小结构调整保留有效数据并失败原子，不因重设 schema 身份拒绝现有正常 V2 库，
   不要求重新初始化／重配／重发工作。原本不支持或畸形／混合库在修改或执行前拒绝且

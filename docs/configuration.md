@@ -373,7 +373,7 @@ The V2 Storage workspace accepts and displays both values through Save, Active i
 Edit, including entries saved before this correction. A failed list read remains a read/presentation
 failure and does not imply that Save rolled back; verify current Active state before any explicit
 new submission. For genuine setup-required state, the Storage page offers the current System
-Settings (`/configuration`) first-Draft handoff and returns to refreshed Storage truth. No
+Settings (`/configuration`) empty-configuration handoff and returns to refreshed Storage truth. No
 direct database edit, configuration reset or physical-file migration is required.
 
 [config/alist.example.json](../config/alist.example.json) is the secret-free OpenList Storage
@@ -381,9 +381,10 @@ template. Append its `storage` object to the generated `mediaflow.activation.jso
 replace `options.baseUrl` with the real service address, and provide `OPENLIST_TOKEN` only in the
 deployment environment where the Storage is actually checked or used. Connection fields belong
 under `Storage.options`; the retired top-level spelling fails import with the correction. Import
-reuses the `config publish --file` command above and never contacts OpenList; it validates and
-publishes the complete document directly. A ResourceLibrary that references the Storage runs its
-read-only check as part of that publication.
+reuses the `config publish --file` command above and validates and publishes the complete document
+directly. An unreferenced OpenList template is not contacted; once a ResourceLibrary references the
+Storage, the same read-only Storage check runs as part of publication and needs that deployment's
+address and credential.
 
 ### OpenList metadata and content reads
 
