@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: DEVELOPER FIXES TASK57.1
+Next Action: B REVIEW TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: DEVELOPER FIXES TASK57.1
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -251,6 +251,43 @@ B 独立运行生产 Web 构建、真实 Python/SQLite 认证浏览器用例 4 �
 
 Slice 57 的 RO-1 已验证上述设置、登录恢复与改密旅程，账号切换尚未达标。RO-2 用户管理
 和脚本令牌仍待后续 Task。RO-3 的本机常驻启动与实作重启验收仍有缺口。
+
+**Developer 返工交付记录（READY FOR B REVIEW）**
+
+- 实现候选：`5028fa595cc5d3cfb557a020225ab43651201518`（Task Base
+  `4566a74055c698aec704215dd431eb8521bcfedb`）。保留原 Slice 合同、原评审记录和
+  未授权范围；本记录只覆盖 B 本轮的两项 P1 返工指导。
+- P1 多标签账号切换修复：新增同源 `BroadcastChannel` 的非秘密会话变更信号；登录、退出、
+  改密和主机重置成功后通知其他标签，其他标签用现有 `/api/auth/status` 确认当前身份。
+  后台恢复的标签在可见/重新聚焦时也会确认，覆盖错过广播的悬挂页面。确认到不同账号或
+  角色/权限集合后，同步清理上一账号的浏览器上下文（含 React Query 缓存），推进权威
+  generation 并只让受保护页面按原 URL 路径和允许的查询参数重新挂载读取；相同账号确认
+  不触发缓存或请求栅栏抖动。没有把 Cookie 或账号秘密放入存储或跨标签消息。
+- P1 本机常驻启动修复：`worker`、`scheduler`、`notification-worker` 的 bootstrap
+  读取分支与 API／配置入口使用同一退役字段校验，在打开数据库前拒绝 `api.principals`
+  与 `api.tokenEnv`，错误包含应删除的具体键。旧生成器产物不再创建数据库或继续常驻；
+  当前生成器的 locator-only bootstrap 继续正常等待首次业务配置。
+- 测试夹具：`test_resident_services` 改用当前生成器的最小 bootstrap；新增旧产物对
+  `worker run`、`scheduler run`、`notification-worker run` 的拒绝用例，逐项断言退出码、
+  删除指引和数据库未创建。真实 Python harness 增加隔离只读账号夹具控制；
+  `web-account-auth.python.spec.ts` 新增「标签 A 管理员打开任务中心 → 标签 B 退出并以
+  只读账号登录 → 标签 A 返回、账号更新为 readonly 并刷新任务中心」的真实浏览器场景，
+  同时核对 `/api/auth/session` 归属只读账号。
+- 实际验证：
+  - `test_resident_services` 29 项、`test_api_credentials` 8 项、
+    `test_web_account_auth` 15 项、`test_api_security` 13 项、
+    `test_container_deployment` 15 项、`test_container_probe` 12 项、
+    `test_execution_authorization` 10 项、`test_management_setup` 17 项、
+    `test_configuration_snapshot` 41 项通过。
+  - Web 单测 1601 项（104 个文件）通过；`npm run typecheck`、`lint`、
+    `format:check`、`build` 通过。
+  - 真实 Python/SQLite `web-account-auth.python.spec.ts` 5 项通过（含新增双标签场景）；
+    正式产物下 `deep-link.spec.ts` 15 项通过。
+  - 改动 Python 文件的 Ruff 格式与检查、`compileall`、`git diff --check` 通过；
+    治理检查 PASS。
+- 剩余风险：完整 T4 全量 Python、真实 Compose、候选镜像、wheel、真实 Scheduler／Worker
+  账号权限运行验收和其他真实 Python 浏览器 spec 未由 Developer 执行，按工作流留给 B
+  独立验收。Docker 多角色发布安全脚本和部分诊断脚本仍按后续账号管理范围处理。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
