@@ -51,10 +51,10 @@ mediaflow --config config/mediaflow.json config publish \
   --file config/mediaflow.activation.json
 ```
 
-The bootstrap named by `--config` (or by an exported `MEDIAFLOW_CONFIG`) is the authority that
-receives the Draft; without one the command refuses to run. The block uses the host-local durable
-locator so this command and the service opened later share one database; in the container layout
-omit `--database-path` and keep the default `/data/mediaflow.sqlite3`.
+The bootstrap named by `--config` (or by an exported `MEDIAFLOW_CONFIG`) supplies the deployment
+locator and authority for publication; without one the command refuses to run. The block uses the
+host-local durable locator so this command and the service opened later share one database; in the
+container layout omit `--database-path` and keep the default `/data/mediaflow.sqlite3`.
 
 The generated input omits the database locator and API principal identity, so import binds the
 receiving deployment's own authority. Unrelated empty families are legal and create no
@@ -134,9 +134,10 @@ labels the audit record for `initialize` and `publish`. The retired `draft-impor
 Web settings, business forms and `系统设置` → `高级配置` → `导入配置` share the same direct
 publication services. The import entry accepts either the complete configuration JSON or a
 previously exported redacted configuration package, checks it against the current Active baseline
-and publishes only after the operator selects `核对并应用`. The read-only `配置 JSON` and
-`脱敏配置包` views remain available on demand. Imported packages/JSON are validated and published;
-they never create an inactive draft.
+and publishes only after the operator selects `核对并应用`. Package import requires both
+configuration-management and activation permission, exactly like complete JSON publication. The
+read-only `配置 JSON` and `脱敏配置包` views remain available on demand. Imported packages/JSON are
+validated and published; they never create an inactive draft.
 
 ## Immutable runtime snapshot
 
@@ -210,7 +211,7 @@ and reconnection reopen the exact object with immutable edit ID. Settings and ob
 have separate areas, preserving their inputs and evidence. Unsaved close offers Continue editing
 or explicit Discard; in-flight Save blocks unsafe exits and duplicate submission. One checked Save
 publishes the focused successor and returns to the list with the known publication fact, preserving
-unrelated Drafts/hidden configuration and prior Active/input on known failure. A failed list read
+unrelated hidden configuration and prior Active/input on known failure. A failed list read
 does not undo publication. Unknown publication retains the exact submitted request through close,
 reopen and refresh; explicitly verify current state before another submission. Adopt current values
 or retain input after recheck pairs that choice with its verified Active context; no automatic replay.
@@ -279,8 +280,8 @@ checked publication; the historical API/key names do not make these Automation-o
 | `automation.schedulerPollSeconds` | Finite positive seconds; checks for due Automation definitions only, not manual/Run once submission, definition Cron/interval/timezone or notifications. |
 
 One Save publishes only these three fields from the exact observed Active, preserving unrelated
-Drafts/settings, runtime preparation, atomic activation, submission reconciliation and truthful
-actual adoption/override evidence. Capacity-full preserves existing work/choices/authority; release
+settings, runtime preparation, atomic activation, submission reconciliation and truthful actual
+adoption/override evidence. Capacity-full preserves existing work/choices/authority; release
 allows an explicit retry or the next due check. Save itself starts no media operation.
 
 Delete `automation.staleJobAgeSeconds` from editable/effective/default settings and runtime arguments.
@@ -305,12 +306,11 @@ while adoption problems and their next actions remain visible. General engine/sc
 and JSON examples are omitted from this focused settings surface.
 
 One Save publishes only `automation.{maximumActiveJobs,workerPollSeconds,schedulerPollSeconds}`
-from the observed immutable Active. Other settings, definitions and open
-Drafts are preserved byte-identically, the whole candidate is validated, and the runtime binding is
-prepared before atomic activation. An unchanged save publishes nothing. Out-of-scope keys, booleans,
-fractional integers, non-finite and out-of-range values are rejected before a Draft exists. The
-generic `/api/system/settings` Draft editor and its separate validate/activate journey are
-unchanged and remain available for the wider field set.
+from the observed immutable Active. Other settings and definitions are preserved byte-identically,
+the whole candidate is validated, and the runtime binding is prepared before atomic activation. An
+unchanged save publishes nothing. Out-of-scope keys, booleans, fractional integers, non-finite and
+out-of-range values are rejected before a candidate exists. The wider field set uses the same direct
+publication through `高级配置`; there is no separate Draft validate/activate journey.
 
 Publication and adoption are reported as separate outcomes. Each live resident instance publishes
 its own adopted values, the publication identity it adopted, freshness and any explicit
@@ -343,9 +343,9 @@ The runtime loader supports these Storage types:
 
 Adapters implement the Storage port and report capabilities. Unsupported Move, Copy, Delete,
 HardLink or SoftLink operations fail explicitly; there is no implicit fallback. The managed object
-editor does not probe or mutate a Storage while saving a Draft. The Files-page ResourceLibrary
-save is the explicit page-local exception: it runs the existing bounded checks and activation
-workflow as one backend command, and it still does not mutate media Storage.
+editor does not probe or mutate a Storage while applying its checked candidate. The Files-page
+ResourceLibrary save is the explicit page-local exception: it runs the existing bounded checks and
+activation workflow as one backend command, and it still does not mutate media Storage.
 
 ## Path model
 
@@ -432,19 +432,21 @@ exception for Provider access, and an explicit Webhook test sends one bounded si
 configured endpoint. Neither starts media work, creates an Outbox delivery nor performs Storage
 mutation.
 
-### Notification Draft checks and publication
+### Notification checks and application
 
-The Notification editor saves one Webhook into the open successor Draft; Save does not activate it.
-Its object-specific publication requires that checked Webhook to be the Draft's only change;
-it is distinct from the general guided activation below. The complete saved-context checks,
-signature test, explicit publication and concurrent/unknown-result recovery belong to the
+The Notification form works on the current object. An explicit signature test sends one request
+using exactly the current form's address and secret reference, and changing either invalidates that
+test. After the required test succeeds, `应用更改` validates and publishes that one object as the new
+Active, refusing sibling-definition or unrelated configuration changes. Ordinary checks and apply
+send no notification. The complete form context, explicit apply and concurrent/unknown-result
+recovery belong to the
 [notification journey](product-experience.md#notification-definitions-and-deliveries).
 
 ### Checked activation
 
-The guided checked path requires current evidence for the exact revision:
+The guided checked path requires current evidence for the exact candidate:
 
-1. the Draft is successfully validated;
+1. the candidate is successfully validated;
 2. the applicable Recognition Strategy Test is complete;
 3. every applicable enabled Storage referenced by a ResourceLibrary or MediaLibrary has passed its
    current provider-neutral read-only Storage check; and

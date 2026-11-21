@@ -987,6 +987,17 @@ class ManagedConfigurationService:
         existing.extend(item for item in values if item is not None)
         self._transient_evidence[revision_id] = tuple(existing)
 
+    def release_transient_revision(self, revision_id: str) -> None:
+        """Forget one request-scoped candidate after its command has finished.
+
+        Durable ``active``/``superseded`` revisions are never touched. This is
+        the explicit release for a preview or object analysis response: the
+        revision identity may be returned as part of the check evidence, but
+        it must not remain readable as configuration after the request.
+        """
+
+        self._drop_transient(revision_id)
+
     def stage_candidate_document(
         self,
         document: object,

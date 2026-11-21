@@ -3102,6 +3102,7 @@ class MediaFlowApi:
                     )
                 if method == "POST":
                     self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+                    self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
                     package_value, _recovery = self._package_import_request(environ)
                     result = self._package_exchange.import_configuration(
                         package_value,
@@ -15579,130 +15580,135 @@ class MediaFlowApi:
             expected_digest=digest,
             object_id=candidate["objectId"],
         )
-        revision_id = staged.revision_id
-        version = staged.version
-        digest = staged.digest
-        if kind in {"naming", "classification", "organize"} and not isinstance(
-            document["sample"], dict
-        ):
-            raise ValueError("preview sample must be an object")
-        policy_selection = None
-        if kind in {"naming", "classification"}:
-            policy_selection = document["policySelection"]
-            if not isinstance(policy_selection, dict):
-                raise ValueError("policySelection must be an object")
-            mode = policy_selection.get("mode")
-            if mode == "direct":
-                if (
-                    set(policy_selection) != {"mode", "policyId"}
-                    or not isinstance(policy_selection.get("policyId"), str)
-                    or not policy_selection["policyId"].strip()
-                ):
-                    raise ValueError("direct policySelection requires policyId")
-            elif mode == "binding":
-                if (
-                    set(policy_selection) != {"mode", "recognitionType"}
-                    or not isinstance(policy_selection.get("recognitionType"), str)
-                    or not policy_selection["recognitionType"].strip()
-                ):
-                    raise ValueError("binding policySelection requires recognitionType")
-            else:
-                raise ValueError("policySelection mode must be direct or binding")
-        if kind in {"strategy", "metadata", "organize"}:
-            if (
-                not isinstance(document["resourceLibraryId"], str)
-                or not document["resourceLibraryId"].strip()
+        try:
+            revision_id = staged.revision_id
+            version = staged.version
+            digest = staged.digest
+            if kind in {"naming", "classification", "organize"} and not isinstance(
+                document["sample"], dict
             ):
-                raise ValueError("resourceLibraryId must be a non-empty string")
-            if (
-                not isinstance(document["syntheticPath"], str)
-                or not document["syntheticPath"].strip()
+                raise ValueError("preview sample must be an object")
+            policy_selection = None
+            if kind in {"naming", "classification"}:
+                policy_selection = document["policySelection"]
+                if not isinstance(policy_selection, dict):
+                    raise ValueError("policySelection must be an object")
+                mode = policy_selection.get("mode")
+                if mode == "direct":
+                    if (
+                        set(policy_selection) != {"mode", "policyId"}
+                        or not isinstance(policy_selection.get("policyId"), str)
+                        or not policy_selection["policyId"].strip()
+                    ):
+                        raise ValueError("direct policySelection requires policyId")
+                elif mode == "binding":
+                    if (
+                        set(policy_selection) != {"mode", "recognitionType"}
+                        or not isinstance(policy_selection.get("recognitionType"), str)
+                        or not policy_selection["recognitionType"].strip()
+                    ):
+                        raise ValueError("binding policySelection requires recognitionType")
+                else:
+                    raise ValueError("policySelection mode must be direct or binding")
+            if kind in {"strategy", "metadata", "organize"}:
+                if (
+                    not isinstance(document["resourceLibraryId"], str)
+                    or not document["resourceLibraryId"].strip()
+                ):
+                    raise ValueError("resourceLibraryId must be a non-empty string")
+                if (
+                    not isinstance(document["syntheticPath"], str)
+                    or not document["syntheticPath"].strip()
+                ):
+                    raise ValueError("syntheticPath must be a non-empty string")
+                if kind != "organize" and not isinstance(document["liveMetadata"], bool):
+                    raise ValueError("liveMetadata must be a boolean")
+            if kind == "metadata":
+                if not isinstance(document["policyId"], str) or not document["policyId"].strip():
+                    raise ValueError("policyId must be a non-empty string")
+                evidence = self._rules_workspace.preview_metadata(
+                    revision_id,
+                    expected_version=version,
+                    expected_digest=digest,
+                    actor=principal.principal_id,
+                    policy_id=document["policyId"],
+                    resource_library_id=document["resourceLibraryId"],
+                    synthetic_path=document["syntheticPath"],
+                    live_metadata=document["liveMetadata"],
+                )
+            elif kind == "strategy":
+                evidence = self._rules_workspace.preview_strategy(
+                    revision_id,
+                    expected_version=version,
+                    expected_digest=digest,
+                    actor=principal.principal_id,
+                    resource_library_id=document["resourceLibraryId"],
+                    synthetic_path=document["syntheticPath"],
+                    live_metadata=document["liveMetadata"],
+                )
+            elif kind == "naming":
+                assert isinstance(policy_selection, dict)
+                if policy_selection["mode"] == "binding":
+                    evidence = self._rules_workspace.preview_naming_for_type(
+                        revision_id,
+                        expected_version=version,
+                        expected_digest=digest,
+                        actor=principal.principal_id,
+                        recognition_type=policy_selection["recognitionType"],
+                        sample=document["sample"],
+                    )
+                else:
+                    evidence = self._rules_workspace.preview_naming(
+                        revision_id,
+                        expected_version=version,
+                        expected_digest=digest,
+                        actor=principal.principal_id,
+                        policy_id=policy_selection["policyId"],
+                        sample=document["sample"],
+                    )
+            elif kind == "classification":
+                assert isinstance(policy_selection, dict)
+                if policy_selection["mode"] == "binding":
+                    evidence = self._rules_workspace.preview_classification_for_type(
+                        revision_id,
+                        expected_version=version,
+                        expected_digest=digest,
+                        actor=principal.principal_id,
+                        recognition_type=policy_selection["recognitionType"],
+                        sample=document["sample"],
+                    )
+                else:
+                    evidence = self._rules_workspace.preview_classification(
+                        revision_id,
+                        expected_version=version,
+                        expected_digest=digest,
+                        actor=principal.principal_id,
+                        policy_id=policy_selection["policyId"],
+                        sample=document["sample"],
+                    )
+            else:
+                evidence = self._rules_workspace.explain_organize(
+                    revision_id,
+                    expected_version=version,
+                    expected_digest=digest,
+                    actor=principal.principal_id,
+                    recognition_type=document["recognitionType"],
+                    resource_library_id=document["resourceLibraryId"],
+                    synthetic_path=document["syntheticPath"],
+                    sample=document["sample"],
+                )
+            response_document = evidence if isinstance(evidence, dict) else evidence.document()
+            response_document["candidateState"] = "check_only"
+            if kind in {"strategy", "metadata"} and isinstance(
+                response_document.get("result"), dict
             ):
-                raise ValueError("syntheticPath must be a non-empty string")
-            if kind != "organize" and not isinstance(document["liveMetadata"], bool):
-                raise ValueError("liveMetadata must be a boolean")
-        if kind == "metadata":
-            if not isinstance(document["policyId"], str) or not document["policyId"].strip():
-                raise ValueError("policyId must be a non-empty string")
-            evidence = self._rules_workspace.preview_metadata(
-                revision_id,
-                expected_version=version,
-                expected_digest=digest,
-                actor=principal.principal_id,
-                policy_id=document["policyId"],
-                resource_library_id=document["resourceLibraryId"],
-                synthetic_path=document["syntheticPath"],
-                live_metadata=document["liveMetadata"],
-            )
-        elif kind == "strategy":
-            evidence = self._rules_workspace.preview_strategy(
-                revision_id,
-                expected_version=version,
-                expected_digest=digest,
-                actor=principal.principal_id,
-                resource_library_id=document["resourceLibraryId"],
-                synthetic_path=document["syntheticPath"],
-                live_metadata=document["liveMetadata"],
-            )
-        elif kind == "naming":
-            assert isinstance(policy_selection, dict)
-            if policy_selection["mode"] == "binding":
-                evidence = self._rules_workspace.preview_naming_for_type(
-                    revision_id,
-                    expected_version=version,
-                    expected_digest=digest,
-                    actor=principal.principal_id,
-                    recognition_type=policy_selection["recognitionType"],
-                    sample=document["sample"],
-                )
-            else:
-                evidence = self._rules_workspace.preview_naming(
-                    revision_id,
-                    expected_version=version,
-                    expected_digest=digest,
-                    actor=principal.principal_id,
-                    policy_id=policy_selection["policyId"],
-                    sample=document["sample"],
-                )
-        elif kind == "classification":
-            assert isinstance(policy_selection, dict)
-            if policy_selection["mode"] == "binding":
-                evidence = self._rules_workspace.preview_classification_for_type(
-                    revision_id,
-                    expected_version=version,
-                    expected_digest=digest,
-                    actor=principal.principal_id,
-                    recognition_type=policy_selection["recognitionType"],
-                    sample=document["sample"],
-                )
-            else:
-                evidence = self._rules_workspace.preview_classification(
-                    revision_id,
-                    expected_version=version,
-                    expected_digest=digest,
-                    actor=principal.principal_id,
-                    policy_id=policy_selection["policyId"],
-                    sample=document["sample"],
-                )
-        else:
-            evidence = self._rules_workspace.explain_organize(
-                revision_id,
-                expected_version=version,
-                expected_digest=digest,
-                actor=principal.principal_id,
-                recognition_type=document["recognitionType"],
-                resource_library_id=document["resourceLibraryId"],
-                synthetic_path=document["syntheticPath"],
-                sample=document["sample"],
-            )
-        response_document = evidence if isinstance(evidence, dict) else evidence.document()
-        response_document["candidateState"] = "check_only"
-        if kind in {"strategy", "metadata"} and isinstance(response_document.get("result"), dict):
-            response_document["result"]["source"] = {
-                "resourceLibraryId": document["resourceLibraryId"],
-                "syntheticPath": document["syntheticPath"],
-            }
-        return self._response(start_response, 200, response_document)
+                response_document["result"]["source"] = {
+                    "resourceLibraryId": document["resourceLibraryId"],
+                    "syntheticPath": document["syntheticPath"],
+                }
+            return self._response(start_response, 200, response_document)
+        finally:
+            self._configuration_objects._managed.release_transient_revision(staged.revision_id)
 
     def _rules_analysis_command(
         self,
@@ -15780,23 +15786,26 @@ class MediaFlowApi:
             expected_digest=digest,
             object_id=candidate["objectId"],
         )
-        result = self._rules_analysis.analyze(
-            family,
-            revision_id=staged.revision_id,
-            object_id=candidate["objectId"],
-            sample=sample,
-            live_metadata=live_metadata,
-        )
-        response_document = result.document()
-        response_document["revisionId"] = staged.revision_id
-        response_document["revisionVersion"] = staged.version
-        response_document["revisionDigest"] = staged.digest
-        response_document["testedAt"] = datetime.now(UTC).isoformat()
-        response_document["testedObject"] = {
-            "family": family,
-            "objectId": candidate["objectId"],
-        }
-        return self._response(start_response, 200, response_document)
+        try:
+            result = self._rules_analysis.analyze(
+                family,
+                revision_id=staged.revision_id,
+                object_id=candidate["objectId"],
+                sample=sample,
+                live_metadata=live_metadata,
+            )
+            response_document = result.document()
+            response_document["revisionId"] = staged.revision_id
+            response_document["revisionVersion"] = staged.version
+            response_document["revisionDigest"] = staged.digest
+            response_document["testedAt"] = datetime.now(UTC).isoformat()
+            response_document["testedObject"] = {
+                "family": family,
+                "objectId": candidate["objectId"],
+            }
+            return self._response(start_response, 200, response_document)
+        finally:
+            self._configuration_objects._managed.release_transient_revision(staged.revision_id)
 
     def _rules_complete_flow_command(
         self,

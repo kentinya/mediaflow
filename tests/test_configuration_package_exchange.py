@@ -81,9 +81,14 @@ def setup_api(root: Path):
         first = activate(service, example_document(root, "first-history.jsonl"))
         admin = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
         viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
+        manager = ResolvedApiPrincipal(
+            "manager",
+            "manager-token",
+            frozenset({ApiPermission.READ, ApiPermission.MANAGE_CONFIGURATION}),
+        )
         api = MediaFlowApi(
             task_repository,
-            principals=(admin, viewer),
+            principals=(admin, viewer, manager),
             configuration_service=service,
             configuration_snapshot_id=first.revision_id,
             configuration_snapshot_digest=first.digest,
@@ -521,6 +526,33 @@ class PackageExchangeApiTests(unittest.TestCase):
         )
         self.assertEqual(code, 403)
         self.assertEqual(denied["error"]["code"], "forbidden")
+
+        # Managing configuration is not enough: direct publication requires
+        # the same activation authority as complete JSON publication. A denied
+        # request leaves Active, revision history and import audit untouched.
+        before_revisions = service.repository.list_revisions(limit=100)
+        before_active = service.active()
+        assert before_active is not None
+        code, denied = request(
+            api,
+            "/api/configuration/packages",
+            method="POST",
+            body={"package": package},
+            token="manager-token",
+        )
+        self.assertEqual(code, 403)
+        self.assertEqual(denied["error"]["code"], "forbidden")
+        after_active = service.active()
+        assert after_active is not None
+        self.assertEqual(after_active.revision_id, before_active.revision_id)
+        self.assertEqual(
+            [item.revision_id for item in service.repository.list_revisions(limit=100)],
+            [item.revision_id for item in before_revisions],
+        )
+        self.assertNotIn(
+            "configuration_package_import",
+            {record.action for record in repository.list_security_audit(limit=100)},
+        )
 
         code, imported = request(
             api,

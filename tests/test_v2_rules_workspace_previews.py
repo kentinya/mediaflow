@@ -51,6 +51,13 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertNotEqual(body["revisionId"], before_active.revision_id)
         self.assertEqual(body["status"], "completed")
+        with self.assertRaises(LookupError):
+            self.harness.configuration.require(body["revisionId"])
+        status, detail = self.harness.request(
+            "GET", f"/api/configuration/revisions/{body['revisionId']}"
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(detail["error"]["code"], "not_found")
         after_active = self.harness.configuration.active()
         assert after_active is not None
         self.assertEqual(after_active.revision_id, before_active.revision_id)
@@ -124,9 +131,11 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "completed")
-        staged = self.harness.configuration.require(body["revisionId"])
-        names = {item["id"]: item["name"] for item in staged.document["recognitionTypes"]}
-        self.assertEqual(names["C"], "Candidate C")
+        # The exact edited candidate was consumed by this request. Its check
+        # result remains in the response, but the candidate is released instead
+        # of becoming a readable configuration revision.
+        with self.assertRaises(LookupError):
+            self.harness.configuration.require(body["revisionId"])
         self.assertEqual(body["result"]["source"]["resourceLibraryId"], "source")
 
     def test_invalid_create_candidate_is_actionable_and_does_not_activate(self) -> None:
@@ -183,6 +192,12 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "completed")
         self.assertEqual(body["candidateState"], "check_only")
+        with self.assertRaises(LookupError):
+            self.harness.configuration.require(body["revisionId"])
+        status, detail = self.harness.request(
+            "GET", f"/api/configuration/revisions/{body['revisionId']}"
+        )
+        self.assertEqual(status, 404)
         active = self.harness.configuration.active()
         assert active is not None
         self.assertNotEqual(active.revision_id, body["revisionId"])

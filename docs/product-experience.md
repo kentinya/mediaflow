@@ -645,7 +645,7 @@ are reconciled from durable identity before another explicit attempt; reads neve
 
 [Configuration](configuration.md) owns exact fields, lifecycle APIs, secret references and checked
 publication. Reference-safe removal preserves media, Results and historical snapshots; it cannot
-silently publish unrelated Draft changes.
+silently publish unrelated unsaved changes.
 
 ## First-time setup
 
@@ -668,7 +668,8 @@ only settings are never presented as already consumed.
 
 Fresh Compose needs no media mount. Local roots must be explicit paths visible to the running
 container/UID/GID; host `/`, Docker socket and arbitrary unmapped paths are unsupported. Correct a
-missing/denied root by fixing the mount/ownership or Draft path, then retry the bounded read/check.
+missing/denied root by fixing the mount/ownership or configured path, then retry the bounded
+read/check.
 V1's complete-configuration setup remains a compatibility path, not the native empty-first requirement.
 
 ## Storage management and root recovery
@@ -1380,27 +1381,29 @@ Actions share RBAC/audit/validation and preserve prior Active/correctable input 
 
 ### Notification definitions and deliveries
 
-Enter 通知 from the sidebar. The definitions list distinguishes 已生效 from 仅草稿, enabled state,
+Enter 通知 from the sidebar. The definitions list shows each published definition's enabled state,
 HTTPS endpoint, readable events and secret-reference readiness. Add, view and edit open centered
 cards over that list; delivery detail opens over the delivery list. Cards retain list context on
 return, support direct links/reconnection, and keep their contents and primary/close actions reachable
 on narrow or short windows. Technical identities and revisions remain available under diagnostics.
 
-Create or edit the open successor Draft using grouped endpoint/secret-reference, event/enablement
-and timeout/retry fields. Without an editable Draft or permission, explain the reason and offer
-the permitted next action instead of a writable form. Saving writes only the Draft. Check and
-signature-test the exact saved version, then explicitly confirm publication; publication refuses
-sibling-definition or unrelated configuration changes. Read the resulting immutable Active rather
-than treating local inputs as effective configuration. A signature test sends one
-request to the configured endpoint; it creates no delivery and publishes nothing.
+Create or edit the current object using grouped endpoint/secret-reference, event/enablement and
+timeout/retry fields. Without an editable form or permission, explain the reason and offer the
+permitted next action instead of a writable form. An explicit signature test checks exactly the
+current form's address and secret reference; changing either invalidates the prior test. After the
+required test succeeds, explicitly apply the current object to publish one checked Active successor.
+Ordinary checks and apply send no notification; only the explicit signature test sends one request
+to the configured endpoint and creates no delivery. Apply refuses sibling-definition or unrelated
+configuration changes. Read the resulting immutable Active rather than treating local inputs as
+effective configuration.
 
-Unsaved edits invalidate saved-version test/check feedback and publication confirmation. Closing,
-Escape, backdrop and browser navigation share the continue-editing/discard choice; continuing
-retains both inputs and the exact route. Commands in flight prevent conflicting exits and duplicate
-submission. New-definition creation and publication lock fields until their result because success
-leaves the form. Ordinary Save permits further editing: its success applies to submitted values,
-while newer input remains visibly unsaved. A concurrent change retains local edits and offers an
-explicit choice to adopt server values or keep inputs before saving against the read version.
+Unsaved edits invalidate prior signature-test feedback and apply readiness. Closing, Escape, backdrop
+and browser navigation share the continue-editing/discard choice; continuing retains both inputs and
+the exact route. Commands in flight prevent conflicting exits and duplicate submission. New-definition
+creation and apply lock fields until their result because success leaves the form. An ordinary apply
+permits further editing: its success applies the submitted values, while newer input remains visibly
+unsaved. A concurrent change retains local edits and offers an explicit choice to adopt server values
+or keep inputs before applying against the read version.
 
 Open 投递记录, choose a status such as 死信, and view one delivery's result, attempts, readable times,
 failure reason, known receiver effects and permitted next action. Confirm recovery of that exact

@@ -1059,19 +1059,26 @@ class RulesObjectAnalysisApiTests(unittest.TestCase):
         self.assertEqual(body["status"], "completed")
         self.assertIn("recognition", body["result"])
 
-    def test_analysis_is_read_only_and_bound_to_the_submitted_candidate(self) -> None:
+    def test_analysis_is_request_scoped_and_released_after_the_command(self) -> None:
         before_revisions = self.harness.config_repo.list_revisions(limit=100)
         status, body = self.analyze(
             "recognitionTypes", self.edit_candidate("recognitionTypes", "A")
         )
         self.assertEqual(status, 200)
-        revision = self.harness.configuration.require(body["revisionId"])
-        # The analysed revision is an in-memory check candidate; the Active and
-        # the durable revision list are untouched.
-        self.assertEqual(revision.status.value, "draft")
+        # The analysed revision was an in-memory check candidate consumed by
+        # this request. It is released before the response returns, so neither
+        # the configuration service nor the revision-detail API can read it as
+        # configuration after the command.
+        with self.assertRaises(LookupError):
+            self.harness.configuration.require(body["revisionId"])
+        status, detail = self.harness.request(
+            "GET", f"/api/configuration/revisions/{body['revisionId']}"
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(detail["error"]["code"], "not_found")
         active = self.harness.configuration.active()
         assert active is not None
-        self.assertNotEqual(active.revision_id, revision.revision_id)
+        self.assertNotEqual(active.revision_id, body["revisionId"])
         self.assertEqual(
             [item.revision_id for item in before_revisions],
             [item.revision_id for item in self.harness.config_repo.list_revisions(limit=100)],
