@@ -42,12 +42,12 @@ only in [the development workflow](development-workflow.md).
 | 54 — Organizing Rules Dialogs and Readability | Seven Rules families use coordinated Add/Copy/Edit dialogs, readable settings and object-local tests; only Overview retains the complete-flow check, preserving exact checked publication and edit-link recovery | PASS / CLOSED | Accepted53 baseline `e43a40674eb14aa12615a440a348fe675cd50c4e`; independent A Final Review on 2026-11-11 through `aef044e51dc91655372bf5fe39c6116da976c3b4`; first-Task planning role exception retained |
 | 55 — Complete V1 and Migration Residue Retirement | Retire V1 and obsolete migration paths while preserving current V2 journeys, valid data and safety | PASS / CLOSED | Independent A Final Review on 2026-11-19, Base `2b2e7c1824fa5681864455714d0f97b26555c7dc` through implementation `80334ccaa30d54019934b50855f7dee00525abcc` |
 | 56 — Canonical Web and API Routes | Serve the operator Web at the root and the current API at `/api/*`, retire the old prefixes, and keep existing Tasks accessible at the new addresses | PASS / CLOSED | Accepted Slice55 and current baseline `33c70735e0a8f45426dde614587ea3d43af94e9b` |
-| 57 — Web Accounts and Sessions for Fresh Deployments | Start from an empty database, create and manage users in Web, keep login across navigation, issue API credentials on demand, and retire configuration-owned identities and tokens | PLANNED | Accepted Slice56, direct configuration publication and current baseline `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab` |
+| 57 — Web Accounts and Sessions for Fresh Deployments | Start from an empty database, create and manage users in Web, keep login across navigation, issue API credentials on demand, and retire configuration-owned identities and tokens | ACTIVE | Accepted Slice56, direct configuration publication and current baseline `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab` |
 
 ## Current boundary
 
-[Slice57](../SLICE.md) is **PLANNED** and awaits activation. [TASK.md](../TASK.md) records the
-latest Task review. Slice56 remains **PASS / CLOSED** at its fixed acceptance checkpoint below.
+[Slice57](../SLICE.md) is **ACTIVE**. The user authorized implementation of
+[Task 57.1](../TASK.md). The latest accepted Slice is Slice56.
 
 ## Accepted boundary references
 

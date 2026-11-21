@@ -1,10 +1,10 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-## Task 57.1 — 从空实例创建管理员并完成 Web 登录（规划草案）
+Next Action: DEVELOPER STARTS TASK57.1 IMPLEMENTATION
 
-依据已提交的 [Slice 57 RO-1 与 RO-3](SLICE.md#required-outcomes-and-surfaces)。A 按用户
-授权代 B 编写规划草案。B 独立验收，A 终审。当前阶段为规划，Slice 和 Task 的激活按
-[开发工作流](docs/development-workflow.md) 单独办理。
+本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
+`PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
+[Slice 57 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
 Task ID: 57.1
@@ -16,6 +16,7 @@ Difficulty: High
 Test Level: T4
 Planner: A on behalf of B (user-authorized planning only)
 Reviewer: B
+Implementation Authorization: AUTHORIZED BY USER FOR TASK57.1
 ```
 
 ### 目标与现有缺口

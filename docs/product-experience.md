@@ -11,7 +11,7 @@ points to the current implementation state and immutable review packet.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
-## TARGET — Web accounts and sessions for fresh deployments (Slice57 PLANNED)
+## TARGET — Web accounts and sessions for fresh deployments (Slice57 ACTIVE)
 
 - **首次访问。** 从空库启动并打开根地址，页面指引部署者从主机领取一次性设置码。创建管理
   员成功后进入系统设置初始化业务配置。设置码失效时，页面指引部署者在主机上重新领取。

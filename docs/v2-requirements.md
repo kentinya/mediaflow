@@ -8,7 +8,7 @@ in [`requirements.md`](requirements.md). Slice-specific architecture and proof d
 remain in [`SLICE.md`](../SLICE.md) and the architecture document; this file records only durable
 product and authority boundaries.
 
-## TARGET — Web accounts and sessions for fresh deployments (Slice57 PLANNED)
+## TARGET — Web accounts and sessions for fresh deployments (Slice57 ACTIVE)
 
 验收后以 `V2-AUTH-004–009` 取代 V2 的 `V2-AUTH-001/002`，并更新 `V2-ROUTE-001/002/004`
 的认证和恢复语义。V1 历史基线、`V2-AUTH-003` 与现行后端安全要求继续适用。

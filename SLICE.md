@@ -4,14 +4,14 @@
 Slice ID: 57
 Name: Web Accounts and Sessions for Fresh Deployments
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PLANNED
+Status: ACTIVE
 Base SHA: ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: PLANNING ONLY
+Development Authorization: TASK57.1 IMPLEMENTATION AUTHORIZED
 Risk: High
 Target Test Level: T4
-Next Action: USER REVIEWS FIRST TASK DRAFT / AUTHORIZES ACTIVATION
+Next Action: SEE TASK.md
 ```
 
 ## 授权与基线
@@ -20,7 +20,8 @@ Next Action: USER REVIEWS FIRST TASK DRAFT / AUTHORIZES ACTIVATION
 Slice 的数据范围从空数据库开始，覆盖本版本创建的配置、账号和工作，以及同版本重启后的
 使用。本合同记录目标和验收，激活及 Task 规划按工作流进行。[Development Workflow](docs/development-workflow.md)
 
-用户授权 A 代 B 编写首个 Task 的规划草案。该角色例外限于规划，B 独立验收，A 独立终审。
+用户授权 A 代 B 规划首个 Task，并要求激活 Task 57.1。Developer 按既定 Task 范围实施，
+B 独立验收，A 独立终审。A 代 B 的角色例外限于首个 Task 的规划。
 
 规划基线为上面的 Base，规划前治理检查 PASS，工作区与暂存区干净。Slice 56 的关闭事实、
 原验收范围和验证证据见固定终审。配置草稿退役的 B PASS 见当前 Task 指针。
@@ -38,7 +39,7 @@ Slice 的数据范围从空数据库开始，覆盖本版本创建的配置、�
 
 验收后以 `V2-AUTH-004–009` 取代 V2 的 `V2-AUTH-001/002` 身份和认证要求，更新
 `V2-ROUTE-001/002/004` 的认证和恢复表述。后端业务裁决与 Storage 安全义务继续适用。
-[目标要求](docs/v2-requirements.md#target--web-accounts-and-sessions-for-fresh-deployments-slice57-planned) · [目标旅程](docs/product-experience.md#target--web-accounts-and-sessions-for-fresh-deployments-slice57-planned) · [目标架构](docs/architecture.md#target--web-accounts-and-sessions-for-fresh-deployments-slice57-planned)
+[目标要求](docs/v2-requirements.md#target--web-accounts-and-sessions-for-fresh-deployments-slice57-active) · [目标旅程](docs/product-experience.md#target--web-accounts-and-sessions-for-fresh-deployments-slice57-active) · [目标架构](docs/architecture.md#target--web-accounts-and-sessions-for-fresh-deployments-slice57-active)
 
 ## Required Outcomes and Surfaces
 
