@@ -16,6 +16,7 @@ export default defineConfig({
     "**/automation-settings.python.spec.ts",
     "**/automation-workspace.python.spec.ts",
     "**/automation-run-once.python.spec.ts",
+    "**/configuration-settings.python.spec.ts",
     "**/direct-files.python.spec.ts",
     "**/live-files.python.spec.ts",
     "**/storage-dialog.python.spec.ts",

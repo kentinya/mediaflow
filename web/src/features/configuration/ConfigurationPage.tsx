@@ -275,28 +275,20 @@ const RULE_READINESS_LABELS: Readonly<Record<string, string>> = {
   MALFORMED: "Active 规则无法解析",
 };
 
-type MutationAction =
-  | "create-first-draft"
-  | "save-settings"
-  | "validate"
-  | "activate"
-  | "export"
-  | "import";
+type MutationAction = "initialize" | "save-settings" | "export" | "import";
 
 export interface ConfigurationMutationFailureView {
   readonly title: string;
   readonly message: string;
   /** The operator must re-verify durable state before another write. */
   readonly verifyRequired: boolean;
-  /** The current optimistic Draft token advertised by the conflict. */
+  /** The current Active sequence advertised by the conflict. */
   readonly currentVersion: number | null;
 }
 
 const ACTION_FAILURE_TITLES: Readonly<Record<MutationAction, string>> = {
-  "create-first-draft": "首个草稿未能创建",
+  initialize: "空配置未能初始化",
   "save-settings": "设置未保存",
-  validate: "草稿未通过验证",
-  activate: "配置未激活",
   export: "配置包未能导出",
   import: "配置未发布",
 };
@@ -307,13 +299,12 @@ const ACTION_FAILURE_TITLES: Readonly<Record<MutationAction, string>> = {
  * A known 4xx rejection is reported as a refusal with its durable state and
  * backend next action; a lost answer (transport abort, unexplained 5xx) is
  * reported as an unknown publication outcome that must be verified and is
- * never replayed automatically. A stale Draft edit recovers from the conflict's
- * own current version instead of the first-setup message.
+ * never replayed automatically. A stale apply recovers from the conflict's
+ * own current Active sequence instead of the first-setup message.
  */
 export function configurationMutationFailure(
   error: unknown,
   action: MutationAction,
-  blockingChecks: readonly string[] = [],
 ): ConfigurationMutationFailureView {
   const title = ACTION_FAILURE_TITLES[action];
   if (error instanceof ConfigurationUnknownOutcomeError) {
@@ -337,63 +328,35 @@ export function configurationMutationFailure(
     }
     if (error instanceof ConfigurationConflictError) {
       const conflictVersion = numberValue(details.currentVersion);
-      if (action === "create-first-draft") {
+      if (action === "initialize") {
         return {
           title,
-          message: "首个草稿已存在；原有草稿已保留，请恢复该草稿后继续。",
+          message: "已存在生效配置；本次没有初始化。请读取当前生效配置后继续。",
           verifyRequired: false,
           currentVersion: null,
         };
       }
       if (
         action === "save-settings" &&
-        details.durableState === "draft_preserved" &&
+        details.durableState === "active_preserved" &&
         conflictVersion !== null &&
         conflictVersion > 0
       ) {
         return {
           title,
-          message: `配置草稿已被其他会话更新（当前编辑版本 ${conflictVersion}），您的修改尚未保存；已采用当前版本，请核对后重新保存。`,
+          message: `另一会话已发布新的生效配置（序号 ${conflictVersion}）；本次没有发布，当前生效配置保持为该发布。您的输入已保留，表单会同步最新生效值，请核对后再次应用。`,
           verifyRequired: false,
           currentVersion: conflictVersion,
         };
       }
-      if (action === "activate" && conflictVersion === null) {
-        // Checked activation is refused until the exact revision has the
-        // applicable read-only check, strategy test and destination precheck.
-        // A stale activation version always carries currentVersion, so this
-        // branch is the missing/invalid-evidence refusal and keeps both the
-        // Draft and the previous Active untouched.
-        const guidance =
-          blockingChecks.length > 0
-            ? `尚未通过的发布前检查：${blockingChecks.join(
-                "、",
-              )}。请在上方“发布前检查”中运行或纠正这些检查，然后再次激活。`
-            : "请在上方“发布前检查”中运行该修订适用的只读 Storage 检查、识别策略测试和目标预检，然后再次激活。";
-        return {
-          title,
-          message:
-            "发布前检查未满足或该修订已不是可激活的精确版本，本次没有激活；草稿与当前生效配置保持不变。" +
-            guidance +
-            (blockingChecks.length > 0 || error.nextAction === null
-              ? ""
-              : ` 后端给出的具体缺项与下一步：${error.nextAction}`),
-          verifyRequired: false,
-          currentVersion: null,
-        };
-      }
       const durable =
-        details.durableState === "draft_preserved_active_unchanged"
-          ? "草稿已保留，原有生效配置未变化。"
-          : details.durableState === "draft_preserved"
-            ? "草稿已保留。"
-            : details.durableState === "active_preserved" ||
-                details.durableState === "active_winner_preserved"
-              ? "并发发布出的生效配置已保留为权威。"
-              : "配置冲突未执行本次更改。";
+        details.durableState === "active_preserved" ||
+        details.durableState === "active_winner_preserved"
+          ? "并发发布出的生效配置已保留为权威。"
+          : "配置冲突未执行本次更改。";
       return {
         title,
-        message: `${durable}请刷新并重新载入当前草稿或生效配置后重试。`,
+        message: `${durable}请刷新并重新载入当前生效配置后重试。`,
         verifyRequired: false,
         currentVersion: null,
       };
@@ -418,7 +381,7 @@ export function configurationMutationFailure(
     if (errors.length > 0) {
       return {
         title,
-        message: `设置未保存：后端有 ${errors.length} 项校验未通过，草稿与生效配置未被本次请求改变。请修正标记的输入后重试。`,
+        message: `设置未保存：后端有 ${errors.length} 项校验未通过，本次没有发布，当前生效配置保持不变。请修正标记的输入后重试。`,
         verifyRequired: false,
         currentVersion: null,
       };
@@ -455,6 +418,47 @@ export function configurationMutationFailure(
     verifyRequired: true,
     currentVersion: null,
   };
+}
+
+/**
+ * Project the backend's bounded validation errors onto the fields this apply
+ * submitted. The reason stays project-authored; no raw exception or backend
+ * prose is echoed into the form.
+ */
+function backendFieldValidationMessages(
+  error: ConfigurationApiError,
+  group: SettingGroup,
+): Record<string, string> {
+  const entries = Array.isArray(error.details?.errors)
+    ? error.details.errors
+    : [];
+  const messages: Record<string, string> = {};
+  for (const entry of entries) {
+    const record = asRecord(entry);
+    if (record === null) continue;
+    const path = text(record.field, "");
+    const field = group.fields.find((candidate) => candidate.path === path);
+    if (field === undefined) continue;
+    const code = text(record.code, "");
+    if (
+      code === "invalid_range" &&
+      field.minimum !== null &&
+      field.maximum !== null
+    ) {
+      messages[path] = `允许范围 ${field.minimum}–${field.maximum}。`;
+    } else if (code === "invalid_timezone") {
+      messages[path] = "请填写可识别的 IANA 时区，例如 Asia/Shanghai。";
+    } else if (code === "invalid_locale") {
+      messages[path] = "请填写标准语言标记，例如 zh-CN 或 en-US。";
+    } else if (code === "unsafe_path") {
+      messages[path] = "请填写不越出部署范围的安全相对路径。";
+    } else if (code === "field_retired") {
+      messages[path] = "该设置已退役，不能再通过设置页修改。";
+    } else {
+      messages[path] = "该值未通过后端检查，请核对后重试。";
+    }
+  }
+  return messages;
 }
 
 interface StatusModel {
@@ -1174,7 +1178,8 @@ export function ConfigurationPage() {
     const currentValues = currentView
       ? formValues(currentForm, currentGroups, currentBaseline)
       : (currentForm?.values ?? {});
-    const typed = currentForm !== undefined &&
+    const typed =
+      currentForm !== undefined &&
       (currentGroups.length > 0
         ? currentGroups.some((group) =>
             group.fields.some((field) =>
@@ -1242,13 +1247,20 @@ export function ConfigurationPage() {
     }
     setSelectionId(nextActiveId);
     if (!awaitingVerification && reconciliation === null) {
-      setNotice({
-        tone: "warning",
-        title: "已同步新的生效配置",
-        text: typed
-          ? "其他会话发布了新的生效配置；未编辑的字段已同步，正在编辑的输入、焦点和编辑基线保留，被其他会话修改的字段会单独标记。"
-          : "其他会话发布了新的生效配置；当前没有未提交输入，表单已切换到最新读到的生效快照。",
-      });
+      // A refused apply already stated its own error and preserved the input;
+      // following the winner must not replace that failure explanation with a
+      // generic sync notice before the operator reads it.
+      setNotice((current) =>
+        current?.tone === "error"
+          ? current
+          : {
+              tone: "warning",
+              title: "已同步新的生效配置",
+              text: typed
+                ? "其他会话发布了新的生效配置；未编辑的字段已同步，正在编辑的输入、焦点和编辑基线保留，被其他会话修改的字段会单独标记。"
+                : "其他会话发布了新的生效配置；当前没有未提交输入，表单已切换到最新读到的生效快照。",
+            },
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -1314,12 +1326,8 @@ export function ConfigurationPage() {
   const groupHasMixedBoundaries =
     startGroup !== null &&
     new Set(startGroup.fields.map((field) => field.boundary)).size > 1;
-  const writeFailure = (
-    error: unknown,
-    action: MutationAction,
-    blockingChecks: readonly string[] = [],
-  ) => {
-    const failure = configurationMutationFailure(error, action, blockingChecks);
+  const writeFailure = (error: unknown, action: MutationAction) => {
+    const failure = configurationMutationFailure(error, action);
     setNotice({
       tone: "error",
       title: failure.title,
@@ -1360,7 +1368,7 @@ export function ConfigurationPage() {
         await loadRevision(String(result.revisionId ?? ""));
       }
     } catch (error) {
-      writeFailure(error, "create-first-draft");
+      writeFailure(error, "initialize");
       void client.invalidateQueries({ queryKey: QUERY_KEY });
     } finally {
       setBusy(null);
@@ -1550,6 +1558,15 @@ export function ConfigurationPage() {
         writePendingApply(principalId, null);
         setAwaitingVerification(false);
         writeFailure(error, "save-settings");
+        if (error instanceof ConfigurationApiError) {
+          const fieldMessages = backendFieldValidationMessages(error, group);
+          if (Object.keys(fieldMessages).length > 0) {
+            setFieldErrors((previous) => ({
+              ...previous,
+              [group.id]: { ...(previous[group.id] ?? {}), ...fieldMessages },
+            }));
+          }
+        }
       }
       if (error instanceof ConfigurationUnknownOutcomeError) {
         void client.invalidateQueries({ queryKey: QUERY_KEY });
@@ -1978,8 +1995,7 @@ export function ConfigurationPage() {
       );
       return;
     }
-    const label =
-      importMode === "package" ? "脱敏配置包导入" : "完整配置导入";
+    const label = importMode === "package" ? "脱敏配置包导入" : "完整配置导入";
     const pending: PendingConfigurationPublication = {
       kind: "configuration",
       submissionId,
@@ -2180,9 +2196,7 @@ export function ConfigurationPage() {
                   ；
                   {reconciliation.currentRevisionId === null
                     ? "当前没有可用的生效配置"
-                    : `当前生效配置为 ${
-                        reconciliation.currentRevisionId
-                      }${
+                    : `当前生效配置为 ${reconciliation.currentRevisionId}${
                         reconciliation.currentVersion === null
                           ? ""
                           : `（序号 ${reconciliation.currentVersion}）`
@@ -2424,8 +2438,7 @@ export function ConfigurationPage() {
                                 const remoteChanged =
                                   form !== undefined &&
                                   editBaseline !== undefined &&
-                                  editBaseline !==
-                                    (baseline[field.path] ?? "");
+                                  editBaseline !== (baseline[field.path] ?? "");
                                 const fieldBoundary = groupHasMixedBoundaries
                                   ? boundaryLabel(field.boundary)
                                   : null;

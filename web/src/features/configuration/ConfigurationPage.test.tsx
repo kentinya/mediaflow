@@ -323,7 +323,62 @@ describe("V2 configuration direct publication", () => {
     await userEvent.click(screen.getByRole("button", { name: "应用更改" }));
 
     expect(await screen.findByText("设置未保存")).toBeVisible();
+    expect(
+      screen.getByText(/另一会话已发布新的生效配置（序号 5）/),
+    ).toBeVisible();
     expect(screen.getByLabelText("启用操作日志")).toHaveValue("true");
+    expect(screen.getByText("配置已生效")).toBeVisible();
+  });
+
+  it("keeps the old Active and marks a backend validation refusal", async () => {
+    const fetchMock = baseFetch();
+    fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings") && init?.method === "PUT") {
+        return response(
+          {
+            error: {
+              code: "system_settings_invalid",
+              message: "1 settings validation error(s): invalid_timezone",
+              details: {
+                durableState: "active_preserved",
+                errors: [
+                  {
+                    code: "invalid_timezone",
+                    field: "timezone",
+                    message: "unknown timezone 'Not/AZone'",
+                    nextAction:
+                      "provide a recognized IANA timezone such as 'Asia/Shanghai'",
+                  },
+                ],
+              },
+            },
+          },
+          422,
+        );
+      }
+      if (input.includes("/system/settings")) return response(activeSettings());
+      return response(activeStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "语言与时区" }),
+    );
+    const timezone = screen.getByLabelText("系统时区");
+    fireEvent.change(timezone, { target: { value: "Not/AZone" } });
+    await userEvent.click(screen.getByRole("button", { name: "应用更改" }));
+
+    expect(await screen.findByText("设置未保存")).toBeVisible();
+    expect(
+      screen.getByText("请填写可识别的 IANA 时区，例如 Asia/Shanghai。"),
+    ).toBeVisible();
+    expect(timezone).toHaveValue("Not/AZone");
     expect(screen.getByText("配置已生效")).toBeVisible();
   });
 
@@ -449,9 +504,7 @@ describe("V2 configuration direct publication", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("日志保留天数")).toHaveValue("52"),
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: "语言与时区" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "语言与时区" }));
     expect(screen.getByLabelText("系统语言")).toHaveValue("en-US");
     expect(screen.queryByText(/其他会话已修改此字段/)).toBeNull();
   });
@@ -530,14 +583,12 @@ describe("V2 configuration direct publication", () => {
       expect(screen.getByLabelText("日志保留天数")).toHaveValue("51"),
     );
     expect(screen.getByLabelText("日志保留天数")).toHaveFocus();
-    expect(
-      screen.getAllByText(/其他会话已修改此字段/).length,
-    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(/其他会话已修改此字段/).length).toBeGreaterThan(
+      0,
+    );
     expect(screen.getByText(/编辑基线仍为 30/)).toBeVisible();
     expect(screen.getByText(/当前生效值为 52/)).toBeVisible();
-    await userEvent.click(
-      screen.getByRole("button", { name: "语言与时区" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "语言与时区" }));
     expect(screen.getByLabelText("系统语言")).toHaveValue("en-US");
   });
 

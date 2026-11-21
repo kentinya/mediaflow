@@ -539,7 +539,7 @@ test.describe("Storage management", () => {
     ).toHaveAttribute("href", "/configuration?returnTo=storage");
   });
 
-  test("the setup handoff reaches native Settings, explicitly creates or resumes Draft, and returns to refreshed inventory", async ({
+  test("the setup handoff initializes one empty Active in Settings and returns to inventory", async ({
     page,
   }) => {
     await resetStorage(page, "?noActive=1");
@@ -562,39 +562,28 @@ test.describe("Storage management", () => {
       name: "配置状态摘要",
     });
     await expect(
-      statusSummary.getByText("需要首次设置", { exact: true }),
+      statusSummary.getByText("需要初始化", { exact: true }),
     ).toBeVisible();
     await expect(
-      statusSummary.getByRole("button", { name: "创建首个草稿" }),
+      statusSummary.getByRole("button", { name: "初始化为空配置" }),
     ).toBeVisible();
-    // Merely opening Settings is a read. Creation is a separate, visible
-    // operator action and produces a resumable Draft without implying Active.
+    // Merely opening Settings is a read. Initialization is a separate, visible
+    // operator action that publishes the empty Active exactly once.
     expect(setupWrites).toEqual([]);
-    await statusSummary.getByRole("button", { name: "创建首个草稿" }).click();
+    await statusSummary.getByRole("button", { name: "初始化为空配置" }).click();
+    await expect(page.getByText("配置已初始化", { exact: true })).toBeVisible();
     await expect(
-      statusSummary.getByText("已有草稿待恢复", { exact: true }),
+      statusSummary.getByText("空配置已生效", { exact: true }),
     ).toBeVisible();
-    await expect(
-      statusSummary.getByRole("button", {
-        name: /恢复草稿（编辑版本 \d+）/,
-      }),
-    ).toBeVisible();
-    expect(setupWrites).toEqual(["POST /api/configuration/drafts/first"]);
+    expect(setupWrites).toEqual(["POST /api/configuration/initialize"]);
+
     await page.getByRole("link", { name: "返回上一页" }).click();
     await expect(page).toHaveURL(/\/storage$/);
-    await expect(page.getByText(/继续已有的设置草稿/)).toBeVisible();
-    await expect(page.getByRole("table")).toHaveCount(0);
-    await page.getByRole("link", { name: "去完成设置" }).click();
-    await expect(page).toHaveURL(/\/configuration\?returnTo=storage$/);
+    await expect(page.getByRole("heading", { name: "存储管理" })).toBeVisible();
+    await expect(page.getByText("尚未完成首次设置")).toHaveCount(0);
     await expect(
-      statusSummary.getByText("已有草稿待恢复", { exact: true }),
+      page.getByText("当前 Active 配置中没有存储对象。"),
     ).toBeVisible();
-    await expect(
-      statusSummary.getByRole("button", {
-        name: /恢复草稿（编辑版本 \d+）/,
-      }),
-    ).toBeVisible();
-    expect(setupWrites).toEqual(["POST /api/configuration/drafts/first"]);
   });
 
   test("setup navigation and return start no configuration or media work", async ({

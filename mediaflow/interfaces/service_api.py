@@ -1236,7 +1236,7 @@ class MediaFlowApi:
                 str(error),
                 details={
                     "errors": error.errors,
-                    "durableState": "draft_preserved_or_not_created",
+                    "durableState": "active_preserved",
                     "sideEffects": "none",
                     "retrySafe": True,
                     "nextAction": "correct invalid settings values and submit again",
@@ -3072,7 +3072,8 @@ class MediaFlowApi:
                     )
                     if len(prepared) != 1:
                         raise RuntimeSnapshotUnavailable(
-                            "the replacement runtime binding was not prepared; no Active was published",
+                            "the replacement runtime binding was not prepared; "
+                            "no Active was published",
                             reason="runtime_unavailable",
                         )
                     self._publish_runtime_binding(prepared[0])

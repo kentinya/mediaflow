@@ -794,7 +794,7 @@ describe("Storage management journey", () => {
     expect(root).toHaveValue("");
   });
 
-  it("offers an existing setup Draft to resume instead of a second one", async () => {
+  it("offers the current initialization path instead of a resumable draft", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -814,7 +814,9 @@ describe("Storage management journey", () => {
     );
     authStore.setToken(TOKEN);
     renderApp("/storage");
-    expect(await screen.findByText(/继续已有的设置草稿/)).toBeVisible();
+    expect(
+      await screen.findByText(/请在现有配置页初始化空配置或导入完整配置/),
+    ).toBeVisible();
     expect(screen.getByRole("link", { name: "去完成设置" })).toHaveAttribute(
       "href",
       "/configuration?returnTo=storage",

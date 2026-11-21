@@ -9,7 +9,7 @@ Web 从 `/` 进入，API 使用 `/api/*`。换址后可在任务中心查看原�
 | 文档 | 内容 |
 | --- | --- |
 | [快速开始](../README.md#-快速开始) | Docker Compose 和本地源码运行。 |
-| [配置说明](configuration.md) | 凭据、草稿、校验、发布和规则。 |
+| [配置说明](configuration.md) | 凭据、校验、直接发布和规则。 |
 | [部署指南](deployment.md) | 媒体挂载、健康检查、重启和备份。 |
 | [用户操作](product-experience.md) · [任务中心](task-center-page-spec.md) | 日常文件操作、整理、自动化及恢复。 |
 | [文件页](file-page-visual-spec.md) · [媒体库](media-library-page-visual-spec.md) | 两类库的页面行为。 |

@@ -17601,6 +17601,69 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  // First setup publishes one empty managed Active. The direct publication
+  // routes below serve its exact Active identity back to Settings and Rules.
+  if (url.pathname === "/api/configuration/initialize") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: { code: "method_not_allowed" } });
+      return;
+    }
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const state = rulesState(session);
+    if (state.available || state.published !== null) {
+      sendJson(res, 409, {
+        error: {
+          code: "configuration_exists",
+          message: "managed configuration already exists",
+          details: {
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "read the current Active configuration and continue",
+          },
+        },
+      });
+      return;
+    }
+    state.available = true;
+    state.reason = null;
+    state.emptyActive = true;
+    state.sections = Object.fromEntries(
+      Object.keys(RULES_FIXTURE.inventory.sections).map((key) => [key, []]),
+    );
+    state.state = "EMPTY";
+    state.counts = Object.fromEntries(
+      Object.keys(RULES_FIXTURE.ruleReadiness.counts).map((key) => [key, 0]),
+    );
+    state.enabledCounts = { ...state.counts };
+    state.gaps = [];
+    state.advance = 0;
+    state.setupDraft = null;
+    state.published = {
+      revisionId: "rules-setup-active-e2e",
+      version: 1,
+      validated: true,
+    };
+    RECORDED_MUTATIONS.push({
+      method: "POST",
+      objectType: "configuration_initialize",
+      path: url.pathname,
+    });
+    sendJson(res, 201, {
+      ...currentRuleActive(state),
+      created: true,
+      activated: true,
+    });
+    return;
+  }
+
   // No-Active first-setup lifecycle (Task 41.5 correction): the same routes
   // the real backend serves, bound to the fake's rules state so the browser
   // journey can prove the originating-family return through an actual

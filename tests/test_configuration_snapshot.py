@@ -967,8 +967,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                         {
                             "document": current.document,
                             "expectedActiveRevisionId": current.revision_id,
-                            "expectedActiveVersion": current.revision_sequence
-                            or current.version,
+                            "expectedActiveVersion": current.revision_sequence or current.version,
                             "expectedActiveDigest": current.digest,
                             "submissionId": submission_id,
                         }
@@ -984,13 +983,9 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200, reconciled)
                 self.assertEqual(reconciled["state"], "COMMITTED")
-                self.assertEqual(
-                    reconciled["committedRevisionId"], published["revisionId"]
-                )
+                self.assertEqual(reconciled["committedRevisionId"], published["revisionId"])
                 self.assertEqual(reconciled["sideEffects"], "none")
-                self.assertEqual(
-                    len(service.repository.list_revisions(limit=100)), before
-                )
+                self.assertEqual(len(service.repository.list_revisions(limit=100)), before)
                 self.assertEqual(service.active().revision_id, published["revisionId"])
 
                 # A refused command with a lost transport also has a terminal
@@ -1020,9 +1015,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(reconciled["state"], "NOT_COMMITTED")
                 self.assertFalse(reconciled["committed"])
                 self.assertEqual(reconciled["sideEffects"], "none")
-                self.assertEqual(
-                    service.active().revision_id, published["revisionId"]
-                )
+                self.assertEqual(service.active().revision_id, published["revisionId"])
 
     def test_api_invalid_candidate_is_rejected_then_corrected_publish_pins_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -68,7 +68,9 @@ test.describe("Settings direct publication", () => {
     await expect(page.getByLabel("Database location")).toHaveCount(0);
 
     await page.getByRole("button", { name: "配置 JSON", exact: true }).click();
-    await expect(page.getByLabel("配置 JSON", { exact: true })).toHaveValue(/zh-CN/);
+    await expect(page.getByLabel("配置 JSON", { exact: true })).toHaveValue(
+      /zh-CN/,
+    );
     await page.getByRole("button", { name: "收起配置内容" }).click();
     await expect(page.getByLabel("配置 JSON", { exact: true })).toHaveCount(0);
   });

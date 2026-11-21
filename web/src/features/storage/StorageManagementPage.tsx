@@ -1289,17 +1289,12 @@ function StorageSetupHandoff({
     </button>
   );
   if (setup.setupRequired) {
-    const draftExists = setup.setupDraftExists;
     return (
       <StatusBanner variant="warning" title="尚未完成首次设置">
         <p>
-          当前还没有已激活的托管配置,因此没有可显示的存储清单。首次设置会在现有配置向导中
-          {draftExists ? "继续已有的设置草稿" : "创建第一个设置草稿"}
-          ,完成校验并激活后回到本页查看真实清单。
+          当前还没有已激活的托管配置,因此没有可显示的存储清单。请在现有配置页初始化空配置或导入完整配置,完成后回到本页查看真实清单。
         </p>
-        <p>
-          前往设置只会打开配置页面;本页不会自动创建草稿、运行检查或激活配置。
-        </p>
+        <p>前往设置只会打开配置页面;本页不会自动初始化、运行检查或发布配置。</p>
         {canStartSetup ? (
           <div className="mf-actions">
             <Link
@@ -1313,7 +1308,7 @@ function StorageSetupHandoff({
           </div>
         ) : (
           <>
-            <p>当前账号没有管理配置的权限,无法创建或激活设置草稿。</p>
+            <p>当前账号没有管理配置的权限,无法初始化或发布配置。</p>
             <div className="mf-actions">
               <Link
                 className="mf-button mf-button-primary"

@@ -308,34 +308,27 @@ test.describe("Rules readiness and Settings handoff", () => {
       "/rules?section=metadataPolicies",
     );
 
-    // First setup through the real lifecycle: create, validate, activate.
-    await page.getByRole("button", { name: "创建首个草稿" }).click();
-    await expect(page.getByRole("button", { name: "验证草稿" })).toBeVisible();
-    await page.getByRole("button", { name: "验证草稿" }).click();
-    await expect
-      .poll(() => page.getByRole("button", { name: "激活配置" }).isEnabled())
-      .toBe(true);
-    await page.getByRole("button", { name: "激活配置" }).click();
+    // First setup publishes the empty managed Active directly from Settings.
+    await page.getByRole("button", { name: "初始化为空配置" }).click();
+    await expect(page.getByText("配置已初始化", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("配置状态摘要")).toContainText("空配置已生效");
 
-    // The automatic return lands on the originating family inventory, now
+    // The explicit return lands on the originating family inventory, now
     // backed by the published Active.
+    await returnLink.click();
     await expect(
       page.getByRole("heading", { name: "元数据策略", exact: true }),
     ).toBeVisible();
     expect(page.url()).toContain("section=metadataPolicies");
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    // The only writes in the whole journey are the explicit first-setup
-    // lifecycle commands the operator pressed on Settings; the rules surface
-    // itself (deep link, handoff, return) issued reads exclusively, and no
-    // Provider, Storage, Task, Job or rule-object mutation occurred.
+    // The only write in the whole journey is the explicit empty-configuration
+    // publication the operator pressed on Settings; the rules surface itself
+    // (deep link, handoff, return) issued reads exclusively, and no Provider,
+    // Storage, Task, Job or rule-object mutation occurred.
     const writes = traffic
       .filter((entry) => !entry.startsWith("GET "))
       .map((entry) => new URL(entry.split(" ")[1]!).pathname);
-    expect(writes).toEqual([
-      "/api/configuration/drafts/first",
-      "/api/configuration/revisions/rules-setup-draft-e2e/validate",
-      "/api/configuration/revisions/rules-setup-draft-e2e/activate",
-    ]);
+    expect(writes).toEqual(["/api/configuration/initialize"]);
   });
 
   test("a publication between two Settings reads is observed instead of shown stale", async ({
@@ -347,18 +340,15 @@ test.describe("Rules readiness and Settings handoff", () => {
     const settings = page.getByRole("region", { name: "整理规则就绪状态" });
     const firstSequence = await settings.locator("dd").nth(1).textContent();
 
-    // A competing writer publishes a successor Active, then the operator
-    // refreshes: the page must re-read and show the new readiness.
+    // A competing writer publishes a successor Active, then the tab returns
+    // online: the page must re-read and show the new readiness automatically.
     await page.request.post("/__test__/advance-rules-active");
-    await page
-      .getByRole("button", { name: /刷新|Refresh/ })
-      .first()
-      .click();
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect
       .poll(async () => settings.locator("dd").nth(1).textContent())
       .not.toBe(firstSequence);
-    // The refreshed readiness is not reported as a mixed snapshot.
-    await expect(page.getByText("Active 已变更,需要刷新")).toHaveCount(0);
+    // The re-read readiness is not reported as a mixed snapshot.
+    await expect(page.getByText("Active 已变更，需要刷新")).toHaveCount(0);
   });
 
   test("the readiness journey performs no write on any surface", async ({
