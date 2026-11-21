@@ -432,3 +432,27 @@ Next: SAME TASK FIX LOOP
 
 1. 修正仓库已有 Docker 健康验收的媒体权限步骤。沿当前管道直接发布带媒体挂载的配置，保留 Worker 停启和 API 密钥缺失与恢复的原断言。权限变更后用现有存储只读检查确认媒体访问失败，恢复后确认读取通过，同时核对 API 存活、已生效版本和任务清单。同步部署指南对这两个信号的描述。
 2. 把上述首次部署指引和配置生成命令帮助改为实际操作。新实例可从系统设置初始化空配置，已有完整输入可直接核对并应用。用现有 Docker 首次配置旅程和 `make_deployment_config.py --help` 核对说明。
+
+### Developer 第十三轮修复报告
+
+```text
+Task Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Candidate: 2837d9bc6c0dcc1360b02ccf659922a121bba667
+Decision: READY FOR B REVIEW
+Authorized bug acceptance complete: NO
+```
+
+- Docker 健康验收不再把已发布配置的媒体根目录当作容器健康信号。启动并直接发布带媒体挂载的配置后，先对 `source-storage` 执行一次现行 Storage 只读检查并确认 `status=passed`；保留 Worker 停启及 API 密钥缺失／恢复的原断言。将宿主来源目录权限改为 `000` 后，同一检查按精确 Active 返回 `status=failed`、`failureCategory=permission_denied`，`sideEffects=none`、`retrySafe=true`；此时 `/health` 仍为 `200` 且 `processAlive=true`，`/api/configuration` 的 revision/digest 未变，任务清单为空。恢复权限后同一检查再次 `passed`，最终任务清单仍为空。检查请求使用现行 `POST /api/operations/storage-management/storage/{id}/check`，与存储页「运行只读检查」共用同一应用行为。
+- 部署指南把「基础设施健康」与「已发布媒体访问」分开描述：管理 bootstrap 不含已发布 Storage，媒体根目录缺失或不可读由检查后的发布、Storage 只读检查及存储页报告，API 与 `/health` 保持存活；失败恢复条目分别覆盖 `/data` 与已发布媒体根目录，健康 harness 说明同步新信号。
+- 首次部署指引改为实际操作：可选媒体挂载 Compose 文件说明从系统设置初始化空配置，产品体验的 Slice55 旅程摘要不再要求创建或恢复 Draft，`make_deployment_config.py` 的帮助与模块说明改为直接检查并发布生成输入。
+
+实际结果：
+
+- `.venv/bin/python -m unittest tests.test_container_deployment`：15 项通过。
+- `TMPDIR=<repo>/.git/smoke-tmp .venv/bin/python scripts/docker_health_smoke_test.py`：通过，输出含直接发布、媒体只读检查、Worker 停启、API 密钥降级／恢复、媒体权限降级／恢复及 `Docker health/readiness smoke acceptance passed.`。
+- `MEDIAFLOW_SMOKE_TEMP_DIR=<repo>/.git/smoke-tmp .venv/bin/python scripts/docker_empty_baseline_smoke_test.py`：两套真实栈均通过，默认无媒体挂载栈经真实设置页初始化空 Active，可选媒体挂载栈完成 ResourceLibrary、整理及两种库复制；耗时 72 秒。
+- `.venv/bin/python scripts/make_deployment_config.py --help`：`--configuration` 与 `--configuration-output` 均说明检查并直接发布当前 Configuration lifecycle。
+- `.venv/bin/ruff format --check`、`.venv/bin/ruff check`（两个改动脚本）、`py_compile`、`git diff --check`、`python3 scripts/check_governance.py` 通过。
+- 本轮测试实际耗时约 3 分钟，低于本轮开发总时间的 30%。
+
+剩余风险：T4 全量、真实桌面及 390px 截图验收、Base 数据切换按 Task 分工留给 B；本轮 Docker 运行使用本机隔离临时目录和本地引擎，未推送、未部署。
