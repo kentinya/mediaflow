@@ -336,3 +336,30 @@ Next: SAME TASK FIX LOOP
 
 1. 从自动化列表删除「发布状态」中的草稿筛选和对应查询。用当前生效配置直接投影列表，删除把 Active 当草稿合并的逻辑，以及列表和定义详情中的旧草稿状态、计数和创建动作。同步 Web 响应模型与测试夹具。原草稿筛选值按无效输入处理。
 2. 从「任务中心 → Automation」复测有现存任务的列表。验证能通过启用状态筛选、打开详情、编辑并读回已发布值。沿此页面实际发送的列表请求核对响应只有当前发布状态，并用本轮已观察到的旧筛选参数验证拒绝。用现有空配置和历史定义入口验证引导指向初始化或查看记录。
+
+### Developer 第十一轮修复报告
+
+```text
+Task Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Candidate: cdaa5d16cbfa90d4ebd3d7f0f702ed75c1e98821
+Decision: READY FOR B REVIEW
+Authorized bug acceptance complete: NO
+```
+
+- 自动化列表改为只投影当前 Active 中的定义：移除 `state` 查询与「发布状态」筛选、Active 当作草稿合并、`draftState`、`draftOnly` 计数及 `createDraft`/`draftCreate` 动作。旧 `state=draft-only`、`state=active`、`state=all` 均按无效查询返回 JSON `400`。
+- 自动化定义详情不再读取或回退到 open Draft，不返回草稿状态和草稿动作；被移除定义仍以只读历史返回。同步删除仅服务于草稿激活的不可达实现。
+- 列表行不再显示草稿徽标或「仅存在于草稿」，计数只显示已发布/已启用。空配置列表提供「系统设置」初始化入口。
+- Web 模型、查询键、Node 夹具及真实 Python 浏览器规格同步当前响应。真实浏览器列表请求已核对无 `draftState`/`draftOnly`/`state`，旧筛选参数为 `400`。
+
+实际结果：
+
+- `.venv/bin/python -m unittest tests.test_v2_automation_operations tests.test_v2_automation_lifecycle`：44 项通过。
+- `.venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_configuration_status tests.test_configuration_package_exchange tests.test_configuration_destination_activation tests.test_system_settings_management tests.test_automation_settings_management`：159 项通过。
+- `npm run test -- run src/entities/operations/automation.test.ts src/features/operations/AutomationRouter.test.tsx src/features/operations/AutomationWorkspaceReadModel.test.tsx src/features/operations/AutomationListCopy.test.tsx src/features/operations/AutomationListRunOnce.test.tsx`：75 项通过。
+- `npm run test -- run src/features/operations/AutomationSettingsPage.test.tsx src/features/operations/AutomationLifecyclePage.test.tsx src/features/operations/AutomationCreateDialog.test.tsx`：61 项通过。
+- `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-workspace.python.spec.ts --grep "inventory reads full-population"`：1 项通过。
+- `npm run test:e2e -- tests/e2e/automation.spec.ts`：10 项通过。
+- `npm run build`、`npm run typecheck`、`npm run lint`、`npm run format:check`、Ruff check/format、`py_compile`、`git diff --check`、治理检查通过。构建产物为 `index-BFVM_GYd.js` / `index-Tw5pYUJe.css`。
+- 本轮测试实际耗时约 3 分钟，低于本轮开发总时间的 30%。
+
+剩余风险：T4 全量、真实桌面及 390px 截图验收、Base 数据切换按 Task 分工留给 B；本轮未运行全量 Python/Node 套件，未推送、未部署。
