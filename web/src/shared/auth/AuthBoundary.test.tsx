@@ -8,6 +8,16 @@ import {
   browseContextId,
 } from "../../features/explore/explore-query";
 
+const sessionListeners = vi.hoisted(() => new Set<() => void>());
+
+vi.mock("../../shared/auth/session-sync", () => ({
+  announceSessionChange: vi.fn(),
+  subscribeSessionChange: (listener: () => void) => {
+    sessionListeners.add(listener);
+    return () => sessionListeners.delete(listener);
+  },
+}));
+
 function anonymous() {
   authStore.completeSessionRestore({
     firstAdministratorRequired: false,
@@ -93,6 +103,75 @@ describe("AuthBoundary", () => {
     expect(router.state.location.pathname).toBe("/medialib/files");
     expect(screen.queryByLabelText("Login name")).toBeNull();
     expect(authStore.getAccount()?.username).toBe("admin");
+  });
+
+  it("re-confirms the server session and drops the previous account cache after another tab changes it", async () => {
+    const admin = {
+      principalId: "account-admin",
+      accountId: "account-admin",
+      username: "admin",
+      roles: ["admin"],
+      permissions: ["read"],
+    };
+    const readonly = {
+      principalId: "account-readonly",
+      accountId: "account-readonly",
+      username: "readonly",
+      roles: ["viewer"],
+      permissions: ["read"],
+    };
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/auth/status") {
+        return jsonResponse({
+          authenticated: true,
+          firstAdministratorRequired: false,
+          configurationRequired: false,
+          account: readonly,
+        });
+      }
+      if (url === "/api/media-libraries") {
+        return jsonResponse({
+          surface: "media_libraries",
+          items: [],
+          total: 0,
+          sideEffects: "none",
+        });
+      }
+      if (url === "/api/system/status") {
+        return jsonResponse({
+          system: {
+            configuration_valid: true,
+            configuration_authority: "MANAGED",
+            configuration_snapshot_id: "active-1",
+          },
+          storages: { total: 0, truncated: false, items: [] },
+          resource_libraries: { total: 0, truncated: false, items: [] },
+        });
+      }
+      throw new Error(`unexpected test request: ${url}`);
+    });
+    authStore.completeSessionRestore({
+      firstAdministratorRequired: false,
+      configurationRequired: false,
+      account: admin,
+    });
+    const { queryClient, router } = renderApp("/medialib/files");
+    expect(
+      await screen.findByRole("heading", { name: "尚未添加媒体库" }),
+    ).toBeVisible();
+    queryClient.setQueryData(["account-scoped-read"], { owner: "admin" });
+
+    for (const listener of sessionListeners) {
+      listener();
+    }
+
+    await waitFor(() =>
+      expect(authStore.getAccount()?.username).toBe("readonly"),
+    );
+    expect(queryClient.getQueryData(["account-scoped-read"])).toBeUndefined();
+    expect(router.state.location.pathname).toBe("/medialib/files");
+    expect(screen.queryByLabelText("Login name")).toBeNull();
   });
 
   it("redirects an unauthenticated deep route to entry and preserves the intended path", async () => {

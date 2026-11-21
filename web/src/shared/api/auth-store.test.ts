@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { authStore } from "./auth-store";
+import { registerPrincipalSessionDataCleaner } from "../auth/principal-session-data";
 import { destinations } from "../navigation/destination-model";
 import type { DestinationPath } from "../navigation/destination-model";
 
@@ -112,6 +113,67 @@ describe("authStore", () => {
 
     expect(connectedGeneration).toBeGreaterThan(startingGeneration);
     expect(authStore.getGeneration()).toBeGreaterThan(connectedGeneration);
+  });
+
+  it("discards prior account state only when the confirmed authority changes", () => {
+    const cleaner = vi.fn();
+    const unregister = registerPrincipalSessionDataCleaner(cleaner);
+    const admin = {
+      principalId: "account-admin",
+      accountId: "account-admin",
+      username: "admin",
+      roles: ["admin"],
+      permissions: ["read", "submit_dry_run"],
+    } as const;
+    const readonly = {
+      principalId: "account-readonly",
+      accountId: "account-readonly",
+      username: "readonly",
+      roles: ["viewer"],
+      permissions: ["read"],
+    } as const;
+    try {
+      authStore.completeSessionRestore({
+        firstAdministratorRequired: false,
+        configurationRequired: false,
+        account: admin,
+      });
+      const restoredGeneration = authStore.getGeneration();
+      expect(cleaner).not.toHaveBeenCalled();
+
+      // A same-account confirmation does not churn caches or request fencing.
+      authStore.applyServerSession({
+        firstAdministratorRequired: false,
+        configurationRequired: true,
+        account: admin,
+      });
+      expect(authStore.getGeneration()).toBe(restoredGeneration);
+      expect(cleaner).not.toHaveBeenCalled();
+      expect(authStore.getConfigurationRequired()).toBe(true);
+
+      // A different account (or changed role/permission authority) drops the
+      // previous account's browser state and advances the generation.
+      authStore.applyServerSession({
+        firstAdministratorRequired: false,
+        configurationRequired: false,
+        account: readonly,
+      });
+      expect(cleaner).toHaveBeenCalledTimes(1);
+      expect(authStore.getAccount()?.username).toBe("readonly");
+      expect(authStore.getToken()).toBe("account-readonly");
+      expect(authStore.getGeneration()).toBeGreaterThan(restoredGeneration);
+
+      authStore.applyServerSession({
+        firstAdministratorRequired: false,
+        configurationRequired: false,
+        account: null,
+      });
+      expect(cleaner).toHaveBeenCalledTimes(2);
+      expect(authStore.getToken()).toBeNull();
+      expect(authStore.getSessionStatus()).toBe("anonymous");
+    } finally {
+      unregister();
+    }
   });
 
   it("notifies subscribers until they unsubscribe", () => {

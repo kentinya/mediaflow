@@ -410,6 +410,14 @@ def final_main(
         elif arguments.command in {"worker", "scheduler", "notification-worker"} or (
             arguments.command == "api" and arguments.api_command == "credentials"
         ):
+            bootstrap_document = _configuration_document(arguments.config)
+            # The resident-services branch loads only the immutable locator, but
+            # it is still a current startup entrance.  Apply the same retired
+            # identity-input rule as the API/config entrances before the
+            # database is opened; otherwise an old generated bootstrap carrying
+            # ``api.principals`` would keep a Worker/Scheduler alive with a
+            # silently ignored authority source.
+            reject_retired_configuration_input(bootstrap_document)
             # Resident services bootstrap from deployment-owned authority alone.
             # The immutable locator is enough to open the durable database, run
             # the heartbeat and claim a bounded unit of already-pinned work.  It
@@ -427,7 +435,7 @@ def final_main(
             # otherwise an unsupported file would hide the SET/UNSET diagnosis
             # and a first start would create the store just to read environment
             # variables.
-            configuration = load_management_bootstrap(_configuration_document(arguments.config))
+            configuration = load_management_bootstrap(bootstrap_document)
         else:
             try:
                 configuration = (

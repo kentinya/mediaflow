@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import urllib.parse
+from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
 from wsgiref.simple_server import WSGIServer, make_server
@@ -23,7 +24,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from mediaflow.application.accounts import AccountService  # noqa: E402
+from mediaflow.application.accounts import AccountService, hash_password  # noqa: E402
+from mediaflow.domain.accounts import Account  # noqa: E402
+from mediaflow.domain.security import ApiRole  # noqa: E402
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository  # noqa: E402
 from mediaflow.interfaces.service_api import MediaFlowApi  # noqa: E402
 from mediaflow.interfaces.v2_ui import asset_root  # noqa: E402
@@ -114,6 +117,40 @@ def application(environ, start_response):
             200,
             {"code": code, "expiresAt": expires_at.isoformat()},
         )
+    if path == "/__harness__/create-account" and method == "POST":
+        # Test-only fixture control for the account-switch journey.  The
+        # product's user-management surface is a later Slice outcome, so the
+        # harness creates one ordinary read-only account directly through the
+        # same durable repository used by AccountService.
+        length = int(environ.get("CONTENT_LENGTH") or 0)
+        raw = environ["wsgi.input"].read(length) if length > 0 else b"{}"
+        try:
+            body = json.loads(raw or b"{}")
+            username = str(body.get("username", ""))
+            password = str(body.get("password", ""))
+            role = ApiRole(str(body.get("role", ApiRole.VIEWER.value)))
+        except (ValueError, UnicodeDecodeError) as error:
+            return _json_response(
+                start_response, 422, {"error": {"code": "invalid_fixture", "message": str(error)}}
+            )
+        if STATE.repository.get_account_by_username(username) is not None:
+            return _json_response(
+                start_response, 409, {"error": {"code": "fixture_exists", "message": username}}
+            )
+        now = datetime.now(UTC)
+        STATE.repository.create_account(
+            Account(
+                f"harness-{username}",
+                username,
+                (role,),
+                True,
+                now,
+                now,
+                now,
+            ),
+            hash_password(password),
+        )
+        return _json_response(start_response, 201, {"username": username, "role": role.value})
     if path == "/__harness__/account-state" and method == "GET":
         return _json_response(
             start_response,

@@ -16,6 +16,12 @@ import type { AuthAccount } from "./auth-api";
 
 export type AuthListener = () => void;
 
+export interface ServerSessionSnapshot {
+  readonly firstAdministratorRequired: boolean;
+  readonly configurationRequired: boolean;
+  readonly account: AuthAccount | null;
+}
+
 export interface MemoryAuthStore {
   getToken(): string | null;
   getAccount(): AuthAccount | null;
@@ -24,15 +30,26 @@ export interface MemoryAuthStore {
   getConfigurationRequired(): boolean;
   getRestoreError(): "unavailable" | null;
   setSession(account: AuthAccount): void;
-  completeSessionRestore(input: {
-    readonly firstAdministratorRequired: boolean;
-    readonly configurationRequired: boolean;
-    readonly account: AuthAccount | null;
-  }): void;
+  completeSessionRestore(input: ServerSessionSnapshot): void;
+  /**
+   * Adopt a session confirmed by `/api/auth/status` after another tab or a
+   * reactivated page reported a possible account change.  A different account
+   * (or a changed role/permission set) discards the previous account's
+   * browser state and advances the authority generation; the route keeps its
+   * path and allowlisted query while the page is restored for the new account.
+   */
+  applyServerSession(input: ServerSessionSnapshot): void;
   failSessionRestore(): void;
   beginSessionRestore(): void;
   /** Monotonic in-memory auth session identity; it contains no credential. */
   getGeneration(): number;
+  /**
+   * Monotonic marker for a server-confirmed account transition from another
+   * tab or a reactivated page.  It is separate from `generation` so an
+   * ordinary same-tab sign-in keeps the root entry's single continuation
+   * decision while a cross-tab switch still remounts the protected page.
+   */
+  getSessionEpoch(): number;
   setToken(token: string): void;
   clearToken(): void;
   /**
@@ -79,6 +96,7 @@ export function createMemoryAuthStore(): MemoryAuthStore {
   let configurationRequired = true;
   let restoreError: "unavailable" | null = null;
   let generation = 0;
+  let sessionEpoch = 0;
   const listeners = new Set<AuthListener>();
   const emit = () => {
     for (const listener of listeners) {
@@ -92,9 +110,33 @@ export function createMemoryAuthStore(): MemoryAuthStore {
     intendedPath = null;
     intendedSearch = null;
   };
+  const authorityKey = (value: AuthAccount | null): string | null =>
+    value === null
+      ? null
+      : JSON.stringify([
+          value.principalId,
+          ...[...value.roles].sort(),
+          ...[...value.permissions].sort(),
+        ]);
+  const adoptAccount = (
+    next: AuthAccount | null,
+    options: { readonly discardPrevious: boolean },
+  ) => {
+    const changed = authorityKey(account) !== authorityKey(next);
+    if (options.discardPrevious && changed) {
+      clearPrincipalSessionData();
+    }
+    account = next;
+    token = next?.principalId ?? null;
+    status = next === null ? "anonymous" : "authenticated";
+    rejected = false;
+    restoreError = null;
+    return changed;
+  };
   return {
     getToken: () => token,
     getGeneration: () => generation,
+    getSessionEpoch: () => sessionEpoch,
     getAccount: () => account,
     getSessionStatus: () => status,
     getFirstAdministratorRequired: () => firstAdministratorRequired,
@@ -115,11 +157,18 @@ export function createMemoryAuthStore(): MemoryAuthStore {
     completeSessionRestore: (input) => {
       firstAdministratorRequired = input.firstAdministratorRequired;
       configurationRequired = input.configurationRequired;
-      restoreError = null;
-      account = input.account;
-      token = input.account?.principalId ?? null;
-      status = input.account === null ? "anonymous" : "authenticated";
-      rejected = false;
+      adoptAccount(input.account, {
+        discardPrevious: account !== null,
+      });
+      emit();
+    },
+    applyServerSession: (input) => {
+      firstAdministratorRequired = input.firstAdministratorRequired;
+      configurationRequired = input.configurationRequired;
+      if (adoptAccount(input.account, { discardPrevious: true })) {
+        generation += 1;
+        sessionEpoch += 1;
+      }
       emit();
     },
     failSessionRestore: () => {

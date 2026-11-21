@@ -24,6 +24,15 @@ export function useAuthGeneration(): number {
   );
 }
 
+/** Server-confirmed cross-tab/background account transition marker. */
+export function useSessionEpoch(): number {
+  return useSyncExternalStore(
+    authStore.subscribe,
+    authStore.getSessionEpoch,
+    () => 0,
+  );
+}
+
 export function useIsConnected(): boolean {
   return useAuthToken() !== null;
 }

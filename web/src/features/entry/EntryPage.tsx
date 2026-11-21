@@ -16,6 +16,7 @@ import {
   loginAccount,
   resetPassword,
 } from "../../shared/api/auth-api";
+import { announceSessionChange } from "../../shared/auth/session-sync";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { TextField } from "../../shared/ui/TextField";
@@ -152,6 +153,7 @@ export function EntryPage() {
       const result = await loginAccount({ username, password, remember });
       setPassword("");
       authStore.setSession(result.account);
+      announceSessionChange();
       continueAfterSignIn();
     } catch (error) {
       setPassword("");
@@ -193,6 +195,7 @@ export function EntryPage() {
       setPassword("");
       setConfirmPassword("");
       authStore.setSession(result.account);
+      announceSessionChange();
       continueAfterSignIn({ path: "/configuration", search: "" });
     } catch (error) {
       setCode("");
@@ -223,6 +226,9 @@ export function EntryPage() {
       setCode("");
       setPassword("");
       setConfirmPassword("");
+      // The reset revoked every Web session for this account, including any
+      // still open in other tabs of this browser.
+      announceSessionChange();
       setMode("login");
       setFeedback({
         kind: "success",

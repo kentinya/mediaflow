@@ -8,6 +8,7 @@ import {
 } from "../api/auth-context";
 import { authStore } from "../api/auth-store";
 import { AuthApiError, logoutAccount } from "../api/auth-api";
+import { announceSessionChange } from "./session-sync";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icons";
 
@@ -47,6 +48,7 @@ export function AuthControls() {
       await logoutAccount();
       authStore.clearToken();
       queryClient.clear();
+      announceSessionChange();
       setOpen(false);
       void navigate({ to: "/" });
     } catch (failure) {
@@ -55,6 +57,7 @@ export function AuthControls() {
         // and cache still completes the operator's explicit sign-out.
         authStore.clearToken();
         queryClient.clear();
+        announceSessionChange();
         setOpen(false);
         void navigate({ to: "/" });
       } else {

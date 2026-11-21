@@ -1,3 +1,4 @@
+import { Fragment, type ReactNode } from "react";
 import {
   createBrowserHistory,
   createRootRoute,
@@ -33,13 +34,29 @@ import { DeliveryDetailPage } from "../features/operations/DeliveryDetailPage";
 import { readOperationsDialog } from "../shared/navigation/operations-organize";
 import { AppShell } from "../shared/ui/AppShell";
 import { AuthBoundary } from "../shared/auth/AuthBoundary";
+import { useSessionEpoch } from "../shared/api/auth-context";
 import { StatusBanner } from "../shared/ui/StatusBanner";
+
+/**
+ * Remount the routed page when the authenticated authority changes.
+ *
+ * The URL remains the single source of route/search state, so the new mount
+ * restores the same allowed page.  This is what makes a cross-tab account
+ * switch re-read every page-level query as the current account after the
+ * store synchronously discarded the previous account's cache.
+ */
+function SessionScope({ children }: { readonly children: ReactNode }) {
+  const sessionEpoch = useSessionEpoch();
+  return <Fragment key={sessionEpoch}>{children}</Fragment>;
+}
 
 function RootRoute() {
   return (
     <AppShell>
       <AuthBoundary />
-      <Outlet />
+      <SessionScope>
+        <Outlet />
+      </SessionScope>
     </AppShell>
   );
 }

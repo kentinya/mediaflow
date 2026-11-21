@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAuthAccount } from "../../shared/api/auth-context";
 import { authStore } from "../../shared/api/auth-store";
 import { AuthApiError, changePassword } from "../../shared/api/auth-api";
+import { announceSessionChange } from "../../shared/auth/session-sync";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { TextField } from "../../shared/ui/TextField";
@@ -45,6 +46,7 @@ export function ChangePasswordPage() {
       await changePassword({ currentPassword, newPassword });
       authStore.clearToken();
       queryClient.clear();
+      announceSessionChange();
       void navigate({ to: "/" });
     } catch (failure) {
       setCurrentPassword("");

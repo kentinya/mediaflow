@@ -50,16 +50,30 @@ FAKE_TOKEN = "fake-resident-token"
 FAKE_WEBHOOK_SECRET = "fake-webhook-secret"
 
 
-def _bootstrap(database: str, token_env: str = "MF_ADMIN_TOKEN") -> dict:
+def _bootstrap(database: str) -> dict:
+    """The current generator's strict first-setup shape: locator only."""
+
     return {
         "version": 1,
         "persistence": {"databasePath": database},
-        "api": {
-            "principals": [
-                {"id": "admin", "tokenEnv": token_env, "roles": ["admin"], "enabled": True}
-            ]
-        },
     }
+
+
+def _retired_bootstrap(database: str) -> dict:
+    """A previous generator's bootstrap carrying the retired principal input."""
+
+    document = _bootstrap(database)
+    document["api"] = {
+        "principals": [
+            {
+                "id": "admin",
+                "tokenEnv": "MF_ADMIN_TOKEN",
+                "roles": ["admin"],
+                "enabled": True,
+            }
+        ]
+    }
+    return document
 
 
 class ResidentDeploymentFixture(unittest.TestCase):
@@ -168,6 +182,32 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
         # The precondition for the whole boundary: a fresh deployment document
         # really is a valid strict first-setup bootstrap.
         self.assertTrue(is_minimal_management_bootstrap(self.document))
+
+    def test_retired_principals_are_rejected_before_resident_services_open_the_database(
+        self,
+    ) -> None:
+        """Every local resident `run` entrance applies the current input rule.
+
+        A previous generated bootstrap is the operator's actual upgrade input;
+        each long-running process must stop with the exact key to remove rather
+        than creating the durable database and waiting forever.
+        """
+
+        self.config.write_text(
+            json.dumps(_retired_bootstrap(self.database), indent=2), encoding="utf-8"
+        )
+        for arguments in (
+            ("worker", "run"),
+            ("scheduler", "run"),
+            ("notification-worker", "run"),
+        ):
+            with self.subTest(arguments=arguments):
+                code, out, err = self.cli(*arguments)
+                self.assertEqual(code, 2, msg=err)
+                self.assertEqual("", out)
+                self.assertIn("api.principals is retired", err)
+                self.assertIn("remove it", err)
+                self.assertFalse(Path(self.database).exists(), msg=err)
 
     def test_scheduler_tick_starts_without_active(self) -> None:
         """With a valid management-only bootstrap, the resident Scheduler and

@@ -1,11 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
-import {
-  useAuthAccount,
-  useRejected,
-  useSessionStatus,
-} from "../api/auth-context";
+import { useRejected, useSessionStatus } from "../api/auth-context";
 import { authStore } from "../api/auth-store";
 import { fetchAuthStatus } from "../api/auth-api";
 import {
@@ -13,6 +8,7 @@ import {
   allowlistedDestinationSearch,
 } from "../navigation/destination-model";
 import type { DestinationPath } from "../navigation/destination-model";
+import { subscribeSessionChange } from "./session-sync";
 
 /**
  * Shared route/authentication boundary for supported product routes.
@@ -26,16 +22,52 @@ import type { DestinationPath } from "../navigation/destination-model";
  */
 export function AuthBoundary() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const location = useRouterState({
     select: (state) => state.location,
   });
   const pathname = location.pathname;
   const searchStr = location.searchStr ?? "";
   const status = useSessionStatus();
-  const account = useAuthAccount();
   const rejected = useRejected();
-  const previousPrincipal = useRef<string | null>(null);
+  const reconcileInFlight = useRef(false);
+  const reconcileQueued = useRef(false);
+  const reconcileSequence = useRef(0);
+
+  // Another tab or a reactivated page may hold a different server session
+  // behind the same shared cookie.  Confirm the current account through the
+  // existing status read before the page keeps displaying or reading with the
+  // previous identity.
+  const reconcileServerSession = useCallback(async () => {
+    if (reconcileInFlight.current) {
+      reconcileQueued.current = true;
+      return;
+    }
+    reconcileInFlight.current = true;
+    try {
+      do {
+        reconcileQueued.current = false;
+        const sequence = ++reconcileSequence.current;
+        try {
+          const value = await fetchAuthStatus();
+          if (sequence !== reconcileSequence.current) {
+            continue;
+          }
+          authStore.applyServerSession({
+            firstAdministratorRequired: value.firstAdministratorRequired,
+            configurationRequired: value.configurationRequired,
+            account: value.authenticated ? value.account : null,
+          });
+        } catch {
+          // A background confirmation failure keeps the current truthful
+          // state.  The next protected read, focus or explicit retry surfaces
+          // the unavailable boundary; no account is guessed from a failed
+          // probe.
+        }
+      } while (reconcileQueued.current);
+    } finally {
+      reconcileInFlight.current = false;
+    }
+  }, []);
 
   // One page-load session probe.  A transient network failure is presented by
   // the root entry as an in-place retry instead of pretending the operator is
@@ -66,18 +98,32 @@ export function AuthBoundary() {
     };
   }, [status, pathname]);
 
-  // Cached feature reads belong to one authenticated account.  A sign-out or
-  // account switch clears them before the next protected page can render.
+  // Interactive sign-in/sign-out in another tab is announced over the
+  // non-secret cross-tab channel.  A tab restored from the background also
+  // re-confirms the cookie because it may have missed an announcement while
+  // suspended.
+  useEffect(
+    () => subscribeSessionChange(() => void reconcileServerSession()),
+    [reconcileServerSession],
+  );
+
   useEffect(() => {
-    const current = account?.principalId ?? null;
-    if (
-      previousPrincipal.current !== null &&
-      previousPrincipal.current !== current
-    ) {
-      queryClient.clear();
+    if (status === "restoring") {
+      return;
     }
-    previousPrincipal.current = current;
-  }, [account?.principalId, queryClient]);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void reconcileServerSession();
+      }
+    };
+    const onFocus = () => void reconcileServerSession();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [status, reconcileServerSession]);
 
   // A rejected 401 leaves the operator on the active route behind the bounded
   // unauthorized state.  Record that exact supported route and its safe view

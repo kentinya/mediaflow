@@ -293,3 +293,59 @@ test("a host reset code sets a new Chinese password and revokes the existing Web
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 });
+
+test("a same-browser account switch reconciles the other tab before its next read", async ({
+  page,
+  request,
+}) => {
+  const ADMIN_PASSWORD = "跨标签管理员密码9";
+  const READONLY_PASSWORD = "只读用户密码2468";
+
+  const resetCode = await issueResetCode(request, "admin");
+  const reset = await request.post(`${BASE}/api/auth/reset`, {
+    data: { code: resetCode, newPassword: ADMIN_PASSWORD },
+  });
+  expect(reset.ok()).toBe(true);
+  const created = await request.post(`${BASE}/__harness__/create-account`, {
+    data: {
+      username: "readonly",
+      password: READONLY_PASSWORD,
+      role: "viewer",
+    },
+  });
+  expect(created.status()).toBe(201);
+
+  // Tab A reads the task center as the administrator.
+  await page.goto(`${BASE}/`);
+  await submitSignIn(page, "admin", ADMIN_PASSWORD);
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+  await page.goto(`${BASE}/operations`);
+  await expect(page.getByRole("heading", { name: "任务中心" })).toBeVisible();
+  const accountButton = page.getByRole("button", { name: "Account menu" });
+  await expect(accountButton).toContainText("admin");
+
+  // Tab B shares the cookie but ends the administrator session and signs in
+  // as the ordinary read-only account.
+  const second = await page.context().newPage();
+  await second.goto(`${BASE}/`);
+  await expect(
+    second.getByRole("button", { name: "Account menu" }),
+  ).toBeVisible();
+  await signOut(second);
+  await submitSignIn(second, "readonly", READONLY_PASSWORD);
+  await expect(second.getByRole("region", { name: "探索" })).toBeVisible();
+
+  // Returning to tab A confirms the server session before the next protected
+  // read.  The task-center path is preserved, but the page re-reads it as the
+  // current account rather than keeping the administrator identity/cache.
+  await page.bringToFront();
+  await expect(accountButton).toContainText("readonly");
+  await expect(accountButton).not.toContainText("admin");
+  await expect(page.getByRole("heading", { name: "任务中心" })).toBeVisible();
+  await page.getByRole("button", { name: "刷新" }).first().click();
+  await expect(accountButton).toContainText("readonly");
+  const session = await page.request.get(`${BASE}/api/auth/session`);
+  expect(session.status()).toBe(200);
+  expect((await session.json()).account.username).toBe("readonly");
+  await second.close();
+});
