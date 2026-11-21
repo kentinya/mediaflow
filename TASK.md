@@ -267,3 +267,25 @@ Authorized bug acceptance complete: NO
 - Ruff check/format、`py_compile`、`git diff --check` 与 governance check 通过。
 
 剩余风险：真实浏览器中的外部 HTTPS 探测由隔离夹具的本地传输承接，实际外网连接仍由 Python 传输分类用例覆盖；T4 全量、真实桌面/390px 截图及 Base 数据切换按分工留给 B。未推送、未部署。
+
+### B 第九次返工复核
+
+```text
+Reviewed Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Reviewed Head: 914d153ad06b709390f9a789a2f2c70f52d30e0c
+Reviewed Implementation: e6363c6bf4e7f0efc498f0800ce11f88123ab40b
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+- 上轮两处问题通过复验。Python 通知发布定向用例 6 项通过，覆盖测试 A 后应用 B 被拒绝、缺少成功测试证据时拒绝及原请求核实。真实 Python 浏览器的通知用例 2 项通过，覆盖编辑后读回，以及编辑提交成功但回包丢失时重连自动核实原请求。设置和自动化运行设置用例 20 项通过。
+- Python 全量执行 2326 项，7 项跳过，其余通过。Web 单测 104 个文件、1595 项通过，完整 Node 浏览器套件 276 项通过。生产 Web 构建、类型检查、Lint、Prettier、Ruff、Python 编译、依赖和示例配置验证均通过。Python wheel 独立安装后的冒烟及恢复用例通过。真实 Base 库副本复验中，状态读取及未确认的切换保持文件一致，确认后已发布修订、审计、任务及结果仍一致。Docker 空配置及媒体挂载旅程通过，包括隔离 HTTPS 接收端收到签名通知。
+- **新建通知重载后无法自动核实。** 从「通知 → 新建 Webhook」填写并完成签名测试，点击「应用更改」。真实后端返回 `200` 并发布了定义，仅丢弃浏览器回包，让第一次只读核实返回待核实。此时重载页面并以同一账号重新连接，页面显示空白新建表单，发出零次核实请求。浏览器仍保留待核实记录，SQLite 也读得到已发布定义。手动重新输入原标识符后，页面才查询原请求。本次只发出一次发布请求。`3e6b202b` 按用户输入的标识符保存请求身份，新建路由重载时没有标识符用于恢复。
+- **Docker 重启和发布安全验收仍调用旧草稿 API。** 将临时目录移到 Colima 可挂载的位置后，两套脚本都已启动真实服务。`scripts/docker_health_smoke_test.py:113` 的共用初始化调用了已退役的 `POST /api/configuration/drafts`，两套脚本均收到 `404` 并提前退出，后续安全和重启断言尚未执行。
+- 本地日志与截图位于 `.git/validation-evidence/914d153ad06b709390f9a789a2f2c70f52d30e0c/b-review/`。B 在修正候选上完成两条阻塞旅程和 T4 门禁。
+
+#### Developer 修复指导
+
+1. 新建页按当前账号和新建入口恢复待核实请求，从已保存的请求里取回原标识符。页面重新打开或重新连接时自动只读核实，核实期间阻止再次应用。复用现有通知签名测试夹具和原请求核实接口，覆盖「新建 → 签名测试 → 应用已提交但回包丢失 → 首次核实待定 → 整页重载 → 重新连接」，验证页面自动确认并打开已发布的定义，整个旅程只有一次发布。
+2. 将 `docker_health_smoke_test.py` 的共用配置初始化改为现有 `POST /api/configuration/publish`，沿用空配置 Docker 验收中的直接发布请求和生效检查。保留各调用方原有断言。Developer 复验共用初始化可以在真实容器中发布并读回 Active，B 负责两套完整 Docker 门禁。
