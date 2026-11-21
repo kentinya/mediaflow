@@ -56,10 +56,10 @@ def make_management_bootstrap(
 def make_deployment_configuration() -> dict:
     """Render the canonical media configuration input with container paths.
 
-    This document is imported through ``/api/configuration/drafts`` and
-    activated by the current lifecycle.  It is not a service runtime bootstrap;
-    it declares Local Storage roots and therefore needs the optional media-mount
-    overlay when the activated configuration is actually consumed.
+    This document is published through ``/api/configuration/publish``.  It is
+    not a service runtime bootstrap; it declares Local Storage roots and
+    therefore needs the optional media-mount overlay when the activated
+    configuration is actually consumed.
 
     The rendered document is the same portable input the managed export
     produces: deployment startup authority (the durable database locator and

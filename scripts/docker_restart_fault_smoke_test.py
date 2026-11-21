@@ -800,7 +800,9 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             source_bytes = source_file.read_bytes()
             intent_evidence = prepare_definition_intent(base, token, identity)
             identity = active_identity(base, token)
-            if source_file.read_bytes() != source_bytes or any(target_root.rglob("*")):
+            if source_file.read_bytes() != source_bytes or any(
+                path.is_file() for path in target_root.rglob("*")
+            ):
                 raise RuntimeError("checked enable mutated source/destination media")
             run([*command, "stop", "worker"], environment=environment)
 

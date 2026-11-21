@@ -139,6 +139,12 @@ def prepare_files(root: Path, token: str) -> tuple[Path, Path, Path, Path, Path]
     target.mkdir(parents=True)
     source.chmod(0o755)
     target.chmod(0o777)
+    # The portable example routes movies and TV into these MediaLibrary roots;
+    # a checked publication verifies that each configured root exists.
+    for library_root in ("Movies", "TV Shows"):
+        directory = target / library_root
+        directory.mkdir()
+        directory.chmod(0o777)
 
     config_file = root / "mediaflow.json"
     activation_file = root / "mediaflow.activation.json"
@@ -269,33 +275,30 @@ def smoke(project: str, image: str, keep: bool) -> None:
             base = f"http://127.0.0.1:{api_port}"
             wait_for_api(base, token)
             activation = json.loads(activation_file.read_text(encoding="utf-8"))
-            status, draft_body = http_request(
-                f"{base}/api/configuration/drafts",
+            status, active_body = http_request(
+                f"{base}/api/configuration/publish",
                 method="POST",
                 token=token,
                 body=json.dumps({"document": activation}).encode(),
             )
-            if status != 201:
-                raise RuntimeError(f"configuration Draft import returned HTTP {status}")
-            revision = json.loads(draft_body)["revisionId"]
-            status, validated_body = http_request(
-                f"{base}/api/configuration/revisions/{revision}/validate",
-                method="POST",
-                token=token,
-                body=b"{}",
-            )
-            validated = json.loads(validated_body)
-            if status != 200 or validated.get("status") != "validated":
-                raise RuntimeError(f"configuration validation failed: {validated}")
-            status, active_body = http_request(
-                f"{base}/api/configuration/revisions/{revision}/activate",
-                method="POST",
-                token=token,
-                body=json.dumps({"expectedVersion": validated["version"]}).encode(),
-            )
             active = json.loads(active_body)
-            if status != 200 or active.get("status") != "active":
-                raise RuntimeError(f"configuration activation failed: {active}")
+            if (
+                status != 200
+                or active.get("published") is not True
+                or active.get("status") != "active"
+            ):
+                raise RuntimeError(f"configuration publication failed: {active}")
+            status, status_body = http_request(f"{base}/api/configuration", token=token)
+            configuration = json.loads(status_body)
+            current = configuration.get("active") if isinstance(configuration, dict) else None
+            if (
+                status != 200
+                or not isinstance(current, dict)
+                or current.get("revisionId") != active.get("revisionId")
+            ):
+                raise RuntimeError(
+                    f"published Active was not readable back through the API: {configuration}"
+                )
 
             status, entry = http_request(f"{base}/")
             if status != 200 or b'<div id="root">' not in entry:

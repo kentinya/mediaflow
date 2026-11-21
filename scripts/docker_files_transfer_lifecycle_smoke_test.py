@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Docker proof: start before Active, checked-activate, then execute OpenList Move.
+"""Docker proof: start before Active, publish directly, then execute OpenList Move.
 
 The committed candidate's real API and resident Worker are used.  A bounded
 in-process HTTP service implements only the OpenList v4 endpoints needed by
@@ -19,7 +19,6 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 
@@ -238,68 +237,26 @@ def prepare(root: Path, api_token: str, openlist_token: str, port: int) -> tuple
 
 def checked_activate(base: str, token: str, config: Path) -> dict:
     document = json.loads(config.read_text(encoding="utf-8"))
-    status, draft = json_request(
-        base, "/api/configuration/drafts", token, method="POST", body={"document": document}
-    )
-    if status != 201:
-        raise RuntimeError(f"Draft import failed: HTTP {status}: {draft}")
-    revision = urllib.parse.quote(draft["revisionId"])
-    status, validated = json_request(
-        base, f"/api/configuration/revisions/{revision}/validate", token, method="POST", body={}
-    )
-    if status != 200:
-        raise RuntimeError(f"validation failed: HTTP {status}: {validated}")
-    evidence = {
-        "expectedVersion": validated["version"],
-        "expectedDigest": validated["digest"],
-    }
-    for storage_id in ("openlist",):
-        status, result = json_request(
-            base,
-            f"/api/configuration/revisions/{revision}/storage-check",
-            token,
-            method="POST",
-            body={**evidence, "storageId": storage_id},
-        )
-        if status != 200 or result.get("status") != "passed":
-            raise RuntimeError(f"Storage check failed: HTTP {status}: {result}")
-    status, result = json_request(
-        base,
-        f"/api/configuration/revisions/{revision}/recognition-strategy-test",
-        token,
-        method="POST",
-        body={**evidence, "resourceLibraryId": "source", "syntheticPath": "resident.mkv"},
-    )
-    if status != 200 or result.get("status") != "completed":
-        raise RuntimeError(f"strategy test failed: HTTP {status}: {result}")
-    status, result = json_request(
-        base,
-        f"/api/configuration/revisions/{revision}/destination-precheck",
-        token,
-        method="POST",
-        body={
-            **evidence,
-            "recognitionType": "C",
-            "sample": {
-                "title": "Resident",
-                "mediaType": "movie",
-                "year": 2026,
-                "genres": ["Test"],
-                "extension": "mkv",
-            },
-        },
-    )
-    if status != 200 or result.get("status") != "completed":
-        raise RuntimeError(f"destination precheck failed: HTTP {status}: {result}")
     status, active = json_request(
         base,
-        f"/api/configuration/revisions/{revision}/activate",
+        "/api/configuration/publish",
         token,
         method="POST",
-        body={"expectedVersion": validated["version"], "checked": True},
+        body={"document": document},
     )
-    if status != 200 or active.get("status") != "active":
-        raise RuntimeError(f"checked activation failed: HTTP {status}: {active}")
+    if status != 200 or active.get("published") is not True or active.get("status") != "active":
+        raise RuntimeError(f"configuration publication failed: HTTP {status}: {active}")
+    status, configuration = json_request(base, "/api/configuration", token)
+    current = configuration.get("active") if isinstance(configuration, dict) else None
+    if (
+        status != 200
+        or not isinstance(current, dict)
+        or current.get("revisionId") != active.get("revisionId")
+        or current.get("digest") != active.get("digest")
+    ):
+        raise RuntimeError(
+            f"published Active was not readable back through the API: {configuration}"
+        )
     return active
 
 

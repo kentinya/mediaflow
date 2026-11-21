@@ -109,6 +109,10 @@ def prepare_transfer_config(root: Path, admin_token: str) -> tuple[Path, Path, P
     target_root.mkdir(parents=True)
     source_root.chmod(0o755)
     target_root.chmod(0o777)
+    for library_root in ("Movies", "TV Shows"):
+        directory = target_root / library_root
+        directory.mkdir()
+        directory.chmod(0o777)
 
     generated = subprocess.check_output(
         [

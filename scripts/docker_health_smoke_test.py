@@ -18,7 +18,6 @@ import secrets
 import shutil
 import tempfile
 import time
-import urllib.parse
 from pathlib import Path
 
 from docker_smoke_test import (
@@ -107,35 +106,30 @@ def json_request(
 
 
 def activate_runtime(base: str, token: str, config_file: Path) -> dict:
+    """Publish one portable configuration through the current direct API."""
+
     document = json.loads(config_file.read_text(encoding="utf-8"))
-    status, draft = json_request(
+    status, active = json_request(
         base,
-        "/api/configuration/drafts",
+        "/api/configuration/publish",
         token,
         method="POST",
         body={"document": document},
     )
-    if status != 201:
-        raise RuntimeError(f"managed Draft import returned HTTP {status}: {draft}")
-    revision_id = draft["revisionId"]
-    status, validated = json_request(
-        base,
-        f"/api/configuration/revisions/{urllib.parse.quote(revision_id)}/validate",
-        token,
-        method="POST",
-        body={},
-    )
-    if status != 200 or validated.get("status") != "validated":
-        raise RuntimeError(f"managed Draft validation failed: {validated}")
-    status, active = json_request(
-        base,
-        f"/api/configuration/revisions/{urllib.parse.quote(revision_id)}/activate",
-        token,
-        method="POST",
-        body={"expectedVersion": validated["version"]},
-    )
-    if status != 200 or active.get("status") != "active":
-        raise RuntimeError(f"managed Draft activation failed: {active}")
+    if status != 200 or active.get("published") is not True or active.get("status") != "active":
+        raise RuntimeError(f"managed configuration publication failed: {active}")
+    revision_id = active.get("revisionId")
+    status, configuration = json_request(base, "/api/configuration", token)
+    current = configuration.get("active") if isinstance(configuration, dict) else None
+    if (
+        status != 200
+        or not isinstance(current, dict)
+        or current.get("revisionId") != revision_id
+        or current.get("digest") != active.get("digest")
+    ):
+        raise RuntimeError(
+            f"published Active was not readable back through the API: {configuration}"
+        )
     return active
 
 
