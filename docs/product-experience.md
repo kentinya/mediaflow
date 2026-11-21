@@ -25,8 +25,8 @@ Detailed superseded delivery notes are retained at
 下列旅程落实 `V2-RETIRE-001–010`，取代先前的 V1 共存、旧链接承接和废弃迁移格式义务。
 
 - **目标／入口：** 新实例四服务从最小管理 bootstrap 启动，无业务 JSON runtime 或媒体
-  挂载前置。用户连接当前 api.principals 身份，进入现有 V2 系统设置，显式创建／恢复
-  当前 Draft、完成适用检查并激活空或完整 Active；当前业务页保持直接 checked Save。
+  挂载前置。用户连接当前 api.principals 身份，进入现有 V2 系统设置，显式初始化空
+  配置或应用经检查的完整 Active；当前业务页保持直接 checked Save。
 - **可见状态／动作：** 探索、两种库、存储、规则、系统设置、自动化、任务中心和通知只
   提供当前能力；旧 /ui、/review、Library/Task/Job 地址、自动化旧创建／settings 链接
   使用普通未知路由／认证结果，无迁移卡、跳转或 V1 回退。当前正式深链和来源返回保持。

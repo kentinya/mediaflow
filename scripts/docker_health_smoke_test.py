@@ -4,9 +4,12 @@
 The script builds the exact image, starts an isolated four-service stack,
 activates the managed runtime through the authenticated API, observes the three
 health/readiness signals, stops and restarts the processing Worker, degrades a
-deployment dependency (missing API secret and inaccessible media mount), and
-verifies bounded fail-closed diagnostics and recovery.  It never reads
-production paths, credentials, Storage or Providers.
+deployment dependency (missing API secret) and the mounted media permission,
+and verifies bounded fail-closed diagnostics and recovery.  Media access is
+observed through the current Storage read check: the published Storage root is
+not an infrastructure health signal, so API liveness stays up while the check
+reports the denied access.  It never reads production paths, credentials,
+Storage or Providers.
 """
 
 from __future__ import annotations
@@ -118,19 +121,97 @@ def activate_runtime(base: str, token: str, config_file: Path) -> dict:
     )
     if status != 200 or active.get("published") is not True or active.get("status") != "active":
         raise RuntimeError(f"managed configuration publication failed: {active}")
-    revision_id = active.get("revisionId")
+    assert_current_active(base, token, active, stage="published Active was not readable back")
+    return active
+
+
+def assert_current_active(base: str, token: str, expected: dict, *, stage: str) -> None:
+    """Require the API to still report the exact immutable Active identity."""
+
     status, configuration = json_request(base, "/api/configuration", token)
     current = configuration.get("active") if isinstance(configuration, dict) else None
     if (
         status != 200
         or not isinstance(current, dict)
-        or current.get("revisionId") != revision_id
-        or current.get("digest") != active.get("digest")
+        or current.get("revisionId") != expected.get("revisionId")
+        or current.get("digest") != expected.get("digest")
     ):
+        raise RuntimeError(f"{stage}: current Active changed: {configuration}")
+
+
+def read_check_storage_id(config_file: Path) -> str:
+    """Return the read-only Local Storage the media-access check observes."""
+
+    document = json.loads(config_file.read_text(encoding="utf-8"))
+    storages = document.get("storages")
+    for storage in storages if isinstance(storages, list) else []:
+        if (
+            isinstance(storage, dict)
+            and str(storage.get("type", "")).casefold() == "local"
+            and storage.get("readOnly") is True
+            and isinstance(storage.get("id"), str)
+            and storage["id"].strip()
+        ):
+            return storage["id"]
+    raise RuntimeError("the generated configuration declares no read-only Local Storage")
+
+
+def storage_read_check(base: str, token: str, active: dict, storage_id: str) -> dict:
+    """Run the current zero-mutation Storage read check against the exact Active."""
+
+    status, evidence = json_request(
+        base,
+        f"/api/operations/storage-management/storage/{storage_id}/check",
+        token,
+        method="POST",
+        body={
+            "expectedRevisionId": active["revisionId"],
+            "expectedVersion": active.get("revisionSequence") or active["version"],
+        },
+    )
+    if status != 200 or not isinstance(evidence, dict):
         raise RuntimeError(
-            f"published Active was not readable back through the API: {configuration}"
+            f"Storage read check for {storage_id!r} failed: HTTP {status} {evidence}"
         )
-    return active
+    if evidence.get("revisionId") != active.get("revisionId") or evidence.get(
+        "revisionDigest"
+    ) != active.get("digest"):
+        raise RuntimeError(f"Storage read check did not bind the current Active: {evidence}")
+    if evidence.get("sideEffects") != "none":
+        raise RuntimeError(f"Storage read check reported side effects: {evidence}")
+    return evidence
+
+
+def wait_for_storage_check(
+    base: str,
+    token: str,
+    active: dict,
+    storage_id: str,
+    *,
+    status: str,
+    failure_category: str | None = None,
+) -> dict:
+    """Observe one Storage read-check outcome, allowing for mount propagation."""
+
+    last: dict = {}
+
+    def observed() -> bool:
+        nonlocal last
+        last = storage_read_check(base, token, active, storage_id)
+        if last.get("status") != status:
+            return False
+        return failure_category is None or last.get("failureCategory") == failure_category
+
+    try:
+        wait_until(
+            observed,
+            timeout=90.0,
+            interval=2.0,
+            description=f"Storage read check status={status}",
+        )
+    except RuntimeError as error:
+        raise RuntimeError(f"{error}; last evidence: {last}") from None
+    return last
 
 
 def readiness_assertions(base: str, token: str, config_file: Path) -> None:
@@ -254,6 +335,10 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
             if service_records(command, environment)["worker"].get("ID") != worker_identity:
                 raise RuntimeError("Worker container was replaced or restarted after activation")
 
+            print("Checking mounted media through the current Storage read check...")
+            storage_id = read_check_storage_id(activation_file)
+            wait_for_storage_check(base, token, active, storage_id, status="passed")
+
             print("Stopping the Worker and verifying no-Worker failure...")
             run([*command, "stop", "worker"], environment=environment)
 
@@ -275,11 +360,30 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
             environment_file.write_text(original_env)
             wait_for_service_health(command, environment, "api", expected="healthy")
 
-            print("Degrading the media mount permission and repairing it...")
+            print("Degrading the media mount permission and checking Storage access...")
             source_root.chmod(0o000)
-            wait_for_service_health(command, environment, "api", expected="unhealthy")
+            failed = wait_for_storage_check(
+                base,
+                token,
+                active,
+                storage_id,
+                status="failed",
+                failure_category="permission_denied",
+            )
+            if failed.get("retrySafe") is not True:
+                raise RuntimeError(f"Storage read check failure is not retry-safe: {failed}")
+            # The published Storage root is deliberately not an infrastructure
+            # health signal: the API process and /health stay alive while the
+            # bounded Storage read check reports the denied access.
+            status, health = json_request(base, "/health", token=None)
+            if status != 200 or health.get("processAlive") is not True:
+                raise RuntimeError(f"API liveness failed while media access was denied: {health}")
+            assert_current_active(base, token, active, stage="media access failure")
+            status, degraded_tasks = json_request(base, "/api/tasks?limit=100", token)
+            if status != 200 or degraded_tasks.get("items"):
+                raise RuntimeError("degraded media access created durable Tasks")
             source_root.chmod(0o755)
-            wait_for_service_health(command, environment, "api", expected="healthy")
+            wait_for_storage_check(base, token, active, storage_id, status="passed")
 
             status, tasks = json_request(base, "/api/tasks?limit=100", token)
             if status != 200 or tasks.get("items"):

@@ -191,12 +191,12 @@ when the host network is a trusted LAN or the port is behind an HTTPS reverse
 proxy. MediaFlow does not provide TLS.
 
 The container entrypoint performs a bounded preflight before each command: it
-verifies the config file and `/data` are present and writable, checks that every
-configured Local Storage root is a mounted directory with the intended
-read-only/read-write access, rejects host-root and Docker-socket paths, and only
-for the API command verifies that the referenced API token environment value is
-present. Preflight never scans media, calls a Provider, creates a Task,
-sends a notification, or mutates Storage.
+verifies the config file and `/data` are present and writable, checks every
+Local Storage root declared in the deployment configuration file for a mounted
+directory with the intended read-only/read-write access, rejects host-root and
+Docker-socket paths, and only for the API command verifies that the referenced
+API token environment value is present. Preflight never scans media, calls a
+Provider, creates a Task, sends a notification, or mutates Storage.
 
 Each Compose service also declares a bounded healthcheck. The healthcheck runs
 `python -m mediaflow.container_probe check --service <name>` inside the same
@@ -204,6 +204,14 @@ container and repeats the read-only preflight. The API additionally requests
 the loopback `/health` endpoint. The Worker additionally reads the shared runtime
 database and requires a live, schema-compatible registration advertising both
 ResourceLibrary and MediaLibrary transfer commands.
+
+Published Storage roots are deliberately not part of this probe: the
+deployment configuration is a management-only bootstrap, so the probe never
+sees them. Media access declared by a published Active is validated by checked
+publication and reported by the authenticated Storage read check and the
+ordinary Storage surfaces. A removed or unreadable mounted media root therefore
+leaves the API container healthy and `/health` answering `200`, while the read
+check returns its bounded `permission_denied` failure.
 
 Every resident service additionally publishes a **durable registration and
 heartbeat** in the shared runtime database, and the healthcheck requires one.
@@ -544,19 +552,29 @@ pinned context; those are distinct signals, not hidden failures.
   before starting the container. Create the file and retry.
 - **Missing media root:** only possible when the optional media overlay is
   applied. The overlay refuses to render and names `MEDIAFLOW_SOURCE_MEDIA_ROOT`
-  or `MEDIAFLOW_TARGET_MEDIA_ROOT`; container preflight reports a configured
-  Local Storage root that is not a mounted directory. Create the directory, or
-  drop the overlay for a configuration-only deployment, then retry.
-- **Inaccessible `/data` or media path:** preflight reports the exact directory
-  and whether it must be readable or writable. Fix UID/GID ownership or mount
-  authority and retry; MediaFlow never falls back to root, another path, or the
+  or `MEDIAFLOW_TARGET_MEDIA_ROOT`. A Local Storage root declared in the
+  deployment configuration is also checked at startup. A published Storage root
+  that is missing is reported by the checked publication (read-only Storage
+  check and destination precheck) and by the Storage page's read-only check, not
+  by container health. Create the directory, or drop the overlay for a
+  configuration-only deployment, then retry the check or publication.
+- **Inaccessible `/data`:** preflight reports the exact directory and the
+  container healthcheck marks the service unhealthy. Fix UID/GID ownership or
+  mount authority and retry; MediaFlow never falls back to root or another path.
+- **Inaccessible published media root:** the API container stays healthy and
+  `/health` keeps answering. The Storage page's `运行只读检查` (or the
+  authenticated storage-management check endpoint) reports `status: failed`
+  with `failureCategory: permission_denied`; the current Active revision and the
+  Task list are unchanged. Fix UID/GID ownership or mount authority, then rerun
+  the same read check. MediaFlow never falls back to root, another path, or the
   Docker socket.
 - **Missing API token:** the API preflight names the referenced environment
   variable and tells you to provide it in the mounted deployment environment
   file. Secret values are never echoed.
-- **Healthcheck becomes unhealthy after startup:** correct the named mount,
-  permission or environment-file reference, then `docker compose restart
-  <service>`. Healthcheck output is bounded and never contains secret values.
+- **Healthcheck becomes unhealthy after startup:** correct the named `/data`
+  mount, configuration-file or environment-file reference, then `docker compose
+  restart <service>`. Healthcheck output is bounded and never contains secret
+  values.
 - **Worker not ready:** `workers/readiness` reports the exact condition and
   next action. Start or restart the `worker` service with the current image and
   Active snapshot; MediaFlow never starts a Worker on the API's behalf and does
@@ -631,11 +649,14 @@ The health harness verifies the complete signal journey:
 python3 scripts/docker_health_smoke_test.py
 ```
 
-It starts an isolated healthy stack, activates the managed runtime through the
-authenticated API, observes healthy/ready signals, stops and restarts the
-Worker, verifies no-Worker/stale and ready transitions, degrades a media mount
-and the API secret reference, and confirms bounded recovery plus secret-free
-output.
+It starts an isolated healthy stack, publishes the canonical media
+configuration through the authenticated API, observes healthy/ready signals,
+stops and restarts the Worker, verifies no-Worker/stale and ready transitions,
+removes the API secret reference and restores it, and removes read access to the
+mounted source media to confirm the current Storage read check reports
+`permission_denied` while `/health` stays alive and the published Active and
+Task list are unchanged. Restoring the permission makes the same check pass
+again. Output stays secret-free.
 
 The restart harness verifies durable restart and fault behavior:
 

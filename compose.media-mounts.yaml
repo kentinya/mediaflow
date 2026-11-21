@@ -3,7 +3,7 @@
 # The default `compose.yaml` starts the API and all three resident services with
 # the application bootstrap file, the durable data volume and the deployment
 # environment file only.  That is enough to install MediaFlow, open V2 Settings,
-# create the first Draft and activate a valid empty baseline — none of which
+# and initialize a valid empty configuration — none of which
 # touches media.
 #
 # Actual Local Storage needs a real host directory.  Which one is a deployment

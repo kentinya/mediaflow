@@ -7,7 +7,7 @@ That is the shape every resident service starts from, and it needs no media
 mount and no pre-authored business configuration.
 
 ``--configuration-output`` additionally writes the canonical example as a
-configuration *input* document.  It is imported, checked and activated through
+configuration *input* document.  It is checked and published directly through
 the normal managed Configuration lifecycle; it is never passed to a service as
 its startup authority.
 
@@ -106,7 +106,7 @@ def main() -> int:
         action="store_true",
         help=(
             "print the canonical configuration input instead of the management bootstrap; "
-            "import/validate/activate it through the normal Configuration lifecycle"
+            "check and publish it directly through the current Configuration lifecycle"
         ),
     )
     parser.add_argument(
@@ -114,7 +114,7 @@ def main() -> int:
         type=Path,
         help=(
             "also write the canonical example as a managed configuration input; "
-            "import, validate and activate it through the normal Configuration lifecycle"
+            "check and publish it directly through the current Configuration lifecycle"
         ),
     )
     parser.add_argument(
