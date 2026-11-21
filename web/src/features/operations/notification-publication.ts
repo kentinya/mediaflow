@@ -46,7 +46,10 @@ export function notificationApplyScope(
   kind: "editor" | "create",
   webhookId: string,
 ): string {
-  return `${kind}:${webhookId}`;
+  // The create card is one per-principal entry. Its saved request contains the
+  // identifier the operator typed, so a reload that starts with an empty form
+  // can find the request it must reconcile instead of losing it.
+  return kind === "create" ? "create" : `editor:${webhookId}`;
 }
 
 export function readPendingNotificationApply(

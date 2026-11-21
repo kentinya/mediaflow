@@ -4482,6 +4482,97 @@ test("the Notification editor verifies a lost apply response after reconnect wit
   await expect(card.getByText(/最大尝试 8 次/)).toBeVisible();
 });
 
+test("a new Notification publication reconciles after a full reload without republishing", async ({
+  page,
+}) => {
+  const webhookId = "reload-webhook";
+  let publishRequests = 0;
+  let reconcileReads = 0;
+  let firstReconcileSeen: (() => void) | null = null;
+  const firstReconcile = new Promise<void>((resolve) => {
+    firstReconcileSeen = resolve;
+  });
+  await page.route(
+    "**/api/configuration/revisions/*/objects/webhooks",
+    async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      publishRequests += 1;
+      // The real Python server publishes the definition; only the browser
+      // response is lost.
+      await route.fetch();
+      await route.abort("failed");
+    },
+  );
+  await page.route("**/api/system/settings/reconcile?**", async (route) => {
+    reconcileReads += 1;
+    if (reconcileReads === 1) {
+      firstReconcileSeen?.();
+      firstReconcileSeen = null;
+      const submissionId =
+        new URL(route.request().url()).searchParams.get("submissionId") ?? "";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          state: "UNRESOLVED",
+          committed: false,
+          submissionId,
+          current: null,
+          nextAction: "no terminal durable outcome can be proven yet",
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await connect(page, ADMIN_TOKEN);
+  await page.getByRole("link", { name: "Notifications", exact: true }).click();
+  await expect(page).toHaveURL(/\/operations\/notifications$/);
+  await page.getByRole("link", { name: "新建 Webhook" }).click();
+  await expect(page).toHaveURL(/\/operations\/notifications\/webhooks\/new$/);
+  await page.getByLabel("标识符").fill(webhookId);
+  await page
+    .getByLabel("HTTPS 接收地址")
+    .fill("https://example.invalid/hooks/reload");
+  await page.getByLabel("密钥环境变量引用").fill("MEDIAFLOW_WEBHOOK_SECRET");
+  await page.getByRole("checkbox").first().check();
+  await page.getByRole("button", { name: "发送签名测试" }).click();
+  await expect(page.getByText(/签名测试成功/)).toBeVisible();
+  await page.getByRole("button", { name: "应用更改" }).click();
+  await firstReconcile;
+  await expect(page.getByText("应用结果待核实")).toBeVisible();
+  expect(publishRequests).toBe(1);
+
+  // The full reload starts with an empty create form and loses the memory-only
+  // token. Reconnecting with the same principal must find the retained request
+  // by account and entry, verify it read-only, and open the published definition.
+  await page.reload();
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(page).toHaveURL(
+    new RegExp(`/operations/notifications/webhooks/${webhookId}$`),
+  );
+  const dialog = page.getByRole("dialog", {
+    name: `Webhook ${webhookId}`,
+  });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("定义已发布", { exact: true })).toBeVisible();
+  expect(reconcileReads).toBeGreaterThanOrEqual(2);
+  expect(publishRequests).toBe(1);
+
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page
+      .locator(".mf-notification-list-card")
+      .filter({ hasText: webhookId })
+      .first(),
+  ).toBeVisible();
+});
+
 test("a settled Task publishes one outbox delivery the delivery pages read", async ({
   page,
   request,

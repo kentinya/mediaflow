@@ -69,6 +69,7 @@ function recordingFetch(
 
 afterEach(() => {
   cleanup();
+  window.sessionStorage.clear();
   authStore.clearToken();
   authStore.clearIntendedPath();
   vi.unstubAllGlobals();
@@ -594,6 +595,125 @@ describe("V2 Notification direct publication", () => {
       ),
     ).toHaveLength(1);
     expect(view.getByRole("button", { name: "应用更改" })).toBeDisabled();
+  });
+
+  it("restores a pending new-definition apply after a reload", async () => {
+    let publishWrites = 0;
+    let reconcileReads = 0;
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.method === "POST" &&
+        call.url === `/api/operations/notifications/webhooks/new-webhook/test`
+      ) {
+        return jsonResponse({
+          testId: "test-new-lost",
+          testEvidenceId: "evidence-new-lost",
+          webhook: webhookDocument({ id: "new-webhook" }),
+          revision: {
+            revisionId: ACTIVE_REVISION,
+            version: 3,
+            status: "active",
+          },
+          outcome: "success",
+          category: "http_204",
+          responseStatus: 204,
+          message: "delivered",
+          durableState: "no_delivery_created_no_configuration_change",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "apply the tested form",
+        });
+      }
+      if (
+        call.method === "POST" &&
+        call.url ===
+          `/api/configuration/revisions/${ACTIVE_REVISION}/objects/webhooks`
+      ) {
+        publishWrites += 1;
+        throw new TypeError("network lost after commit");
+      }
+      if (
+        call.url.startsWith("/api/system/settings/reconcile") &&
+        call.method === "GET"
+      ) {
+        reconcileReads += 1;
+        if (reconcileReads === 1) {
+          return jsonResponse({
+            state: "UNRESOLVED",
+            committed: false,
+            submissionId: "submission-new-lost",
+            current: null,
+            nextAction: "no terminal durable outcome can be proven yet",
+          });
+        }
+        return jsonResponse({
+          state: "COMMITTED",
+          committed: true,
+          submissionId: "submission-new-lost",
+          committedRevisionId: "revision-active-2",
+          committedRevisionVersion: 4,
+          current: null,
+          nextAction: "this exact submission published",
+        });
+      }
+      if (
+        call.method === "GET" &&
+        call.url === "/api/operations/notifications/webhooks/new-webhook"
+      ) {
+        return jsonResponse({
+          webhook: webhookDocument({ id: "new-webhook" }),
+          activeConfiguration: {
+            revisionId: "revision-active-2",
+            version: 4,
+            revisionSequence: 3,
+            status: "active",
+          },
+        });
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations/notifications/webhooks/new");
+    let view = within(await dialog());
+    await userEvent.clear(await view.findByLabelText("标识符"));
+    await userEvent.type(view.getByLabelText("标识符"), "new-webhook");
+    await userEvent.type(
+      view.getByLabelText("HTTPS 接收地址"),
+      "https://example.invalid/hooks/new",
+    );
+    await userEvent.type(
+      view.getByLabelText("密钥环境变量引用"),
+      "MEDIAFLOW_WEBHOOK_SECRET",
+    );
+    await userEvent.click(view.getAllByRole("checkbox")[0]);
+    await userEvent.click(view.getByRole("button", { name: "发送签名测试" }));
+    expect(await view.findByText(/签名测试成功/)).toBeVisible();
+    await userEvent.click(view.getByRole("button", { name: "应用更改" }));
+    expect(await view.findByText("应用结果待核实")).toBeVisible();
+    expect(publishWrites).toBe(1);
+    expect(reconcileReads).toBe(1);
+
+    // A full reload starts from an empty form; the retained request identity
+    // names the definition to reconcile instead of the form re-entry.
+    cleanup();
+    const reloaded = renderApp("/operations/notifications/webhooks/new");
+    await waitFor(() => {
+      expect(reloaded.router.state.location.pathname).toBe(
+        "/operations/notifications/webhooks/new-webhook",
+      );
+    });
+    view = within(await dialog());
+    expect(await view.findByText("定义已发布", { exact: true })).toBeVisible();
+    expect(reconcileReads).toBeGreaterThanOrEqual(2);
+    expect(publishWrites).toBe(1);
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "POST" &&
+          call.url ===
+            `/api/configuration/revisions/${ACTIVE_REVISION}/objects/webhooks`,
+      ),
+    ).toHaveLength(1);
   });
 
   it("does not render a fillable form when no Active configuration exists", async () => {

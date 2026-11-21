@@ -105,9 +105,6 @@ export function NotificationNewPage() {
   const verifyOutcomeRef = useRef<(pending: PendingNotificationApply) => void>(
     () => {},
   );
-  const guardRef = useRef<ReturnType<typeof useNotificationCardGuard> | null>(
-    null,
-  );
 
   const authGeneration = useAuthGeneration();
   const principalQuery = useQuery({
@@ -160,7 +157,7 @@ export function NotificationNewPage() {
         const createdId = result.model.id;
         // The bound model is the exact created identity; the known result is
         // delivered to the detail card even if its follow-up read is slow.
-        guardRef.current?.guardNavigation(() =>
+        guard.guardNavigation(() =>
           navigate({
             to: "/operations/notifications/webhooks/$webhookId",
             params: { webhookId: createdId },
@@ -245,6 +242,26 @@ export function NotificationNewPage() {
   });
 
   const busy = createMutation.isPending || testMutation.isPending || verifying;
+  const closeCard = () => {
+    void navigate({ to: "/operations/notifications" });
+  };
+  const dirty =
+    webhookId.trim().length > 0 || !sameWebhookForm(form, INITIAL_FORM);
+  const createInFlight = createMutation.isPending;
+  const guard = useNotificationCardGuard({
+    busy,
+    dirty,
+    onClose: closeCard,
+    onDiscard: () => {
+      setWebhookId("");
+      setForm(INITIAL_FORM);
+      setTouched(new Set());
+      setShowIssues(false);
+      setError(null);
+    },
+    firstFieldId: "notification-new-id",
+    fallbackFocusId: "notification-definitions-background",
+  });
 
   const verifyApplicationOutcome = async (
     pending: PendingNotificationApply,
@@ -301,7 +318,7 @@ export function NotificationNewPage() {
         void queryClient.invalidateQueries({
           queryKey: [notificationListQueryKey],
         });
-        guardRef.current?.guardNavigation(() =>
+        guard.guardNavigation(() =>
           navigate({
             to: "/operations/notifications/webhooks/$webhookId",
             params: { webhookId: pending.webhookId },
@@ -338,15 +355,15 @@ export function NotificationNewPage() {
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (principalId === null || webhookId.trim() === "") return;
-    const scope = notificationApplyScope("create", webhookId.trim());
+    if (principalId === null) return;
+    const scope = notificationApplyScope("create", "");
     const stored = readPendingNotificationApply(principalId, scope);
     if (stored === null) return;
     setWebhookId(stored.webhookId);
     setPendingApply((previous) => previous ?? stored);
     setAwaitingVerification(true);
     setReconciliation(null);
-  }, [principalId, webhookId]);
+  }, [principalId]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -376,30 +393,6 @@ export function NotificationNewPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [awaitingVerification, pendingApply, query.refetch]);
-
-  const closeCard = () => {
-    void navigate({ to: "/operations/notifications" });
-  };
-  const dirty =
-    webhookId.trim().length > 0 || !sameWebhookForm(form, INITIAL_FORM);
-  const createInFlight = createMutation.isPending;
-  const guard = useNotificationCardGuard({
-    busy,
-    dirty,
-    onClose: closeCard,
-    onDiscard: () => {
-      setWebhookId("");
-      setForm(INITIAL_FORM);
-      setTouched(new Set());
-      setShowIssues(false);
-      setError(null);
-    },
-    firstFieldId: "notification-new-id",
-    fallbackFocusId: "notification-definitions-background",
-  });
-  useEffect(() => {
-    guardRef.current = guard;
-  });
 
   const issues = webhookFormIssues(form);
   const testContext = `${form.url}\u0000${form.secretEnv}`;
@@ -562,10 +555,14 @@ export function NotificationNewPage() {
               busy ||
               readDegraded ||
               awaitingVerification ||
-              pendingApply !== null ||
-              testResult?.evidenceId === null ||
-              testResult?.evidenceId === undefined
+              pendingApply !== null
             ) {
+              return;
+            }
+            if (principalId === null) {
+              setError(
+                "还没有读到当前账号身份，无法保存可核实的请求标识；稍后重试。",
+              );
               return;
             }
             setShowIssues(true);
