@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
+Next Action: DEVELOPER FIXES TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -110,7 +110,62 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.1
   本 Task 的多角色账号管理属于后续 Slice 成果，B 应按本 Task 新链路使用隔离空库验收，
   不应以旧多角色脚本作为本 Task 的通过条件。真实 Compose 与 E2E 候选验收由 B 执行。
 
-B 评审结果待填写。
+#### B 评审结果
+
+```text
+Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..8c0e2c850de370e4c2f832deb3c1454b95f61ee1
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P0｜空库首页无法创建首位管理员，有效会话也无法恢复。** 使用仓库生成的最小配置启动
+  空 SQLite 库，主机成功签发设置码。服务端状态显示需要创建管理员，390px 浏览器打开
+  根地址只看到账号密码登录，没有设置码输入。通过正式设置 API 建立隔离夹具后，同一浏览器
+  新开任务中心仍跳到登录页，服务端确认 Cookie 对应的会话仍有效。
+- **P1｜已接受的中文密码无法在网页改密。** 初设接受中文密码，用户能用它从首页登录。
+  从账号菜单进入「改密码」并提交后，服务端返回 500，旧会话仍然有效。
+- **P1｜经 HTTPS 登录时，会话 Cookie 缺少 Secure。** 浏览器通过本地 TLS 反向代理
+  打开生产 Web，勾选保持登录并成功登录，真实会话 Cookie 有 HttpOnly 和到期时间，
+  缺少 Secure。
+- **P1｜非容器启动及新配置仍接收退役字段。** 以候选生成器创建最小部署配置，在隔离
+  目录用此前随仓示例的 `api.principals` 校验及发布业务配置，校验成功且发布结果是
+  Active。用原启动配置在本机执行 `mediaflow api serve` 也能启动。Compose 预检
+  已拒绝该字段，本机启动与新配置输入需要给出同样明确的删除指引。
+
+#### Developer 返工指导
+
+1. 在真实 Web 启动时触发一次 `/api/auth/status`，状态返回后再显示首位设置、登录或
+   继续已有会话。用现有根路由与共享认证边界处理重试和深链回跳。首位设置成功后进入
+   系统设置，退出后根入口显示登录。有效会话刷新及新标签保留原站内页面和允许的查询参数。
+   会话失效后，使用原有受理结果查询恢复业务上下文。
+2. 让改密和初设、登录、重置接受同一密码字符范围。用 UTF-8 字节处理新旧密码相等的
+   比较，沿用现有改密事务写入新密码并撤销旧会话。回归中文旧密码改为中文新密码、
+   同密码提示、新密码可登录和旧会话失效。
+3. 在生产 Waitress 入口落实部署指南的 HTTPS 代理配置。让经可信 TLS 代理的请求以
+   HTTPS 签发会话 Cookie，同时保留回环 HTTP。用真实生产监听器和 TLS 代理验证登录
+   及改密等同源写入，核对浏览器收到的 Cookie 属性。同步反向代理配置说明。
+4. 在当前启动和新配置输入的共同边界拒绝 `api.principals` 与 `api.tokenEnv`，
+   将提示指向具体应删除的键。覆盖本机启动、Compose 预检、`config validate`、
+   `config publish` 和系统设置的完整配置输入。验证拒绝后完整保留原数据库和 Active。
+5. 把现有浏览器测试夹具接到账号登录和会话，保留深链、权限和原请求核对的业务断言。
+   补上本 Task 已约定的真实 Python 浏览器用例，从打开空库首页开始，由 Web 入口读取
+   服务端认证状态。开发者按上节命令跑受影响测试，并执行
+   `.venv/bin/python -m unittest discover -s tests -p test_api_credentials.py`、
+   `.venv/bin/python -m unittest discover -s tests -p test_management_setup.py`，
+   以及 `web/` 下的
+   `npm run test:e2e -- tests/e2e/deep-link.spec.ts` 和
+   `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/web-account-auth.python.spec.ts`。
+
+生产 Web 构建通过。B 使用正式产物、Chromium、真实 Python 与隔离 SQLite 复现上述
+用户旅程。现有 `deep-link.spec.ts` 的定向用例 1 项失败，仍等待已退役的令牌表单。
+本轮按工作流在复现阻塞后结束验收，完整 T4、Compose、wheel、真实 Scheduler／Worker
+和原请求非重放验收留待修正候选。日志位于
+`.git/validation-evidence/8c0e2c850de370e4c2f832deb3c1454b95f61ee1/b-review/`。
+
+Slice 57 的 RO-1 首位设置、会话恢复、改密和 HTTPS 会话尚未达标。RO-2 的用户管理、
+角色与脚本令牌后续交付。RO-3 已提供空库在线入口，退役配置字段验收未达标，同版本重启和
+后台按当前账号权限处理原工作待实测。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
