@@ -165,3 +165,24 @@ Next: SAME TASK FIX LOOP
 #### Developer 修复指导
 
 从现有状态查询和部署入口完成切换旅程。先让操作者只读查看受影响的未发布修订及证据范围，按 Task 已约定的部署范围确认后再执行清理。沿本轮 Base 副本验证首次查看仍是 schema 11 且数据未变，确认后才切换为 12。沿用现有切换事务，再核对已发布历史、审计、任务固定引用、结果，以及两种切换失败的回滚。
+
+### B 第六次返工复核
+
+```text
+Reviewed Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Reviewed Head: 626f15648084bb9dd518991e7e330cedd39c6de3
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+- 上轮旧库切换阻塞已解决。用实际 Base 生成的库副本执行 `config status`，看到两份未发布修订和一份检查证据。状态查询和未带 `--confirm` 的 `config retire-unpublished` 执行后，SQLite 文件校验和均与操作前一致。确认后切到 schema 12，清除所列记录。已发布修订 ID、摘要、对应审计、任务固定引用和任务结果逐项一致。异常任务引用和 SQLite 删除失败两种情况下均拒绝切换，重开后逻辑内容与各自操作前一致。
+- Python 全量执行 2322 项，跳过 7 项，其余通过。Web 单测 104 个文件、1599 项通过。Node 设置与通知浏览器用例 13 项通过。生产 Web 构建、类型检查、Lint、Python 编译、依赖检查、两份示例配置验证和治理检查通过。日志及浏览器 trace 位于本地 `.git/validation-evidence/626f15648084bb9dd518991e7e330cedd39c6de3/b-review/`。
+- **真实浏览器验收仍在执行旧草稿旅程。** Chromium 连接真实 Python 和临时 SQLite，从「系统设置 → 日志」修改保留天数，页面显示「应用更改」。`web/tests/e2e/automation-settings.python.spec.ts:1308` 仍等待「保存到草稿」，30 秒超时，未执行到发布和读回断言。同文件仍有以草稿为目标的并发和丢回包用例，Task 指定的 `configuration-settings.python.spec.ts` 尚未提交。本次失败定位在浏览器规格，直接应用的真实验收仍待完成。
+- **质量检查失败。** `ruff check` 报 `mediaflow/interfaces/service_api.py:3075` 超长，`ruff format --check` 报 `tests/test_configuration_snapshot.py`。Web Prettier 报 `ConfigurationPage.tsx`、`ConfigurationPage.test.tsx` 和 `configuration-settings.spec.ts`。
+- 完整 Node 浏览器门禁、真实设置页直接应用规格及适用的打包和生产验证待 B 在修正候选上完成。
+
+#### Developer 修复指导
+
+1. 用现有真实 Python Playwright 配置和夹具，把设置页的旧草稿用例迁移到 `web/tests/e2e/configuration-settings.python.spec.ts`，保留原文件的自动化业务用例。沿「系统设置 → 日志 → 修改保留天数 → 应用更改 → 读回当前生效值」覆盖桌面及 390px 窄屏。把原检查断言迁移到当前检查和发布入口，确认检查拒绝时仍显示原生效值并保留输入。两个会话在同一生效基线编辑同一字段时，只允许一次发布并保留另一会话的输入。丢回包测试让真实后端先提交，再从页面重连，确认自动只读核实原请求、显示对应结果，发布请求共一次。
+2. 修复上列 Ruff 和 Prettier 问题。用 `playwright.python.automation.config.ts` 跑迁移后的设置规格及直接受影响的自动化浏览器用例，运行相关格式检查，并在同一 Task 记录实际结果。
