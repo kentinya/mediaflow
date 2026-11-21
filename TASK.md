@@ -363,3 +363,23 @@ Authorized bug acceptance complete: NO
 - 本轮测试实际耗时约 3 分钟，低于本轮开发总时间的 30%。
 
 剩余风险：T4 全量、真实桌面及 390px 截图验收、Base 数据切换按 Task 分工留给 B；本轮未运行全量 Python/Node 套件，未推送、未部署。
+
+### B 第十一次返工复核
+
+```text
+Reviewed Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Reviewed Head: 74f6ad99ccac6dc75c87f44919253ecf26532619
+Reviewed Implementation: cdaa5d16cbfa90d4ebd3d7f0f702ed75c1e98821
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+- 自动化列表复验通过。管理员打开列表并按启用状态筛选，实际列表响应只含已发布定义，旧草稿筛选返回 `400`。编辑保存后重新打开可读回新值，移除定义后仍可查看历史。真实 Python 浏览器相关用例 4 项通过。
+- **通知和设置相关的当前接口仍依赖旧草稿契约。** 从侧栏进入「通知」，再打开已有 Webhook 的编辑卡或新建卡，真实后端的列表、列表项和定义详情都还返回 `draftState`。通知列表解析要求该字段，新建卡仍从该字段选择修订基线。编辑读请求取得的是已发布版本，但首轮退役加入的转换层仍把它包装成状态为 `validated` 的草稿模型。进入「系统设置」后，当前状态和版本详情都还接收 `setupDraft: null`。进入「存储管理」，实际清单还返回 `setup.setupDraftExists: false`，前端把它当成必填字段。这些普通入口仍生产或依赖旧结构，未达到彻底退役且不设兼容转接的要求。
+- 真实设置浏览器用例 5 项通过，包括桌面和 390px 直接应用、并发拒绝和丢回包核实。真实通知用例 3 项通过，包括签名测试后应用及丢回包重连。生产 Web 构建、治理和完整范围的 `git diff --check` 通过。证据位于 `.git/validation-evidence/74f6ad99ccac6dc75c87f44919253ecf26532619/b-review/`。本轮确认接口阻塞后结束定向验收，候选的 T4 全量门禁及 Docker 健康旅程待完成。
+
+#### Developer 修复指导
+
+1. 通知列表、详情、新建和编辑直接使用已发布定义、当前生效版本与发布权限。同步删除后端 `draftState`、前端的草稿解析与把已发布版本转换成草稿的适配层。通过真实「通知 → 编辑／新建 → 签名测试 → 应用 → 读回」核对正常响应和表单。沿现有丢回包测试保留对原请求的一次提交及重连核实断言。
+2. 从配置状态、版本详情、管理就绪响应和存储清单删除 `setupDraft` 与 `setupDraftExists`。同步前端模型及夹具。沿「系统设置」和「存储管理 → 去完成设置」核对正常和未初始化场景，未初始化引导指向现有的空配置初始化。
