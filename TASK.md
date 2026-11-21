@@ -241,3 +241,29 @@ Next: SAME TASK FIX LOOP
 
 1. 将通知新建和编辑的现有签名测试接到同一发布检查。成功结果要能在后端对应到本次定义、被测地址、密钥引用和该次编辑使用的生效基线。提交时核对这份结果。沿现有通知详情公布的测试和编辑入口复测，测试 A 后改为 B 时应拒绝应用且保持生效配置与发布审计，测试 B 后再应用才产生一份新生效配置。普通应用仍发送零次探测，测试结果只保留核验所需的信息。
 2. 通知表单应用复用现有配置发布的请求身份和只读核实机制。发布回包丢失时保留原请求身份，核实期间保持应用按钮不可提交。重连后自动核实该次请求，分别显示本次应用结果和当前生效定义。沿真实页面复测「编辑 → 签名测试 → 应用提交成功但回包丢失 → 重连」，断言原请求可确认且发布总数为一次。
+
+### Developer 第九轮修复报告
+
+```text
+Task Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Candidate: e6363c6bf4e7f0efc498f0800ce11f88123ab40b
+Implementation: 3e6b202b6cf4e2ebd9ef271cace94c39b2b36dfc
+Decision: READY FOR B REVIEW
+Authorized bug acceptance complete: NO
+```
+
+- 通知新建与编辑的签名测试现在提交当前表单及精确生效基线。成功探测在服务端留下有界证据，只含定义 ID、被测地址、密钥引用、操作者和基线身份；提交时在暂存候选前核对同一表单。先测试 A 再改为 B 会以 `409` 拒绝，Active 与发布审计不变；测试 B 后再应用才生成一份新生效配置。应用本身不发送探测，证据只保留核验所需信息。
+- 通知新建和编辑的应用请求携带 `submissionId`，发布审计记录该身份。回包丢失时保留原请求，应用按钮保持阻止，自动及重连后只用同一只读端点核实；页面分别显示本次请求结果与当前生效定义，成功核实后刷新列表。首次核实为 `UNRESOLVED` 时保留身份，重连继续同一核实，发布请求总数保持一次。
+- 创建表单复用同一请求身份、核实与按钮阻止语义。真实 Python 通知浏览器用例增加「签名测试 → 应用回包丢失 → 首次核实无结果 → 重连自动确认 → 列表读回」链路；正常编辑链路继续从列表读回当前定义。
+- 相关旧草稿式 Webhook 测试夹具改为激活后经签名测试和证据应用；不安全定义仍由规范校验返回 `400`。Pokémon 运行器改为通过真实 API 的本地签名传输承接一次探测，仍由真实 Python 签名与证据门禁校验。
+
+实际结果：
+
+- `.venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_configuration_status tests.test_configuration_package_exchange tests.test_configuration_destination_activation tests.test_system_settings_management tests.test_automation_settings_management tests.test_v2_notification_operations tests.test_webhook_management tests.test_webhook_url_security tests.test_notification_delivery_management`：217 项通过。
+- 最终定向 `.venv/bin/python -m unittest tests.test_v2_notification_operations tests.test_webhook_management tests.test_webhook_url_security tests.test_notification_delivery_management`：58 项通过。
+- `web/` 的 `npm run test -- run src/features/operations/NotificationRouter.test.tsx`：6 项通过；`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 通过。
+- `npm run test:e2e -- tests/e2e/notifications.spec.ts`：9 项通过。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "Notifications page edits|lost apply response"`：2 项通过。
+- Ruff check/format、`py_compile`、`git diff --check` 与 governance check 通过。
+
+剩余风险：真实浏览器中的外部 HTTPS 探测由隔离夹具的本地传输承接，实际外网连接仍由 Python 传输分类用例覆盖；T4 全量、真实桌面/390px 截图及 Base 数据切换按分工留给 B。未推送、未部署。
