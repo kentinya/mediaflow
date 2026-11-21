@@ -32,8 +32,13 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
     CONFIGURATION_SCHEMA_VERSION,
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION as RUNTIME_SCHEMA_VERSION
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import (
+    SCHEMA_VERSION,
+    SQLiteTaskRepository,
+)
+from mediaflow.infrastructure.sqlite_runtime import (
+    SCHEMA_VERSION as RUNTIME_SCHEMA_VERSION,
+)
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_configuration_objects import admit_organize_job, example_document, request
 
@@ -976,7 +981,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 # Runtime schema 43 adds durable scope continuations; schema
                 # 44 links exact-Preview recovery to the paused source Task and
                 # schema 54 adds the Task-owned scheduling facts.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 58)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, SCHEMA_VERSION)
 
     def test_api_apply_requires_activation_authority_and_publishes_checked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

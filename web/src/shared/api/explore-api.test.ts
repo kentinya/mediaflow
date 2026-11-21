@@ -84,9 +84,7 @@ describe("request construction", () => {
     expect(url).toBe(
       "/api/explore/browse?mediaType=tv&sort=rating&genreId=18&originalLanguage=zh&year=2020&minRating=7&minVotes=300&page=3",
     );
-    expect(new Headers(init.headers).get("Authorization")).toBe(
-      `Bearer ${TOKEN}`,
-    );
+    expect(new Headers(init.headers).get("Authorization")).toBeNull();
     expect(init.method).toBe("GET");
     expect(init.body).toBeUndefined();
   });

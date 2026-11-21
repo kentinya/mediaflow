@@ -8,7 +8,23 @@ import {
   browseContextId,
 } from "../../features/explore/explore-query";
 
-const TOKEN = "boundary-connect-token";
+function anonymous() {
+  authStore.completeSessionRestore({
+    firstAdministratorRequired: false,
+    configurationRequired: true,
+    account: null,
+  });
+}
+
+function account() {
+  authStore.setSession({
+    principalId: "account-1",
+    accountId: "account-1",
+    username: "admin",
+    roles: ["admin"],
+    permissions: ["read"],
+  });
+}
 
 function stubFetch(implementation: typeof fetch): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(implementation);
@@ -32,44 +48,49 @@ afterEach(() => {
 
 describe("AuthBoundary", () => {
   it("redirects an unauthenticated deep route to entry and preserves the intended path", async () => {
+    anonymous();
     renderApp("/medialib/files");
     // AuthBoundary redirects to / and stores the supported MediaLibrary Files
     // route as the intended continuation target.
-    expect(await screen.findByLabelText("API token")).toBeVisible();
+    expect(await screen.findByLabelText("Login name")).toBeVisible();
     expect(authStore.getIntendedPath()).toBe("/medialib/files");
     expect(
-      await screen.findByRole("heading", { name: "V2 entry" }),
+      await screen.findByRole("heading", { name: "Sign in" }),
     ).toBeVisible();
   });
 
   it("records no intention for a retired route", async () => {
     for (const path of ["/library/files", "/review"]) {
       cleanup();
+      anonymous();
       renderApp(path);
       expect(
         await screen.findByRole("heading", { name: "Route not found" }),
       ).toBeVisible();
       expect(authStore.getIntendedPath()).toBeNull();
-      expect(screen.queryByLabelText("API token")).toBeNull();
+      expect(screen.queryByLabelText("Login name")).toBeNull();
     }
   });
 
   it("redirects an unauthenticated Explore deep entry and preserves /explore", async () => {
+    anonymous();
     renderApp("/explore");
-    expect(await screen.findByLabelText("API token")).toBeVisible();
+    expect(await screen.findByLabelText("Login name")).toBeVisible();
     expect(authStore.getIntendedPath()).toBe("/explore");
     expect(
-      await screen.findByRole("heading", { name: "V2 entry" }),
+      await screen.findByRole("heading", { name: "Sign in" }),
     ).toBeVisible();
   });
 
   it("does not register an intention when entering from the root", async () => {
+    anonymous();
     renderApp("/");
     expect(authStore.getIntendedPath()).toBeNull();
-    expect(await screen.findByLabelText("API token")).toBeVisible();
+    expect(await screen.findByLabelText("Login name")).toBeVisible();
   });
 
   it("ignores unknown routes and does not set an intended path", async () => {
+    anonymous();
     renderApp("/does-not-exist");
     expect(authStore.getIntendedPath()).toBeNull();
     expect(
@@ -101,7 +122,7 @@ describe("AuthBoundary", () => {
       }
       throw new Error(`unexpected test request: ${url}`);
     });
-    authStore.setToken("boundary-token");
+    account();
     const { router } = renderApp("/medialib/files");
     expect(authStore.getIntendedPath()).toBeNull();
     // The explicit empty list is what produces the empty state; a still-pending
@@ -110,32 +131,47 @@ describe("AuthBoundary", () => {
       await screen.findByRole("heading", { name: "尚未添加媒体库" }),
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/medialib/files");
-    expect(authStore.getToken()).toBe("boundary-token");
+    expect(authStore.getToken()).toBe("account-1");
     expect(authStore.getIntendedPath()).toBeNull();
-    expect(screen.queryByLabelText("API token")).toBeNull();
+    expect(screen.queryByLabelText("Login name")).toBeNull();
   });
 
   it("replaces an earlier intention with the operator's newest route choice", async () => {
     const user = userEvent.setup();
-    const fetchMock = stubFetch(async () => jsonResponse({}, 503));
+    const fetchMock = stubFetch(async (input) => {
+      if (String(input) === "/api/auth/login") {
+        return jsonResponse({
+          account: {
+            principalId: "account-1",
+            accountId: "account-1",
+            username: "admin",
+            roles: ["admin"],
+            permissions: ["read"],
+          },
+        });
+      }
+      return jsonResponse({}, 503);
+    });
+    anonymous();
     renderApp("/medialib/files");
-    expect(await screen.findByLabelText("API token")).toBeVisible();
+    expect(await screen.findByLabelText("Login name")).toBeVisible();
     expect(authStore.getIntendedPath()).toBe("/medialib/files");
 
     // While still unauthenticated the operator explicitly picks Operations
     // from the shell navigation. The boundary records the newest supported
     // route instead of keeping the stale MediaLibrary intention, and returns to
-    // the connection boundary.
+    // the sign-in boundary.
     await user.click(screen.getByRole("link", { name: "任务中心" }));
-    expect(await screen.findByLabelText("API token")).toBeVisible();
+    expect(await screen.findByLabelText("Login name")).toBeVisible();
     expect(authStore.getIntendedPath()).toBe("/operations");
 
-    // Connecting continues to the newest explicit choice. Operations is a real
+    // Signing in continues to the newest explicit choice. Operations is a real
     // V2 workspace now, so the intended route renders its own bounded state
     // (here the API is unavailable) instead of a migration placeholder.
-    await user.type(screen.getByLabelText("API token"), TOKEN);
-    await user.click(screen.getByRole("button", { name: "Connect" }));
-    await waitFor(() => expect(authStore.getToken()).toBe(TOKEN));
+    await user.type(screen.getByLabelText("Login name"), "admin");
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(authStore.getToken()).toBe("account-1"));
     expect(authStore.getIntendedPath()).toBeNull();
     expect(
       await screen.findByRole("heading", { name: "Operations unavailable" }),

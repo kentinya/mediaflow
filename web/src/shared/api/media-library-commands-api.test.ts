@@ -124,7 +124,7 @@ describe("submitMediaLibraryDirectCommand", () => {
       name: "Inception (2010)",
     });
     const headers = init.headers as Record<string, string>;
-    expect(headers.Authorization).toBe(`Bearer ${TOKEN}`);
+    expect(headers.Authorization).toBeUndefined();
     expect(headers["Content-Type"]).toBe("application/json");
   });
 

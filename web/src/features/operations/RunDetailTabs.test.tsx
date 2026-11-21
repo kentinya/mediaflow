@@ -2596,7 +2596,7 @@ describe("selected-run detail tabs", () => {
 
     expect(
       await screen.findByText(
-        "The connected API principal does not have permission to view this area.",
+        "The signed-in account does not have permission to view this area.",
       ),
     ).toBeVisible();
   });

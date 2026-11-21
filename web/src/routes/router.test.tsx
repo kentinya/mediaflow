@@ -93,7 +93,7 @@ describe("Task55.1 retired Web routes", () => {
         await screen.findByRole("heading", { name: "Route not found" }),
       ).toBeVisible();
       expect(authStore.getIntendedPath()).toBeNull();
-      expect(screen.queryByLabelText("API token")).toBeNull();
+      expect(screen.queryByLabelText("Login name")).toBeNull();
       expect(vi.mocked(fetch)).not.toHaveBeenCalled();
     },
   );

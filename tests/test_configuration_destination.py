@@ -35,8 +35,13 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
     CONFIGURATION_SCHEMA_VERSION,
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION as RUNTIME_SCHEMA_VERSION
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import (
+    SCHEMA_VERSION,
+    SQLiteTaskRepository,
+)
+from mediaflow.infrastructure.sqlite_runtime import (
+    SCHEMA_VERSION as RUNTIME_SCHEMA_VERSION,
+)
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_configuration_objects import example_document, request
 
@@ -683,7 +688,7 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                     ).fetchone()[0]
                 self.assertEqual(marker, CONFIGURATION_SCHEMA_VERSION)
                 # A same-version reopen keeps the current structure and marker.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 58)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, SCHEMA_VERSION)
 
 
 if __name__ == "__main__":

@@ -2529,7 +2529,7 @@ button.mf-grid-button {
 }
 
 /* The reference account control is the visible auth affordance. Keep the
-   memory-only status in the DOM for diagnostics without displacing the
+   signed-in status in the DOM for diagnostics without displacing the
    canonical top-bar geometry. */
 .mf-shell-topbar .mf-auth-state {
   display: none;
@@ -11630,4 +11630,59 @@ tr[aria-selected="true"] {
 }
 .mf-settings-adoption .mf-table {
   min-width: 720px;
+}
+
+.mf-checkbox {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}
+
+.mf-entry-context {
+  color: var(--mf-text-muted, #55606f);
+  font-size: 0.9rem;
+}
+
+.mf-account-menu {
+  position: absolute;
+  z-index: 40;
+  right: 1rem;
+  top: 3.5rem;
+  display: grid;
+  gap: 0.35rem;
+  min-width: 12rem;
+  padding: 0.75rem;
+  border: 1px solid var(--mf-border, #d6dbe3);
+  border-radius: 0.6rem;
+  background: var(--mf-surface, #fff);
+  box-shadow: 0 0.6rem 1.6rem rgb(20 30 45 / 18%);
+}
+
+.mf-account-menu a,
+.mf-account-menu button {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.5rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.mf-account-menu a:hover,
+.mf-account-menu button:hover,
+.mf-account-menu a:focus-visible,
+.mf-account-menu button:focus-visible {
+  background: var(--mf-surface-raised, #eef2f7);
+}
+
+.mf-account-menu-identity {
+  margin: 0 0 0.25rem;
+  font-weight: 600;
 }

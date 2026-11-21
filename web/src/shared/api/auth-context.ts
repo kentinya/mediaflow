@@ -1,12 +1,12 @@
 /**
- * React binding for the memory-only auth store.
+ * React binding for the browser account/session store.
  */
 
 import { useSyncExternalStore } from "react";
 import { authStore } from "./auth-store";
 import type { DestinationPath } from "../navigation/destination-model";
 
-/** The in-memory API-principal token, or null when not connected. */
+/** Non-secret account identity marker, or null when not signed in. */
 export function useAuthToken(): string | null {
   return useSyncExternalStore(
     authStore.subscribe,
@@ -51,6 +51,48 @@ export function useIntendedSearch(): string | null {
   return useSyncExternalStore(
     authStore.subscribe,
     authStore.getIntendedSearch,
+    () => null,
+  );
+}
+
+/** The current server-account projection, or null when anonymous/restoring. */
+export function useAuthAccount() {
+  return useSyncExternalStore(
+    authStore.subscribe,
+    authStore.getAccount,
+    () => null,
+  );
+}
+
+/** Session restoration state; protected routes wait while "restoring". */
+export function useSessionStatus() {
+  return useSyncExternalStore(
+    authStore.subscribe,
+    authStore.getSessionStatus,
+    () => "restoring" as const,
+  );
+}
+
+export function useFirstAdministratorRequired(): boolean {
+  return useSyncExternalStore(
+    authStore.subscribe,
+    authStore.getFirstAdministratorRequired,
+    () => false,
+  );
+}
+
+export function useConfigurationRequired(): boolean {
+  return useSyncExternalStore(
+    authStore.subscribe,
+    authStore.getConfigurationRequired,
+    () => true,
+  );
+}
+
+export function useRestoreError() {
+  return useSyncExternalStore(
+    authStore.subscribe,
+    authStore.getRestoreError,
     () => null,
   );
 }

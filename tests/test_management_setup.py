@@ -13,10 +13,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
+from mediaflow.application.accounts import AccountService, hash_password
 from mediaflow.application.configuration_snapshot import (
     ManagedConfigurationService,
     build_first_setup_starter_document,
 )
+from mediaflow.domain.accounts import Account
 from mediaflow.domain.configuration_integrity import (
     MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
     canonical_document_digest,
@@ -26,7 +28,7 @@ from mediaflow.domain.configuration_management import (
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
 )
-from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.security import ApiPermission, ApiRole, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import (
     is_minimal_management_bootstrap,
@@ -39,7 +41,7 @@ from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 
-def request(api, path, *, method="GET", token="admin-token", body=None):
+def request(api, path, *, method="GET", token="admin-token", body=None, cookie=None, origin=None):
     raw = b"" if body is None else json.dumps(body).encode("utf-8")
     query = ""
     if "?" in path:
@@ -55,6 +57,10 @@ def request(api, path, *, method="GET", token="admin-token", body=None):
     }
     if token is not None:
         environ["HTTP_AUTHORIZATION"] = f"Bearer {token}"
+    if cookie is not None:
+        environ["HTTP_COOKIE"] = cookie
+    if origin is not None:
+        environ["HTTP_ORIGIN"] = origin
     value = b"".join(api(environ, lambda status, headers: statuses.append(status)))
     return int(statuses[0].split()[0]), json.loads(value)
 
@@ -118,7 +124,11 @@ class ManagementSetupTests(unittest.TestCase):
     def test_fresh_readiness_and_system_projection_are_bounded(self) -> None:
         status, health = request(self.api, "/health", token=None)
         self.assertEqual(status, 200)
-        self.assertEqual(health, {"processAlive": True, "status": "ok"})
+        self.assertEqual(health["status"], "ok")
+        self.assertIs(health["processAlive"], True)
+        self.assertIn("firstAdministratorRequired", health)
+        self.assertIn("configurationRequired", health)
+        self.assertNotIn("token", json.dumps(health).casefold())
 
         status, readiness = request(self.api, "/api/management/readiness")
         self.assertEqual(status, 200)
@@ -216,23 +226,49 @@ class ManagementSetupTests(unittest.TestCase):
                 return None
 
             def serve_forever(self):
+                cookie = f"mediaflow_session={admin_grant.token}"
                 self.health = request(self.app, "/health", token=None)
-                self.readiness = request(self.app, "/api/management/readiness")
-                self.configuration = request(self.app, "/api/configuration")
+                self.readiness = request(
+                    self.app, "/api/management/readiness", token=None, cookie=cookie
+                )
+                self.configuration = request(
+                    self.app, "/api/configuration", token=None, cookie=cookie
+                )
                 _, created = request(
                     self.app,
                     "/api/configuration/initialize",
                     method="POST",
                     body={},
+                    token=None,
+                    cookie=cookie,
+                    origin="http://127.0.0.1",
                 )
                 self.activated = (201, created)
                 self.scan_service_ready = False
 
         with tempfile.TemporaryDirectory() as directory:
             bootstrap = json.loads(json.dumps(self.bootstrap))
-            bootstrap["persistence"]["databasePath"] = str(Path(directory, "api.sqlite3"))
+            database = str(Path(directory, "api.sqlite3"))
+            bootstrap["persistence"]["databasePath"] = database
             config = Path(directory, "bootstrap.json")
             config.write_text(json.dumps(bootstrap), encoding="utf-8")
+            with SQLiteTaskRepository(database) as task_repository:
+                now = datetime.now(UTC)
+                task_repository.create_account(
+                    Account(
+                        "fresh-admin",
+                        "admin",
+                        (ApiRole.ADMIN,),
+                        True,
+                        now,
+                        now,
+                        now,
+                    ),
+                    hash_password("correct-horse"),
+                )
+                admin_grant = AccountService(task_repository).login(
+                    username="admin", password="correct-horse", remember=False
+                )
             server = Server()
 
             def make_server(_host, _port, app):
@@ -269,7 +305,11 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertFalse(hasattr(server.app, "_file_index"))
         self.assertEqual(server.activated[0], 201)
         self.assertFalse(server.scan_service_ready)
-        self.assertEqual(server.health, (200, {"processAlive": True, "status": "ok"}))
+        self.assertEqual(server.health[0], 200)
+        self.assertEqual(server.health[1]["status"], "ok")
+        self.assertIs(server.health[1]["processAlive"], True)
+        self.assertIs(server.health[1]["firstAdministratorRequired"], False)
+        self.assertIs(server.health[1]["configurationRequired"], True)
         self.assertEqual(server.readiness[0], 200)
         self.assertTrue(server.readiness[1]["managementReady"])
         self.assertTrue(server.readiness[1]["setupRequired"])
@@ -646,10 +686,16 @@ class ManagementSetupTests(unittest.TestCase):
 
             def serve_forever(self):
                 self.viewer_status = request(
-                    self.app, "/api/configuration/status", token="viewer-token"
+                    self.app,
+                    "/api/configuration/status",
+                    token=None,
+                    cookie=f"mediaflow_session={viewer_grant.token}",
                 )
                 self.admin_status = request(
-                    self.app, "/api/configuration/status", token="admin-token"
+                    self.app,
+                    "/api/configuration/status",
+                    token=None,
+                    cookie=f"mediaflow_session={admin_grant.token}",
                 )
 
         with tempfile.TemporaryDirectory() as directory:
@@ -695,6 +741,32 @@ class ManagementSetupTests(unittest.TestCase):
             )
             repository.close()
 
+            with SQLiteTaskRepository(runtime) as task_repository:
+                accounts = AccountService(task_repository)
+                now = datetime.now(UTC)
+                for account_id, username, role in (
+                    ("admin-account", "admin", ApiRole.ADMIN),
+                    ("viewer-account", "viewer", ApiRole.VIEWER),
+                ):
+                    task_repository.create_account(
+                        Account(
+                            account_id,
+                            username,
+                            (role,),
+                            True,
+                            now,
+                            now,
+                            now,
+                        ),
+                        hash_password("correct-horse"),
+                    )
+                admin_grant = accounts.login(
+                    username="admin", password="correct-horse", remember=False
+                )
+                viewer_grant = accounts.login(
+                    username="viewer", password="correct-horse", remember=False
+                )
+
             server = Server()
 
             def make_server(_host, _port, app):
@@ -704,7 +776,7 @@ class ManagementSetupTests(unittest.TestCase):
             with (
                 patch.dict(
                     os.environ,
-                    {"MF_ADMIN_TOKEN": "admin-token", "MF_VIEWER_TOKEN": "viewer-token"},
+                    {"MF_ADMIN_TOKEN": "retired-secret", "MF_VIEWER_TOKEN": "retired-secret"},
                     clear=True,
                 ),
                 patch("wsgiref.simple_server.make_server", side_effect=make_server),

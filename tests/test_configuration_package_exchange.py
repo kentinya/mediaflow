@@ -109,6 +109,9 @@ class PackageRedactionTests(unittest.TestCase):
             "baseUrl": "https://example.invalid",
         }
         document["webhooks"][0]["secret"] = "literal-password"
+        document["api"]["principals"] = [
+            {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"]}
+        ]
         document["api"]["fallbackToken"] = "literal-token"
         safe, evidence = redact_configuration_document(document)
 

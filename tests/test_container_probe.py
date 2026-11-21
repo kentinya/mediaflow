@@ -32,9 +32,6 @@ def _configuration(root: Path) -> Path:
         "version": 1,
         "historyPath": str(data / "history.jsonl"),
         "persistence": {"databasePath": str(data / "mediaflow.sqlite3")},
-        "api": {
-            "principals": [{"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"]}]
-        },
         "storages": [
             {"id": "source", "type": "local", "rootPath": str(incoming), "readOnly": True},
             {
@@ -88,20 +85,24 @@ class ContainerProbeTests(unittest.TestCase):
 
             config_document["storages"][0]["rootPath"] = str(root / "incoming")
             config.write_text(json.dumps(config_document), encoding="utf-8")
-            missing_secret = dict(environment)
-            missing_secret.pop("MEDIAFLOW_API_TOKEN")
-            errors = probe_preflight_errors("api", environ=missing_secret)
-            self.assertTrue(
-                any(
-                    "MEDIAFLOW_API_TOKEN" in error and "deployment-secret-value" not in error
-                    for error in errors
-                )
-            )
-            self.assertEqual(
-                probe_preflight_errors("worker", environ=missing_secret),
-                [],
-                "non-API services do not require the API principal secret",
-            )
+            # The retired environment token is ignored: all four services are
+            # healthy with no API secret in the deployment environment.
+            without_secret = dict(environment)
+            without_secret.pop("MEDIAFLOW_API_TOKEN")
+            for service in ("api", "worker", "scheduler", "notification-worker"):
+                with self.subTest(service=service):
+                    self.assertEqual(probe_preflight_errors(service, environ=without_secret), [])
+
+            retired = json.loads(config.read_text(encoding="utf-8"))
+            retired["api"] = {
+                "principals": [
+                    {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"]}
+                ]
+            }
+            config.write_text(json.dumps(retired), encoding="utf-8")
+            errors = probe_preflight_errors("api", environ=environment)
+            self.assertTrue(any("api.principals is retired" in error for error in errors))
+            self.assertFalse(any("deployment-secret-value" in error for error in errors))
 
     def test_environment_file_values_are_loaded_but_never_echoed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -116,10 +117,8 @@ class ContainerProbeTests(unittest.TestCase):
             }
             self.assertEqual(probe_preflight_errors("api", environ=environment), [])
             missing = dict(environment)
-            environment_file.write_text("# no api token\n")
-            errors = probe_preflight_errors("api", environ=missing)
-            rendered = "\n".join(errors)
-            self.assertNotIn("deployment-secret-value", rendered)
+            environment_file.write_text("# no api token needed\n")
+            self.assertEqual(probe_preflight_errors("api", environ=missing), [])
 
     def test_unknown_service_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown probe service"):
@@ -291,16 +290,31 @@ class ContainerProbeTests(unittest.TestCase):
                 status = probe_main(["check", "--service", "api"])
             self.assertEqual(status, 0, error.getvalue())
 
-            missing = dict(environment)
-            missing.pop("MEDIAFLOW_API_TOKEN")
+            without_secret = dict(environment)
+            without_secret.pop("MEDIAFLOW_API_TOKEN")
             error = io.StringIO()
             with (
-                patch.dict("os.environ", missing, clear=True),
+                patch.dict("os.environ", without_secret, clear=True),
+                patch("sys.stderr", error),
+            ):
+                status = probe_main(["check", "--service", "api"])
+            self.assertEqual(status, 0, error.getvalue())
+
+            document = json.loads(config.read_text(encoding="utf-8"))
+            document["api"] = {
+                "principals": [
+                    {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"]}
+                ]
+            }
+            config.write_text(json.dumps(document), encoding="utf-8")
+            error = io.StringIO()
+            with (
+                patch.dict("os.environ", environment, clear=True),
                 patch("sys.stderr", error),
             ):
                 status = probe_main(["check", "--service", "api"])
             self.assertEqual(status, 1)
-            self.assertIn("MEDIAFLOW_API_TOKEN", error.getvalue())
+            self.assertIn("api.principals is retired", error.getvalue())
             self.assertNotIn("deployment-secret-value", error.getvalue())
 
 

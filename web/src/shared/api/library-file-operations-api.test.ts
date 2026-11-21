@@ -99,8 +99,8 @@ describe("fetchLibraryFileOperations", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/resource-libraries/source/file-operations?limit=20");
-    expect((init as RequestInit).headers).toMatchObject({
-      Authorization: `Bearer ${TOKEN}`,
+    expect((init as RequestInit).headers).not.toMatchObject({
+      Authorization: expect.any(String),
     });
   });
 

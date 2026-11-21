@@ -140,14 +140,18 @@ describe("fetchSystemStatus", () => {
     const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(input).toBe("/api/system/status");
     expect(init.method).toBe("GET");
-    expect((init.headers as Record<string, string>).Authorization).toBe(
-      `Bearer ${TOKEN}`,
-    );
+    expect(
+      (init.headers as Record<string, string>).Authorization,
+    ).toBeUndefined();
   });
 
-  it("omits the Authorization header when not connected", async () => {
-    stubFetch(async () => jsonResponse(systemStatusPayload));
+  it("never sends a Bearer header from page memory", async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(systemStatusPayload));
     await fetchSystemStatus(null);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(
+      (init.headers as Record<string, string>).Authorization,
+    ).toBeUndefined();
   });
 
   it.each([
@@ -372,9 +376,9 @@ describe("saveResourceLibrary", () => {
       storageId: "local-1",
       storagePath: "incoming/new",
     });
-    expect((init.headers as Record<string, string>).Authorization).toBe(
-      `Bearer ${TOKEN}`,
-    );
+    expect(
+      (init.headers as Record<string, string>).Authorization,
+    ).toBeUndefined();
   });
 
   it("returns a bounded server error without retrying or exposing its message", async () => {

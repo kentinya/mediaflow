@@ -21,7 +21,6 @@ from mediaflow.infrastructure.runtime_configuration import (
     load_minimal_management_bootstrap,
 )
 from scripts.make_deployment_config import (
-    DEFAULT_ADMIN_TOKEN_ENV,
     make_deployment_configuration,
     make_management_bootstrap,
 )
@@ -111,15 +110,19 @@ class ProductionWsgiCliTests(unittest.TestCase):
 
             def fake_serve(app, *, host, port, threads):
                 calls.append((host, port, threads))
-                self.assertEqual(request(app, "GET", "/health")[0], 200)
+                status, health = request(app, "GET", "/health")
+                self.assertEqual(status, 200)
+                self.assertTrue(health["firstAdministratorRequired"])
                 self.assertEqual(request(app, "GET", "/api/tasks")[0], 401)
+                # The retired environment token is an explicit Authorization
+                # credential and is rejected; it never falls back to an account.
                 status, _ = request(
                     app,
                     "GET",
                     "/api/tasks",
                     token="production-secret",
                 )
-                self.assertEqual(status, 200)
+                self.assertEqual(status, 401)
 
             with (
                 patch.dict(os.environ, {"MEDIAFLOW_API_TOKEN": "production-secret"}, clear=True),
@@ -193,11 +196,6 @@ class ContainerPreflightTests(unittest.TestCase):
             "version": 1,
             "historyPath": str(data / "history.jsonl"),
             "persistence": {"databasePath": str(data / "mediaflow.sqlite3")},
-            "api": {
-                "principals": [
-                    {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"]}
-                ]
-            },
             "storages": [
                 {"id": "source", "type": "local", "rootPath": str(incoming), "readOnly": True},
                 {
@@ -261,22 +259,49 @@ class ContainerPreflightTests(unittest.TestCase):
             )
             self.assertTrue(any("unsupported" in error for error in errors))
 
-    def test_api_missing_secret_fails_with_reference_only(self) -> None:
+    def test_retired_api_identity_and_unsupported_database_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config, data, _ = self._configuration(root)
+            document = json.loads(config.read_text(encoding="utf-8"))
+            document["api"] = {
+                "principals": [
+                    {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"]}
+                ]
+            }
+            config.write_text(json.dumps(document), encoding="utf-8")
             errors = container_preflight_errors(
                 str(config),
                 str(data),
-                environ={},
+                environ={"MEDIAFLOW_API_TOKEN": "deployment-secret"},
                 command=("api", "serve-production"),
             )
+            self.assertTrue(any("api.principals is retired" in error for error in errors))
             self.assertTrue(
-                any(
-                    "MEDIAFLOW_API_TOKEN" in error and "deployment-secret" not in error
-                    for error in errors
-                )
+                any("issue-setup-code" in error for error in errors),
+                errors,
             )
+            self.assertFalse(any("deployment-secret" in error for error in errors))
+
+            retired_reference = json.loads(config.read_text(encoding="utf-8"))
+            retired_reference["api"] = {"tokenEnv": "MEDIAFLOW_API_TOKEN"}
+            config.write_text(json.dumps(retired_reference), encoding="utf-8")
+            errors = container_preflight_errors(str(config), str(data), environ={})
+            self.assertTrue(any("api.tokenEnv is retired" in error for error in errors))
+
+            # A foreign SQLite file is refused before any MediaFlow table is
+            # added, and the original bytes remain intact.
+            unsupported = Path(data, "mediaflow.sqlite3")
+            unsupported.write_bytes(b"not a database")
+            original = unsupported.read_bytes()
+            clean = json.loads(config.read_text(encoding="utf-8"))
+            clean.pop("api", None)
+            config.write_text(json.dumps(clean), encoding="utf-8")
+            errors = container_preflight_errors(str(config), str(data), environ={})
+            self.assertTrue(
+                any("not usable by this MediaFlow version" in error for error in errors)
+            )
+            self.assertEqual(original, unsupported.read_bytes())
 
     def test_environment_file_parsing_is_bounded_and_never_echoes_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -371,68 +396,64 @@ class ContainerArtifactTests(unittest.TestCase):
         """The documented generated pair imports without rewriting identities.
 
         An operator runs the deployment helper once, starts the management
-        bootstrap and imports the second file as produced.  The default and a
-        custom ``--token-env`` bootstrap must both accept it, so the rendering
-        may never carry the example's unrelated principal identity.
+        bootstrap and imports the second file as produced.  The bootstrap
+        carries no API identity, so the rendering may never carry the
+        example's unrelated principal identity.
         """
 
-        for token_env in (DEFAULT_ADMIN_TOKEN_ENV, "CUSTOM_ADMIN_TOKEN"):
-            with self.subTest(token_env=token_env), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                database = str(root / "runtime.sqlite3")
-                bootstrap_path = root / "mediaflow.json"
-                configuration_path = root / "mediaflow.activation.json"
-                subprocess.check_output(
-                    [
-                        os.sys.executable,
-                        str(ROOT / "scripts" / "make_deployment_config.py"),
-                        "--output",
-                        str(bootstrap_path),
-                        "--configuration-output",
-                        str(configuration_path),
-                        "--token-env",
-                        token_env,
-                    ],
-                    cwd=ROOT,
-                    text=True,
-                )
-                bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
-                self.assertEqual(bootstrap["api"]["principals"][0]["tokenEnv"], token_env)
-                # The deployment owns the durable locator, so only the
-                # bootstrap is pointed at this isolated database.
-                bootstrap["persistence"] = {"databasePath": database}
-                bootstrap_path.write_text(
-                    json.dumps(bootstrap, ensure_ascii=False), encoding="utf-8"
-                )
-                # Local publications run the same read-only Storage and
-                # destination checks as the Web form; point the generated
-                # media input at this test's existing temporary roots.
-                configuration = json.loads(configuration_path.read_text(encoding="utf-8"))
-                configuration["storages"][0]["rootPath"] = str(root / "incoming")
-                configuration["storages"][1]["rootPath"] = str(root / "organized")
-                (root / "incoming").mkdir()
-                (root / "organized" / "Movies").mkdir(parents=True)
-                (root / "organized" / "TV Shows").mkdir()
-                configuration_path.write_text(
-                    json.dumps(configuration, ensure_ascii=False), encoding="utf-8"
-                )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = str(root / "runtime.sqlite3")
+            bootstrap_path = root / "mediaflow.json"
+            configuration_path = root / "mediaflow.activation.json"
+            subprocess.check_output(
+                [
+                    os.sys.executable,
+                    str(ROOT / "scripts" / "make_deployment_config.py"),
+                    "--output",
+                    str(bootstrap_path),
+                    "--configuration-output",
+                    str(configuration_path),
+                ],
+                cwd=ROOT,
+                text=True,
+            )
+            bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+            self.assertNotIn("api", bootstrap)
+            self.assertNotIn("principals", bootstrap)
+            # The deployment owns the durable locator, so only the
+            # bootstrap is pointed at this isolated database.
+            bootstrap["persistence"] = {"databasePath": database}
+            bootstrap_path.write_text(json.dumps(bootstrap, ensure_ascii=False), encoding="utf-8")
+            # Local publications run the same read-only Storage and
+            # destination checks as the Web form; point the generated
+            # media input at this test's existing temporary roots.
+            configuration = json.loads(configuration_path.read_text(encoding="utf-8"))
+            configuration["storages"][0]["rootPath"] = str(root / "incoming")
+            configuration["storages"][1]["rootPath"] = str(root / "organized")
+            (root / "incoming").mkdir()
+            (root / "organized" / "Movies").mkdir(parents=True)
+            (root / "organized" / "TV Shows").mkdir()
+            configuration_path.write_text(
+                json.dumps(configuration, ensure_ascii=False), encoding="utf-8"
+            )
 
-                stdout, stderr = io.StringIO(), io.StringIO()
-                code = final_main(
-                    [
-                        "--config",
-                        str(bootstrap_path),
-                        "config",
-                        "publish",
-                        "--file",
-                        str(configuration_path),
-                    ],
-                    stdout=stdout,
-                    stderr=stderr,
-                )
-                self.assertEqual(code, 0, stderr.getvalue())
-                published = json.loads(stdout.getvalue())
-                self.assertEqual(published["status"], "active")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            code = final_main(
+                [
+                    "--config",
+                    str(bootstrap_path),
+                    "config",
+                    "publish",
+                    "--file",
+                    str(configuration_path),
+                ],
+                stdout=stdout,
+                stderr=stderr,
+            )
+            self.assertEqual(code, 0, stderr.getvalue())
+            published = json.loads(stdout.getvalue())
+            self.assertEqual(published["status"], "active")
 
     def test_openlist_example_imports_through_documented_first_setup(self) -> None:
         """The shipped OpenList example imports exactly as the guide describes.
@@ -575,7 +596,8 @@ class ContainerArtifactTests(unittest.TestCase):
         rendered = json.dumps(document, ensure_ascii=False)
         self.assertTrue(is_minimal_management_bootstrap(document))
         self.assertEqual(document["persistence"]["databasePath"], "/data/mediaflow.sqlite3")
-        self.assertEqual(document["api"]["principals"][0]["tokenEnv"], DEFAULT_ADMIN_TOKEN_ENV)
+        self.assertNotIn("api", document)
+        self.assertNotIn("principals", document)
         # No business object and no media path may be invented here.
         for section in (
             "storages",

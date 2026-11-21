@@ -69,15 +69,12 @@ def request(api, method, path, *, token=None, document=None, execution_token=Non
 
 
 class ApiSecurityTests(unittest.TestCase):
-    def test_configuration_principals_roles_legacy_and_invalid_matrix(self) -> None:
+    def test_canonical_example_has_no_deployment_identity_and_retired_token_env_is_rejected(
+        self,
+    ) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         loaded = load_runtime_configuration(copy.deepcopy(document))
-        self.assertEqual(loaded.api_principals[0].principal_id, "local-admin")
-        self.assertEqual(loaded.api_principals[0].permissions, frozenset(ApiPermission))
-        with patch.dict(os.environ, {"MEDIAFLOW_API_TOKEN": "resolved-secret"}, clear=True):
-            resolved = loaded.resolve_api_principals()
-        self.assertEqual(resolved[0].principal_id, "local-admin")
-        self.assertEqual(resolved[0].token, "resolved-secret")
+        self.assertEqual((), loaded.api_principals)
 
         legacy = copy.deepcopy(document)
         legacy["api"] = {"tokenEnv": "LEGACY_API_TOKEN"}
@@ -87,44 +84,15 @@ class ApiSecurityTests(unittest.TestCase):
         ):
             load_runtime_configuration(legacy)
 
-        invalid_values = []
-        mixed = copy.deepcopy(document)
-        mixed["api"]["tokenEnv"] = "LEGACY_API_TOKEN"
-        invalid_values.append(mixed)
-        duplicate_id = copy.deepcopy(document)
-        duplicate_id["api"]["principals"].append(
-            {"id": "local-admin", "tokenEnv": "SECOND", "roles": ["viewer"]}
-        )
-        invalid_values.append(duplicate_id)
-        duplicate_env = copy.deepcopy(document)
-        duplicate_env["api"]["principals"].append(
-            {"id": "second", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["viewer"]}
-        )
-        invalid_values.append(duplicate_env)
-        unknown = copy.deepcopy(document)
-        unknown["api"]["principals"][0]["roles"] = ["root"]
-        invalid_values.append(unknown)
-        empty = copy.deepcopy(document)
-        empty["api"]["principals"][0]["roles"] = []
-        invalid_values.append(empty)
-        literal = copy.deepcopy(document)
-        literal["api"]["principals"][0]["token"] = "secret"
-        invalid_values.append(literal)
-        for value in invalid_values:
-            with self.subTest(value=value["api"]), self.assertRaises(ValueError):
-                load_runtime_configuration(value)
-
-        missing = copy.deepcopy(document)
-        missing["api"]["principals"][0]["tokenEnv"] = "MISSING_API_TOKEN"
+        # The retired environment token cannot become an API identity even if
+        # it is present in a process environment.
         with (
-            patch.dict(os.environ, {}, clear=True),
-            self.assertRaisesRegex(ValueError, "MISSING_API_TOKEN"),
+            tempfile.TemporaryDirectory() as directory,
+            SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository,
+            patch.dict(os.environ, {"MEDIAFLOW_API_TOKEN": "old-secret"}, clear=True),
         ):
-            load_runtime_configuration(missing).resolve_api_principals()
-        disabled = copy.deepcopy(document)
-        disabled["api"]["principals"][0]["enabled"] = False
-        with self.assertRaisesRegex(ValueError, "enabled configured principal"):
-            load_runtime_configuration(disabled).resolve_api_principals()
+            api = MediaFlowApi(repository, principals=principals())
+            self.assertEqual(request(api, "GET", "/api/tasks", token="old-secret")[0], 401)
 
     def test_role_permission_matrix_and_401_403(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

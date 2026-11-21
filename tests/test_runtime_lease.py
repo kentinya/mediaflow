@@ -172,8 +172,7 @@ class RuntimeLeaseTests(unittest.TestCase):
             lock_path = RuntimeDatabaseLease(database, RuntimeLeaseMode.SHARED).path
             for arguments in (
                 ["--config", str(config), "config", "validate"],
-                ["api", "token", "generate"],
-                ["--config", str(config), "api", "credentials", "check"],
+                ["--config", str(config), "accounts", "status"],
                 ["--config", str(config), "storage", "list"],
             ):
                 with self.subTest(arguments=arguments):

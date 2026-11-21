@@ -97,6 +97,15 @@ const childDestinationData = [
     description: "Browse live Storage through ResourceLibrary boundaries.",
   },
   {
+    id: "account-password",
+    label: "Change password",
+    path: "/account/password",
+    title: "Change password | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Change the signed-in account password and revoke its Web sessions.",
+  },
+  {
     id: "rules-edit",
     label: "Edit rule object",
     path: "/rules/edit/$family/$objectId",

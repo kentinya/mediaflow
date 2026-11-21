@@ -69,7 +69,7 @@ class ProcessingWorkerService:
         # Kept in step with ``mediaflow.infrastructure.sqlite_runtime.SCHEMA_VERSION``:
         # the application layer must not import the infrastructure module, and an
         # additive runtime schema bump is expected to update both defaults.
-        runtime_schema_version: int = 58,
+        runtime_schema_version: int = 59,
     ) -> None:
         self._repository = repository
         self._active_configuration_snapshot_id = active_configuration_snapshot_id
@@ -472,7 +472,7 @@ class ResidentProcessingWorker:
         configuration_snapshot_id: str | None = None,
         configuration_snapshot_digest: str | None = None,
         configuration_snapshot_resolver: Callable[[], tuple[str | None, str | None]] | None = None,
-        runtime_schema_version: int = 58,
+        runtime_schema_version: int = 59,
     ) -> None:
         self._repository = repository
         self._manual_task_worker = manual_task_worker

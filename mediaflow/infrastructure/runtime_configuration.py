@@ -213,6 +213,8 @@ def load_management_bootstrap(document: Any) -> ManagementBootstrapConfiguration
     api = document.get("api", {})
     if not isinstance(api, dict):
         raise ValueError("configuration bootstrap api must be an object")
+    if not api:
+        return ManagementBootstrapConfiguration(database_path, ())
     if "tokenEnv" in api:
         raise ValueError(
             "api.tokenEnv is retired and cannot grant an implicit administrator; "
@@ -263,6 +265,8 @@ def is_minimal_management_bootstrap(document: Any) -> bool:
         or set(persistence).difference({"databasePath"})
     ):
         return False
+    if "api" not in document:
+        return True
     api = document.get("api")
     if not isinstance(api, dict) or "principals" not in api or set(api).difference({"principals"}):
         return False

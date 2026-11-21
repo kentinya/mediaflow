@@ -71,26 +71,25 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
-def _api_token_names(document: object) -> tuple[str, ...]:
+def _retired_api_errors(document: object) -> list[str]:
     if not isinstance(document, dict):
-        return ()
+        return []
     api = document.get("api")
     if not isinstance(api, dict):
-        return ()
-    token_env = api.get("tokenEnv")
-    if isinstance(token_env, str) and _ENV_NAME.fullmatch(token_env):
-        return (token_env,)
-    principals = api.get("principals")
-    if not isinstance(principals, list):
-        return ()
-    names = []
-    for item in principals:
-        if not isinstance(item, dict) or item.get("enabled", True) is not True:
-            continue
-        name = item.get("tokenEnv")
-        if isinstance(name, str) and _ENV_NAME.fullmatch(name):
-            names.append(name)
-    return tuple(names)
+        return []
+    errors: list[str] = []
+    if "principals" in api:
+        errors.append(
+            "api.principals is retired; remove it from the startup configuration. "
+            "Create the first administrator through the Web sign-in page with a "
+            "one-time code from `mediaflow accounts issue-setup-code`"
+        )
+    if "tokenEnv" in api:
+        errors.append(
+            "api.tokenEnv is retired; remove it from the startup configuration. "
+            "Environment tokens no longer authenticate requests"
+        )
+    return errors
 
 
 def container_preflight_errors(
@@ -102,7 +101,6 @@ def container_preflight_errors(
 ) -> list[str]:
     """Return actionable deployment errors, or an empty list when safe."""
 
-    environment = os.environ if environ is None else environ
     errors: list[str] = []
     config = Path(config_path)
     if not config.is_file():
@@ -132,6 +130,8 @@ def container_preflight_errors(
             "run the container as the documented non-root UID/GID or repair ownership"
         )
 
+    errors.extend(_retired_api_errors(document))
+
     persistence = document.get("persistence")
     if isinstance(persistence, dict):
         database = persistence.get("databasePath")
@@ -147,6 +147,28 @@ def container_preflight_errors(
                     "persistence.databasePath must be inside the local "
                     f"{data_dir} persistence volume"
                 )
+            else:
+                try:
+                    from mediaflow.infrastructure.sqlite_applicability import (
+                        DatabaseApplicabilityError,
+                        assert_supported_database,
+                    )
+                    from mediaflow.infrastructure.sqlite_configuration_schema import (
+                        CONFIGURATION_SCHEMA_VERSION,
+                    )
+                    from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+                    assert_supported_database(
+                        path,
+                        current_runtime_version=SCHEMA_VERSION,
+                        current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
+                    )
+                except DatabaseApplicabilityError as error:
+                    errors.append(
+                        f"{error}. Start a fresh deployment with a new empty data directory"
+                    )
+                except (OSError, ValueError) as error:
+                    errors.append(f"persistence.databasePath could not be checked: {error}")
     history = document.get("historyPath")
     if isinstance(history, str) and history.strip():
         path = Path(history)
@@ -196,16 +218,6 @@ def container_preflight_errors(
                     "mount it read-write for the container UID/GID"
                 )
 
-    if command[:1] == ("api",):
-        names = _api_token_names(document)
-        missing = tuple(name for name in names if not environment.get(name))
-        if missing:
-            errors.append(
-                "API startup requires deployment-owned environment secret"
-                f"{'s' if len(missing) != 1 else ''} "
-                + ", ".join(missing)
-                + "; provide them in the mounted deployment environment file"
-            )
     return errors
 
 

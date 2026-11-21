@@ -6,7 +6,6 @@ import ipaddress
 import json
 import os
 import re
-import secrets
 import signal
 import sqlite3
 import threading
@@ -19,6 +18,7 @@ from pathlib import Path
 from typing import TextIO
 from uuid import uuid4
 
+from mediaflow.application.accounts import AccountService
 from mediaflow.application.automation import (
     AutomationConfigurationUnavailable,
     AutomationFailureEvidence,
@@ -262,6 +262,20 @@ def final_main(
     notification_worker_commands.add_parser("run-next")
     notification_worker_run = notification_worker_commands.add_parser("run")
     notification_worker_run.add_argument("--poll-seconds", type=float)
+    accounts = commands.add_parser(
+        "accounts", help="host-local Web account and setup-code administration"
+    )
+    account_commands = accounts.add_subparsers(dest="account_command", required=True)
+    account_setup = account_commands.add_parser(
+        "issue-setup-code", help="issue the one-time code that creates the first administrator"
+    )
+    account_setup.add_argument("--json", action="store_true", help="print a JSON document")
+    account_reset = account_commands.add_parser(
+        "issue-reset-code", help="issue a password reset code bound to one account"
+    )
+    account_reset.add_argument("--username", required=True)
+    account_reset.add_argument("--json", action="store_true", help="print a JSON document")
+    account_commands.add_parser("status", help="show whether a first administrator exists")
     security_audit = commands.add_parser("security-audit", help="local API security audit")
     security_audit_commands = security_audit.add_subparsers(
         dest="security_audit_command", required=True
@@ -285,15 +299,6 @@ def final_main(
     database_restore.add_argument("--confirm-empty-destination", action="store_true")
     api = commands.add_parser("api", help="development REST API")
     api_commands = api.add_subparsers(dest="api_command", required=True)
-    api_token = api_commands.add_parser("token", help="cryptographic bearer token operations")
-    api_token_commands = api_token.add_subparsers(dest="api_token_command", required=True)
-    api_token_generate = api_token_commands.add_parser("generate")
-    api_token_generate.add_argument("--bytes", type=int, default=32, dest="token_bytes")
-    api_credentials = api_commands.add_parser("credentials", help="redacted credential status")
-    api_credential_commands = api_credentials.add_subparsers(
-        dest="api_credential_command", required=True
-    )
-    api_credential_commands.add_parser("check")
     api_serve = api_commands.add_parser("serve")
     api_serve.add_argument("--host", default="127.0.0.1")
     api_serve.add_argument("--port", type=int, default=8787)
@@ -313,10 +318,50 @@ def final_main(
     runtime_lease: RuntimeDatabaseLease | None = None
     direct_organize_worker_id: str | None = None
     try:
-        if arguments.command == "api" and arguments.api_command == "token":
-            if not 32 <= arguments.token_bytes <= 128:
-                raise ValueError("API token bytes must be between 32 and 128")
-            stdout.write(f"{secrets.token_urlsafe(arguments.token_bytes)}\n")
+        if arguments.command == "accounts":
+            bootstrap_document = _configuration_document(arguments.config)
+            database_path = _bootstrap_database_path(bootstrap_document)
+            with SQLiteTaskRepository(database_path) as repository:
+                service = AccountService(repository)
+                if arguments.account_command == "status":
+                    required = service.setup_required()
+                    stdout.write(
+                        json.dumps(
+                            {
+                                "firstAdministratorRequired": required,
+                                "accountCount": repository.count_accounts(),
+                            },
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
+                    return 0
+                if arguments.account_command == "issue-setup-code":
+                    code, expires_at = service.issue_first_admin_code()
+                    document = {
+                        "purpose": "first_administrator",
+                        "expiresAt": expires_at.isoformat(),
+                        "code": code,
+                    }
+                else:
+                    code, expires_at = service.issue_reset_code(arguments.username)
+                    document = {
+                        "purpose": "reset_password",
+                        "username": arguments.username,
+                        "expiresAt": expires_at.isoformat(),
+                        "code": code,
+                    }
+            if arguments.json:
+                stdout.write(json.dumps(document, sort_keys=True) + "\n")
+            else:
+                stdout.write(
+                    "\nONE-TIME CODE\n\n"
+                    f"Purpose: {document['purpose']}\n"
+                    f"Expires: {document['expiresAt']}\n"
+                    f"Code: {document['code']}\n\n"
+                    "Enter this code only in the MediaFlow sign-in page. It is shown once "
+                    "and cannot be recovered.\n\n"
+                )
             return 0
         # A resumed/retried workflow must resolve the snapshot pinned to the
         # original Task before loading the runtime strategy.  Otherwise a
@@ -416,14 +461,6 @@ def final_main(
         if lease_mode is not None:
             runtime_lease = RuntimeDatabaseLease(configuration.database_path, lease_mode).acquire(
                 create_parent=lease_mode is RuntimeLeaseMode.SHARED
-            )
-        if arguments.command == "api" and arguments.api_command == "credentials":
-            statuses = configuration.api_credential_statuses()
-            stdout.write(render_api_credentials(statuses))
-            return (
-                0
-                if statuses and all(not item.enabled or item.configured for item in statuses)
-                else 1
             )
         if arguments.command == "config":
             bootstrap_document = _configuration_document(arguments.config)
@@ -1599,12 +1636,33 @@ def render_security_audit(values) -> str:
 
 
 class _ConfiguredPermissionAuthority:
-    """Read current configured principal roles without resolving credentials."""
+    """Current execution permission from the database account, or legacy config.
 
-    def __init__(self, configuration_provider: Callable[[], object]) -> None:
+    A real account is always authoritative.  The JSON-configuration fallback
+    exists only for focused compatibility tests that still pass principal
+    definitions directly; a fresh deployment has no such definitions, so an
+    unknown or revoked account is denied.
+    """
+
+    def __init__(
+        self,
+        configuration_provider: Callable[[], object],
+        account_service: AccountService | None = None,
+    ) -> None:
         self._configuration_provider = configuration_provider
+        self._account_service = account_service
 
     def has_permission(self, principal_id: str, permission: str | ApiPermission) -> bool:
+        if self._account_service is not None:
+            repository = self._account_service._repository
+            account = repository.get_account(principal_id)
+            if account is not None:
+                return self._account_service.has_permission(principal_id, permission)
+            # Once the instance has durable accounts, a missing/unknown
+            # principal is denied.  The JSON fallback is only for focused
+            # compatibility tests that never created an account.
+            if repository.count_accounts() > 0:
+                return False
         configuration = self._configuration_provider()
         definitions = tuple(getattr(configuration, "api_principals", ()))
         expected = permission.value if isinstance(permission, ApiPermission) else str(permission)
@@ -1652,7 +1710,8 @@ def _definition_scoped_service(
         execution_authority=AutomationExecutionAuthority(
             task_repository,
             permission_authority=_ConfiguredPermissionAuthority(
-                lambda: _configuration(configured_path)
+                lambda: _configuration(configured_path),
+                AccountService(task_repository),
             ),
             publication_principal_resolver=lambda job, definition: (
                 _definition_publication_principal(configuration.database_path, job, definition)
@@ -1674,7 +1733,8 @@ def _scheduler_execution_authority(configuration, repository):
     return AutomationExecutionAuthority(
         repository,
         permission_authority=_ConfiguredPermissionAuthority(
-            lambda: _current_automation_configuration(configuration.database_path)
+            lambda: _current_automation_configuration(configuration.database_path),
+            AccountService(repository),
         ),
         publication_principal_resolver=lambda task, definition: _definition_publication_principal(
             configuration.database_path, task, definition
@@ -2923,7 +2983,6 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
             )
         from wsgiref.simple_server import make_server
 
-    principals = configuration.resolve_api_principals()
     bootstrap_document = _configuration_document(arguments.config)
     from mediaflow.infrastructure.configuration_snapshot import (
         build_configuration_snapshot,
@@ -2967,7 +3026,7 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
         )
         app = MediaFlowApi(
             repository,
-            principals=principals,
+            account_service=AccountService(repository),
             maximum_active_jobs=getattr(configuration, "automation_maximum_active_jobs", 100),
             system_status=(
                 None if management_only else build_configuration_snapshot(configuration)
@@ -3585,25 +3644,6 @@ def _validate_api_bind_host(host: str) -> bool:
         if not labels or any(not _HOST_LABEL.fullmatch(label) for label in labels):
             raise ValueError("API host must be a valid hostname or IP address") from None
         return False
-
-
-def render_api_credentials(values) -> str:
-    lines = ["API CREDENTIALS", ""]
-    if not values:
-        return "\n".join(lines + ["No API principals configured", ""])
-    for value in values:
-        lines.append(
-            " | ".join(
-                (
-                    value.principal_id,
-                    ",".join(role.value for role in value.roles),
-                    value.token_env,
-                    "ENABLED" if value.enabled else "DISABLED",
-                    "SET" if value.configured else "UNSET",
-                )
-            )
-        )
-    return "\n".join(lines + [""])
 
 
 def _resource_library(configuration: RuntimeConfiguration, path: str) -> tuple[object, str]:

@@ -12,6 +12,7 @@ tests keep the retirement honest through real entry points:
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -24,9 +25,13 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.accounts import hash_password
+from mediaflow.domain.accounts import Account, AccountSessionRecord
+from mediaflow.domain.security import ApiRole
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -48,16 +53,6 @@ def _write_configuration(root: Path, storages: tuple[Path, ...]) -> Path:
     for storage, location in zip(document.get("storages", []), storages):
         location.mkdir(parents=True, exist_ok=True)
         storage["rootPath"] = str(location)
-    document["api"] = {
-        "principals": [
-            {
-                "id": "probe-reader",
-                "tokenEnv": "DASHBOARD_RETIREMENT_TOKEN",
-                "roles": ["viewer"],
-                "enabled": True,
-            }
-        ]
-    }
     path = root / "config.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     publish_managed_document(document)
@@ -73,7 +68,7 @@ def _free_port() -> int:
 def _fetch(url: str, token: str | None = None) -> tuple[int, bytes]:
     request = urllib.request.Request(url)
     if token is not None:
-        request.add_header("Authorization", f"Bearer {token}")
+        request.add_header("Cookie", f"mediaflow_session={token}")
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             return response.status, response.read()
@@ -86,6 +81,31 @@ class DashboardApiRetirementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = _write_configuration(root, (root / "source", root / "target"))
+            now = datetime.now(UTC)
+            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
+                repository.create_account(
+                    Account(
+                        "account-probe-reader",
+                        "probe-reader",
+                        (ApiRole.VIEWER,),
+                        True,
+                        now,
+                        now,
+                        now,
+                    ),
+                    hash_password("probe-reader-password"),
+                )
+                repository.create_account_session(
+                    AccountSessionRecord(
+                        "session-probe-reader",
+                        "account-probe-reader",
+                        hashlib.sha256(READER_TOKEN.encode()).hexdigest(),
+                        now,
+                        now,
+                        now + timedelta(days=1),
+                        now + timedelta(days=2),
+                    )
+                )
             port = _free_port()
             base = f"http://127.0.0.1:{port}"
             environment_patch = patch.dict(os.environ, {"DASHBOARD_RETIREMENT_TOKEN": READER_TOKEN})
@@ -128,7 +148,7 @@ class DashboardApiRetirementTests(unittest.TestCase):
             # A supported read answers 200 for the legal READ identity.
             status, body = _fetch(f"{base}/api/auth/principal", READER_TOKEN)
             self.assertEqual(status, 200, body)
-            self.assertEqual(json.loads(body), {"principal_id": "probe-reader"})
+            self.assertEqual(json.loads(body), {"principal_id": "account-probe-reader"})
 
             _, unknown_plain = _fetch(f"{base}/api/not-a-supported-route", READER_TOKEN)
             _, unknown_query = _fetch(
@@ -156,7 +176,7 @@ class DashboardApiRetirementTests(unittest.TestCase):
                 audit = repository.list_security_audit(limit=50)
                 self.assertTrue(
                     any(
-                        item.principal_id == "probe-reader" and item.http_status == 404
+                        item.principal_id == "account-probe-reader" and item.http_status == 404
                         for item in audit
                     ),
                     audit,

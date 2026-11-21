@@ -2,7 +2,7 @@
  * Central typed API client for the V2 frontend's read-only contracts.
  *
  * This is the single server-state boundary of the V2 frontend: requests carry
- * the API-principal Bearer token from runtime memory only, responses are
+ * same-origin HttpOnly account session cookie, responses are
  * strictly normalized into frontend-owned models, and every failure becomes
  * one bounded, secret-free error category. No other module may call the API
  * directly.
@@ -115,13 +115,10 @@ async function readErrorEnvelope(response: Response): Promise<ErrorEnvelope> {
 }
 
 export async function fetchSystemStatus(
-  token: string | null,
+  _token: string | null,
   fetchImpl: FetchLike = fetch,
 ): Promise<SystemStatusModel> {
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (token !== null) {
-    headers.Authorization = `Bearer ${token}`;
-  }
   let response: Response;
   try {
     response = await fetchImpl("/api/system/status", {
@@ -163,7 +160,7 @@ export async function fetchSystemStatus(
 /**
  * Bounded, secret-free reason a Files read did not return a document.
  *
- * A Storage-provider read/permission failure is explicitly NOT an API-principal
+ * A Storage-provider read/permission failure is explicitly NOT an account
  * RBAC denial: the operator is still authorized, only the provider read
  * failed. Returning it as a result instead of an error keeps the shared
  * boundary from clearing a valid authority, and lets the feature render the
@@ -318,7 +315,7 @@ export function storageFilesUrl(options: StorageFilesQueryOptions): string {
 }
 
 export async function fetchStorageFiles(
-  token: string | null,
+  _token: string | null,
   options: StorageFilesQueryOptions,
   fetchImpl: FetchLike = fetch,
 ): Promise<StorageFilesRead> {
@@ -334,9 +331,6 @@ export async function fetchStorageFiles(
     };
   }
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (token !== null) {
-    headers.Authorization = `Bearer ${token}`;
-  }
   let response: Response;
   try {
     response = await fetchImpl(storageFilesUrl(options), {
@@ -351,7 +345,7 @@ export async function fetchStorageFiles(
   if (response.status === 401) {
     throw new StorageFilesApiError("unauthorized");
   }
-  // A 403 is either an API-principal RBAC denial (stable code "forbidden") or
+  // A 403 is either an account RBAC denial (stable code "forbidden") or
   // a Storage-provider permission failure (stable code
   // "storage_browser_permission_denied"). Only the former may clear a valid
   // authority; the latter is a bounded read failure with Storage-specific
@@ -504,7 +498,7 @@ export function mediaLibraryFilesUrl(
 }
 
 export async function fetchMediaLibraryFiles(
-  token: string | null,
+  _token: string | null,
   options: MediaLibraryFilesQueryOptions,
   fetchImpl: FetchLike = fetch,
 ): Promise<MediaLibraryFilesRead> {
@@ -520,9 +514,6 @@ export async function fetchMediaLibraryFiles(
     };
   }
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (token !== null) {
-    headers.Authorization = `Bearer ${token}`;
-  }
   let response: Response;
   try {
     response = await fetchImpl(mediaLibraryFilesUrl(options), {
@@ -537,7 +528,7 @@ export async function fetchMediaLibraryFiles(
   if (response.status === 401) {
     throw new MediaLibraryFilesApiError("unauthorized");
   }
-  // A 403 is either an API-principal RBAC denial (stable code "forbidden") or
+  // A 403 is either an account RBAC denial (stable code "forbidden") or
   // a Storage-provider permission failure; only the former may clear a valid
   // authority.
   if (response.status === 403) {
@@ -581,13 +572,10 @@ export async function fetchMediaLibraryFiles(
 }
 
 export async function fetchMediaLibraryList(
-  token: string | null,
+  _token: string | null,
   fetchImpl: FetchLike = fetch,
 ): Promise<MediaLibraryListModel> {
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (token !== null) {
-    headers.Authorization = `Bearer ${token}`;
-  }
   let response: Response;
   try {
     response = await fetchImpl("/api/media-libraries", {
@@ -733,10 +721,8 @@ function operationsFailure(
 }
 
 function operationsHeaders(token: string | null): Record<string, string> {
+  void token;
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (token !== null) {
-    headers.Authorization = `Bearer ${token}`;
-  }
   return headers;
 }
 
@@ -2930,9 +2916,10 @@ export async function submitMediaLibraryDirectCommand(
 }
 
 function directFilesReadHeaders(token: string | null): HeadersInit {
-  return token === null
-    ? { Accept: "application/json" }
-    : { Accept: "application/json", Authorization: `Bearer ${token}` };
+  void token;
+  // The HttpOnly session cookie is attached by the browser; JavaScript never
+  // handles the credential.
+  return { Accept: "application/json" };
 }
 
 export interface FilesOrganizeAdmissionOptions {

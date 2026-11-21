@@ -141,7 +141,7 @@ afterEach(() => {
 });
 
 describe("Storage management API", () => {
-  it("fetches the inventory with a Bearer header from runtime memory", async () => {
+  it("fetches the inventory with the browser session cookie", async () => {
     const fetchMock = vi.fn(async () => jsonResponse(inventoryPayload));
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("inventory-token");
@@ -153,9 +153,9 @@ describe("Storage management API", () => {
       RequestInit,
     ];
     expect(url).toBe("/api/operations/storage-management/inventory");
-    expect((init.headers as Record<string, string>).Authorization).toBe(
-      "Bearer inventory-token",
-    );
+    expect(
+      (init.headers as Record<string, string>).Authorization,
+    ).toBeUndefined();
   });
 
   it("sends the bounded search, provider filter and continuation as a query", async () => {
@@ -525,7 +525,7 @@ const smbCandidate = {
 };
 
 describe("Storage Add/Edit command API", () => {
-  it("reads the typed edit projection with a Bearer header", async () => {
+  it("reads the typed edit projection with the browser session cookie", async () => {
     const fetchMock = vi.fn(async () => jsonResponse(STORAGE_EDIT_PAYLOAD));
     vi.stubGlobal("fetch", fetchMock);
     const result = await fetchStorageEdit("edit-token", "nas-media");
@@ -545,9 +545,9 @@ describe("Storage Add/Edit command API", () => {
     ];
     expect(url).toBe("/api/storages/nas-media/edit");
     expect(init.method).toBe("GET");
-    expect((init.headers as Record<string, string>).Authorization).toBe(
-      "Bearer edit-token",
-    );
+    expect(
+      (init.headers as Record<string, string>).Authorization,
+    ).toBeUndefined();
   });
 
   it("surfaces the backend failure code and durable state from the projection", async () => {

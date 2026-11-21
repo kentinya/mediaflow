@@ -26,6 +26,7 @@ describe("destination model", () => {
     ).toHaveLength(0);
     expect(childDestinations.map((item) => item.label)).toEqual([
       "Files",
+      "Change password",
       "Edit rule object",
       "Manual intent",
       "整理发现",

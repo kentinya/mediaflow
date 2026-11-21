@@ -8,6 +8,7 @@ import {
   type RouterHistory,
 } from "@tanstack/react-router";
 import { EntryPage } from "../features/entry/EntryPage";
+import { ChangePasswordPage } from "../features/entry/ChangePasswordPage";
 import { ExplorePage } from "../features/explore/ExplorePage";
 import { parseExploreDetailToken } from "../entities/explore/explore";
 import { ConfigurationPage } from "../features/configuration/ConfigurationPage";
@@ -75,6 +76,12 @@ const entryRoute = createRoute({
  * plain list instead of a detail. The retired `/dashboard` address has no
  * route, redirect or alias and lands on the ordinary not-found component.
  */
+const changePasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "account/password",
+  component: ChangePasswordPage,
+});
+
 const exploreRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "explore",
@@ -254,6 +261,7 @@ const rulesEditRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   entryRoute,
   exploreRoute,
+  changePasswordRoute,
   mediaLibraryFilesRoute,
   resourceLibraryFilesRoute,
   operationsRoute,

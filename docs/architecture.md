@@ -47,8 +47,8 @@ explicit item actions. See [Slice 56 A Final Review](https://github.com/kentinya
 `V2-RETIRE-001–010` 定义当前原生 V2 架构，取代先前的 V1 共存与废弃迁移承接约定。
 
 ```text
-minimal deployment bootstrap + api.principals
-  -> current complete configuration/runtime schema + managed Active
+minimal deployment bootstrap (database locator only)
+  -> durable Web accounts/sessions + current complete configuration/runtime schema + managed Active
   -> native V2 + one current /api and CLI contract
   -> Task admission / claim / discovery-analysis / exact authority / execution
   -> same-Task decisions, attempts, independent Results/effects and audit
@@ -812,14 +812,14 @@ Python serves the V2 static assets at `/` and the API. Asset failure uses ordina
 See [Deployment](deployment.md#v2-frontend-artifact-and-serving) for serving/security details.
 
 The shared responsive AppShell owns route/auth continuation, bounded return context and permission/
-unavailable/not-found recovery. Tokens remain memory-only; reject 401 authority and clear its queries,
-while 403 preserves authenticated identity. Exact path identity survives typed normalization, including
+unavailable/not-found recovery. The server session remains HttpOnly; reject 401 authority and clear its
+queries, while 403 preserves authenticated identity. Exact path identity survives typed normalization, including
 boundary whitespace; navigation/cache cannot confer scope or rewrite an entry's name.
 The shared domain path-prefix check distinguishes ordinary colons in supported Storage names from
 drive and URI prefixes. Browsing, discovery, planning, recovery and logical OpenList/S3 paths
 preserve those names; relative-path, root-confinement and budget checks remain at their boundaries.
 
-API-principal Bearer/RBAC, exact immutable Active/pinned work, explicit effect authority, audit,
+Database account/session RBAC, exact immutable Active/pinned work, explicit effect authority, audit,
 claim/lease/fence and completed/uncertain non-replay govern current work. TMDB stays behind
 MetadataProvider. Unavailable credentials fail closed. [Roadmap](roadmap.md) records the closed milestones.
 
@@ -928,9 +928,10 @@ Storage root.
 
 ## Configuration authority and runtime binding
 
-The minimal management bootstrap locates SQLite and supplies deployment-owned API principals through
-environment references. It keeps setup and recovery available before the first managed Active.
-Only a validated and activated managed revision provides runtime business authority.
+The minimal management bootstrap locates SQLite only. Durable Web accounts, server-side sessions
+and host-issued one-time codes keep setup and recovery available before the first managed Active.
+Only a validated and activated managed revision provides runtime business authority; environment
+tokens and `api.principals` are retired.
 
 Managed Configuration persists current and historical published snapshots only: Active and
 Superseded revisions. Candidate content is validated in one command, bound to the exact current
@@ -1932,8 +1933,10 @@ Automation and Notifications. The unified Operations task center provides native
 decision/recovery, cross-Task problem-type lists and same-Task four-type analysis/summary/confirmation. Cross-Task
 bulk mutation and arbitrary historical Reprocess remain deferred. Advanced JSON and managed lifecycle
 operations remain available in Settings. The SPA uses the shared `/api/*` application authority.
-The browser holds the API token in memory. A read-only API response confirms the current principal before
-the browser uses recovery hints that survive a page reload. The hints carry context only.
+The browser holds no session secret: the server sets an HttpOnly session cookie, and
+`/api/auth/status` restores the current account projection before protected routes read. A
+read-only response confirms the current account before the browser uses recovery hints that
+survive a page reload. The hints carry context only.
 
 The `api serve` HTTP listener uses `wsgiref.simple_server` and remains a development/trusted-loopback
 boundary. Production Compose uses the explicitly selected `api serve-production` command with the

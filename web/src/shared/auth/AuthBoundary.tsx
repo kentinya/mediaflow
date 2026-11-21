@@ -1,7 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { useIsConnected, useRejected } from "../api/auth-context";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useAuthAccount,
+  useRejected,
+  useSessionStatus,
+} from "../api/auth-context";
 import { authStore } from "../api/auth-store";
+import { fetchAuthStatus } from "../api/auth-api";
 import {
   destinationForPath,
   allowlistedDestinationSearch,
@@ -9,33 +15,71 @@ import {
 import type { DestinationPath } from "../navigation/destination-model";
 
 /**
- * Shared route/authentication boundary for supported V2 product routes.
+ * Shared route/authentication boundary for supported product routes.
  *
- * When an unauthenticated operator opens a known deep route, the boundary
- * records the exact allowed destination in the memory-only auth store and
- * redirects to the shell's entry interaction at "/". Connecting from the
- * entry then continues to the operator's latest recorded supported route:
- * each explicit route choice replaces any earlier intention, so reconnection
- * never returns to a stale destination. Root entry itself does not set an
- * intention, so connecting from root still falls through to the Dashboard
- * default.
- *
- * Arbitrary / unknown routes are ignored so the shell's not-found UX
- * remains responsible. Bearer material never enters URL / route state.
+ * A fresh page load first restores the server session.  While that check is in
+ * flight a deep route is neither redirected nor treated as anonymous, so a
+ * valid refresh/new-tab cookie continues in place.  An unauthenticated deep
+ * route records its safe destination and redirects to the root sign-in page;
+ * after sign-in the operator returns to that same supported route.  The
+ * session secret is HttpOnly and never enters URL or route state.
  */
 export function AuthBoundary() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const location = useRouterState({
     select: (state) => state.location,
   });
   const pathname = location.pathname;
   const searchStr = location.searchStr ?? "";
-  const connected = useIsConnected();
+  const status = useSessionStatus();
+  const account = useAuthAccount();
   const rejected = useRejected();
-  // A backend 401 leaves the operator on the active route behind the bounded
-  // unauthorized state. Record that exact supported route (with safe view
-  // state) as the continuation target so a fresh credential returns to the
-  // same read instead of the root default.
+  const previousPrincipal = useRef<string | null>(null);
+
+  // One page-load session probe.  A transient network failure is presented by
+  // the root entry as an in-place retry instead of pretending the operator is
+  // signed out.
+  useEffect(() => {
+    if (status !== "restoring") return;
+    if (pathname !== "/" && destinationForPath(pathname) === undefined) {
+      return;
+    }
+    let cancelled = false;
+    void fetchAuthStatus()
+      .then((value) => {
+        if (cancelled) return;
+        authStore.completeSessionRestore({
+          firstAdministratorRequired: value.firstAdministratorRequired,
+          configurationRequired: value.configurationRequired,
+          account: value.authenticated ? value.account : null,
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        authStore.failSessionRestore();
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [status, pathname]);
+
+  // Cached feature reads belong to one authenticated account.  A sign-out or
+  // account switch clears them before the next protected page can render.
+  useEffect(() => {
+    const current = account?.principalId ?? null;
+    if (
+      previousPrincipal.current !== null &&
+      previousPrincipal.current !== current
+    ) {
+      queryClient.clear();
+    }
+    previousPrincipal.current = current;
+  }, [account?.principalId, queryClient]);
+
+  // A rejected 401 leaves the operator on the active route behind the bounded
+  // unauthorized state.  Record that exact supported route and its safe view
+  // state so an explicit re-sign-in returns to the same read.
   useEffect(() => {
     if (!rejected || pathname === "/") {
       return;
@@ -53,11 +97,9 @@ export function AuthBoundary() {
       authStore.setIntendedSearch(allowedSearch);
     }
   }, [rejected, pathname, searchStr]);
+
   useEffect(() => {
-    // A fresh unauthenticated deep entry redirects to the connection
-    // boundary. A 401-rejected principal stays on the current route so the
-    // active page can present its bounded "new credentials required" state.
-    if (connected || rejected) {
+    if (status === "restoring" || status === "authenticated" || rejected) {
       return;
     }
     if (pathname === "/") {
@@ -67,10 +109,6 @@ export function AuthBoundary() {
     if (destination === undefined) {
       return;
     }
-    // The operator's latest explicit supported-route choice always replaces an
-    // earlier intention so reconnection continues to the route they last asked
-    // for, never a stale one. Safe Storage Files view state (relative path and
-    // cursor) is retained so a refresh/reconnect returns to the same read.
     authStore.setIntendedPath(pathname as DestinationPath);
     const allowedSearch = allowlistedDestinationSearch(
       destination.path,
@@ -80,6 +118,6 @@ export function AuthBoundary() {
       authStore.setIntendedSearch(allowedSearch);
     }
     void navigate({ to: "/" });
-  }, [connected, rejected, pathname, searchStr, navigate]);
+  }, [status, rejected, pathname, searchStr, navigate]);
   return null;
 }

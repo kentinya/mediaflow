@@ -13,20 +13,18 @@ afterEach(() => {
 });
 
 describe("AuthStateBanner", () => {
-  it("renders the not-connected state with the V2 entry link", async () => {
+  it("renders the not-connected state with the sign-in link", async () => {
     renderWithProviders(
       <AuthStateBanner
         variant="not-connected"
         title="Not connected"
-        message="Enter an API principal token to view this area."
+        message="Sign in with a MediaFlow account to view this area."
       />,
     );
     expect(
       await screen.findByRole("heading", { name: "Not connected" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "Go to the V2 entry" }),
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Go to sign in" })).toBeVisible();
   });
 
   it("renders the unauthorized state with bounded recovery on 401", async () => {
@@ -34,15 +32,13 @@ describe("AuthStateBanner", () => {
       <AuthStateBanner
         variant="unauthorized"
         title="Not authorized"
-        message="The API token was rejected. Enter a valid API principal token to continue."
+        message="The Web session was rejected. Sign in again to continue."
       />,
     );
     expect(
       await screen.findByRole("heading", { name: "Not authorized" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "Enter an API principal token" }),
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Sign in again" })).toBeVisible();
   });
 
   it("renders the forbidden state with bounded recovery on 403", async () => {
@@ -51,7 +47,7 @@ describe("AuthStateBanner", () => {
       <AuthStateBanner
         variant="forbidden"
         title="Forbidden"
-        message="The connected API principal does not have permission to view this area."
+        message="The signed-in account does not have permission to view this area."
       />,
     );
     expect(
@@ -62,7 +58,7 @@ describe("AuthStateBanner", () => {
     ).toBeVisible();
     expect(
       screen.getByRole("link", {
-        name: "Connect a principal with read permission",
+        name: "Sign in with an account that has read permission",
       }),
     ).toBeVisible();
     // The active principal is never rendered by the banner.

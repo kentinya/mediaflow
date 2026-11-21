@@ -2,7 +2,8 @@
 
 Compose healthchecks run this probe inside each service container.  It repeats
 the read-only startup preflight (configuration file, persistent volume and
-media mount paths, permission checks and API secret-reference presence), proves
+media mount paths, permission checks, retired API-identity rejection and
+database applicability), proves
 that the real resident process of this container is registered and heartbeating,
 and — for the API service — also performs a bounded loopback request to the
 public ``/health`` liveness endpoint.

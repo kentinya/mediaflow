@@ -232,9 +232,7 @@ describe("AppShell", () => {
     renderApp("/");
     const toggle = await screen.findByRole("button", { name: "Open menu" });
     const topbar = expectNoTopbarNotificationControl();
-    expect(
-      within(topbar).getByRole("link", { name: "Connect API token" }),
-    ).toBeVisible();
+    expect(within(topbar).getByRole("link", { name: "Sign in" })).toBeVisible();
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     await userEvent.setup().click(toggle);
     expect(screen.getByRole("button", { name: "Close menu" })).toHaveAttribute(
@@ -288,7 +286,7 @@ describe("AppShell", () => {
     ).toBeEnabled();
     const topbar = expectNoTopbarNotificationControl();
     expect(
-      within(topbar).getByRole("button", { name: "Disconnect" }),
+      within(topbar).getByRole("button", { name: "Account menu" }),
     ).toBeVisible();
     // Exactly one shell header: no duplicate top bar above the workspace.
     expect(document.querySelectorAll(".mf-shell-topbar")).toHaveLength(1);
@@ -373,7 +371,7 @@ describe("AppShell", () => {
     expect(screen.queryByRole("searchbox")).toBeNull();
     const topbar = expectNoTopbarNotificationControl();
     expect(
-      within(topbar).getByRole("button", { name: "Disconnect" }),
+      within(topbar).getByRole("button", { name: "Account menu" }),
     ).toBeVisible();
     // The sidebar entry and browser title remain.
     expect(screen.getByRole("link", { name: "任务中心" })).toBeVisible();
@@ -443,7 +441,7 @@ describe("AppShell", () => {
     expect(screen.getByLabelText("作品名搜索")).toBeVisible();
     const topbar = expectNoTopbarNotificationControl();
     expect(
-      within(topbar).getByRole("button", { name: "Disconnect" }),
+      within(topbar).getByRole("button", { name: "Account menu" }),
     ).toBeVisible();
     expect(screen.getByRole("link", { name: "Explore" })).toHaveAttribute(
       "aria-current",

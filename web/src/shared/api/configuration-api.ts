@@ -110,7 +110,7 @@ async function boundedErrorBody(response: Response): Promise<{
 }
 
 async function request<T>(
-  token: string | null,
+  _token: string | null,
   path: string,
   init: RequestInit = {},
   fetchImpl: FetchLike = fetch,
@@ -125,7 +125,6 @@ async function request<T>(
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
   if (init.body !== undefined) headers.set("Content-Type", "application/json");
-  if (token !== null) headers.set("Authorization", `Bearer ${token}`);
   let response: Response;
   try {
     response = await fetchImpl(path, { ...init, headers });

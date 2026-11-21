@@ -1273,6 +1273,7 @@ class ManualRecoveryPreparationPersistenceTests(unittest.TestCase):
                 + self._RECOVERY_CONTINUATIONS_BASE_COLUMNS
                 + ")"
             )
+            connection.execute("UPDATE schema_version SET version = 58 WHERE component = 'runtime'")
             connection.execute(
                 """INSERT INTO recovery_continuations (
                     continuation_id, request_id, source_task_id, source_item_id,

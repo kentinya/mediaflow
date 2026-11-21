@@ -9,10 +9,12 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from urllib.parse import parse_qs, quote
+from http.cookies import SimpleCookie
+from urllib.parse import parse_qs, quote, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from mediaflow.application.accounts import AccountService
 from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.application.automation_definition_occurrence import (
     AutomationDefinitionOccurrenceService,
@@ -114,6 +116,7 @@ from mediaflow.application.system_settings import (
 from mediaflow.application.task_item_recovery import TaskItemRecoveryError, TaskItemRecoveryService
 from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.application.webhook_test import WebhookTestService, webhook_events_supported
+from mediaflow.domain.accounts import AccountAuthenticationError, AuthenticatedAccount
 from mediaflow.domain.automation import (
     AutomationQueueFull,
     AutomationTaskDefinition,
@@ -216,6 +219,21 @@ _AUTOMATION_DEFINITION_FILTER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 # versioned prefix is an ordinary unknown route: it ends with the JSON 404
 # before authentication, so no old client can reach a business service.
 _API_ROOT = "/api"
+
+SESSION_COOKIE_NAME = "mediaflow_session"
+_AUTH_PUBLIC_PATHS = frozenset(
+    {
+        "/api/auth/status",
+        "/api/auth/session",
+        "/api/auth/bootstrap",
+        "/api/auth/login",
+        "/api/auth/logout",
+        "/api/auth/password",
+        "/api/auth/reset",
+    }
+)
+
+
 _RETIRED_API_NAMESPACES = frozenset({"v1", "v2"})
 
 _V2_STATIC_CSP = (
@@ -280,13 +298,16 @@ class ApiPermissionDenied(RuntimeError):
 class _CurrentConfiguredPermissionAuthority:
     """Resolve principal permissions from the current managed configuration."""
 
-    def __init__(self, fallback, configuration_service=None) -> None:
+    def __init__(self, fallback, configuration_service=None, account_service=None) -> None:
         self._fallback = tuple(fallback)
         self._configuration_service = configuration_service
+        self._account_service = account_service
         if configuration_service is not None:
             self._runtime_snapshot_validator = configuration_service.validate_runtime_snapshot
 
     def has_permission(self, principal_id: str, permission: str | ApiPermission) -> bool:
+        if self._account_service is not None:
+            return self._account_service.has_permission(principal_id, permission)
         principals = self._current_principals()
         expected = permission.value if isinstance(permission, ApiPermission) else str(permission)
         for principal in principals:
@@ -379,6 +400,7 @@ class MediaFlowApi:
         repository,
         *,
         principals: tuple[ResolvedApiPrincipal, ...] = (),
+        account_service: AccountService | None = None,
         maximum_active_jobs: int | None = None,
         system_status=None,
         metadata_policies=(),
@@ -401,13 +423,15 @@ class MediaFlowApi:
         webhook_transport: object | None = None,
         resident_services: ResidentServiceService | None = None,
     ) -> None:
-        if not principals:
-            raise ValueError("at least one API principal must be configured")
+        if not principals and account_service is None:
+            raise ValueError("a database account service or focused test authority is required")
         self._repository = repository
         self._principals = principals
+        self._accounts = account_service
         self._runtime_snapshot_validator = recovery_snapshot_validator
         self._storage_adapters = dict(storage_adapters or {})
         self._configuration_service = configuration_service
+        self._management_only = bool(management_only)
         self._attach_task_terminal_notifications()
         # A cursor minted by one API/CLI process must be verifiable by a later
         # one, so the shared runtime browser and the setup storage picker use
@@ -471,7 +495,9 @@ class MediaFlowApi:
                 binder(
                     repository,
                     configuration_service,
-                    _CurrentConfiguredPermissionAuthority(self._principals, configuration_service),
+                    _CurrentConfiguredPermissionAuthority(
+                        self._principals, configuration_service, self._accounts
+                    ),
                 )
         self._configuration_objects = (
             ConfigurationObjectService(
@@ -641,12 +667,14 @@ class MediaFlowApi:
 
         if configuration_service is not None:
             configuration_service.bind_automation_publication_authority(
-                _CurrentConfiguredPermissionAuthority(self._principals, configuration_service)
+                _CurrentConfiguredPermissionAuthority(
+                    self._principals, configuration_service, self._accounts
+                )
             )
         self._automation_execution_authority = AutomationExecutionAuthority(
             repository,
             permission_authority=_CurrentConfiguredPermissionAuthority(
-                self._principals, configuration_service
+                self._principals, configuration_service, self._accounts
             ),
             publication_principal_resolver=(
                 lambda job, definition: resolve_principal(configuration_service, job, definition)
@@ -724,17 +752,57 @@ class MediaFlowApi:
                 return self._response(
                     start_response,
                     200,
-                    {"status": "ok", "processAlive": True},
+                    self._health_document(),
+                )
+            if path in _AUTH_PUBLIC_PATHS:
+                return self._dispatch_account_auth(
+                    method, path, environ, start_response, request_id
                 )
             if path == _API_ROOT or path.startswith(_API_ROOT + "/"):
                 if self._is_retired_api_path(path):
                     return self._error(start_response, 404, "not_found", "route was not found")
-                principal = self._authenticate(environ)
+                principal, invalid_session = self._authenticate(environ)
                 if principal is None:
                     self._audit(
                         environ, request_id, None, method, path, "authenticate", "denied", 401
                     )
-                    return self._error(start_response, 401, "unauthorized", "bearer token required")
+                    extra_headers = (self._expired_session_cookie(),) if invalid_session else ()
+                    return self._error(
+                        start_response,
+                        401,
+                        "unauthorized",
+                        "sign in with an account to continue",
+                        challenge=not invalid_session,
+                        extra_headers=extra_headers,
+                    )
+                if (
+                    getattr(principal, "session_id", None) is not None
+                    and method not in {"GET", "HEAD", "OPTIONS"}
+                    and not self._same_origin_request(environ)
+                ):
+                    self._audit(
+                        environ,
+                        request_id,
+                        principal,
+                        method,
+                        path,
+                        "cross_site_write",
+                        "denied",
+                        403,
+                    )
+                    return self._error(
+                        start_response,
+                        403,
+                        "cross_site_write_rejected",
+                        "The write request did not come from the same origin.",
+                        details={
+                            "durableState": "no business or media state changed",
+                            "retrySafe": True,
+                            "nextAction": (
+                                "reload MediaFlow and submit the action from the open page"
+                            ),
+                        },
+                    )
                 if not self._suppress_file_detail_audit(path, method, principal):
                     self._audit(
                         environ, request_id, principal, method, path, "request", "started", 0
@@ -6573,21 +6641,429 @@ class MediaFlowApi:
             )
         return self._error(start_response, 404, "not_found", "route was not found")
 
-    def _authenticate(self, environ: dict) -> ResolvedApiPrincipal | None:
+    def _authenticate(self, environ: dict) -> tuple[object | None, bool]:
+        """Return the current identity and whether a stale session cookie was sent.
+
+        An explicit Authorization header is always authoritative: until API
+        token issuance is implemented, a presented bearer credential is
+        rejected instead of silently falling back to a browser cookie.
+        """
+
         header = str(environ.get("HTTP_AUTHORIZATION", ""))
-        prefix = "Bearer "
-        candidate = header[len(prefix) :] if header.startswith(prefix) else ""
-        valid = (
-            len(header) <= 4096
-            and 1 <= len(candidate) <= 2048
-            and not any(character.isspace() for character in candidate)
+        cookie_token = self._session_cookie_value(environ)
+        if header:
+            prefix = "Bearer "
+            candidate = header[len(prefix) :] if header.startswith(prefix) else ""
+            valid = (
+                len(header) <= 4096
+                and 1 <= len(candidate) <= 2048
+                and not any(character.isspace() for character in candidate)
+            )
+            presented = candidate if valid else ""
+            matched = None
+            for principal in self._principals:
+                if hmac.compare_digest(presented, principal.token):
+                    matched = principal
+            return matched, False
+        if self._accounts is None or not cookie_token:
+            return None, False
+        account = self._accounts.authenticate(
+            cookie_token,
+            source_address=self._source_address(environ),
         )
-        presented = candidate if valid else ""
-        matched = None
-        for principal in self._principals:
-            if hmac.compare_digest(presented, principal.token):
-                matched = principal
-        return matched
+        return account, account is None
+
+    def _dispatch_account_auth(
+        self,
+        method: str,
+        path: str,
+        environ: dict,
+        start_response: Callable,
+        request_id: str,
+    ):
+        if self._accounts is None:
+            return self._error(start_response, 404, "not_found", "route was not found")
+        if path in {"/api/auth/status", "/api/auth/session"}:
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            account = self._account_from_cookie(environ)
+            if path == "/api/auth/session" and account is None:
+                extra_headers = (
+                    (self._expired_session_cookie(),) if self._session_cookie_value(environ) else ()
+                )
+                return self._error(
+                    start_response,
+                    401,
+                    "unauthorized",
+                    "sign in with an account to continue",
+                    challenge=False,
+                    extra_headers=extra_headers,
+                )
+            document = self._auth_status_document(account)
+            if path == "/api/auth/session":
+                document = {
+                    "account": document["account"],
+                    "expiresAt": account.expires_at.isoformat() if account else None,
+                    "absoluteExpiresAt": (
+                        account.absolute_expires_at.isoformat() if account else None
+                    ),
+                }
+            return self._response(start_response, 200, document)
+        if path in {"/api/auth/bootstrap", "/api/auth/login", "/api/auth/reset"}:
+            if method != "POST":
+                return self._error(start_response, 405, "method_not_allowed", "POST required")
+            if not self._origin_acceptable(environ):
+                return self._cross_site_error(start_response)
+            try:
+                body = self._document(environ)
+            except (ValueError, KeyError, UnicodeDecodeError, json.JSONDecodeError) as error:
+                return self._error(
+                    start_response,
+                    422,
+                    "invalid_request",
+                    str(error) or "request JSON is invalid",
+                    details={
+                        "durableState": "no account or session changed",
+                        "retrySafe": True,
+                        "nextAction": "submit the form again",
+                    },
+                )
+            source = self._source_address(environ)
+            try:
+                if path == "/api/auth/bootstrap":
+                    grant = self._accounts.bootstrap(
+                        code=body.get("code"),
+                        username=body.get("username"),
+                        password=body.get("password"),
+                        remember=body.get("remember", False),
+                        source_address=source,
+                    )
+                    self._audit(
+                        environ,
+                        request_id,
+                        grant.account,
+                        method,
+                        path,
+                        "first_administrator",
+                        "allowed",
+                        201,
+                    )
+                    return self._response(
+                        start_response,
+                        201,
+                        {"account": self._account_document(grant.account)},
+                        extra_headers=(
+                            self._session_cookie(grant.token, environ, grant.persistent),
+                        ),
+                    )
+                if path == "/api/auth/login":
+                    grant = self._accounts.login(
+                        username=body.get("username"),
+                        password=body.get("password"),
+                        remember=body.get("remember", False),
+                        source_address=source,
+                    )
+                    self._audit(
+                        environ,
+                        request_id,
+                        grant.account,
+                        method,
+                        path,
+                        "login",
+                        "allowed",
+                        200,
+                    )
+                    return self._response(
+                        start_response,
+                        200,
+                        {"account": self._account_document(grant.account)},
+                        extra_headers=(
+                            self._session_cookie(grant.token, environ, grant.persistent),
+                        ),
+                    )
+                account = self._accounts.reset_password(
+                    code=body.get("code"),
+                    new_password=body.get("newPassword"),
+                    source_address=source,
+                )
+                self._audit(
+                    environ,
+                    request_id,
+                    account,
+                    method,
+                    path,
+                    "password_reset",
+                    "allowed",
+                    200,
+                )
+                return self._response(
+                    start_response,
+                    200,
+                    {
+                        "account": self._account_document(account),
+                        "signedOut": True,
+                        "nextAction": "sign in with the new password",
+                    },
+                    extra_headers=(self._expired_session_cookie(),),
+                )
+            except AccountAuthenticationError as error:
+                self._audit(
+                    environ,
+                    request_id,
+                    None,
+                    method,
+                    path,
+                    "authenticate",
+                    "denied",
+                    error.status,
+                )
+                headers: tuple[tuple[str, str], ...] = ()
+                if error.status == 429:
+                    headers = (("Retry-After", "900"),)
+                return self._error(
+                    start_response,
+                    error.status,
+                    error.code,
+                    error.message,
+                    details=error.document(),
+                    challenge=error.status == 401,
+                    extra_headers=headers,
+                )
+        if path in {"/api/auth/logout", "/api/auth/password"}:
+            if method != "POST":
+                return self._error(start_response, 405, "method_not_allowed", "POST required")
+            if not self._same_origin_request(environ):
+                return self._cross_site_error(start_response)
+            account = self._account_from_cookie(environ)
+            if account is None:
+                return self._error(
+                    start_response,
+                    401,
+                    "unauthorized",
+                    "sign in with an account to continue",
+                    challenge=False,
+                    extra_headers=(self._expired_session_cookie(),),
+                )
+            try:
+                body = self._document(environ)
+            except (ValueError, KeyError, UnicodeDecodeError, json.JSONDecodeError) as error:
+                return self._error(
+                    start_response,
+                    422,
+                    "invalid_request",
+                    str(error) or "request JSON is invalid",
+                    details={
+                        "durableState": "no session or password changed",
+                        "retrySafe": True,
+                        "nextAction": "submit the form again",
+                    },
+                )
+            if path == "/api/auth/logout":
+                self._accounts.logout(
+                    self._session_cookie_value(environ),
+                    source_address=self._source_address(environ),
+                )
+                self._audit(
+                    environ,
+                    request_id,
+                    account,
+                    method,
+                    path,
+                    "logout",
+                    "allowed",
+                    200,
+                )
+                return self._response(
+                    start_response,
+                    200,
+                    {"signedOut": True},
+                    extra_headers=(self._expired_session_cookie(),),
+                )
+            try:
+                self._accounts.change_password(
+                    account_id=account.account_id,
+                    current_password=body.get("currentPassword"),
+                    new_password=body.get("newPassword"),
+                    source_address=self._source_address(environ),
+                )
+            except AccountAuthenticationError as error:
+                self._audit(
+                    environ,
+                    request_id,
+                    account,
+                    method,
+                    path,
+                    "password_change",
+                    "denied",
+                    error.status,
+                )
+                return self._error(
+                    start_response,
+                    error.status,
+                    error.code,
+                    error.message,
+                    details=error.document(),
+                    challenge=False,
+                )
+            self._audit(
+                environ,
+                request_id,
+                account,
+                method,
+                path,
+                "password_change",
+                "allowed",
+                200,
+            )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "passwordChanged": True,
+                    "signedOut": True,
+                    "nextAction": "sign in again with the new password",
+                },
+                extra_headers=(self._expired_session_cookie(),),
+            )
+        return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _account_from_cookie(self, environ: dict) -> AuthenticatedAccount | None:
+        if self._accounts is None:
+            return None
+        token = self._session_cookie_value(environ)
+        if not token:
+            return None
+        return self._accounts.authenticate(token, source_address=self._source_address(environ))
+
+    def _auth_status_document(self, account: AuthenticatedAccount | None) -> dict:
+        first_required = self._accounts.setup_required() if self._accounts else False
+        return {
+            "authenticated": account is not None,
+            "firstAdministratorRequired": first_required,
+            "configurationRequired": self._configuration_required(),
+            "account": self._account_document(account.account) if account else None,
+            "expiresAt": account.expires_at.isoformat() if account else None,
+            "absoluteExpiresAt": (account.absolute_expires_at.isoformat() if account else None),
+        }
+
+    def _account_document(self, account) -> dict:
+        return {
+            "principalId": account.account_id,
+            "accountId": account.account_id,
+            "username": account.username,
+            "roles": [role.value for role in account.roles],
+            "permissions": sorted(permission.value for permission in account.permissions),
+        }
+
+    def _health_document(self) -> dict:
+        try:
+            first_required = self._accounts.setup_required() if self._accounts else False
+        except Exception:
+            first_required = False
+        return {
+            "status": "ok",
+            "processAlive": True,
+            "firstAdministratorRequired": first_required,
+            "configurationRequired": self._configuration_required(),
+        }
+
+    def _configuration_required(self) -> bool:
+        if self._configuration_service is None:
+            return True
+        try:
+            return self._configuration_service.active() is None
+        except Exception:
+            return True
+
+    @staticmethod
+    def _source_address(environ: dict) -> str | None:
+        value = environ.get("REMOTE_ADDR")
+        if not isinstance(value, str):
+            return None
+        address = value.split("\n", 1)[0].strip()
+        return address[:128] or None
+
+    @staticmethod
+    def _session_cookie_value(environ: dict) -> str | None:
+        raw = environ.get("HTTP_COOKIE")
+        if not isinstance(raw, str) or not raw:
+            return None
+        try:
+            cookie = SimpleCookie()
+            cookie.load(raw)
+            morsel = cookie.get(SESSION_COOKIE_NAME)
+        except Exception:
+            return None
+        if morsel is None:
+            return None
+        value = morsel.value
+        if not value or len(value) > 512 or any(character.isspace() for character in value):
+            return None
+        return value
+
+    @staticmethod
+    def _session_cookie(token: str, environ: dict, persistent: bool) -> tuple[str, str]:
+        parts = [
+            f"{SESSION_COOKIE_NAME}={token}",
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Lax",
+        ]
+        if persistent:
+            parts.append("Max-Age=2592000")
+        if MediaFlowApi._secure_cookie_request(environ):
+            parts.append("Secure")
+        return ("Set-Cookie", "; ".join(parts))
+
+    @staticmethod
+    def _expired_session_cookie() -> tuple[str, str]:
+        return (
+            "Set-Cookie",
+            f"{SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+        )
+
+    @staticmethod
+    def _secure_cookie_request(environ: dict) -> bool:
+        forwarded = str(environ.get("HTTP_X_FORWARDED_PROTO", "")).split(",", 1)[0].strip()
+        return forwarded.casefold() == "https" or environ.get("wsgi.url_scheme") == "https"
+
+    @staticmethod
+    def _same_origin_request(environ: dict) -> bool:
+        origin = environ.get("HTTP_ORIGIN") or environ.get("HTTP_REFERER")
+        host = (
+            environ.get("HTTP_HOST")
+            or environ.get("HTTP_X_FORWARDED_HOST")
+            or environ.get("SERVER_NAME")
+        )
+        if not isinstance(origin, str) or not isinstance(host, str):
+            return False
+        try:
+            parsed = urlsplit(origin)
+        except ValueError:
+            return False
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username:
+            return False
+        return parsed.netloc.casefold() == host.strip().casefold()
+
+    @classmethod
+    def _origin_acceptable(cls, environ: dict) -> bool:
+        if environ.get("HTTP_ORIGIN") or environ.get("HTTP_REFERER"):
+            return cls._same_origin_request(environ)
+        return True
+
+    @classmethod
+    def _cross_site_error(cls, start_response: Callable):
+        return cls._error(
+            start_response,
+            403,
+            "cross_site_write_rejected",
+            "The request did not come from the MediaFlow origin.",
+            details={
+                "durableState": "no account, session or business state changed",
+                "retrySafe": True,
+                "nextAction": "reload MediaFlow and submit the form from the open page",
+            },
+        )
 
     @staticmethod
     def _stream_response(
@@ -17027,7 +17503,12 @@ class MediaFlowApi:
 
     @staticmethod
     def _response(
-        start_response: Callable, status: int, document: dict, *, challenge: bool = True
+        start_response: Callable,
+        status: int,
+        document: dict,
+        *,
+        challenge: bool = True,
+        extra_headers: tuple[tuple[str, str], ...] = (),
     ) -> list[bytes]:
         body = json.dumps(document, ensure_ascii=False, sort_keys=True).encode("utf-8")
         labels = {
@@ -17059,6 +17540,7 @@ class MediaFlowApi:
         ]
         if status == 401 and challenge:
             headers.append(("WWW-Authenticate", 'Bearer realm="mediaflow"'))
+        headers.extend(extra_headers)
         start_response(f"{status} {labels[status]}", headers)
         return [body]
 
@@ -17139,8 +17621,15 @@ class MediaFlowApi:
         *,
         details: dict[str, object] | None = None,
         challenge: bool = True,
+        extra_headers: tuple[tuple[str, str], ...] = (),
     ):
         error = {"code": code, "message": redact_manual_text(message)}
         if details:
             error["details"] = redact_manual_value(details)
-        return cls._response(start_response, status, {"error": error}, challenge=challenge)
+        return cls._response(
+            start_response,
+            status,
+            {"error": error},
+            challenge=challenge,
+            extra_headers=extra_headers,
+        )

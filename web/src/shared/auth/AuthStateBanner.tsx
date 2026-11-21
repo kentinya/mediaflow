@@ -28,7 +28,7 @@ export function AuthStateBanner({
       <StatusBanner variant="warning" title={title}>
         <p>{message}</p>
         <div className="mf-actions">
-          <Link to="/">Go to the V2 entry</Link>
+          <Link to="/">Go to sign in</Link>
         </div>
       </StatusBanner>
     );
@@ -38,7 +38,7 @@ export function AuthStateBanner({
       <StatusBanner variant="error" title={title}>
         <p>{message}</p>
         <div className="mf-actions">
-          <Link to="/">Enter an API principal token</Link>
+          <Link to="/">Sign in again</Link>
         </div>
       </StatusBanner>
     );
@@ -47,7 +47,7 @@ export function AuthStateBanner({
     <StatusBanner variant="error" title={title}>
       <p>{message}</p>
       <div className="mf-actions">
-        <Link to="/">Connect a principal with read permission</Link>
+        <Link to="/">Sign in with an account that has read permission</Link>
       </div>
     </StatusBanner>
   );

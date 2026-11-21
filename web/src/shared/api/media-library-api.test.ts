@@ -109,9 +109,9 @@ describe("fetchMediaLibraryFiles", () => {
     const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(input).toBe("/api/media-libraries/movies/files");
     expect(init.method).toBe("GET");
-    expect((init.headers as Record<string, string>).Authorization).toBe(
-      `Bearer ${TOKEN}`,
-    );
+    expect(
+      (init.headers as Record<string, string>).Authorization,
+    ).toBeUndefined();
   });
 
   it("rejects an unsafe library identity before any request", async () => {

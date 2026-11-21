@@ -65,7 +65,7 @@ export class SystemStatusApiError extends ApiReadError {
 }
 
 /**
- * Typed boundary error for the Storage Files read. Only API-principal
+ * Typed boundary error for the Storage Files read. Only account
  * authentication/RBAC outcomes travel through this error; a Storage-provider
  * read failure is returned as a bounded `StorageFilesFailure` result instead,
  * so a provider permission denial never clears a valid authority.
@@ -79,7 +79,7 @@ export class StorageFilesApiError extends ApiReadError {
 
 /**
  * Typed boundary error for the MediaLibrary read-only Files read. Provider
- * read failures stay bounded results at the feature edge; only API-principal
+ * read failures stay bounded results at the feature edge; only account
  * authentication/RBAC outcomes use this error class.
  */
 export class MediaLibraryFilesApiError extends ApiReadError {

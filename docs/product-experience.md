@@ -41,7 +41,7 @@ Detailed superseded delivery notes are retained at
 下列旅程落实 `V2-RETIRE-001–010`，取代先前的 V1 共存、旧链接承接和废弃迁移格式义务。
 
 - **目标／入口：** 新实例四服务从最小管理 bootstrap 启动，无业务 JSON runtime 或媒体
-  挂载前置。用户连接当前 api.principals 身份，进入现有 V2 系统设置，显式初始化空
+  挂载前置。用户用数据库账号登录，进入现有 V2 系统设置，显式初始化空
   配置或应用经检查的完整 Active；当前业务页保持直接 checked Save。
 - **可见状态／动作：** 探索、两种库、存储、规则、系统设置、自动化、任务中心和通知只
   提供当前能力；旧 /ui、/review、Library/Task/Job 地址、自动化旧创建／settings 链接
@@ -1466,13 +1466,13 @@ The shared responsive light shell provides persistent navigation, identity/conne
 safe deep links and bounded return context. The top bar provides only the account control.
 Use the page-level search in Explore, Rules inventories and Automation. Open `通知` from the sidebar
 to manage Webhooks and view delivery records.
-After connection, root opens Explore. Memory-only token auth continues supported routes; reconnect
-never replays work. A 401 clears rejected authority and query state. A 403 retains identity and offers
-legal navigation. Disconnect clears token/cache/intended route.
+After sign-in, root opens Explore. The HttpOnly server session continues supported routes; reconnect
+never replays work. A 401 clears rejected account authority and query state. A 403 retains identity and
+offers legal navigation. Sign out revokes the server session and clears account cache/intended route.
 Show loading/empty/success/transport/malformed/unauthorized/forbidden/unavailable/not-found distinctly.
 Refresh/list/navigation create no work or media mutation. Explicit Explore reads may contact the
 Provider for bounded metadata/artwork. Other status/list/navigation reads remain Provider-free.
-Python serves the only current Web entry at `/` and retains API-principal identity.
+Python serves the only current Web entry at `/` and binds durable database account identity.
 
 ### Task Center integration
 

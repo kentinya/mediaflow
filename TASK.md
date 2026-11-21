@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: DEVELOPER STARTS TASK57.1 IMPLEMENTATION
+Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: DEVELOPER STARTS TASK57.1 IMPLEMENTATION
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -66,7 +66,7 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.1
 
 ### 验证计划
 
-**Developer 跑受影响用例**
+**Developer — 新增／修改与直接受影响测试**
 
 - `.venv/bin/python -m unittest discover -s tests -p test_web_account_auth.py`
   验证新增的身份、一次性码、会话、并发及原子撤销用例。
@@ -79,7 +79,7 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.1
   覆盖登录、恢复、错误状态和缓存清理。执行 `npm run typecheck`、`npm run build` 及
   改动文件静态检查与 `git diff --check`。如测试文件随重构改名，同步更新命令。
 
-**B 独立验收与 T4 回归**
+**B — 独立验收与完整回归**
 
 - 在 `web/` 构建正式产物后执行
   `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/web-account-auth.python.spec.ts`，
@@ -97,7 +97,20 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.1
 
 ### 交付与评审记录
 
-Developer 交付记录和 B 评审结果待实施后填写。
+**Developer 交付记录（READY FOR B REVIEW）**
+
+- 交付范围：数据库账号、密码哈希、服务端会话、一次性设置／重置码及审计；Web 首页首位
+  设置、登录、会话恢复、账号菜单、改密、退出与主机码重置；Scheduler／Worker 当前账号权限
+  检查；最小部署生成、预检、配置示例与运维指引退役 `api.principals`／环境令牌入口。
+- 实际验证：`test_web_account_auth` 13 项、受限 RBAC／预检／容器／执行边界等 126 项定向
+  Python 用例通过；全量 Python 2340 项通过（7 项跳过）。Web 单测 1597 项、类型检查、Lint、
+  Prettier、构建通过；身份/入口定向 45 项通过。示例配置校验、Ruff、编译、`pip check` 与
+  `git diff --check` 通过，治理检查 PASS。
+- 剩余风险：既有 Docker 多角色发布安全脚本和若干浏览器诊断脚本仍按退役环境令牌模型编写；
+  本 Task 的多角色账号管理属于后续 Slice 成果，B 应按本 Task 新链路使用隔离空库验收，
+  不应以旧多角色脚本作为本 Task 的通过条件。真实 Compose 与 E2E 候选验收由 B 执行。
+
+B 评审结果待填写。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 

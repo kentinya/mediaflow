@@ -38,7 +38,7 @@ flowchart LR
    cp deploy/mediaflow.env.example .env.mediaflow
    ```
 
-2. 编辑 `.env.mediaflow`，将 `MEDIAFLOW_API_TOKEN` 的占位值替换为自己生成并保存的高强度随机令牌。在 Linux 上按容器默认 UID/GID 设置文件权限。
+2. 按容器默认 UID/GID 设置环境文件权限并启动。该文件只保存可选的服务凭据，不再保存 Web 登录令牌。
 
    ```bash
    sudo chown 10001:10001 .env.mediaflow
@@ -47,7 +47,13 @@ flowchart LR
    docker compose ps
    ```
 
-3. 打开 <http://127.0.0.1:8080/>，输入配置的令牌。在「系统设置」初始化为空配置，再按需添加存储、资源库、媒体库和整理规则。
+3. 在主机上领取一次性设置码，打开 <http://127.0.0.1:8080/> 创建首位管理员。
+
+   ```bash
+   docker compose exec -T api mediaflow accounts issue-setup-code
+   ```
+
+   创建成功后进入「系统设置」初始化为空配置，再按需添加存储、资源库、媒体库和整理规则。日常使用账号密码登录；忘记密码时在主机执行 `mediaflow accounts issue-reset-code --username <登录名>`。
 
 默认以管理模式启动。本地媒体目录通过 Compose 覆盖文件显式挂载。挂载、日志、备份和网络设置见[部署指南](docs/deployment.md)。
 
@@ -64,18 +70,17 @@ python3 scripts/make_deployment_config.py \
   --output config/mediaflow.json \
   --database-path "$PWD/.mediaflow/mediaflow.sqlite3"
 export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
-export MEDIAFLOW_API_TOKEN="<替换为已保存的随机令牌>"
 .venv/bin/mediaflow api serve --host 127.0.0.1 --port 8787
 ```
 
-打开 <http://127.0.0.1:8787/>。需要执行任务时，在另一个终端用同一个 `MEDIAFLOW_CONFIG` 启动 `.venv/bin/mediaflow worker run`。定时整理另需启动 Scheduler。
+打开 <http://127.0.0.1:8787/>，在另一个终端用同一个 `MEDIAFLOW_CONFIG` 执行 `.venv/bin/mediaflow accounts issue-setup-code`，再在网页创建首位管理员。需要执行任务时用同一个配置启动 `.venv/bin/mediaflow worker run`。定时整理另需启动 Scheduler。
 
 ## ⚙️ 常用配置
 
 | 配置 | 用途 |
 | --- | --- |
-| `config/mediaflow.json` | 指定 SQLite 路径及 API 身份使用的环境变量。 |
-| `.env.mediaflow` | Compose 使用的环境文件，存放 API 令牌和可选的服务凭据。 |
+| `config/mediaflow.json` | 指定 SQLite 路径等启动信息，不保存账号或登录令牌。 |
+| `.env.mediaflow` | Compose 使用的环境文件，仅存放可选的服务凭据。 |
 | `TMDB_ACCESS_TOKEN` | 使用 TMDB 探索或元数据匹配时设置。 |
 | Web「系统设置」 | 初始化、检查和直接应用配置。运行服务读取已发布快照。 |
 | Web「存储」「文件」「媒体库」「整理规则」 | 配置输入、目标和整理方式。首次整理时可先用少量文件复核方案。 |

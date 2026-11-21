@@ -48,9 +48,7 @@ describe("AuthorizedReadBoundary", () => {
     expect(
       await screen.findByRole("heading", { name: "Not connected" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "Go to the V2 entry" }),
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Go to sign in" })).toBeVisible();
     expect(renderContent).not.toHaveBeenCalled();
   });
 

@@ -91,10 +91,8 @@ python3 scripts/make_deployment_config.py \
 The second document rewrites the example's Local Storage roots to
 `/media/incoming` and `/media/organized`, so it is only usable together with the
 optional media mount overlay below. It never carries deployment startup authority:
-the database locator and the API principal identity stay in
-`mediaflow.json` (so a `--token-env` bootstrap and its configuration input stay
-consistent), and the imported document binds them from the receiving
-bootstrap. `mediaflow.json` keeps `/data/mediaflow.sqlite3` and the
+the database locator stays in `mediaflow.json`, and the imported document binds
+deployment authority from the receiving bootstrap. `mediaflow.json` keeps `/data/mediaflow.sqlite3` and the
 configuration input adds `/data/history.jsonl`. `config/mediaflow.json` and the
 activation input are Git-ignored.
 
@@ -133,20 +131,17 @@ page names and describes failed-check recovery.
 
 - A deployment-owned environment file. Copy
   [deploy/mediaflow.env.example](../deploy/mediaflow.env.example) to
-  `.env.mediaflow`, replace the placeholder, and make the file readable by the
-  container UID/GID:
+  `.env.mediaflow` and make the file readable by the container UID/GID:
 
 ```bash
 cp deploy/mediaflow.env.example .env.mediaflow
-# Replace MEDIAFLOW_API_TOKEN with a generated token, then:
 chown 10001:10001 .env.mediaflow
 chmod 0440 .env.mediaflow
 ```
 
-The API token should be generated with `mediaflow api token generate` or another
-cryptographic random source. Optional `TMDB_ACCESS_TOKEN` and
-`MEDIAFLOW_WEBHOOK_SECRET` references are only needed when the corresponding
-capability is enabled in configuration.
+The file contains no Web login or API bearer token. Optional
+`TMDB_ACCESS_TOKEN` and `MEDIAFLOW_WEBHOOK_SECRET` references are only needed
+when the corresponding capability is enabled in configuration.
 
 - Media directories are **only needed when Local Storage is actually used**.
   Create them and apply the optional overlay:
@@ -193,8 +188,10 @@ verifies the config file and `/data` are present and writable, checks every
 Local Storage root declared in the deployment configuration file for a mounted
 directory with the intended read-only/read-write access, rejects host-root and
 Docker-socket paths, and only for the API command verifies that the referenced
-API token environment value is present. Preflight never scans media, calls a
-Provider, creates a Task, sends a notification, or mutates Storage.
+API identity is retired: a configuration declaring `api.principals` or
+`api.tokenEnv` fails closed with the removal guidance, and an unsupported
+database file is refused without modification. Preflight never scans media,
+calls a Provider, creates a Task, sends a notification, or mutates Storage.
 
 Each Compose service also declares a bounded healthcheck. The healthcheck runs
 `python -m mediaflow.container_probe check --service <name>` inside the same
@@ -260,7 +257,8 @@ The production artifact flow is one image, two stages, one Python runtime:
 - The retired `/ui`, `/ui/` and `/ui-v2/*` navigation addresses render the
   same entry document. The browser shows its ordinary not-found view or connection screen.
   Their old assets return 404. Retired API paths under `/api/v1` and `/api/v2` return JSON 404
-  before authentication. The current `/api/*` routes enforce Bearer authentication and RBAC.
+  before authentication. The current `/api/*` routes enforce the signed-in
+  account session or an issued API token plus RBAC.
 - Update bookmarks by removing the `/ui-v2` segment and keeping the page path and query. In API
   scripts, use `/api/tasks` in place of `/api/v1/tasks` for the existing task list. Verify with
   a read of `GET /health` and an authenticated `GET /api/tasks?limit=1`. Reopen the original
@@ -353,7 +351,7 @@ implies the other signals.
 2. **Management/API readiness** — authenticated, read-only:
 
    ```bash
-   curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
+   curl -b /tmp/mediaflow.cookies \
      http://127.0.0.1:8080/api/management/readiness
    ```
 
@@ -367,7 +365,7 @@ implies the other signals.
 3. **Business/processing-Worker readiness** — authenticated, read-only:
 
    ```bash
-   curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
+   curl -b /tmp/mediaflow.cookies \
      http://127.0.0.1:8080/api/workers/readiness
    ```
 
@@ -488,11 +486,11 @@ before any release claim:
   media target and read-only config/environment/source mounts. A container
   whose Local Storage root is host `/` fails closed before starting with a
   bounded message and no fallback.
-- The production API/Web is exercised with deployment-owned viewer, auditor,
-  operator, executor and admin Bearer principals. Missing/invalid credentials
-  are denied, least-privilege RBAC separation holds, and denied/read-only
-  requests create no Task, notification, execution authority or Storage
-  mutation.
+- The production API/Web is exercised with database accounts and server-side
+  Web sessions. Missing/invalid credentials are denied, least-privilege RBAC
+  separation holds, and denied/read-only requests create no Task, notification,
+  execution authority or Storage mutation. The retired environment token cannot
+  authenticate.
 - The running API service is probed live for V2 static serving: the entry
   document, the `/explore` and `/resourcelib/files` routes, every referenced
   hashed JS/CSS asset with its safe headers, the retired `/ui`, `/ui-v2` and
@@ -518,11 +516,15 @@ configuration, media, credentials, Storage or Providers.
 
 ```bash
 curl -i http://127.0.0.1:8080/health
-curl -H "Authorization: Bearer $MEDIAFLOW_API_TOKEN" \
+curl -c /tmp/mediaflow.cookies -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"<your password>"}' \
+  http://127.0.0.1:8080/api/auth/login
+curl -b /tmp/mediaflow.cookies \
   "http://127.0.0.1:8080/api/tasks?limit=100"
 ```
 
-Open `http://127.0.0.1:8080/` in a browser and connect with an API-principal token.
+Open `http://127.0.0.1:8080/` in a browser and sign in with the account created
+from the host-issued setup code.
 The retired `/ui` addresses render the ordinary not-found route.
 
 Restart one service without replacing state:
@@ -566,9 +568,11 @@ pinned context; those are distinct signals, not hidden failures.
   Task list are unchanged. Fix UID/GID ownership or mount authority, then rerun
   the same read check. MediaFlow never falls back to root, another path, or the
   Docker socket.
-- **Missing API token:** the API preflight names the referenced environment
-  variable and tells you to provide it in the mounted deployment environment
-  file. Secret values are never echoed.
+- **First administrator or sign-in required:** `/health` reports
+  `firstAdministratorRequired` and the root page asks for a setup code. On the
+  host run `mediaflow accounts issue-setup-code` and enter the one-time code
+  within 15 minutes. An expired or used code is replaced by issuing a new one;
+  password or host reset operations never echo a credential.
 - **Healthcheck becomes unhealthy after startup:** correct the named `/data`
   mount, configuration-file or environment-file reference, then `docker compose
   restart <service>`. Healthcheck output is bounded and never contains secret

@@ -12,6 +12,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+from mediaflow.domain.accounts import (
+    Account,
+    AccountAuditRecord,
+    AccountAuthenticationError,
+    AccountPurpose,
+    AccountSessionRecord,
+    AuthenticatedAccount,
+    OneTimeCodeRecord,
+)
 from mediaflow.domain.automation import (
     AutomationDefinitionDueState,
     AutomationDefinitionOccurrence,
@@ -168,7 +177,7 @@ from mediaflow.domain.resident_services import (
     validate_resident_service_name,
     validate_resident_waiting_reason,
 )
-from mediaflow.domain.security import SecurityAuditRecord
+from mediaflow.domain.security import ApiRole, SecurityAuditRecord
 from mediaflow.domain.source_evidence import (
     SourceVersionEvidence,
     source_version_is_known_different,
@@ -354,7 +363,61 @@ from mediaflow.infrastructure.sqlite_initialization import execute_script
 # stage never reached such a boundary has no row, and the migration backfills
 # nothing: no existing Task, TaskItem, Result, pin, authorization or Job row is
 # rewritten, re-labelled or made executable by the upgrade.
-SCHEMA_VERSION = 58
+SCHEMA_VERSION = 59
+
+# Web accounts, server-side sessions and host-issued one-time codes are part of
+# the same runtime store as Tasks.  Only password hashes and SHA-256 digests of
+# session/code secrets are persisted; a raw credential never enters a row.
+_ACCOUNT_TABLES_CREATE = """
+    CREATE TABLE IF NOT EXISTS accounts (
+        account_id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        username_key TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        roles_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        password_changed_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS account_sessions (
+        session_id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        absolute_expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        FOREIGN KEY(account_id) REFERENCES accounts(account_id)
+    );
+    CREATE INDEX IF NOT EXISTS account_sessions_account
+        ON account_sessions(account_id, revoked_at, expires_at);
+    CREATE TABLE IF NOT EXISTS account_one_time_codes (
+        code_id TEXT PRIMARY KEY,
+        account_id TEXT,
+        purpose TEXT NOT NULL,
+        code_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        issued_by TEXT NOT NULL,
+        FOREIGN KEY(account_id) REFERENCES accounts(account_id)
+    );
+    CREATE INDEX IF NOT EXISTS account_one_time_codes_account
+        ON account_one_time_codes(account_id, purpose, used_at, expires_at);
+    CREATE TABLE IF NOT EXISTS account_auth_audit (
+        audit_id TEXT PRIMARY KEY,
+        occurred_at TEXT NOT NULL,
+        account_id TEXT,
+        action TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        source_address TEXT,
+        detail TEXT
+    );
+    CREATE INDEX IF NOT EXISTS account_auth_audit_occurred
+        ON account_auth_audit(occurred_at, audit_id);
+"""
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -8597,6 +8660,497 @@ class SQLiteTaskRepository:
     initialize_automation_task_definition_due_state = initialize_automation_definition_due_state
     get_latest_automation_occurrence = get_latest_automation_definition_occurrence
     list_automation_occurrences = list_automation_definition_occurrences
+
+    # -- Web accounts, sessions and one-time codes --------------------------
+
+    def count_accounts(self) -> int:
+        with self._lock:
+            row = self._connection.execute("SELECT COUNT(*) AS total FROM accounts").fetchone()
+        return int(row["total"])
+
+    def get_account(self, account_id: str) -> Account | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM accounts WHERE account_id = ?", (account_id,)
+            ).fetchone()
+        return self._account(row) if row is not None else None
+
+    def get_account_by_username(self, username: str) -> Account | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM accounts WHERE username_key = ?", (username.casefold(),)
+            ).fetchone()
+        return self._account(row) if row is not None else None
+
+    def account_password_hash(self, account_id: str) -> str | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT password_hash FROM accounts WHERE account_id = ?", (account_id,)
+            ).fetchone()
+        return None if row is None else str(row["password_hash"])
+
+    def create_account(self, account: Account, password_hash: str) -> None:
+        """Create one non-bootstrap account row for fixtures and future management."""
+
+        with self._lock, self._connection:
+            self._insert_account_locked(account, password_hash)
+
+    def list_accounts(self) -> tuple[Account, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM accounts ORDER BY username_key, account_id"
+            ).fetchall()
+        return tuple(self._account(row) for row in rows)
+
+    def create_one_time_code(
+        self,
+        value: OneTimeCodeRecord,
+        audit: AccountAuditRecord | None = None,
+    ) -> None:
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._connection.execute(
+                    """
+                    INSERT INTO account_one_time_codes (
+                        code_id, account_id, purpose, code_hash, created_at,
+                        expires_at, used_at, issued_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+                    """,
+                    (
+                        value.code_id,
+                        value.account_id,
+                        value.purpose.value,
+                        value.code_hash,
+                        value.created_at.isoformat(),
+                        value.expires_at.isoformat(),
+                        value.issued_by,
+                    ),
+                )
+                if audit is not None:
+                    self._insert_account_audit_locked(audit)
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+
+    def consume_first_admin_code(
+        self,
+        *,
+        code_hash: str,
+        account: Account,
+        password_hash: str,
+        session: AccountSessionRecord,
+        audit: AccountAuditRecord,
+        now: datetime,
+    ) -> Account:
+        """Atomically consume one setup code and create the only first admin."""
+
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                code = self._require_code_locked(code_hash, AccountPurpose.FIRST_ADMIN, now=now)
+                total = self._connection.execute(
+                    "SELECT COUNT(*) AS total FROM accounts"
+                ).fetchone()
+                if int(total["total"]) != 0:
+                    raise AccountAuthenticationError(
+                        "setup_completed",
+                        "A first administrator already exists.",
+                        status=409,
+                        next_action="sign in with the existing account",
+                        durable_state="the one-time code was not consumed",
+                        retry_safe=False,
+                    )
+                if code["account_id"] is not None:
+                    raise AccountAuthenticationError(
+                        "setup_code_invalid",
+                        "The one-time code is not valid for first-administrator setup.",
+                        status=401,
+                        next_action="generate a new setup code on the MediaFlow host",
+                        durable_state="no account was created",
+                    )
+                self._insert_account_locked(account, password_hash)
+                self._mark_code_used_locked(code["code_id"], now)
+                self._insert_session_locked(session)
+                self._insert_account_audit_locked(
+                    replace(
+                        audit,
+                        account_id=account.account_id,
+                        detail=None,
+                    )
+                )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return account
+
+    def consume_reset_code(
+        self,
+        *,
+        code_hash: str,
+        password_hash: str,
+        now: datetime,
+        audit: AccountAuditRecord,
+    ) -> Account:
+        """Atomically reset one bound account's password and revoke its Web sessions."""
+
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                code = self._require_code_locked(code_hash, AccountPurpose.RESET_PASSWORD, now=now)
+                account_id = code["account_id"]
+                if not isinstance(account_id, str):
+                    raise AccountAuthenticationError(
+                        "reset_code_invalid",
+                        "The one-time code is not bound to an account.",
+                        status=401,
+                        next_action="generate a new reset code for the target account",
+                        durable_state="no password or session changed",
+                    )
+                row = self._connection.execute(
+                    "SELECT * FROM accounts WHERE account_id = ?", (account_id,)
+                ).fetchone()
+                if row is None:
+                    raise AccountAuthenticationError(
+                        "reset_code_invalid",
+                        "The account for this reset code no longer exists.",
+                        status=401,
+                        next_action="check the account list and issue a new reset code",
+                        durable_state="no password or session changed",
+                    )
+                self._connection.execute(
+                    """
+                    UPDATE accounts
+                    SET password_hash = ?, updated_at = ?, password_changed_at = ?
+                    WHERE account_id = ?
+                    """,
+                    (
+                        password_hash,
+                        now.isoformat(),
+                        now.isoformat(),
+                        account_id,
+                    ),
+                )
+                self._connection.execute(
+                    """
+                    UPDATE account_sessions
+                    SET revoked_at = ?
+                    WHERE account_id = ? AND revoked_at IS NULL
+                    """,
+                    (now.isoformat(), account_id),
+                )
+                self._mark_code_used_locked(code["code_id"], now)
+                self._insert_account_audit_locked(replace(audit, account_id=account_id))
+                self._connection.commit()
+                account = self._account(row)
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return replace(account, password_changed_at=now, updated_at=now)
+
+    def create_account_session(self, value: AccountSessionRecord) -> None:
+        with self._lock, self._connection:
+            self._insert_session_locked(value)
+
+    def authenticate_account_session(
+        self,
+        token_hash: str,
+        *,
+        now: datetime,
+        idle_limit: timedelta,
+    ) -> AuthenticatedAccount | None:
+        """Validate one session token digest and slide its idle boundary."""
+
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    """
+                    SELECT s.*, a.username, a.roles_json, a.enabled,
+                           a.created_at AS account_created_at,
+                           a.updated_at AS account_updated_at,
+                           a.password_changed_at AS account_password_changed_at
+                    FROM account_sessions s
+                    JOIN accounts a ON a.account_id = s.account_id
+                    WHERE s.token_hash = ?
+                    """,
+                    (token_hash,),
+                ).fetchone()
+                if row is None or row["revoked_at"] is not None:
+                    self._connection.commit()
+                    return None
+                absolute = datetime.fromisoformat(row["absolute_expires_at"])
+                expires = datetime.fromisoformat(row["expires_at"])
+                if now >= absolute or now >= expires:
+                    self._connection.execute(
+                        "UPDATE account_sessions SET revoked_at = ? WHERE session_id = ?",
+                        (now.isoformat(), row["session_id"]),
+                    )
+                    self._connection.commit()
+                    return None
+                if not bool(row["enabled"]):
+                    self._connection.execute(
+                        """
+                        UPDATE account_sessions SET revoked_at = ?
+                        WHERE account_id = ? AND revoked_at IS NULL
+                        """,
+                        (now.isoformat(), row["account_id"]),
+                    )
+                    self._connection.commit()
+                    return None
+                next_expiries = min(now + idle_limit, absolute)
+                self._connection.execute(
+                    """
+                    UPDATE account_sessions
+                    SET last_used_at = ?, expires_at = ?
+                    WHERE session_id = ?
+                    """,
+                    (now.isoformat(), next_expiries.isoformat(), row["session_id"]),
+                )
+                self._connection.commit()
+                account = self._account_from_session_row(row)
+                return AuthenticatedAccount(
+                    account,
+                    str(row["session_id"]),
+                    next_expiries,
+                    absolute,
+                )
+            except BaseException:
+                self._connection.rollback()
+                raise
+
+    def revoke_account_session_by_hash(self, token_hash: str, *, now: datetime) -> str | None:
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    """
+                    SELECT account_id FROM account_sessions
+                    WHERE token_hash = ? AND revoked_at IS NULL
+                    """,
+                    (token_hash,),
+                ).fetchone()
+                if row is None:
+                    self._connection.commit()
+                    return None
+                self._connection.execute(
+                    """
+                    UPDATE account_sessions SET revoked_at = ?
+                    WHERE token_hash = ? AND revoked_at IS NULL
+                    """,
+                    (now.isoformat(), token_hash),
+                )
+                self._connection.commit()
+                return str(row["account_id"])
+            except BaseException:
+                self._connection.rollback()
+                raise
+
+    def revoke_account_sessions(self, account_id: str, *, now: datetime) -> int:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE account_sessions SET revoked_at = ?
+                WHERE account_id = ? AND revoked_at IS NULL
+                """,
+                (now.isoformat(), account_id),
+            )
+            return int(cursor.rowcount)
+
+    def change_account_password(
+        self,
+        *,
+        account_id: str,
+        password_hash: str,
+        now: datetime,
+        audit: AccountAuditRecord,
+    ) -> None:
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._connection.execute(
+                    """
+                    UPDATE accounts
+                    SET password_hash = ?, updated_at = ?, password_changed_at = ?
+                    WHERE account_id = ?
+                    """,
+                    (password_hash, now.isoformat(), now.isoformat(), account_id),
+                )
+                if cursor.rowcount != 1:
+                    raise AccountAuthenticationError(
+                        "account_not_found",
+                        "The account no longer exists.",
+                        status=401,
+                        next_action="sign in again",
+                        durable_state="no password or session changed",
+                    )
+                self._connection.execute(
+                    """
+                    UPDATE account_sessions SET revoked_at = ?
+                    WHERE account_id = ? AND revoked_at IS NULL
+                    """,
+                    (now.isoformat(), account_id),
+                )
+                self._insert_account_audit_locked(replace(audit, account_id=account_id))
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+
+    def append_account_audit(self, value: AccountAuditRecord) -> None:
+        with self._lock, self._connection:
+            self._insert_account_audit_locked(value)
+
+    def list_account_auth_audit(self, *, limit: int = 100) -> tuple[AccountAuditRecord, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise ValueError("account audit limit must be between 1 and 1000")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM account_auth_audit
+                ORDER BY occurred_at DESC, audit_id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return tuple(
+            AccountAuditRecord(
+                row["audit_id"],
+                datetime.fromisoformat(row["occurred_at"]),
+                row["account_id"],
+                row["action"],
+                row["outcome"],
+                row["source_address"],
+                row["detail"],
+            )
+            for row in rows
+        )
+
+    def _require_code_locked(self, code_hash: str, purpose: AccountPurpose, *, now: datetime):
+        row = self._connection.execute(
+            "SELECT * FROM account_one_time_codes WHERE code_hash = ?", (code_hash,)
+        ).fetchone()
+        if row is None or row["used_at"] is not None or row["purpose"] != purpose.value:
+            raise AccountAuthenticationError(
+                "setup_code_invalid",
+                "The one-time code is not valid.",
+                status=401,
+                next_action="generate a new code on the MediaFlow host and try again",
+                durable_state="no account, password or session changed",
+                field="code",
+            )
+        if now >= datetime.fromisoformat(row["expires_at"]):
+            raise AccountAuthenticationError(
+                "setup_code_expired",
+                "The one-time code has expired.",
+                status=401,
+                next_action="generate a new code on the MediaFlow host and try again",
+                durable_state="no account, password or session changed",
+                field="code",
+            )
+        return row
+
+    def _mark_code_used_locked(self, code_id: str, now: datetime) -> None:
+        cursor = self._connection.execute(
+            """
+            UPDATE account_one_time_codes SET used_at = ?
+            WHERE code_id = ? AND used_at IS NULL
+            """,
+            (now.isoformat(), code_id),
+        )
+        if cursor.rowcount != 1:
+            raise AccountAuthenticationError(
+                "setup_code_invalid",
+                "The one-time code was already used.",
+                status=401,
+                next_action="generate a new code on the MediaFlow host and try again",
+                durable_state="no second account or password change was committed",
+            )
+
+    def _insert_account_locked(self, account: Account, password_hash: str) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO accounts (
+                account_id, username, username_key, password_hash, roles_json,
+                enabled, created_at, updated_at, password_changed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                account.account_id,
+                account.username,
+                account.username.casefold(),
+                password_hash,
+                json.dumps([role.value for role in account.roles], sort_keys=True),
+                1 if account.enabled else 0,
+                account.created_at.isoformat(),
+                account.updated_at.isoformat(),
+                account.password_changed_at.isoformat(),
+            ),
+        )
+
+    def _insert_session_locked(self, value: AccountSessionRecord) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO account_sessions (
+                session_id, account_id, token_hash, created_at, last_used_at,
+                expires_at, absolute_expires_at, revoked_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                value.session_id,
+                value.account_id,
+                value.token_hash,
+                value.created_at.isoformat(),
+                value.last_used_at.isoformat(),
+                value.expires_at.isoformat(),
+                value.absolute_expires_at.isoformat(),
+                value.revoked_at.isoformat() if value.revoked_at else None,
+            ),
+        )
+
+    def _insert_account_audit_locked(self, value: AccountAuditRecord) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO account_auth_audit (
+                audit_id, occurred_at, account_id, action, outcome,
+                source_address, detail
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                value.audit_id,
+                value.occurred_at.isoformat(),
+                value.account_id,
+                value.action,
+                value.outcome,
+                value.source_address,
+                value.detail,
+            ),
+        )
+
+    @staticmethod
+    def _account(row: sqlite3.Row) -> Account:
+        return Account(
+            row["account_id"],
+            row["username"],
+            tuple(ApiRole(value) for value in json.loads(row["roles_json"])),
+            bool(row["enabled"]),
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            datetime.fromisoformat(row["password_changed_at"]),
+        )
+
+    @classmethod
+    def _account_from_session_row(cls, row: sqlite3.Row) -> Account:
+        return Account(
+            row["account_id"],
+            row["username"],
+            tuple(ApiRole(value) for value in json.loads(row["roles_json"])),
+            bool(row["enabled"]),
+            datetime.fromisoformat(row["account_created_at"]),
+            datetime.fromisoformat(row["account_updated_at"]),
+            datetime.fromisoformat(row["account_password_changed_at"]),
+        )
 
     def append_security_audit(self, value: SecurityAuditRecord) -> None:
         with self._lock, self._connection:
@@ -19387,6 +19941,7 @@ class SQLiteTaskRepository:
         self._connection.execute(_TASK_SCHEDULING_ADMISSION_INDEX)
         self._connection.execute(_TASK_SCHEDULING_CAPACITY_INDEX)
         self._connection.execute(_TASK_INITIAL_EXECUTIONS_CREATE)
+        execute_script(self._connection, _ACCOUNT_TABLES_CREATE)
         self._advance_runtime_schema_marker()
 
     def _initialize_existing_runtime_locked(self) -> None:
@@ -19402,6 +19957,7 @@ class SQLiteTaskRepository:
 
         self._assert_current_runtime_structure_locked()
         self._migrate_manual_recovery_preparation_legacy_columns_locked()
+        execute_script(self._connection, _ACCOUNT_TABLES_CREATE)
         marker = self._connection.execute(
             "SELECT version FROM schema_version WHERE component='runtime'"
         ).fetchone()

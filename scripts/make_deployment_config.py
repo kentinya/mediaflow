@@ -2,9 +2,9 @@
 """Render the deployment bootstrap for a MediaFlow container.
 
 The rendered document is always the **management-only** bootstrap: the durable
-database locator and environment-owned ``api.principals``, and nothing else.
-That is the shape every resident service starts from, and it needs no media
-mount and no pre-authored business configuration.
+database locator and nothing else.  Browser accounts are created through a
+host-issued one-time setup code, so the bootstrap carries no credential,
+environment token reference or business configuration.
 
 ``--configuration-output`` additionally writes the canonical example as a
 configuration *input* document.  It is checked and published directly through
@@ -23,33 +23,22 @@ import json
 import sys
 from pathlib import Path
 
-#: Environment-owned API credential reference used by the rendered bootstrap.
-#: The value itself is deployment-owned and never written into this file.
-DEFAULT_ADMIN_TOKEN_ENV = "MEDIAFLOW_API_TOKEN"
-
 
 def make_management_bootstrap(
     *,
     database_path: str = "/data/mediaflow.sqlite3",
-    token_env: str = DEFAULT_ADMIN_TOKEN_ENV,
 ) -> dict:
     """Render the management-only deployment bootstrap.
 
-    This is the strict first-setup shape: only the immutable database locator
-    and one environment reference for the API credential.  It contains no
-    Storage, library, policy, schedule or webhook, so starting a resident
-    service never depends on business configuration that an administrator has
-    not created yet.
+    This is the strict first-setup shape: only the immutable database locator.
+    It contains no credential, Storage, library, policy, schedule or webhook,
+    so starting a resident service never depends on business configuration or
+    an environment token that an administrator has not created yet.
     """
 
     return {
         "version": 1,
         "persistence": {"databasePath": database_path},
-        "api": {
-            "principals": [
-                {"id": "admin", "tokenEnv": token_env, "roles": ["admin"], "enabled": True}
-            ]
-        },
     }
 
 
@@ -63,8 +52,8 @@ def make_deployment_configuration() -> dict:
 
     The rendered document is the same portable input the managed export
     produces: deployment startup authority (the durable database locator and
-    the API principal/token identity) is excluded, so importing it binds the
-    receiving bootstrap's own authority instead of this example's identity.
+    any retired API identity) is excluded, so importing it binds the receiving
+    bootstrap's own authority instead of this example's identity.
     """
 
     project = Path(__file__).resolve().parents[1]
@@ -75,6 +64,7 @@ def make_deployment_configuration() -> dict:
     api = document.get("api")
     if isinstance(api, dict):
         api.pop("principals", None)
+        api.pop("tokenEnv", None)
         if not api:
             document.pop("api")
     document["historyPath"] = "/data/history.jsonl"
@@ -118,11 +108,6 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--token-env",
-        default=DEFAULT_ADMIN_TOKEN_ENV,
-        help="environment variable name holding the admin API credential",
-    )
-    parser.add_argument(
         "--database-path",
         default="/data/mediaflow.sqlite3",
         help=(
@@ -134,10 +119,7 @@ def main() -> int:
     document = (
         make_deployment_configuration()
         if arguments.configuration
-        else make_management_bootstrap(
-            database_path=arguments.database_path,
-            token_env=arguments.token_env,
-        )
+        else make_management_bootstrap(database_path=arguments.database_path)
     )
     rendered = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
     if arguments.output is None:

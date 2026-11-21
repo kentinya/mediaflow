@@ -2,7 +2,7 @@
  * Central Explore read contract (Slice 51 / Task 51.1).
  *
  * One bounded boundary between the Explore feature and the Python API:
- * requests carry the in-memory Bearer token only, every response is strictly
+ * requests carry the same-origin HttpOnly session cookie only, every response is strictly
  * normalized by the Explore entity, and every failure — a rejected local
  * principal or an upstream provider family — becomes one secret-free kind
  * with a fixed message. An upstream 401/403 from the provider keeps its HTTP
@@ -159,8 +159,8 @@ export function exploreKindForCode(
 }
 
 function exploreHeaders(token: string | null): Record<string, string> {
+  void token;
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (token !== null) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
 

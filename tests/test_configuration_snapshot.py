@@ -16,6 +16,7 @@ from mediaflow.application.configuration_snapshot import ManagedConfigurationSer
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
+from mediaflow.domain.accounts import Account, AccountSessionRecord
 from mediaflow.domain.automation import (
     AutomationTaskDefinition,
     AutomationTaskRunMode,
@@ -39,7 +40,7 @@ from mediaflow.domain.metadata import (
     MediaType,
     ProviderCapabilities,
 )
-from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.security import ApiPermission, ApiRole, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.final_cli import (
     _configuration,
@@ -100,6 +101,44 @@ def _snapshot_provider_registry(_requested):
     return MetadataProviderRegistry((_SnapshotTMDBProvider(),))
 
 
+SEEDED_SESSION_TOKENS: set[str] = set()
+
+
+def seed_account_session(database, *, token="admin-token", username="admin", role=ApiRole.ADMIN):
+    """Seed one durable Web account/session for a real-final_main API test."""
+
+    from mediaflow.application.accounts import hash_password
+
+    now = datetime.now(UTC)
+    with SQLiteTaskRepository(database) as repository:
+        account_id = f"account-{username}"
+        if repository.get_account(account_id) is None:
+            repository.create_account(
+                Account(
+                    account_id,
+                    username,
+                    (role,),
+                    True,
+                    now,
+                    now,
+                    now,
+                ),
+                hash_password(f"{username}-password"),
+            )
+        repository.create_account_session(
+            AccountSessionRecord(
+                f"session-{username}",
+                account_id,
+                hashlib.sha256(token.encode()).hexdigest(),
+                now,
+                now,
+                now + timedelta(days=1),
+                now + timedelta(days=2),
+            )
+        )
+    SEEDED_SESSION_TOKENS.add(token)
+
+
 def request(
     api,
     path,
@@ -118,8 +157,13 @@ def request(
         "CONTENT_LENGTH": str(len(body)),
         "wsgi.input": io.BytesIO(body),
         "REMOTE_ADDR": "127.0.0.1",
+        "HTTP_HOST": "127.0.0.1",
         "HTTP_AUTHORIZATION": f"Bearer {token}" if token else "",
     }
+    if token in SEEDED_SESSION_TOKENS and getattr(api, "_accounts", None) is not None:
+        environment["HTTP_AUTHORIZATION"] = ""
+        environment["HTTP_COOKIE"] = f"mediaflow_session={token}"
+        environment["HTTP_ORIGIN"] = "http://127.0.0.1"
     environment.update(headers or {})
     payload = b"".join(api(environment, lambda status, headers: statuses.append(status)))
     return int(statuses[0].split()[0]), json.loads(payload)
@@ -1671,6 +1715,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            seed_account_session(runtime)
             server = Server()
             replacement_document = json.loads(json.dumps(document))
             replacement_document.pop("api", None)
@@ -1797,6 +1842,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             invalid = json.loads(json.dumps(document))
             invalid["recognitionTypePolicies"][0]["metadataPolicy"] = "missing-policy"
 
+            seed_account_session(runtime)
             server = Server()
             server.document = document
             server.invalid_document = invalid
@@ -1958,6 +2004,15 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             document["historyPath"] = str(root / "history.jsonl")
             config = root / "bootstrap.json"
             config.write_text(json.dumps(document), encoding="utf-8")
+            document["api"] = {
+                "principals": [
+                    {
+                        "id": "local-admin",
+                        "tokenEnv": "MEDIAFLOW_API_TOKEN",
+                        "roles": ["admin"],
+                    }
+                ]
+            }
             disabled_document = json.loads(json.dumps(document))
             disabled_document["api"]["principals"][0]["enabled"] = False
 
@@ -2213,6 +2268,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             )
             config = root / "bootstrap.json"
             config.write_text(json.dumps(first_document), encoding="utf-8")
+            seed_account_session(runtime)
             server = Server()
             server.first_document = first_document
             server.second_document = second_document

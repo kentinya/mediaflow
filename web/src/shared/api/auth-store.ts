@@ -1,10 +1,10 @@
 /**
- * Memory-only API-principal token store.
+ * Browser account/session state store.
  *
- * The token lives in JavaScript runtime memory only. There is deliberately no
- * persistence path: no localStorage, sessionStorage, IndexedDB, cookie, URL,
- * query/hash parameter or telemetry binding exists in this module, and none
- * may be added without an explicit architecture-contract change.
+ * The HttpOnly session cookie is the credential and is never readable here.
+ * This module holds only a non-secret account identity and safe continuation
+ * state; there is no localStorage, sessionStorage, IndexedDB, JS cookie, URL,
+ * query/hash parameter or telemetry credential binding.
  */
 
 import {
@@ -12,11 +12,25 @@ import {
   type DestinationPath,
 } from "../navigation/destination-model";
 import { clearPrincipalSessionData } from "../auth/principal-session-data";
+import type { AuthAccount } from "./auth-api";
 
 export type AuthListener = () => void;
 
 export interface MemoryAuthStore {
   getToken(): string | null;
+  getAccount(): AuthAccount | null;
+  getSessionStatus(): "restoring" | "anonymous" | "authenticated";
+  getFirstAdministratorRequired(): boolean;
+  getConfigurationRequired(): boolean;
+  getRestoreError(): "unavailable" | null;
+  setSession(account: AuthAccount): void;
+  completeSessionRestore(input: {
+    readonly firstAdministratorRequired: boolean;
+    readonly configurationRequired: boolean;
+    readonly account: AuthAccount | null;
+  }): void;
+  failSessionRestore(): void;
+  beginSessionRestore(): void;
   /** Monotonic in-memory auth session identity; it contains no credential. */
   getGeneration(): number;
   setToken(token: string): void;
@@ -59,6 +73,11 @@ export function createMemoryAuthStore(): MemoryAuthStore {
   let intendedPath: DestinationPath | null = null;
   let intendedSearch: string | null = null;
   let rejected = false;
+  let account: AuthAccount | null = null;
+  let status: "restoring" | "anonymous" | "authenticated" = "anonymous";
+  let firstAdministratorRequired = false;
+  let configurationRequired = true;
+  let restoreError: "unavailable" | null = null;
   let generation = 0;
   const listeners = new Set<AuthListener>();
   const emit = () => {
@@ -76,33 +95,81 @@ export function createMemoryAuthStore(): MemoryAuthStore {
   return {
     getToken: () => token,
     getGeneration: () => generation,
+    getAccount: () => account,
+    getSessionStatus: () => status,
+    getFirstAdministratorRequired: () => firstAdministratorRequired,
+    getConfigurationRequired: () => configurationRequired,
+    getRestoreError: () => restoreError,
+    setSession: (next) => {
+      if (account !== null && account.principalId !== next.principalId) {
+        clearPrincipalSessionData();
+      }
+      token = next.principalId;
+      account = next;
+      status = "authenticated";
+      rejected = false;
+      restoreError = null;
+      generation += 1;
+      emit();
+    },
+    completeSessionRestore: (input) => {
+      firstAdministratorRequired = input.firstAdministratorRequired;
+      configurationRequired = input.configurationRequired;
+      restoreError = null;
+      account = input.account;
+      token = input.account?.principalId ?? null;
+      status = input.account === null ? "anonymous" : "authenticated";
+      rejected = false;
+      emit();
+    },
+    failSessionRestore: () => {
+      account = null;
+      token = null;
+      status = "anonymous";
+      restoreError = "unavailable";
+      emit();
+    },
+    beginSessionRestore: () => {
+      status = "restoring";
+      restoreError = null;
+      emit();
+    },
     isRejected: () => rejected,
     setToken: (next) => {
       if (token !== null && token !== next) {
         clearPrincipalSessionData();
       }
       token = next;
+      account = null;
+      status = "authenticated";
+      restoreError = null;
       generation += 1;
       // A freshly entered principal resets the rejected-authority boundary.
       rejected = false;
       emit();
     },
     clearToken: () => {
-      if (token === null && !rejected) {
+      if (token === null && !rejected && account === null) {
+        status = "anonymous";
         return;
       }
       clearPrincipalSessionData();
       token = null;
+      account = null;
+      status = "anonymous";
       rejected = false;
+      restoreError = null;
       generation += 1;
       clearIntendedPathInternal();
       emit();
     },
     clearRejectedAuthority: () => {
-      if (token === null) {
+      if (token === null && account === null) {
         return;
       }
       token = null;
+      account = null;
+      status = "anonymous";
       rejected = true;
       generation += 1;
       // Intentionally does NOT clear the intended path, so the operator

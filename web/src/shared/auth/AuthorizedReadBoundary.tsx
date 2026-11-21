@@ -119,7 +119,7 @@ export function AuthorizedReadBoundary<T>({
         <AuthStateBanner
           variant="unauthorized"
           title="Not authorized"
-          message="The API token was rejected. Enter a valid API principal token to continue."
+          message="The Web session was rejected. Sign in again to continue."
         />
       );
     }
@@ -127,7 +127,7 @@ export function AuthorizedReadBoundary<T>({
       <AuthStateBanner
         variant="not-connected"
         title="Not connected"
-        message="Enter an API principal token to view this area."
+        message="Sign in with a MediaFlow account to view this area."
       />
     );
   }
@@ -142,7 +142,7 @@ export function AuthorizedReadBoundary<T>({
         <AuthStateBanner
           variant="forbidden"
           title="Forbidden"
-          message="The connected API principal does not have permission to view this area."
+          message="The signed-in account does not have permission to view this area."
         />
       );
     }
@@ -152,7 +152,7 @@ export function AuthorizedReadBoundary<T>({
         <AuthStateBanner
           variant="unauthorized"
           title="Not authorized"
-          message="The API token was rejected. Enter a valid API principal token to continue."
+          message="The Web session was rejected. Sign in again to continue."
         />
       );
     }

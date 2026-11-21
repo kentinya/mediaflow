@@ -1260,7 +1260,7 @@ function toDetailViewModel(
  * - the Active snapshot is unreadable — recovery is a configuration decision,
  *   not a first run.
  *
- * The router link stays inside the V2 application so memory-only bearer
+ * The router link stays inside the V2 application so the HttpOnly session
  * authority survives the continuation. The only URL state is the fixed return
  * target; nothing here creates a Draft, runs a check, activates configuration
  * or starts media work.

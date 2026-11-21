@@ -9,7 +9,7 @@ operator guide, not a Phase or Task log. Large-Slice status is maintained in
 | Path | Authority |
 |---|---|
 | Managed Configuration | Explicitly published immutable SQLite revision/digest; sole runtime authority after publication, with no JSON/draft/stale-cache fallback. |
-| Minimal management bootstrap (`MEDIAFLOW_CONFIG`) | Deployment-owned database locator and API-principal environment references keep status/setup/recovery available without business Active or workflow defaults. |
+| Minimal management bootstrap (`MEDIAFLOW_CONFIG`) | Deployment-owned database locator keeps status/setup/recovery available without business Active or workflow defaults; accounts live in the database. |
 
 A fresh operator explicitly initializes an empty managed configuration in Web Settings and may
 publish a valid empty business baseline. Populated objects/references still validate; missing capability and corrupt
@@ -22,14 +22,12 @@ A fresh deployment starts from the minimal management bootstrap:
 ```json
 {
   "version": 1,
-  "persistence": {"databasePath": "/data/mediaflow.sqlite3"},
-  "api": {
-    "principals": [
-      {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"], "enabled": true}
-    ]
-  }
+  "persistence": {"databasePath": "/data/mediaflow.sqlite3"}
 }
 ```
+
+The bootstrap contains no credential or account identity. Create the first administrator with a
+host-issued one-time code (`mediaflow accounts issue-setup-code`) from the Web sign-in page.
 
 It declares no Storage, ResourceLibrary, MediaLibrary, rule, policy or Webhook, so a fresh
 installation can start all services, expose status/recovery and initialize an empty configuration
@@ -56,7 +54,7 @@ locator and authority for publication; without one the command refuses to run. T
 host-local durable locator so this command and the service opened later share one database; in the
 container layout omit `--database-path` and keep the default `/data/mediaflow.sqlite3`.
 
-The generated input omits the database locator and API principal identity, so import binds the
+The generated input omits the database locator and any retired API identity, so import binds the
 receiving deployment's own authority. Unrelated empty families are legal and create no
 capability/defaults; populated references that point at missing objects fail validation.
 

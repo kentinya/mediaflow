@@ -757,7 +757,10 @@ class ManagementReadinessInfrastructureTests(ResidentDeploymentFixture):
         api = self._api()
         status, health = self._request(api, "/health")
         self.assertEqual(status, 200)
-        self.assertEqual(health, {"processAlive": True, "status": "ok"})
+        self.assertEqual(health["status"], "ok")
+        self.assertIs(health["processAlive"], True)
+        self.assertIn("firstAdministratorRequired", health)
+        self.assertIn("configurationRequired", health)
 
     def test_readiness_degrades_to_a_bounded_reason_when_presence_is_unavailable(self) -> None:
         """A shared-database fault during a read must stay a readable reason.
