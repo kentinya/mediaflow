@@ -289,3 +289,28 @@ Next: SAME TASK FIX LOOP
 
 1. 新建页按当前账号和新建入口恢复待核实请求，从已保存的请求里取回原标识符。页面重新打开或重新连接时自动只读核实，核实期间阻止再次应用。复用现有通知签名测试夹具和原请求核实接口，覆盖「新建 → 签名测试 → 应用已提交但回包丢失 → 首次核实待定 → 整页重载 → 重新连接」，验证页面自动确认并打开已发布的定义，整个旅程只有一次发布。
 2. 将 `docker_health_smoke_test.py` 的共用配置初始化改为现有 `POST /api/configuration/publish`，沿用空配置 Docker 验收中的直接发布请求和生效检查。保留各调用方原有断言。Developer 复验共用初始化可以在真实容器中发布并读回 Active，B 负责两套完整 Docker 门禁。
+
+### Developer 第十轮修复报告
+
+```text
+Task Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Candidate: 0ae629b7a3bfb2bd7e0a7a2bfe0dae02409a3385
+Decision: READY FOR B REVIEW
+Authorized bug acceptance complete: NO
+```
+
+- 新建页的待核实请求改为按账号和新建入口保存，标识符随请求记录而不是作为键。整页重载或重新连接后从同一账号的已保存请求取回原标识符，自动用原 `submissionId` 只读核实；核实和待核实期间应用保持阻止。核实完成确认发布后直接打开对应已发布定义。原 `guardRef` 改为当前渲染的卡片守卫，避免核实先于守卫挂载时只显示结果却不导航。
+- 共用 Docker 初始化 `activate_runtime` 改为 `POST /api/configuration/publish`，发布后读取 `/api/configuration` 核对 Active 的 revision 和 digest。`prepare_files`、transfer-impact 夹具补齐示例配置要求的 `Movies`、`TV Shows` 媒体库根目录；重启夹具的零效果断言改为只拒绝文件，允许已配置的空目录。
+- 一并把 `docker_smoke_test.py`、transfer lifecycle 脚本和 `make_deployment_config.py` 说明中的旧草稿调用/描述切换为直接发布。
+
+实际结果：
+
+- `.venv/bin/python -m unittest tests.test_configuration_snapshot tests.test_configuration_status tests.test_configuration_package_exchange tests.test_configuration_destination_activation tests.test_system_settings_management tests.test_automation_settings_management`：159 项通过。
+- `.venv/bin/python -m unittest tests.test_v2_notification_operations tests.test_webhook_management tests.test_webhook_url_security tests.test_notification_delivery_management`：58 项通过。
+- `npm run test -- run src/features/operations/NotificationRouter.test.tsx`：7 项通过，含新建页丢回包后整页重载自动核实的新增用例。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "Notification"`：3 项通过。新增真实 Python 用例覆盖「新建 → 签名测试 → 应用已提交但回包丢失 → 首次核实待定 → 整页重载 → 重新连接 → 自动确认并打开已发布定义」，发布请求 1 次，核实至少 2 次。
+- `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 通过；构建产物为 `index-D5aKJ4_0.js` / `index-Tw5pYUJe.css`。
+- Ruff check/format、`py_compile`、`git diff --check`、治理检查通过。
+- `TMPDIR=<repo>/.git/smoke-tmp .venv/bin/python scripts/docker_health_smoke_test.py` 已通过共用初始化：真实容器内发布成功并从 `/api/configuration` 读回同一 Active。之后在 `chmod 000` 媒体根目录的降级步骤等待 API `unhealthy` 超时；Colima 的挂载未向容器反映该权限变化，完整健康套件未在本机通过。
+
+剩余风险：T4 全量、重启/发布安全两套完整 Docker 门禁、真实桌面与 390px 截图、Base 数据切换按 Task 分工留给 B。仓库内仍有三个未被现行文档或门禁引用的历史浏览器证明脚本描述已退役草稿界面；它们不是产品入口或当前验证入口，本轮未改。
