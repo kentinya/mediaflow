@@ -186,3 +186,21 @@ Next: SAME TASK FIX LOOP
 
 1. 用现有真实 Python Playwright 配置和夹具，把设置页的旧草稿用例迁移到 `web/tests/e2e/configuration-settings.python.spec.ts`，保留原文件的自动化业务用例。沿「系统设置 → 日志 → 修改保留天数 → 应用更改 → 读回当前生效值」覆盖桌面及 390px 窄屏。把原检查断言迁移到当前检查和发布入口，确认检查拒绝时仍显示原生效值并保留输入。两个会话在同一生效基线编辑同一字段时，只允许一次发布并保留另一会话的输入。丢回包测试让真实后端先提交，再从页面重连，确认自动只读核实原请求、显示对应结果，发布请求共一次。
 2. 修复上列 Ruff 和 Prettier 问题。用 `playwright.python.automation.config.ts` 跑迁移后的设置规格及直接受影响的自动化浏览器用例，运行相关格式检查，并在同一 Task 记录实际结果。
+
+### B 第七次返工复核
+
+```text
+Reviewed Base: e279077c4bca208ab7168983d15eca66ec8833d1
+Reviewed Head: 38efbce447047ddb5433a99437a772f3645d2f1c
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+- 上轮的设置页验收和格式检查已通过。生产 Web 构建后，用真实 Python 和临时 SQLite 运行 `configuration-settings.python.spec.ts` 与 `automation-settings.python.spec.ts`，共 20 项通过。桌面及 390px 直接应用、拒绝后保留输入、并发只发布一次、丢回包重连后自动核实均通过。Ruff、Prettier、Web 类型检查和 Lint 也通过。
+- **真实通知列表无法使用。** 用管理员登录真实 Python Web，从侧栏打开「通知」，页面显示「通知定义暂时不可用」，看不到已有定义、新建或编辑入口。页面发出的 `GET /api/operations/notifications/webhooks` 返回 `200` 和一条已发布定义。将该响应交给页面解析函数，拒绝项为 `items[].actions.activate`。后端已禁用草稿激活并返回 `requiresConfirmation: false`，前端还要求旧动作必须为 `true`。Node 假服务仍返回 `true`，所以已有浏览器用例没有覆盖这个失败。真实 API 还把列表中的编辑权限绑在已退役的草稿上，管理员收到 `edit.available=false` 和空路径。
+- 真实通知截图和日志位于 `.git/validation-evidence/38efbce447047ddb5433a99437a772f3645d2f1c/b-review/`。本轮确认通知阻塞后结束测试，B 在修正候选上完成 T4 全量及适用的打包和生产验证。
+
+#### Developer 修复指导
+
+让真实通知列表、详情和表单共同使用当前已发布 Webhook 和发布权限。调整 `service_api.py` 与 `notification.ts`，从通知响应和解析移除退役的草稿激活动作，并让管理员的编辑入口指向当前已发布定义。同时清理退出编辑时承诺保留草稿的提示，保留继续编辑和放弃输入的选择。用同样的响应契约更新 Node 夹具。用现有真实 Python 浏览器入口复测「通知列表 → 编辑已发布定义 → 签名测试当前输入 → 应用更改 → 回到列表读回新值」，核对测试只发一次请求、应用只发布一次，以及无发布权限账号只能查看。
