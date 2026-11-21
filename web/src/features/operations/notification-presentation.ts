@@ -40,26 +40,6 @@ export function deliveryStatusLabel(status: string): string {
   return DELIVERY_STATUS_LABELS[status as NotificationDeliveryStatus] ?? status;
 }
 
-export const DEFINITION_STATE_LABELS: Readonly<Record<string, string>> = {
-  active: "已生效",
-  "draft-only": "仅草稿",
-};
-
-export function definitionStateLabel(state: string): string {
-  return DEFINITION_STATE_LABELS[state] ?? state;
-}
-
-export const DRAFT_STATUS_LABELS: Readonly<Record<string, string>> = {
-  active: "已生效",
-  draft: "草稿",
-  validated: "已检查",
-};
-
-export function draftStatusLabel(status: string | null): string {
-  if (status === null) return "未知状态";
-  return DRAFT_STATUS_LABELS[status] ?? status;
-}
-
 export const LEASE_STATE_LABELS: Readonly<Record<string, string>> = {
   not_leased: "未租用",
   active: "租约有效",
@@ -362,7 +342,7 @@ export function knownNotificationEffects(
 }
 
 /**
- * Turn a bounded backend action/draft reason into operator language.
+ * Turn a bounded backend action reason into operator language.
  *
  * The reason strings are backend-authoritative evidence. The UI maps the
  * known bounded causes to Chinese and falls back to the caller's Chinese next
@@ -374,12 +354,6 @@ export function notificationReasonLabel(
 ): string {
   if (reason === null || reason.trim() === "") return fallback;
   const lowered = reason.toLowerCase();
-  if (lowered.includes("open successor draft")) {
-    return "需要打开的后继草稿才能继续。";
-  }
-  if (lowered.includes("cannot create a successor draft")) {
-    return "当前账号没有创建后继草稿的权限。";
-  }
   if (
     lowered.includes("cannot manage webhook") ||
     lowered.includes("manage_configuration") ||

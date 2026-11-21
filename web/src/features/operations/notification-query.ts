@@ -10,7 +10,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import {
   fetchNotificationDefinition,
-  fetchNotificationDefinitionDraft,
+  fetchNotificationDefinitionDetail,
   fetchNotificationDefinitions,
   fetchNotificationDeliveries,
   fetchNotificationDeliveryDetail,
@@ -53,17 +53,17 @@ export function notificationDefinitionQueryOptions(
   });
 }
 
-export const notificationDraftQueryKey =
-  "operations.notification-draft" as const;
+export const notificationDefinitionDetailQueryKey =
+  "operations.notification-definition-detail" as const;
 
-export function notificationDraftQueryOptions(
+export function notificationDefinitionDetailQueryOptions(
   token: string | null,
   webhookId: string,
   enabled = true,
 ) {
   return queryOptions({
-    queryKey: [notificationDraftQueryKey, webhookId],
-    queryFn: () => fetchNotificationDefinitionDraft(token, webhookId),
+    queryKey: [notificationDefinitionDetailQueryKey, webhookId],
+    queryFn: () => fetchNotificationDefinitionDetail(token, webhookId),
     enabled: token !== null && webhookId.length > 0 && enabled,
     retry: false,
     refetchOnWindowFocus: false,

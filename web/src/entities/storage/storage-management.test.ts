@@ -12,7 +12,6 @@ import {
  */
 const settledSetup = {
   setupRequired: false,
-  setupDraftExists: false,
   managedActivation: true,
   recoveryRequired: false,
   health: "HEALTHY",
@@ -179,7 +178,6 @@ describe("normalizeStorageInventory", () => {
       // is genuinely outstanding, and no Draft exists to resume.
       setup: {
         setupRequired: true,
-        setupDraftExists: false,
         managedActivation: false,
         recoveryRequired: false,
         health: "SETUP_REQUIRED",
@@ -191,7 +189,6 @@ describe("normalizeStorageInventory", () => {
     expect(model.items).toEqual([]);
     expect(model.active).toBeNull();
     expect(model.setup.setupRequired).toBe(true);
-    expect(model.setup.setupDraftExists).toBe(false);
     expect(model.setup.setupPath).toBe("/configuration");
   });
 
@@ -428,7 +425,6 @@ describe("Storage setup authority", () => {
       ...setupRequiredPayload,
       setup: {
         setupRequired: true,
-        setupDraftExists: true,
         managedActivation: false,
         recoveryRequired: false,
         health: "SETUP_REQUIRED",
@@ -436,7 +432,6 @@ describe("Storage setup authority", () => {
       },
     });
     expect(model.setup.setupRequired).toBe(true);
-    expect(model.setup.setupDraftExists).toBe(true);
     expect(model.setup.setupPath).toBe("/configuration");
   });
 
@@ -473,7 +468,6 @@ describe("Storage setup authority", () => {
   it("rejects malformed setup flags rather than defaulting them", () => {
     for (const key of [
       "setupRequired",
-      "setupDraftExists",
       "managedActivation",
       "recoveryRequired",
     ]) {

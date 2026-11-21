@@ -278,11 +278,8 @@ def run_management_only(root: Path) -> None:
         setup = before_storage.get("setup", {})
         if before_storage.get("reason") != "no_active" or setup.get("setupRequired") is not True:
             raise RuntimeError("Storage no-Active inventory did not expose setup authority")
-        if (
-            setup.get("setupDraftExists") is not False
-            or setup.get("managedActivation") is not False
-        ):
-            raise RuntimeError("no-Active setup authority fabricated a Draft or activation")
+        if setup.get("managedActivation") is not False:
+            raise RuntimeError("no-Active setup authority fabricated an activation")
         if setup.get("setupPath") != "/configuration":
             raise RuntimeError("Storage setup authority did not use native Settings")
         before_tasks = table_count(database, "tasks")

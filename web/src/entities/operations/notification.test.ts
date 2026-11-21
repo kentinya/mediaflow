@@ -5,7 +5,6 @@ import {
   normalizeNotificationDefinitionsPage,
   normalizeNotificationDeliveriesPage,
   normalizeNotificationDeliveryDetail,
-  normalizeNotificationDraftState,
   normalizeNotificationRecoveryResult,
   normalizeWebhookDefinition,
   normalizeWebhookDefinitionMutation,
@@ -67,23 +66,11 @@ function definitionPayload(
   const publishedRoute = `/api/configuration/revisions/rev-1/objects/webhooks/${id}`;
   return {
     ...webhookDocumentPayload(id),
-    definitionState: "active",
     activeConfiguration: {
       revisionId: "rev-1",
       version: 3,
       revisionSequence: 2,
       status: "active",
-    },
-    draftState: {
-      present: false,
-      reason: "Webhook definitions are published directly; no draft exists",
-      revisionId: null,
-      revisionVersion: null,
-      revisionStatus: null,
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
     },
     actions: {
       detail: {
@@ -169,44 +156,11 @@ describe("notification active configuration", () => {
   });
 });
 
-describe("notification draft state", () => {
-  it("requires the exact optimistic identity when a Draft is present", () => {
-    expect(
-      normalizeNotificationDraftState({
-        present: true,
-        reason: null,
-        revisionId: "rev-draft",
-        revisionVersion: 4,
-      }).present,
-    ).toBe(true);
-    expect(() =>
-      normalizeNotificationDraftState({
-        present: true,
-        reason: null,
-        revisionId: null,
-        revisionVersion: null,
-      }),
-    ).toThrow(NotificationNormalizationError);
-  });
-
-  it("rejects a present=false block that carries revision evidence", () => {
-    expect(() =>
-      normalizeNotificationDraftState({
-        present: false,
-        reason: "no draft",
-        revisionId: "rev-draft",
-        revisionVersion: null,
-      }),
-    ).toThrow(NotificationNormalizationError);
-  });
-});
-
 describe("webhook definition", () => {
   it("normalizes the bounded document and exact action transports", () => {
     const model = normalizeWebhookDefinition(definitionPayload("ops"));
     expect(model.document.id).toBe("ops");
     expect(model.document.events).toEqual(["task.completed"]);
-    expect(model.definitionState).toBe("active");
     expect(model.actions.edit.available).toBe(true);
     expect(model.actions.edit.path).toBe(
       "/api/configuration/revisions/rev-1/objects/webhooks/ops",
@@ -279,17 +233,6 @@ describe("notification definitions page", () => {
       items: [definitionPayload("ops")],
       total: 1,
       truncated: false,
-      draftState: {
-        present: false,
-        reason: "no open successor Draft exists",
-        revisionId: null,
-        revisionVersion: null,
-        revisionStatus: null,
-        baseActiveRevisionId: null,
-        updatedAt: null,
-        validatedAt: null,
-        validationErrors: [],
-      },
       supportedEvents: ["task.completed", "task.failed"],
       actions: {
         create: {
@@ -803,100 +746,6 @@ describe("notification action transport", () => {
         "delivery-8",
       ),
     ).toThrow(NotificationNormalizationError);
-  });
-});
-
-describe("draft-only list item", () => {
-  it("normalizes a draft-only definition bound to its own identity", () => {
-    const payload = {
-      ...webhookDocumentPayload("draft-only-webhook", {
-        secretReadiness: [],
-      }),
-      definitionState: "draft-only",
-      activeConfiguration: {
-        revisionId: "rev-1",
-        version: 3,
-        revisionSequence: 2,
-        status: "active",
-      },
-      draftState: {
-        present: true,
-        reason: null,
-        revisionId: "rev-draft",
-        revisionVersion: 4,
-        revisionStatus: "draft",
-        baseActiveRevisionId: "rev-1",
-        updatedAt: "2026-09-12T00:00:00+00:00",
-        validatedAt: null,
-        validationErrors: [],
-      },
-      actions: {
-        detail: {
-          available: true,
-          reason: null,
-          method: "GET",
-          path: "/api/operations/notifications/webhooks/draft-only-webhook",
-          sideEffects: "none",
-          durableOutcome: null,
-          nextAction: "inspect",
-        },
-        test: {
-          available: true,
-          reason: null,
-          method: "POST",
-          path: "/api/operations/notifications/webhooks/draft-only-webhook/test",
-          requiresConfirmation: false,
-          sideEffects: "one_signed_test_request",
-          durableOutcome: "no durable change",
-          nextAction: "test the exact displayed revision",
-        },
-        edit: {
-          available: true,
-          reason: null,
-          method: "PUT",
-          path: "/api/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook",
-          requiresConfirmation: false,
-          sideEffects: "none",
-          durableOutcome: "stored",
-          nextAction: "save",
-        },
-        copy: {
-          available: true,
-          reason: null,
-          method: "POST",
-          path: "/api/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook/copy",
-          requiresConfirmation: false,
-          sideEffects: "none",
-          durableOutcome: "copied",
-          nextAction: "open the copy",
-        },
-        enable: {
-          available: true,
-          reason: null,
-          method: "POST",
-          path: "/api/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook/enable",
-          requiresConfirmation: false,
-          sideEffects: "none",
-          durableOutcome: "enabled in draft",
-          nextAction: "review",
-        },
-        disable: {
-          available: true,
-          reason: null,
-          method: "POST",
-          path: "/api/configuration/revisions/rev-draft/objects/webhooks/draft-only-webhook/disable",
-          requiresConfirmation: false,
-          sideEffects: "none",
-          durableOutcome: "disabled in draft",
-          nextAction: "review",
-        },
-      },
-    };
-    const model = normalizeWebhookDefinition(
-      payload as unknown as Record<string, unknown>,
-    );
-    expect(model.definitionState).toBe("draft-only");
-    expect(model.document.id).toBe("draft-only-webhook");
   });
 });
 

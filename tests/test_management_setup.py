@@ -138,7 +138,7 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertEqual(configuration["authority"], "MANAGEMENT_BOOTSTRAP")
         self.assertEqual(configuration["health"], "SETUP_REQUIRED")
         self.assertIsNone(configuration["active"])
-        self.assertIsNone(configuration["setupDraft"])
+        self.assertNotIn("setupDraft", configuration)
         self.assertGreaterEqual(len(configuration["setupBlockers"]), 5)
         self.assertNotIn("MF_ADMIN_TOKEN", json.dumps(configuration))
 
@@ -281,7 +281,7 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(before["available"])
         self.assertTrue(before["setup"]["setupRequired"])
-        self.assertFalse(before["setup"]["setupDraftExists"])
+        self.assertNotIn("setupDraftExists", before["setup"])
 
         status, created = request(
             self.api,
@@ -295,7 +295,7 @@ class ManagementSetupTests(unittest.TestCase):
         status, after = request(self.api, route, token="admin-token")
         self.assertEqual(status, 200)
         self.assertFalse(after["setup"]["setupRequired"])
-        self.assertFalse(after["setup"]["setupDraftExists"])
+        self.assertNotIn("setupDraftExists", after["setup"])
         self.assertIsNotNone(after["active"])
         self.assertEqual(after["active"]["revisionId"], created["revisionId"])
         self.assertEqual(after["items"], [])
@@ -375,7 +375,7 @@ class ManagementSetupTests(unittest.TestCase):
 
         status, configuration = request(self.api, "/api/configuration/status")
         self.assertEqual(status, 200)
-        self.assertIsNone(configuration["setupDraft"])
+        self.assertNotIn("setupDraft", configuration)
         self.assertFalse(configuration["setupRequired"])
         self.assertEqual(configuration["active"]["revisionId"], revision.revision_id)
 
@@ -918,7 +918,7 @@ class ManagementSetupTests(unittest.TestCase):
             management_only=True,
         )
         status = self.service.status_document()
-        self.assertIsNone(status["setupDraft"])
+        self.assertNotIn("setupDraft", status)
         self.assertFalse(status["setupRequired"])
         self.assertEqual(status["active"]["revisionId"], created.revision_id)
         self.assertFalse(

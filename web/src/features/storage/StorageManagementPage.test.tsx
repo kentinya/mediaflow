@@ -179,7 +179,6 @@ const STORAGE_BEYOND_PAGE = {
  */
 const SETTLED_SETUP = {
   setupRequired: false,
-  setupDraftExists: false,
   managedActivation: true,
   recoveryRequired: false,
   health: "HEALTHY",
@@ -242,7 +241,6 @@ function setupRequiredInventory(
     canStartSetup: true,
     setup: {
       setupRequired: true,
-      setupDraftExists: false,
       managedActivation: false,
       recoveryRequired: false,
       health: "SETUP_REQUIRED",
@@ -802,7 +800,6 @@ describe("Storage management journey", () => {
           setupRequiredInventory({
             setup: {
               setupRequired: true,
-              setupDraftExists: true,
               managedActivation: false,
               recoveryRequired: false,
               health: "SETUP_REQUIRED",
@@ -860,7 +857,6 @@ describe("Storage management journey", () => {
             reason: "unavailable",
             setup: {
               setupRequired: false,
-              setupDraftExists: false,
               managedActivation: true,
               recoveryRequired: true,
               health: "UNAVAILABLE",
@@ -887,7 +883,6 @@ describe("Storage management journey", () => {
             reason: "malformed",
             setup: {
               setupRequired: false,
-              setupDraftExists: false,
               managedActivation: true,
               recoveryRequired: false,
               health: "UNAVAILABLE",

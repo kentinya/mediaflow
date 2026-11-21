@@ -3,9 +3,9 @@
  *
  * The Python contract exposes the V2 Notification journey as digest-free
  * operator documents under ``/api/operations/notifications/``: a Webhook
- * definitions page with the exact immutable Active identity and open-Draft
- * state, a definition detail, a Draft editor document, a bounded signed-test
- * outcome, and a delivery detail with permission-aware recovery actions.
+ * definitions page with the exact immutable Active identity, a published
+ * definition detail and editor document, a bounded signed-test outcome, and a
+ * delivery detail with permission-aware recovery actions.
  * Delivery list/paging and the recovery mutations reuse the existing backend
  * routes whose optimistic status/update fences and permission checks remain
  * authoritative.
@@ -48,8 +48,6 @@ export const NOTIFICATION_DELIVERY_STATUSES = [
 ] as const;
 export type NotificationDeliveryStatus =
   (typeof NOTIFICATION_DELIVERY_STATUSES)[number];
-
-export const NOTIFICATION_OPEN_DRAFT_STATUSES = ["draft", "validated"] as const;
 
 /**
  * Definition and delivery identities travel in exact route segments: a strict
@@ -94,14 +92,6 @@ function eventIdentity(
   }
   return value;
 }
-
-/**
- * Where the definition durably lives: in the immutable Active configuration,
- * or only inside an open successor Draft (newly created or copied). A
- * document without this exact state marker is malformed so no Draft can ever
- * be rendered as Active.
- */
-export const NOTIFICATION_DEFINITION_STATES = ["active", "draft-only"] as const;
 
 export const WEBHOOK_SECRET_READINESS_STATES = ["SET", "UNSET"] as const;
 
@@ -389,57 +379,6 @@ export function normalizeNotificationActiveConfiguration(
   };
 }
 
-export interface NotificationDraftStateModel {
-  readonly present: boolean;
-  readonly reason: string | null;
-  readonly revisionId: string | null;
-  readonly revisionVersion: number | null;
-  readonly revisionStatus: string | null;
-  readonly baseActiveRevisionId: string | null;
-  readonly updatedAt: string | null;
-  readonly validatedAt: string | null;
-  readonly validationErrors: readonly string[];
-}
-
-export function normalizeNotificationDraftState(
-  value: unknown,
-  field = "draftState",
-): NotificationDraftStateModel {
-  const source = readRecord(value, field);
-  const present = flag(source, "present");
-  const revisionId = optionalText(source, "revisionId");
-  const revisionVersion = optionalCount(source, "revisionVersion");
-  const reason = optionalText(source, "reason");
-  if (present && (revisionId === null || revisionVersion === null)) {
-    // An open Draft is a durable revision: an offered Draft without its
-    // exact optimistic identity is malformed evidence.
-    return fail(`${field}.revisionId`);
-  }
-  if (!present && (revisionId !== null || revisionVersion !== null)) {
-    return fail(`${field}.present`);
-  }
-  const errors = source["validationErrors"];
-  if (errors !== null && errors !== undefined && !Array.isArray(errors)) {
-    return fail(`${field}.validationErrors`);
-  }
-  if (Array.isArray(errors) && errors.length > 100) {
-    return fail(`${field}.validationErrors`);
-  }
-  return {
-    present,
-    reason,
-    revisionId,
-    revisionVersion,
-    revisionStatus: optionalText(source, "revisionStatus"),
-    baseActiveRevisionId: optionalText(source, "baseActiveRevisionId"),
-    updatedAt: optionalText(source, "updatedAt"),
-    validatedAt: optionalText(source, "validatedAt"),
-    validationErrors: (errors ?? []).map((item, index) =>
-      normalizeBoundedText(item, `${field}.validationErrors[${index}]`),
-    ),
-  };
-}
-
 /** The deployment-owned secret reference readiness, never a secret value. */
 export interface WebhookSecretReadinessModel {
   readonly field: string;
@@ -467,7 +406,7 @@ function normalizeSecretReadiness(
  * The bounded editable Webhook form document plus its deployment readiness.
  * Only the canonical Webhook fields are modelled; the canonical server
  * validator rejects everything else, so an unknown field can never travel
- * from the browser into a Draft.
+ * from the browser into a published definition.
  */
 export interface WebhookDefinitionDocumentModel {
   readonly id: string;
@@ -541,8 +480,6 @@ export function normalizeWebhookDefinitionDocument(
 
 export interface WebhookDefinitionModel {
   readonly document: WebhookDefinitionDocumentModel;
-  readonly definitionState: (typeof NOTIFICATION_DEFINITION_STATES)[number];
-  readonly draftState: NotificationDraftStateModel;
   readonly activeConfiguration: NotificationActiveConfigurationModel | null;
   readonly actions: {
     readonly detail: NotificationActionModel;
@@ -560,26 +497,15 @@ export function normalizeWebhookDefinition(
 ): WebhookDefinitionModel {
   const source = readRecord(value, field);
   const document = normalizeWebhookDefinitionDocument(source, field);
-  const draftState = normalizeNotificationDraftState(
-    source["draftState"],
-    `${field}.draftState`,
-  );
   const activeConfiguration = normalizeNotificationActiveConfiguration(
     source["activeConfiguration"],
     `${field}.activeConfiguration`,
   );
   const actions = readRecord(source["actions"], `${field}.actions`);
-  const revisionIdentity =
-    draftState.revisionId ?? activeConfiguration?.revisionId ?? null;
+  const revisionIdentity = activeConfiguration?.revisionId ?? null;
   const identity = document.id;
   return {
     document,
-    definitionState: enumOrFail(
-      source["definitionState"],
-      `${field}.definitionState`,
-      NOTIFICATION_DEFINITION_STATES,
-    ),
-    draftState,
     activeConfiguration,
     actions: {
       detail: normalizeNotificationAction(
@@ -631,7 +557,6 @@ export interface NotificationDefinitionsPage {
   readonly items: readonly WebhookDefinitionModel[];
   readonly total: number;
   readonly truncated: boolean;
-  readonly draftState: NotificationDraftStateModel;
   readonly supportedEvents: readonly NotificationEventType[];
   readonly actions: {
     readonly create: NotificationActionModel;
@@ -650,13 +575,11 @@ export function normalizeNotificationDefinitionsPage(
   const activeConfiguration = normalizeNotificationActiveConfiguration(
     source["activeConfiguration"],
   );
-  const draftState = normalizeNotificationDraftState(source["draftState"]);
   return {
     activeConfiguration,
     items: rawItems.map((item) => normalizeWebhookDefinition(item, "items[]")),
     total: count(source, "total"),
     truncated: flag(source, "truncated"),
-    draftState,
     supportedEvents: eventList(source, "supportedEvents", 16),
     actions: {
       create: normalizeNotificationAction(
@@ -669,90 +592,18 @@ export function normalizeNotificationDefinitionsPage(
   };
 }
 
-export interface NotificationDraftDocumentModel {
-  readonly webhookId: string;
-  readonly activeConfiguration: NotificationActiveConfigurationModel | null;
-  /** The Active-definition form values; null for a Draft-only definition. */
-  readonly webhook: WebhookDefinitionDocumentModel | null;
-  readonly draft: {
-    readonly revisionId: string;
-    readonly revisionVersion: number;
-    readonly revisionStatus: string;
-    readonly baseActiveRevisionId: string | null;
-    readonly updatedAt: string | null;
-    readonly validatedAt: string | null;
-    readonly validationErrors: readonly string[];
-    readonly webhook: WebhookDefinitionDocumentModel;
-  } | null;
+export interface NotificationDefinitionDetailModel {
+  readonly webhook: WebhookDefinitionModel;
   readonly supportedEvents: readonly NotificationEventType[];
-  readonly actions: {
-    readonly save: NotificationActionModel;
-    readonly test: NotificationActionModel;
-  };
 }
 
-export function normalizeNotificationDraftDocument(
+export function normalizeNotificationDefinitionDetail(
   payload: unknown,
-): NotificationDraftDocumentModel {
-  const source = readRecord(payload, "notification_definition_draft");
-  const webhookId = uriSafeSegment(source, "webhookId", 64);
-  const activeConfiguration = normalizeNotificationActiveConfiguration(
-    source["activeConfiguration"],
-  );
-  const activeWebhook =
-    source["webhook"] === null || source["webhook"] === undefined
-      ? null
-      : normalizeWebhookDefinitionDocument(source["webhook"], "webhook");
-  const rawDraft = optionalRecord(source["draft"], "draft");
-  let draft: NotificationDraftDocumentModel["draft"] = null;
-  if (rawDraft !== null) {
-    const rawWebhook = optionalRecord(rawDraft["webhook"], "draft.webhook");
-    if (rawWebhook === null) {
-      return fail("draft.webhook");
-    }
-    const errors = rawDraft["validationErrors"];
-    if (!Array.isArray(errors) || errors.length > 100) {
-      return fail("draft.validationErrors");
-    }
-    draft = {
-      revisionId: text(rawDraft, "revisionId"),
-      revisionVersion: count(rawDraft, "revisionVersion"),
-      revisionStatus: enumOrFail(
-        rawDraft["revisionStatus"],
-        "draft.revisionStatus",
-        NOTIFICATION_OPEN_DRAFT_STATUSES,
-      ),
-      baseActiveRevisionId: optionalText(rawDraft, "baseActiveRevisionId"),
-      updatedAt: optionalText(rawDraft, "updatedAt"),
-      validatedAt: optionalText(rawDraft, "validatedAt"),
-      validationErrors: errors.map((item, index) =>
-        normalizeBoundedText(item, `draft.validationErrors[${index}]`),
-      ),
-      webhook: normalizeWebhookDefinitionDocument(rawWebhook, "draft.webhook"),
-    };
-  }
-  const actions = readRecord(source["actions"], "actions");
+): NotificationDefinitionDetailModel {
+  const source = readRecord(payload, "notification_definition");
   return {
-    webhookId,
-    activeConfiguration,
-    webhook: activeWebhook,
-    draft,
+    webhook: normalizeWebhookDefinition(source["webhook"], "webhook"),
     supportedEvents: eventList(source, "supportedEvents", 16),
-    actions: {
-      save: normalizeNotificationAction(
-        actions["save"],
-        "actions.save",
-        "webhook-edit",
-        draft?.revisionId ?? null,
-        draft?.webhook.id ?? webhookId,
-      ),
-      test: normalizeNotificationAction(
-        actions["test"],
-        "actions.test",
-        "webhook-test",
-        webhookId,
-      ),
-    },
   };
 }
 
@@ -840,9 +691,9 @@ export function normalizeWebhookTestResult(
 
 /** The exact definition mutation a success document must answer for. */
 export interface WebhookDefinitionMutationRequestBinding {
-  /** The exact Draft revision the mutation was submitted against. */
+  /** The exact published revision the mutation was submitted against. */
   readonly revisionId: string;
-  /** The Draft version submitted; a stored mutation publishes its successor. */
+  /** The version submitted; a successful mutation publishes its successor. */
   readonly expectedVersion: number;
   /** The response key carrying the changed definition document. */
   readonly documentField: "webhook" | "object";

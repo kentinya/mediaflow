@@ -53,6 +53,7 @@ function recordingFetch(
         return jsonResponse({
           webhook: definitionPayload(),
           activeConfiguration: activeConfiguration(),
+          supportedEvents: ["task.completed", "task.failed"],
         });
       }
       if (call.method === "GET" && call.url === "/api/auth/principal") {
@@ -176,26 +177,6 @@ function definitionActions(): Record<string, unknown> {
       durableOutcome: "the definition is disabled in the Active configuration",
       nextAction: "refresh the definition",
     },
-    draftCreate: {
-      available: false,
-      reason: "Webhook definitions are published directly; no draft exists",
-      method: "POST",
-      path: null,
-      requiresConfirmation: false,
-      sideEffects: "none",
-      durableOutcome: "none",
-      nextAction: "apply the Webhook form",
-    },
-    activate: {
-      available: false,
-      reason: "the definition is already Active",
-      method: "POST",
-      path: null,
-      requiresConfirmation: true,
-      sideEffects: "none",
-      durableOutcome: "none",
-      nextAction: "apply the form",
-    },
   };
 }
 
@@ -204,19 +185,7 @@ function definitionPayload(
 ): Record<string, unknown> {
   return {
     ...webhookDocument(),
-    definitionState: "active",
     activeConfiguration: activeConfiguration(),
-    draftState: {
-      present: true,
-      reason: null,
-      revisionId: ACTIVE_REVISION,
-      revisionVersion: 3,
-      revisionStatus: "validated",
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
-    },
     actions: definitionActions(),
     supportedEvents: ["task.completed", "task.failed"],
     ...overrides,
@@ -236,17 +205,6 @@ function listPayload(
     ],
     total: 1,
     truncated: false,
-    draftState: {
-      present: true,
-      reason: null,
-      revisionId: ACTIVE_REVISION,
-      revisionVersion: 3,
-      revisionStatus: "validated",
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
-    },
     supportedEvents: ["task.completed", "task.failed"],
     actions: {
       create: {
@@ -256,15 +214,6 @@ function listPayload(
         path: `/api/configuration/revisions/${ACTIVE_REVISION}/objects/webhooks`,
         sideEffects: "none",
         durableOutcome: "the definition is published directly",
-        nextAction: "apply the definition",
-      },
-      createDraft: {
-        available: false,
-        reason: "Webhook definitions are published directly; no draft exists",
-        method: "POST",
-        path: null,
-        sideEffects: "none",
-        durableOutcome: "none",
         nextAction: "apply the definition",
       },
     },
@@ -552,17 +501,6 @@ describe("V2 Notification direct publication", () => {
               revisionSequence: 4,
               status: "active",
             },
-            draftState: {
-              present: true,
-              reason: null,
-              revisionId: "revision-active-2",
-              revisionVersion: 4,
-              revisionStatus: "validated",
-              baseActiveRevisionId: null,
-              updatedAt: null,
-              validatedAt: null,
-              validationErrors: [],
-            },
           }),
           activeConfiguration: {
             revisionId: "revision-active-2",
@@ -570,6 +508,7 @@ describe("V2 Notification direct publication", () => {
             revisionSequence: 4,
             status: "active",
           },
+          supportedEvents: ["task.completed", "task.failed"],
         });
       }
       return undefined;
@@ -668,6 +607,7 @@ describe("V2 Notification direct publication", () => {
             revisionSequence: 3,
             status: "active",
           },
+          supportedEvents: ["task.completed", "task.failed"],
         });
       }
       return undefined;
@@ -729,15 +669,6 @@ describe("V2 Notification direct publication", () => {
             total: 0,
             actions: {
               create: {
-                available: false,
-                reason: "no Active configuration exists",
-                method: "POST",
-                path: null,
-                sideEffects: "none",
-                durableOutcome: "none",
-                nextAction: "initialize configuration in Settings",
-              },
-              createDraft: {
                 available: false,
                 reason: "no Active configuration exists",
                 method: "POST",

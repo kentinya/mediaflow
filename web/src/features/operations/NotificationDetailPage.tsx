@@ -2,7 +2,7 @@
  * V2 Webhook definition card.
  *
  * The card opens over the Notification definition list and reads the bounded
- * definition document: exact Active/Draft identity, deployment-owned secret
+ * definition document: exact published Active identity, deployment-owned secret
  * readiness and the backend-advertised test/copy/enable/disable transports.
  * A signed test is bound to the exact displayed revision identity and version
  * while the configuration digest and the resolved secret remain server-side;
@@ -162,7 +162,7 @@ export function NotificationDetailPage() {
     },
   });
 
-  const draftMutation = useMutation({
+  const definitionMutation = useMutation({
     mutationFn: (input: {
       kind: "copy" | "enable" | "disable";
       expectedVersion: number;
@@ -221,7 +221,7 @@ export function NotificationDetailPage() {
     },
   });
 
-  const busy = testMutation.isPending || draftMutation.isPending;
+  const busy = testMutation.isPending || definitionMutation.isPending;
   const closeCard = () => {
     void navigate({ to: "/operations/notifications" });
   };
@@ -372,14 +372,8 @@ export function NotificationDetailPage() {
             </StatusBanner>
           )}
           <div className="mf-notification-detail-badges">
-            <span
-              className={
-                definition.definitionState === "active"
-                  ? "mf-notification-badge mf-notification-badge-active"
-                  : "mf-notification-badge"
-              }
-            >
-              {definition.definitionState === "active" ? "已生效" : "仅定义"}
+            <span className="mf-notification-badge mf-notification-badge-active">
+              已生效
             </span>
             <span className="mf-notification-badge">
               {document.enabled ? "已启用" : "已停用"}
@@ -438,7 +432,7 @@ export function NotificationDetailPage() {
               <summary>诊断信息</summary>
               <dl>
                 <dt>定义状态</dt>
-                <dd>{definition.definitionState}</dd>
+                <dd>当前生效配置</dd>
                 <dt>Webhook 标识</dt>
                 <dd>{document.id}</dd>
                 <dt>事件标识</dt>
@@ -518,14 +512,14 @@ export function NotificationDetailPage() {
                     active?.version !== null &&
                     active?.version !== undefined
                   ) {
-                    draftMutation.mutate({
+                    definitionMutation.mutate({
                       kind: "copy",
                       expectedVersion: active.version,
                     });
                   }
                 }}
               >
-                {draftMutation.isPending ? "正在执行…" : "复制定义"}
+                {definitionMutation.isPending ? "正在执行…" : "复制定义"}
               </Button>
               <Button
                 type="button"
@@ -540,7 +534,7 @@ export function NotificationDetailPage() {
                     active?.version !== null &&
                     active?.version !== undefined
                   ) {
-                    draftMutation.mutate({
+                    definitionMutation.mutate({
                       kind: "enable",
                       expectedVersion: active.version,
                     });
@@ -562,7 +556,7 @@ export function NotificationDetailPage() {
                     active?.version !== null &&
                     active?.version !== undefined
                   ) {
-                    draftMutation.mutate({
+                    definitionMutation.mutate({
                       kind: "disable",
                       expectedVersion: active.version,
                     });

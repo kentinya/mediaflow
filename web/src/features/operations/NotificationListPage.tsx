@@ -2,10 +2,9 @@
  * V2 Notification definitions workspace.
  *
  * The inventory reads the backend's bounded definitions page: the exact
- * immutable Active identity, the open successor Draft, and one bounded Webhook
- * document per definition with deployment-owned secret readiness (never a
- * secret value) and backend-advertised actions. A Draft-only definition stays
- * visibly distinct from Active and is never rendered as runtime truth.
+ * immutable Active identity and one bounded published Webhook document per
+ * definition with deployment-owned secret readiness (never a secret value) and
+ * backend-advertised actions.
  *
  * The page is always the background of the Notification cards: creating,
  * viewing and editing open over this list, so the route/browser-back journey
@@ -22,7 +21,6 @@ import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
   activeConfigurationSummary,
-  definitionStateLabel,
   notificationEventLabel,
   notificationReasonLabel,
   secretReadinessDetail,
@@ -177,14 +175,8 @@ export function NotificationListPage() {
                             <strong className="mf-notification-webhook-name">
                               {document.id}
                             </strong>
-                            <span
-                              className={
-                                item.definitionState === "active"
-                                  ? "mf-notification-badge mf-notification-badge-active"
-                                  : "mf-notification-badge"
-                              }
-                            >
-                              {definitionStateLabel(item.definitionState)}
+                            <span className="mf-notification-badge mf-notification-badge-active">
+                              已生效
                             </span>
                             <span className="mf-notification-badge">
                               {document.enabled ? "已启用" : "已停用"}
@@ -252,7 +244,7 @@ export function NotificationListPage() {
                           <summary>诊断信息</summary>
                           <dl>
                             <dt>定义状态</dt>
-                            <dd>{item.definitionState}</dd>
+                            <dd>当前生效配置</dd>
                             <dt>事件标识</dt>
                             <dd>{document.events.join(", ")}</dd>
                             <dt>密钥引用</dt>

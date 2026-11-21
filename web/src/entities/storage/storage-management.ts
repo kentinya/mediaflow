@@ -93,14 +93,12 @@ export interface StorageActiveIdentity {
  * These flags come from the same configuration status the current System
  * Settings setup workflow uses, so Storage never becomes a second source of truth about
  * whether setup is outstanding. They are read-only facts about that journey:
- * none of them is a command, and the page must not create a Draft, run a check
- * or activate configuration just because this block is present.
+ * none of them is a command, and the page must not initialize, run a check or
+ * publish configuration just because this block is present.
  */
 export interface StorageSetupAuthority {
   /** No managed runtime exists yet: first setup is genuinely outstanding. */
   readonly setupRequired: boolean;
-  /** A setup Draft already exists and must be resumed, never recreated. */
-  readonly setupDraftExists: boolean;
   /** A managed activation happened before, so Active is expected to exist. */
   readonly managedActivation: boolean;
   /** A managed Active exists but is not runtime-consumable right now. */
@@ -385,10 +383,6 @@ function normalizeSetupAuthority(raw: unknown): StorageSetupAuthority {
     setupRequired: normalizeBoolean(
       source.setupRequired,
       "setup.setupRequired",
-    ),
-    setupDraftExists: normalizeBoolean(
-      source.setupDraftExists,
-      "setup.setupDraftExists",
     ),
     managedActivation: normalizeBoolean(
       source.managedActivation,

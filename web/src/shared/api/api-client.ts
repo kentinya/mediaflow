@@ -1659,16 +1659,16 @@ import {
   NOTIFICATION_URI_SAFE_SEGMENT,
   normalizeNotificationDeliveriesPage,
   normalizeNotificationDeliveryDetail,
+  normalizeNotificationDefinitionDetail,
   normalizeNotificationDefinitionsPage,
-  normalizeNotificationDraftDocument,
   normalizeNotificationRecoveryResult,
   normalizeWebhookDefinition,
   normalizeWebhookDefinitionMutation,
   normalizeWebhookTestResult,
   type NotificationDeliveriesPage,
   type NotificationDeliveryDetailModel,
+  type NotificationDefinitionDetailModel,
   type NotificationDefinitionsPage,
-  type NotificationDraftDocumentModel,
   type NotificationRecoveryResultModel,
   type WebhookDefinitionModel,
   type WebhookDefinitionMutationModel,
@@ -5691,24 +5691,20 @@ export async function fetchNotificationDefinition(
   }
 }
 
-export type NotificationDraftRead =
-  | { readonly ok: true; readonly model: NotificationDraftDocumentModel }
+export type NotificationDefinitionDetailRead =
+  | { readonly ok: true; readonly model: NotificationDefinitionDetailModel }
   | { readonly ok: false; readonly failure: OperationsFailure };
 
-export async function fetchNotificationDefinitionDraft(
+export async function fetchNotificationDefinitionDetail(
   token: string | null,
   webhookId: string,
   fetchImpl: FetchLike = fetch,
-): Promise<NotificationDraftRead> {
+): Promise<NotificationDefinitionDetailRead> {
   if (!isSafeIdentifier(webhookId)) {
     return { ok: false, failure: operationsFailure("not_found") };
   }
   let response: Response;
   try {
-    // The current definition is edited in place: saving validates and
-    // publishes a checked successor directly.  This read uses the normal
-    // definition route and adapts the exact Active identity into the existing
-    // editor model; no draft route exists.
     response = await fetchImpl(
       `/api/operations/notifications/webhooks/${encodeURIComponent(webhookId)}`,
       { method: "GET", headers: operationsHeaders(token) },
@@ -5735,55 +5731,10 @@ export async function fetchNotificationDefinitionDraft(
     throw new OperationsApiError("malformed");
   }
   try {
-    const definition = readRecord(payload, "notification_definition");
-    const active = readRecord(
-      definition["activeConfiguration"],
-      "activeConfiguration",
-    );
-    const webhook = readRecord(definition["webhook"], "webhook");
-    const revisionId = String(active["revisionId"] ?? "");
-    const revisionVersion = Number(active["version"] ?? 0);
-    if (revisionId === "" || !Number.isFinite(revisionVersion)) {
-      throw new Error("missing active identity");
-    }
-    const actions = readRecord(webhook["actions"], "webhook.actions");
-    const editAction = readRecord(actions["edit"], "webhook.actions.edit");
-    const adapted = {
-      webhookId,
-      activeConfiguration: active,
-      webhook,
-      draft: {
-        revisionId,
-        revisionVersion,
-        revisionStatus: "validated",
-        baseActiveRevisionId: null,
-        updatedAt: null,
-        validatedAt: null,
-        validationErrors: [],
-        webhook,
-      },
-      supportedEvents: definition["supportedEvents"] ?? [],
-      actions: {
-        save: {
-          available: editAction["available"] === true,
-          reason:
-            typeof editAction["reason"] === "string"
-              ? editAction["reason"]
-              : null,
-          method: "PUT",
-          path:
-            typeof editAction["path"] === "string"
-              ? editAction["path"]
-              : `/api/configuration/revisions/${encodeURIComponent(revisionId)}/objects/webhooks/${encodeURIComponent(webhookId)}`,
-          requiresConfirmation: false,
-          sideEffects: "none",
-          durableOutcome: "the definition is validated and published directly",
-          nextAction: "apply the reviewed form",
-        },
-        test: actions["test"],
-      },
+    return {
+      ok: true,
+      model: normalizeNotificationDefinitionDetail(payload),
     };
-    return { ok: true, model: normalizeNotificationDraftDocument(adapted) };
   } catch {
     throw new OperationsApiError("malformed");
   }
@@ -5938,7 +5889,7 @@ export async function createWebhookDefinition(
   );
 }
 
-export interface SaveWebhookDefinitionDraftOptions {
+export interface SaveWebhookDefinitionOptions {
   readonly revisionId: string;
   readonly webhookId: string;
   readonly expectedVersion: number;
@@ -5949,9 +5900,9 @@ export interface SaveWebhookDefinitionDraftOptions {
   readonly submissionId?: string;
 }
 
-export async function saveWebhookDefinitionDraft(
+export async function saveWebhookDefinition(
   token: string | null,
-  options: SaveWebhookDefinitionDraftOptions,
+  options: SaveWebhookDefinitionOptions,
   fetchImpl: FetchLike = fetch,
 ): Promise<AutomationMutationResult<WebhookDefinitionMutationModel>> {
   if (
@@ -6035,7 +5986,7 @@ export async function copyWebhookDefinition(
         expectedId: null,
         copySourceId: options.webhookId,
         copyNewId: requestedNewId,
-        // The managed copy stores a new, disabled Draft definition.
+        // The managed copy stores and publishes a new, disabled definition.
         expectedEnabled: false,
       }),
     fetchImpl,

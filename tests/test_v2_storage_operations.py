@@ -678,7 +678,7 @@ class StorageOperationsJourney(unittest.TestCase):
                 # arbitrary redirect or a second initialization authority.
                 setup = inventory["setup"]
                 self.assertTrue(setup["setupRequired"])
-                self.assertFalse(setup["setupDraftExists"])
+                self.assertNotIn("setupDraftExists", setup)
                 self.assertFalse(setup["managedActivation"])
                 self.assertFalse(setup["recoveryRequired"])
                 self.assertEqual(setup["setupPath"], "/configuration")
@@ -738,7 +738,7 @@ class StorageOperationsJourney(unittest.TestCase):
                 status, again = _request(api, INVENTORY_ROUTE)
                 self.assertEqual(status, 200)
                 self.assertTrue(again["setup"]["setupRequired"])
-                self.assertFalse(again["setup"]["setupDraftExists"])
+                self.assertNotIn("setupDraftExists", again["setup"])
                 self.assertIsNone(configuration.active())
                 # Reading the recovery state never created a setup Draft, so a
                 # later explicit first-Draft command still has one winner.

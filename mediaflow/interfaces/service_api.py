@@ -363,10 +363,9 @@ class MediaFlowApi:
     #: normalizer contract (more than 100 items fails closed).
     AUTOMATION_DEFINITIONS_PAGE_LIMIT = 100
 
-    #: Deterministic combined page limit for the Operations Notification list:
-    #: Active and Draft-only Webhook definitions share one bounded page that
-    #: matches the frontend normalizer contract (more than 100 items fails
-    #: closed).
+    #: Deterministic page limit for the Operations Notification list: the
+    #: published Webhook definitions share one bounded page that matches the
+    #: frontend normalizer contract (more than 100 items fails closed).
     NOTIFICATION_DEFINITIONS_PAGE_LIMIT = 100
 
     #: The supported ResourceLibrary include/exclude/stability policy fields the
@@ -7169,7 +7168,6 @@ class MediaFlowApi:
             "active": status.get("active"),
             "lastKnownActive": status.get("lastKnownActive"),
             "managedActivation": status.get("managedActivation", False),
-            "setupDraft": status.get("setupDraft"),
             "recoveryRequired": status.get("recoveryRequired", False),
             "health": status.get("health"),
             "unavailableReason": status.get("unavailableReason"),
@@ -7897,12 +7895,8 @@ class MediaFlowApi:
                 return "/api/operations/notifications/webhooks"
             if parts[3] == "webhooks" and len(parts) == 5:
                 return "/api/operations/notifications/webhooks/{id}"
-            if (
-                parts[3] == "webhooks"
-                and len(parts) == 6
-                and parts[5] in {"draft", "test", "activate-draft"}
-            ):
-                return f"/api/operations/notifications/webhooks/{{id}}/{parts[5]}"
+            if parts[3] == "webhooks" and len(parts) == 6 and parts[5] == "test":
+                return "/api/operations/notifications/webhooks/{id}/test"
             if parts[3] == "deliveries" and len(parts) == 5:
                 return "/api/operations/notifications/deliveries/{id}"
             return "/api/<unmatched>"
@@ -10776,33 +10770,6 @@ class MediaFlowApi:
             "version": active.version,
             "revisionSequence": active.revision_sequence,
             "status": active.status.value,
-        }
-
-    def _automation_draft_state(self, draft, *, empty_reason: str) -> dict:
-        """Bounded open-Draft evidence for one definition or for the list."""
-
-        if draft is None:
-            return {
-                "present": False,
-                "reason": empty_reason,
-                "revisionId": None,
-                "revisionVersion": None,
-                "revisionStatus": None,
-                "baseActiveRevisionId": None,
-                "updatedAt": None,
-                "validatedAt": None,
-                "validationErrors": [],
-            }
-        return {
-            "present": True,
-            "reason": None,
-            "revisionId": draft.revision_id,
-            "revisionVersion": draft.version,
-            "revisionStatus": draft.status.value,
-            "baseActiveRevisionId": draft.base_active_revision_id,
-            "updatedAt": draft.updated_at.isoformat(),
-            "validatedAt": draft.validated_at.isoformat() if draft.validated_at else None,
-            "validationErrors": list(draft.validation_errors),
         }
 
     @staticmethod
@@ -16380,10 +16347,10 @@ class MediaFlowApi:
     def _notification_webhook_resolution(self, webhook_id: str, start_response: Callable):
         """Resolve a Webhook definition from the current published revision.
 
-        Returns ``(active, None, raw, in_active)`` where ``raw`` is the
-        bounded projected definition from the immutable Active configuration.
-        Webhook definitions are published directly, so there is no open
-        successor Draft to resolve. Returns the bounded 503 response when the
+        Returns ``(active, raw)`` where ``raw`` is the bounded projected
+        definition from the immutable Active configuration. Webhook
+        definitions are published directly, so there is no open successor
+        Draft to resolve. Returns the bounded 503 response when the
         configuration read fails (callers must return it unchanged); a
         definition that is not in the Active revision raises ``LookupError``
         exactly as the Automation resolution does.
@@ -16406,7 +16373,6 @@ class MediaFlowApi:
                 "managed configuration service is unavailable",
             )
         raw = None
-        in_active = False
         if active is not None:
             projected = self._configuration_objects.revision_detail(active.revision_id)[
                 "objects"
@@ -16419,16 +16385,13 @@ class MediaFlowApi:
                 ),
                 None,
             )
-            in_active = raw is not None
         if raw is None:
             raise LookupError(f"webhooks {webhook_id!r} was not found")
-        return active, None, raw, in_active
+        return active, raw
 
     def _notification_webhook_publish_reason(
         self,
         principal: ResolvedApiPrincipal,
-        *,
-        in_active: bool,
     ) -> str | None:
         """The one reason a definition mutation is unavailable, if any."""
 
@@ -16444,8 +16407,6 @@ class MediaFlowApi:
                 ApiPermission.ACTIVATE_CONFIGURATION,
                 "the connected API principal cannot publish configuration changes",
             )
-        if not in_active:
-            return "the current Webhook definition is not in the published configuration"
         return None
 
     def _notification_webhook_actions(
@@ -16454,19 +16415,16 @@ class MediaFlowApi:
         principal: ResolvedApiPrincipal,
         *,
         active,
-        in_active: bool = True,
     ) -> dict:
         """Backend-authoritative actions for one published Webhook document.
 
         Every mutation is bound to the exact published Active revision and
         requires both configuration-management and publication permission.
-        The signed test is the one bounded probe; it never publishes. The
-        retired draft creation, validation and activation actions are absent.
+        The signed test is the one bounded probe; it never publishes.
         """
 
-        publish_reason = self._notification_webhook_publish_reason(principal, in_active=in_active)
-        published = active is not None and in_active
-        revision_id = active.revision_id if published else None
+        publish_reason = self._notification_webhook_publish_reason(principal)
+        revision_id = active.revision_id if active is not None else None
         test_reason = publish_reason
         return {
             "detail": {
@@ -16563,20 +16521,14 @@ class MediaFlowApi:
         *,
         principal: ResolvedApiPrincipal,
         active,
-        in_active: bool = True,
     ) -> dict:
-        """Bounded, digest-free V2 operator projection for one Webhook definition."""
+        """Bounded, digest-free V2 operator projection for one published definition."""
 
         webhook_id = str(raw.get("id", ""))
         operator = dict(raw)
-        operator["definitionState"] = "active" if in_active else "draft-only"
         operator["activeConfiguration"] = self._automation_active_configuration(active)
-        operator["draftState"] = self._automation_draft_state(
-            None,
-            empty_reason="Webhook definitions are published directly; no draft exists",
-        )
         operator["actions"] = self._notification_webhook_actions(
-            webhook_id, principal, active=active, in_active=in_active
+            webhook_id, principal, active=active
         )
         return operator
 
@@ -16612,10 +16564,6 @@ class MediaFlowApi:
                     "items": [],
                     "total": 0,
                     "truncated": False,
-                    "draftState": self._automation_draft_state(
-                        None,
-                        empty_reason="no Active configuration exists",
-                    ),
                     "supportedEvents": list(webhook_events_supported()),
                     "actions": {
                         "create": {
@@ -16667,10 +16615,6 @@ class MediaFlowApi:
                 "items": items,
                 "total": len(all_items),
                 "truncated": len(all_items) > len(active_page),
-                "draftState": self._automation_draft_state(
-                    None,
-                    empty_reason=("Webhook definitions are published directly; no draft exists"),
-                ),
                 "supportedEvents": list(webhook_events_supported()),
                 "actions": {
                     "create": {
@@ -16697,7 +16641,7 @@ class MediaFlowApi:
         resolution = self._notification_webhook_resolution(webhook_id, start_response)
         if not isinstance(resolution, tuple):
             return resolution
-        active, _draft, raw, in_active = resolution
+        active, raw = resolution
         return self._response(
             start_response,
             200,
@@ -16706,9 +16650,9 @@ class MediaFlowApi:
                     raw,
                     principal=principal,
                     active=active,
-                    in_active=in_active,
                 ),
                 "activeConfiguration": self._automation_active_configuration(active),
+                "supportedEvents": list(webhook_events_supported()),
             },
         )
 
@@ -16798,9 +16742,9 @@ class MediaFlowApi:
         resolution = self._notification_webhook_resolution(webhook_id, start_response)
         if not isinstance(resolution, tuple):
             return resolution
-        active, _draft, _raw, in_active = resolution
+        active, _raw = resolution
         advertised = set()
-        if active is not None and in_active:
+        if active is not None:
             advertised.add(active.revision_id)
         if expected_revision_id not in advertised:
             return self._webhook_test_stale_response(

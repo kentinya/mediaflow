@@ -86,7 +86,6 @@ const activeStatus = (overrides: Record<string, unknown> = {}) => ({
     digest: "digest-1",
   },
   revisions: [],
-  setupDraft: null,
   canManageConfiguration: true,
   canActivateConfiguration: true,
   ...overrides,
@@ -95,7 +94,6 @@ const activeStatus = (overrides: Record<string, unknown> = {}) => ({
 const setupStatus = () => ({
   authority: "MANAGEMENT_BOOTSTRAP",
   setupRequired: true,
-  setupDraft: null,
   revisions: [],
   canManageConfiguration: true,
   canActivateConfiguration: true,

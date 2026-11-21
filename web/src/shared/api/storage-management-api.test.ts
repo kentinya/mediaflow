@@ -71,7 +71,6 @@ const inventoryPayload = {
   canStartSetup: true,
   setup: {
     setupRequired: false,
-    setupDraftExists: false,
     managedActivation: true,
     recoveryRequired: false,
     health: "HEALTHY",
@@ -264,7 +263,6 @@ describe("Storage management API", () => {
           canStartSetup: true,
           setup: {
             setupRequired: true,
-            setupDraftExists: false,
             managedActivation: false,
             recoveryRequired: false,
             health: "SETUP_REQUIRED",

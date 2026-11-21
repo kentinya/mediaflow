@@ -16,13 +16,13 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import {
   fetchAuthenticatedPrincipal,
-  saveWebhookDefinitionDraft,
+  saveWebhookDefinition,
   testWebhookDefinitionForm,
 } from "../../shared/api/api-client";
 import { reconcileSystemSettings } from "../../shared/api/configuration-api";
 import {
-  notificationDraftQueryKey,
-  notificationDraftQueryOptions,
+  notificationDefinitionDetailQueryKey,
+  notificationDefinitionDetailQueryOptions,
   notificationListQueryKey,
 } from "./notification-query";
 import { useAuthorizedReadAuthorityRecovery } from "../../shared/auth/AuthorizedReadBoundary";
@@ -56,15 +56,15 @@ import {
   type PendingNotificationApply,
 } from "./notification-publication";
 
-interface SavedDraft {
+interface SavedDefinition {
   readonly revisionId: string;
-  readonly version: number;
-  readonly status: string;
+  readonly revisionVersion: number;
+  readonly revisionStatus: string;
   readonly values: WebhookFormValues;
 }
 
-interface RemoteDraft extends SavedDraft {
-  /** Whether the same revision moved or a different draft revision was read. */
+interface RemoteDefinition extends SavedDefinition {
+  /** Whether the same revision moved or a different published revision was read. */
   readonly kind: "updated" | "revision";
 }
 
@@ -104,8 +104,8 @@ export function NotificationEditorPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<WebhookFormValues | null>(null);
-  const [baseline, setBaseline] = useState<SavedDraft | null>(null);
-  const [remote, setRemote] = useState<RemoteDraft | null>(null);
+  const [baseline, setBaseline] = useState<SavedDefinition | null>(null);
+  const [remote, setRemote] = useState<RemoteDefinition | null>(null);
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
   const [showIssues, setShowIssues] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -152,20 +152,24 @@ export function NotificationEditorPage() {
   const principalId = principalQuery.data?.principalId ?? null;
   const applyScope = notificationApplyScope("editor", webhookId);
 
-  const draftQuery = useQuery(notificationDraftQueryOptions(token, webhookId));
-  useAuthorizedReadAuthorityRecovery(draftQuery);
+  const definitionQuery = useQuery(
+    notificationDefinitionDetailQueryOptions(token, webhookId),
+  );
+  useAuthorizedReadAuthorityRecovery(definitionQuery);
 
-  const liveDraftModel =
-    draftQuery.data?.ok === true ? draftQuery.data.model : null;
-  const loadedDraft = useLastSuccessfulRead(liveDraftModel);
-  const readDegraded = liveDraftModel === null && loadedDraft !== null;
-  const draft = loadedDraft?.draft ?? null;
+  const liveDefinitionModel =
+    definitionQuery.data?.ok === true ? definitionQuery.data.model : null;
+  const loadedDefinition = useLastSuccessfulRead(liveDefinitionModel);
+  const readDegraded =
+    liveDefinitionModel === null && loadedDefinition !== null;
+  const definition = loadedDefinition?.webhook ?? null;
+  const activeConfiguration = definition?.activeConfiguration ?? null;
   const serverValues =
-    draft === null ? null : webhookFormFromDocument(draft.webhook);
+    definition === null ? null : webhookFormFromDocument(definition.document);
   const currentForm = form ?? (serverValues !== null ? serverValues : null);
-  const saveAvailable = loadedDraft?.actions.save.available === true;
-  const readOnlyDraft =
-    draft !== null && (!saveAvailable || savePermissionDenied);
+  const saveAvailable = definition?.actions.edit.available === true;
+  const readOnlyDefinition =
+    definition !== null && (!saveAvailable || savePermissionDenied);
   const testContext =
     currentForm === null
       ? ""
@@ -179,16 +183,14 @@ export function NotificationEditorPage() {
     setTestResult(null);
   };
 
-  // Reconcile the durable draft into the local saved baseline. A version or
-  // status move with no local edits is adopted directly. A move while local
-  // input exists is held as an explicit remote choice; the old input is never
-  // silently paired with the new version. Losing the open draft (another
-  // administrator published it) and reading a different draft revision must
-  // preserve unsaved input instead of clearing or replacing it.
+  // Reconcile the current published definition into the local saved baseline.
+  // A version or revision move with no local edits is adopted directly. A move
+  // while local input exists is held as an explicit remote choice; the old
+  // input is never silently paired with the new version.
   /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
   useEffect(() => {
-    if (loadedDraft === null) return;
-    const server = loadedDraft.draft;
+    if (loadedDefinition === null) return;
+    const currentActive = loadedDefinition.webhook.activeConfiguration;
     const previous = baselineRef.current;
     const local = formRef.current;
     const hasLocalEdits =
@@ -196,12 +198,9 @@ export function NotificationEditorPage() {
       local !== null &&
       !sameWebhookForm(local, previous.values);
 
-    if (server === null) {
+    if (currentActive === null) {
       setRemote(null);
       if (hasLocalEdits) {
-        // The read proves there is no open draft, but the operator still owns
-        // input made against the old revision. Keep both local input and its
-        // original baseline; never bind them to an unread successor draft.
         setSavedNotice(null);
         clearEvidence();
         return;
@@ -211,14 +210,15 @@ export function NotificationEditorPage() {
       return;
     }
 
-    const values = webhookFormFromDocument(server.webhook);
+    const server = {
+      revisionId: currentActive.revisionId,
+      revisionVersion: currentActive.version,
+      revisionStatus: currentActive.status,
+      values: webhookFormFromDocument(loadedDefinition.webhook.document),
+    };
+    const values = server.values;
     if (previous === null) {
-      setBaseline({
-        revisionId: server.revisionId,
-        version: server.revisionVersion,
-        status: server.revisionStatus,
-        values,
-      });
+      setBaseline(server);
       setForm(values);
       setRemote(null);
       setSavedNotice(null);
@@ -229,46 +229,31 @@ export function NotificationEditorPage() {
       if (hasLocalEdits) {
         setSavedNotice(null);
         clearEvidence();
-        setRemote({
-          revisionId: server.revisionId,
-          version: server.revisionVersion,
-          status: server.revisionStatus,
-          values,
-          kind: "revision",
-        });
+        setRemote({ ...server, kind: "revision" });
         return;
       }
-      setBaseline({
-        revisionId: server.revisionId,
-        version: server.revisionVersion,
-        status: server.revisionStatus,
-        values,
-      });
+      setBaseline(server);
       setForm(values);
       setRemote(null);
       setSavedNotice(null);
       clearEvidence();
       return;
     }
-    if (server.revisionVersion < previous.version) {
+    if (server.revisionVersion < previous.revisionVersion) {
       // An older durable snapshot cannot replace the version this card has
       // already saved or read; wait for the current read instead.
       return;
     }
     if (
-      previous.version === server.revisionVersion &&
-      previous.status === server.revisionStatus
+      previous.revisionVersion === server.revisionVersion &&
+      previous.revisionStatus === server.revisionStatus
     ) {
       return;
     }
     if (!hasLocalEdits) {
-      const versionChanged = previous.version !== server.revisionVersion;
-      setBaseline({
-        revisionId: server.revisionId,
-        version: server.revisionVersion,
-        status: server.revisionStatus,
-        values,
-      });
+      const versionChanged =
+        previous.revisionVersion !== server.revisionVersion;
+      setBaseline(server);
       setForm(values);
       setRemote(null);
       if (versionChanged) {
@@ -277,17 +262,11 @@ export function NotificationEditorPage() {
       return;
     }
     setTestResult(null);
-    setRemote({
-      revisionId: server.revisionId,
-      version: server.revisionVersion,
-      status: server.revisionStatus,
-      values,
-      kind: "updated",
-    });
+    setRemote({ ...server, kind: "updated" });
   }, [
-    loadedDraft?.draft?.revisionId,
-    loadedDraft?.draft?.revisionVersion,
-    loadedDraft?.draft?.revisionStatus,
+    loadedDefinition?.webhook.activeConfiguration?.revisionId,
+    loadedDefinition?.webhook.activeConfiguration?.version,
+    loadedDefinition?.webhook.activeConfiguration?.status,
   ]);
   /* eslint-enable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
 
@@ -296,12 +275,12 @@ export function NotificationEditorPage() {
   // present an executable form that the server just denied.
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (savePermissionDenied && loadedDraft?.actions.save.available === true) {
+    if (savePermissionDenied && definition?.actions.edit.available === true) {
       setSavePermissionDenied(false);
     }
   }, [
-    draftQuery.dataUpdatedAt,
-    loadedDraft?.actions.save.available,
+    definitionQuery.dataUpdatedAt,
+    definition?.actions.edit.available,
     savePermissionDenied,
   ]);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -315,7 +294,7 @@ export function NotificationEditorPage() {
       testEvidenceId: string;
       submissionId: string;
     }) =>
-      saveWebhookDefinitionDraft(token, {
+      saveWebhookDefinition(token, {
         revisionId: input.revisionId,
         webhookId,
         expectedVersion: input.expectedVersion,
@@ -333,8 +312,8 @@ export function NotificationEditorPage() {
       if (result.ok) {
         const saved = {
           revisionId: result.model.revisionId,
-          version: result.model.version,
-          status: "validated",
+          revisionVersion: result.model.version,
+          revisionStatus: "active",
           values: input.values,
         };
         const local = formRef.current;
@@ -356,7 +335,7 @@ export function NotificationEditorPage() {
         verifiedSubmissionRef.current = input.submissionId;
         writePendingNotificationApply(principalId, applyScope, null);
         void queryClient.invalidateQueries({
-          queryKey: [notificationDraftQueryKey],
+          queryKey: [notificationDefinitionDetailQueryKey],
         });
         void queryClient.invalidateQueries({
           queryKey: [notificationListQueryKey],
@@ -390,7 +369,7 @@ export function NotificationEditorPage() {
           "应用没有执行（403）：当前账号没有管理配置的权限。读取最新定义以核对服务端提供的动作；如果仍无权限，请联系配置管理员。系统没有自动重试。",
         );
         void queryClient.invalidateQueries({
-          queryKey: [notificationDraftQueryKey],
+          queryKey: [notificationDefinitionDetailQueryKey],
         });
         return;
       }
@@ -464,9 +443,20 @@ export function NotificationEditorPage() {
       const result = await reconcileSystemSettings(token, pending.submissionId);
       const state =
         typeof result.state === "string" ? result.state : "UNRESOLVED";
-      let refreshed = await draftQuery.refetch();
+      const currentDefinition = (model: typeof liveDefinitionModel) => {
+        if (model === null) return null;
+        const active = model.webhook.activeConfiguration;
+        if (active === null) return null;
+        return {
+          revisionId: active.revisionId,
+          revisionVersion: active.version,
+          revisionStatus: active.status,
+          values: webhookFormFromDocument(model.webhook.document),
+        };
+      };
+      let refreshed = await definitionQuery.refetch();
       let model = refreshed.data?.ok === true ? refreshed.data.model : null;
-      let current = model?.draft ?? null;
+      let current = currentDefinition(model);
       if (
         (state === "COMMITTED" || state === "SUPERSEDED") &&
         (current === null || current.revisionId === pending.baselineRevisionId)
@@ -474,12 +464,11 @@ export function NotificationEditorPage() {
         // The reconciler proves this exact request published; a read still
         // showing the pre-request baseline is a stale read, so take one fresh
         // read before presenting the current effective definition.
-        refreshed = await draftQuery.refetch();
+        refreshed = await definitionQuery.refetch();
         model = refreshed.data?.ok === true ? refreshed.data.model : null;
-        current = model?.draft ?? null;
+        current = currentDefinition(model);
       }
-      const currentValues =
-        current === null ? null : webhookFormFromDocument(current.webhook);
+      const currentValues = current?.values ?? null;
       const currentRevisionId = current?.revisionId ?? null;
       const currentVersion = current?.revisionVersion ?? null;
       const committedVersion = optionalNumber(result.committedRevisionVersion);
@@ -530,20 +519,9 @@ export function NotificationEditorPage() {
           currentValues !== null &&
           current.revisionId !== pending.baselineRevisionId;
         if (readCaughtUp && current !== null && currentValues !== null) {
-          setBaseline({
-            revisionId: current.revisionId,
-            version: current.revisionVersion,
-            status: current.revisionStatus,
-            values: currentValues,
-          });
+          setBaseline(current);
           if (editedDuringRequest) {
-            setRemote({
-              revisionId: current.revisionId,
-              version: current.revisionVersion,
-              status: current.revisionStatus,
-              values: currentValues,
-              kind: "updated",
-            });
+            setRemote({ ...current, kind: "updated" });
           } else {
             setForm(currentValues);
             setRemote(null);
@@ -558,8 +536,8 @@ export function NotificationEditorPage() {
               : pending.baselineRevisionId;
           setBaseline({
             revisionId: committedRevisionId,
-            version: committedVersion ?? pending.baselineVersion,
-            status: "validated",
+            revisionVersion: committedVersion ?? pending.baselineVersion,
+            revisionStatus: "active",
             values: submitted,
           });
           setForm(submitted);
@@ -622,7 +600,7 @@ export function NotificationEditorPage() {
         verifyOutcomeRef.current(pendingApply);
         return;
       }
-      void draftQuery.refetch();
+      void definitionQuery.refetch();
     };
     const onVisibility = () => {
       if (document.visibilityState === "visible") refresh();
@@ -634,7 +612,7 @@ export function NotificationEditorPage() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [awaitingVerification, pendingApply, draftQuery.refetch]);
+  }, [awaitingVerification, pendingApply, definitionQuery.refetch]);
 
   const closeCard = () => {
     const reconciled = reconciliation?.committed === true;
@@ -712,7 +690,7 @@ export function NotificationEditorPage() {
   };
 
   const discardRetainedLocalInput = () => {
-    // Explicit choice after the open draft disappeared: discard only the card
+    // Explicit choice after the current definition disappeared: discard only the card
     // input. Nothing is written; the background list and Active stay as read.
     setForm(null);
     setBaseline(null);
@@ -728,25 +706,25 @@ export function NotificationEditorPage() {
     currentForm !== null &&
     baseline !== null &&
     webhookFormIssues(currentForm).length === 0 &&
-    loadedDraft?.actions.test.available === true;
+    definition?.actions.test.available === true;
   const testedForCurrentForm =
     testResult !== null &&
     testResult.success &&
     testResult.evidenceId !== null &&
     testResult.context === testContext;
   const title =
-    draft === null
+    definition === null
       ? "编辑 Webhook 定义"
-      : readOnlyDraft
-        ? `查看 Webhook ${draft.webhook.id}`
-        : `编辑 Webhook ${draft.webhook.id}`;
+      : readOnlyDefinition
+        ? `查看 Webhook ${definition.document.id}`
+        : `编辑 Webhook ${definition.document.id}`;
   const titleId = "notification-edit-title";
   const retainedLocalInput =
-    draft === null && currentForm !== null && baseline !== null;
-  const baselineIsOpenDraft =
-    draft !== null &&
+    definition === null && currentForm !== null && baseline !== null;
+  const baselineIsCurrentDefinition =
+    activeConfiguration !== null &&
     baseline !== null &&
-    draft.revisionId === baseline.revisionId;
+    activeConfiguration.revisionId === baseline.revisionId;
 
   useEffect(() => {
     // The retained-input explanation and its explicit choices grow above the
@@ -759,10 +737,10 @@ export function NotificationEditorPage() {
     busy ||
     readDegraded ||
     remote !== null ||
-    draft === null ||
+    definition === null ||
     baseline === null ||
     currentForm === null ||
-    readOnlyDraft ||
+    readOnlyDefinition ||
     !saveAvailable ||
     !dirty ||
     !testedForCurrentForm ||
@@ -780,9 +758,9 @@ export function NotificationEditorPage() {
       description={
         retainedLocalInput
           ? "当前没有可编辑的 Webhook 定义；你尚未保存的输入仍保留在此卡片中，不会写入服务端。"
-          : draft === null
+          : definition === null
             ? "当前生效配置不包含这个 Webhook 定义。"
-            : readOnlyDraft
+            : readOnlyDefinition
               ? "当前账号只能查看这个定义，不能应用修改或发送测试。"
               : "点击「应用更改」后，后端会校验并原子发布新的生效配置。"
       }
@@ -799,7 +777,7 @@ export function NotificationEditorPage() {
           >
             关闭
           </Button>
-          {draft !== null && !readOnlyDraft && saveAvailable && (
+          {definition !== null && !readOnlyDefinition && saveAvailable && (
             <Button
               type="submit"
               form="notification-edit-form"
@@ -819,90 +797,93 @@ export function NotificationEditorPage() {
           onDiscard={guard.commitDiscard}
         />
       )}
-      {draftQuery.isError && loadedDraft === null && (
+      {definitionQuery.isError && loadedDefinition === null && (
         <NotificationCardStatus variant="error" title="当前定义读取失败">
           <p>没有读取到当前 Webhook 定义，因此不能安全编辑或应用。</p>
           <div className="mf-actions">
             <Button
               type="button"
               variant="secondary"
-              onClick={() => void draftQuery.refetch()}
-              disabled={draftQuery.isFetching}
+              onClick={() => void definitionQuery.refetch()}
+              disabled={definitionQuery.isFetching}
             >
-              {draftQuery.isFetching ? "正在重试…" : "重试读取"}
+              {definitionQuery.isFetching ? "正在重试…" : "重试读取"}
             </Button>
           </div>
         </NotificationCardStatus>
       )}
-      {draftQuery.data === undefined && !draftQuery.isError && (
+      {definitionQuery.data === undefined && !definitionQuery.isError && (
         <NotificationCardStatus title="正在读取定义">
           <p>读取当前生效配置中的 Webhook 定义。</p>
         </NotificationCardStatus>
       )}
-      {draftQuery.data !== undefined &&
-        draftQuery.data.ok === false &&
-        loadedDraft === null && (
+      {definitionQuery.data !== undefined &&
+        definitionQuery.data.ok === false &&
+        loadedDefinition === null && (
           <NotificationCardStatus
             variant="error"
-            title={draftQuery.data.failure.title}
+            title={definitionQuery.data.failure.title}
           >
-            <p>{draftQuery.data.failure.nextAction}</p>
+            <p>{definitionQuery.data.failure.nextAction}</p>
             <div className="mf-actions">
               <Button
                 type="button"
                 variant="secondary"
-                onClick={() => void draftQuery.refetch()}
-                disabled={draftQuery.isFetching}
+                onClick={() => void definitionQuery.refetch()}
+                disabled={definitionQuery.isFetching}
               >
-                {draftQuery.isFetching ? "正在重试…" : "重试读取"}
+                {definitionQuery.isFetching ? "正在重试…" : "重试读取"}
               </Button>
             </div>
           </NotificationCardStatus>
         )}
-      {loadedDraft !== null && draft === null && !retainedLocalInput && (
-        <div className="mf-notification-card-scroll">
-          <StatusBanner variant="info" title="没有可编辑的定义">
-            <p>
-              当前生效配置不包含这个 Webhook
-              定义；没有渲染可填写的表单，也不会发送测试。
-            </p>
-          </StatusBanner>
-          <div className="mf-notification-actions">
-            <Button type="button" variant="secondary" onClick={closeCard}>
-              返回通知列表
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={busy || draftQuery.isFetching}
-              onClick={() => void draftQuery.refetch()}
-            >
-              {draftQuery.isFetching ? "正在读取…" : "读取当前定义"}
-            </Button>
-          </div>
-          {error !== null && (
-            <StatusBanner variant="error" title="操作没有完成">
-              <p>{error}</p>
+      {loadedDefinition !== null &&
+        definition === null &&
+        !retainedLocalInput && (
+          <div className="mf-notification-card-scroll">
+            <StatusBanner variant="info" title="没有可编辑的定义">
+              <p>
+                当前生效配置不包含这个 Webhook
+                定义；没有渲染可填写的表单，也不会发送测试。
+              </p>
             </StatusBanner>
-          )}
-        </div>
-      )}
-      {readOnlyDraft && serverValues !== null && draft !== null && (
+            <div className="mf-notification-actions">
+              <Button type="button" variant="secondary" onClick={closeCard}>
+                返回通知列表
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy || definitionQuery.isFetching}
+                onClick={() => void definitionQuery.refetch()}
+              >
+                {definitionQuery.isFetching ? "正在读取…" : "读取当前定义"}
+              </Button>
+            </div>
+            {error !== null && (
+              <StatusBanner variant="error" title="操作没有完成">
+                <p>{error}</p>
+              </StatusBanner>
+            )}
+          </div>
+        )}
+      {readOnlyDefinition && serverValues !== null && definition !== null && (
         <div className="mf-notification-card-scroll">
           {readDegraded && (
             <StatusBanner variant="warning" title="最新读取失败">
               <p>
-                显示的是上次成功读取的当前定义版本 {draft.revisionVersion}
+                显示的是上次成功读取的当前定义版本{" "}
+                {activeConfiguration?.version ?? "未知"}
                 。恢复读取后再核对当前权限和当前定义内容。
               </p>
               <div className="mf-actions">
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => void draftQuery.refetch()}
-                  disabled={draftQuery.isFetching}
+                  onClick={() => void definitionQuery.refetch()}
+                  disabled={definitionQuery.isFetching}
                 >
-                  {draftQuery.isFetching ? "正在重试…" : "重试读取"}
+                  {definitionQuery.isFetching ? "正在重试…" : "重试读取"}
                 </Button>
               </div>
             </StatusBanner>
@@ -910,7 +891,7 @@ export function NotificationEditorPage() {
           <StatusBanner variant="warning" title="只能查看这个当前定义">
             <p>
               {notificationReasonLabel(
-                loadedDraft?.actions.save.reason ?? null,
+                definition?.actions.edit.reason ?? null,
                 "当前账号没有保存这个当前定义的权限。",
               )}
             </p>
@@ -939,10 +920,10 @@ export function NotificationEditorPage() {
               <Button
                 type="button"
                 variant="secondary"
-                disabled={busy || draftQuery.isFetching}
-                onClick={() => void draftQuery.refetch()}
+                disabled={busy || definitionQuery.isFetching}
+                onClick={() => void definitionQuery.refetch()}
               >
-                {draftQuery.isFetching ? "正在读取…" : "读取最新当前定义"}
+                {definitionQuery.isFetching ? "正在读取…" : "读取最新当前定义"}
               </Button>
             </div>
           </StatusBanner>
@@ -953,11 +934,9 @@ export function NotificationEditorPage() {
           )}
           <div className="mf-notification-detail-badges">
             <span className="mf-notification-badge">
-              只读当前定义 · 版本 {draft.revisionVersion}
+              只读当前定义 · 版本 {activeConfiguration?.version ?? "未知"}
             </span>
-            <span className="mf-notification-badge">
-              {draft.revisionStatus === "validated" ? "已检查" : "当前定义"}
-            </span>
+            <span className="mf-notification-badge">已生效</span>
             <span className="mf-notification-badge">已生效配置不变</span>
           </div>
           <section className="mf-notification-form-section">
@@ -989,11 +968,11 @@ export function NotificationEditorPage() {
               <summary>诊断信息</summary>
               <dl>
                 <dt>Webhook 标识</dt>
-                <dd>{draft.webhook.id}</dd>
+                <dd>{definition.document.id}</dd>
                 <dt>当前定义修订</dt>
-                <dd>{draft.revisionId}</dd>
+                <dd>{activeConfiguration?.revisionId ?? "未知"}</dd>
                 <dt>当前定义版本</dt>
-                <dd>{draft.revisionVersion}</dd>
+                <dd>{activeConfiguration?.version ?? "未知"}</dd>
                 <dt>事件标识</dt>
                 <dd>{serverValues.events.join(", ")}</dd>
               </dl>
@@ -1001,7 +980,7 @@ export function NotificationEditorPage() {
           </section>
         </div>
       )}
-      {!readOnlyDraft && currentForm !== null && baseline !== null && (
+      {!readOnlyDefinition && currentForm !== null && baseline !== null && (
         <form
           id="notification-edit-form"
           ref={formScrollRef}
@@ -1011,7 +990,7 @@ export function NotificationEditorPage() {
             if (
               busy ||
               readDegraded ||
-              draft === null ||
+              definition === null ||
               remote !== null ||
               !dirty ||
               awaitingVerification ||
@@ -1039,7 +1018,7 @@ export function NotificationEditorPage() {
             setSavedNotice(null);
             saveMutation.mutate({
               revisionId: baseline.revisionId,
-              expectedVersion: baseline.version,
+              expectedVersion: baseline.revisionVersion,
               object: buildWebhookObject(webhookId, values),
               values,
               testEvidenceId: testResult.evidenceId,
@@ -1095,17 +1074,17 @@ export function NotificationEditorPage() {
           {readDegraded && (
             <StatusBanner variant="warning" title="最新读取失败">
               <p>
-                显示的是上次成功读取的当前定义版本 {baseline.version}
+                显示的是上次成功读取的当前定义版本 {baseline.revisionVersion}
                 。已知保存结果仍然有效；恢复读取后再进行测试、检查或发布。
               </p>
               <div className="mf-actions">
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => void draftQuery.refetch()}
-                  disabled={draftQuery.isFetching}
+                  onClick={() => void definitionQuery.refetch()}
+                  disabled={definitionQuery.isFetching}
                 >
-                  {draftQuery.isFetching ? "正在重试…" : "重试读取"}
+                  {definitionQuery.isFetching ? "正在重试…" : "重试读取"}
                 </Button>
               </div>
             </StatusBanner>
@@ -1125,10 +1104,12 @@ export function NotificationEditorPage() {
               <div className="mf-actions">
                 <Button
                   type="button"
-                  disabled={busy || draftQuery.isFetching}
-                  onClick={() => void draftQuery.refetch()}
+                  disabled={busy || definitionQuery.isFetching}
+                  onClick={() => void definitionQuery.refetch()}
                 >
-                  {draftQuery.isFetching ? "正在读取…" : "重新读取当前定义"}
+                  {definitionQuery.isFetching
+                    ? "正在读取…"
+                    : "重新读取当前定义"}
                 </Button>
                 <Button
                   type="button"
@@ -1145,7 +1126,7 @@ export function NotificationEditorPage() {
             {retainedLocalInput ? (
               <>
                 <span className="mf-notification-badge">
-                  原当前定义 · 版本 {baseline.version} · 已不再打开
+                  原当前定义 · 版本 {baseline.revisionVersion} · 已不再打开
                 </span>
                 <span className="mf-notification-badge mf-notification-badge-warn">
                   本地未保存输入已保留
@@ -1154,11 +1135,10 @@ export function NotificationEditorPage() {
                   已生效配置可能已变化
                 </span>
               </>
-            ) : baselineIsOpenDraft ? (
+            ) : baselineIsCurrentDefinition ? (
               <>
                 <span className="mf-notification-badge">
-                  已保存当前定义 · 版本 {baseline.version} ·{" "}
-                  {baseline.status === "validated" ? "已检查" : "当前定义"}
+                  已保存当前定义 · 版本 {baseline.revisionVersion} · 已生效
                 </span>
                 {dirty && (
                   <span className="mf-notification-badge mf-notification-badge-warn">
@@ -1175,7 +1155,7 @@ export function NotificationEditorPage() {
             ) : (
               <>
                 <span className="mf-notification-badge">
-                  原当前定义 · 版本 {baseline.version}
+                  原当前定义 · 版本 {baseline.revisionVersion}
                 </span>
                 <span className="mf-notification-badge mf-notification-badge-warn">
                   读取到新的当前定义修订
@@ -1190,10 +1170,12 @@ export function NotificationEditorPage() {
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={busy || draftQuery.isFetching}
-                  onClick={() => void draftQuery.refetch()}
+                  disabled={busy || definitionQuery.isFetching}
+                  onClick={() => void definitionQuery.refetch()}
                 >
-                  {draftQuery.isFetching ? "正在读取…" : "读取最新当前定义"}
+                  {definitionQuery.isFetching
+                    ? "正在读取…"
+                    : "读取最新当前定义"}
                 </Button>
               </span>
             )}
@@ -1215,8 +1197,8 @@ export function NotificationEditorPage() {
             >
               <p>
                 {remote.kind === "revision"
-                  ? `打开的是另一个当前定义修订（版本 ${remote.version}）。`
-                  : `耐久当前定义现在是版本 ${remote.version}。`}
+                  ? `打开的是另一个当前定义修订（版本 ${remote.revisionVersion}）。`
+                  : `耐久当前定义现在是版本 ${remote.revisionVersion}。`}
                 你还有未保存的输入；系统没有把本地输入静默绑定到新版本。
               </p>
               <div className="mf-actions">
@@ -1241,15 +1223,12 @@ export function NotificationEditorPage() {
               <p>{error}</p>
             </StatusBanner>
           )}
-          {draft !== null && draft.validationErrors.length > 0 && (
-            <StatusBanner variant="error" title="当前定义检查发现">
-              <ul>
-                {draft.validationErrors.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </StatusBanner>
-          )}
+          {definition?.document.validationError !== null &&
+            definition?.document.validationError !== undefined && (
+              <StatusBanner variant="error" title="当前定义检查发现">
+                <p>{definition.document.validationError}</p>
+              </StatusBanner>
+            )}
 
           <section className="mf-notification-form-section">
             <h3>基本设置</h3>
@@ -1312,7 +1291,7 @@ export function NotificationEditorPage() {
               <fieldset className="mf-notification-field mf-notification-field-full">
                 <legend>订阅事件</legend>
                 <div className="mf-notification-event-options">
-                  {loadedDraft?.supportedEvents.map((event) => (
+                  {loadedDefinition?.supportedEvents.map((event) => (
                     <label key={event} className="mf-notification-check">
                       <input
                         type="checkbox"
@@ -1456,7 +1435,7 @@ export function NotificationEditorPage() {
                   variant="secondary"
                   disabled={!canTest || busy}
                   title={notificationReasonLabel(
-                    loadedDraft?.actions.test.reason ?? null,
+                    definition?.actions.test.reason ?? null,
                     "当前不能发送签名测试",
                   )}
                   onClick={() => {
@@ -1466,7 +1445,7 @@ export function NotificationEditorPage() {
                       context: testContext,
                       webhook: buildWebhookObject(webhookId, currentForm),
                       revisionId: baseline.revisionId,
-                      revisionVersion: baseline.version,
+                      revisionVersion: baseline.revisionVersion,
                     });
                   }}
                 >

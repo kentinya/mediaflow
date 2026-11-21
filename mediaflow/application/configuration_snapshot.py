@@ -274,7 +274,6 @@ class ManagedConfigurationService:
             revisions = ()
         # Only current and historical published snapshots are configuration
         # revisions.  An unpublished candidate is never a resumable state.
-        setup_draft = None
         setup_required = not managed_activation
         if setup_required:
             authority = ConfigurationAuthority.MANAGEMENT_BOOTSTRAP.value
@@ -320,7 +319,6 @@ class ManagedConfigurationService:
             "unavailableReason": unavailable_reason,
             "revisions": [self._revision_summary(item) for item in revisions],
             "managedActivation": managed_activation,
-            "setupDraft": setup_draft.summary() if setup_draft is not None else None,
             "setupBlockers": _first_setup_blockers() if setup_required else [],
             "nextAction": next_action,
             "bootstrapMode": "MANAGEMENT_ONLY",
@@ -352,7 +350,6 @@ class ManagedConfigurationService:
             "recoveryRequired": status["recoveryRequired"],
             "unavailableReason": status["unavailableReason"],
             "lastKnownActive": status["lastKnownActive"],
-            "setupDraft": status["setupDraft"],
             "setupBlockers": status["setupBlockers"],
             "nextAction": status["nextAction"],
             # The shared bounded projection preserves the selected immutable

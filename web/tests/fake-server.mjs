@@ -4911,7 +4911,6 @@ function automationPermissions(token) {
 
 const NOTIFICATION_WEBHOOK_ID = "ops-webhook";
 const NOTIFICATION_ACTIVE_REVISION = "notification-active-rev-e2e-001";
-const NOTIFICATION_DRAFT_REVISION = "notification-draft-rev-e2e-001";
 const NOTIFICATION_DELIVERY_ID = "delivery-e2e-001";
 const NOTIFICATION_DELIVERY_ID_2 = "delivery-e2e-002";
 
@@ -4922,9 +4921,6 @@ function notificationState(session) {
   let value = NOTIFICATION_STATES.get(key);
   if (value === undefined) {
     value = {
-      draftCreated: false,
-      draftVersion: 4,
-      draftStatus: "validated",
       tested: false,
       activated: false,
       createdWebhook: null,
@@ -4977,29 +4973,14 @@ function webhookDocument(state, token, overrides = {}) {
     ],
     structuralValid: true,
     validationError: null,
-    definitionState: "active",
     activeConfiguration: {
       revisionId: NOTIFICATION_ACTIVE_REVISION,
       version: state.activated ? 5 : 3,
       revisionSequence: state.activated ? 4 : 2,
       status: "active",
     },
-    draftState: {
-      present: false,
-      reason: "definitions are published directly; no draft exists",
-      revisionId: null,
-      revisionVersion: null,
-      revisionStatus: null,
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
-    },
     actions: webhookActions(state, token, id),
   };
-  if (overrides.definitionState !== undefined) {
-    document.definitionState = overrides.definitionState;
-  }
   if (overrides.enabled !== undefined) {
     document.enabled = overrides.enabled;
   }
@@ -5086,7 +5067,6 @@ function notificationListDocument(state, token) {
             webhookDocument(state, token, {
               id: state.createdWebhook,
               enabled: false,
-              definitionState: "draft-only",
             }),
           ]
         : []),
@@ -5095,24 +5075,12 @@ function notificationListDocument(state, token) {
             webhookDocument(state, token, {
               id: state.copiedWebhook,
               enabled: false,
-              definitionState: "draft-only",
             }),
           ]
         : []),
     ],
     total: 1 + (state.createdWebhook ? 1 : 0) + (state.copiedWebhook ? 1 : 0),
     truncated: false,
-    draftState: {
-      present: false,
-      reason: "definitions are published directly; no draft exists",
-      revisionId: null,
-      revisionVersion: null,
-      revisionStatus: null,
-      baseActiveRevisionId: null,
-      updatedAt: null,
-      validatedAt: null,
-      validationErrors: [],
-    },
     supportedEvents: [
       "task.completed",
       "task.failed",
@@ -5141,9 +5109,7 @@ function notificationDetailDocument(state, token, webhookId) {
     webhook: webhookDocument(
       state,
       token,
-      id === NOTIFICATION_WEBHOOK_ID
-        ? {}
-        : { id, enabled: false, definitionState: "draft-only" },
+      id === NOTIFICATION_WEBHOOK_ID ? {} : { id, enabled: false },
     ),
     activeConfiguration: {
       revisionId: NOTIFICATION_ACTIVE_REVISION,
@@ -5151,6 +5117,12 @@ function notificationDetailDocument(state, token, webhookId) {
       revisionSequence: state.activated ? 4 : 2,
       status: "active",
     },
+    supportedEvents: [
+      "task.completed",
+      "task.failed",
+      "task.cancelled",
+      "schedule.emitted",
+    ],
   };
 }
 
@@ -6734,7 +6706,6 @@ function storageSetupAuthority(state, session) {
   );
   return {
     setupRequired: status.setupRequired === true,
-    setupDraftExists: status.setupDraft !== null,
     managedActivation: status.managedActivation === true,
     recoveryRequired: status.recoveryRequired === true,
     health: status.health,
@@ -6914,10 +6885,8 @@ function rulesState(session) {
       available: true,
       reason: null,
       emptyActive: false,
-      // The no-Active first-setup lifecycle: `setupDraft` is created by
-      // POST /api/configuration/drafts/first, validated and activated by
-      // the revision routes, and activation publishes an empty managed Active.
-      setupDraft: null,
+      // First setup publishes one empty managed Active through the existing
+      // /api/configuration/initialize route; there is no setup draft.
       published: null,
     };
     RULES_STATES.set(key, value);
@@ -7064,18 +7033,11 @@ function configurationStatusDocument(state, token) {
       emptyActive: false,
       recoveryRequired: false,
       unavailableReason: null,
-      revisions: state.setupDraft ? [rulesSetupRevisionSummary(state)] : [],
+      revisions: [],
       managedActivation: false,
-      setupDraft: state.setupDraft
-        ? {
-            revisionId: state.setupDraft.revisionId,
-            version: state.setupDraft.version,
-          }
-        : null,
       setupBlockers: [],
-      nextAction: state.setupDraft
-        ? "open and resume the existing setup Draft, complete guided setup, validate it, and activate it"
-        : "create the first setup Draft, then complete guided setup",
+      nextAction:
+        "initialize an empty configuration, then configure media capabilities",
       bootstrapMode: "MANAGEMENT_ONLY",
       canManageConfiguration: VIEWER_TOKENS.has(token),
       canActivateConfiguration: VIEWER_TOKENS.has(token),
@@ -7103,7 +7065,6 @@ function configurationStatusDocument(state, token) {
     unavailableReason: null,
     revisions: [],
     managedActivation: true,
-    setupDraft: null,
     setupBlockers: [],
     nextAction: null,
     bootstrapMode: "COMPATIBILITY",
@@ -7578,7 +7539,6 @@ function settingsStatusDocument(state, token) {
         "managed Active configuration is not runtime-consumable (settings fixture)",
       revisions,
       managedActivation: true,
-      setupDraft: null,
       setupBlockers: [],
       nextAction:
         "inspect configuration status and stage an explicit recovery Draft",
@@ -7604,11 +7564,9 @@ function settingsStatusDocument(state, token) {
       unavailableReason: null,
       revisions,
       managedActivation: false,
-      setupDraft: state.draft ? settingsDraftSummary(state.draft) : null,
       setupBlockers: [],
-      nextAction: state.draft
-        ? "open and resume the existing setup Draft, complete guided setup, validate it, and activate it"
-        : "create the first setup Draft, then complete guided setup",
+      nextAction:
+        "initialize an empty configuration, then configure media capabilities",
       bootstrapMode: "MANAGEMENT_ONLY",
       canManageConfiguration: canManage,
       canActivateConfiguration: canManage,
@@ -7630,7 +7588,6 @@ function settingsStatusDocument(state, token) {
     unavailableReason: null,
     revisions,
     managedActivation: true,
-    setupDraft: null,
     setupBlockers: [],
     nextAction: null,
     bootstrapMode: "COMPATIBILITY",
@@ -15662,19 +15619,11 @@ const server = createServer(async (req, res) => {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
-    if (
-      expectedRevisionId !== NOTIFICATION_DRAFT_REVISION &&
-      expectedRevisionId !== NOTIFICATION_ACTIVE_REVISION
-    ) {
+    if (expectedRevisionId !== NOTIFICATION_ACTIVE_REVISION) {
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
     }
-    const currentVersion =
-      expectedRevisionId === NOTIFICATION_DRAFT_REVISION
-        ? state.draftVersion
-        : state.activated
-          ? 5
-          : 3;
+    const currentVersion = state.activated ? 5 : 3;
     if (expectedVersion !== currentVersion) {
       sendJson(res, 409, {
         error: {
@@ -15710,10 +15659,7 @@ const server = createServer(async (req, res) => {
         revision: {
           revisionId: expectedRevisionId,
           version: currentVersion,
-          status:
-            expectedRevisionId === NOTIFICATION_DRAFT_REVISION
-              ? state.draftStatus
-              : "active",
+          status: "active",
         },
         outcome: "success",
         category: "http_204",
@@ -15739,10 +15685,7 @@ const server = createServer(async (req, res) => {
       revision: {
         revisionId: expectedRevisionId,
         version: currentVersion,
-        status:
-          expectedRevisionId === NOTIFICATION_DRAFT_REVISION
-            ? state.draftStatus
-            : "active",
+        status: "active",
       },
       outcome: "success",
       category: "http_204",
@@ -15753,327 +15696,6 @@ const server = createServer(async (req, res) => {
       retrySafe: true,
       nextAction:
         "no further action required; the endpoint accepted the signed test",
-    });
-    return;
-  }
-  if (
-    url.pathname ===
-      `/api/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/activate-draft` &&
-    req.method === "POST"
-  ) {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    const parsed = await readBoundedJsonBody(req, res);
-    if (!parsed.ok) {
-      return;
-    }
-    const state = notificationState(session);
-    const document = parsed.document ?? {};
-    if (
-      document.expectedRevisionId !== NOTIFICATION_DRAFT_REVISION ||
-      document.expectedVersion !== state.draftVersion
-    ) {
-      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
-      return;
-    }
-    if (!state.draftCreated) {
-      sendJson(res, 409, { error: { code: "notification_draft_required" } });
-      return;
-    }
-    state.activated = true;
-    recordManualRequestForSession({
-      method: "POST",
-      objectId: NOTIFICATION_WEBHOOK_ID,
-      objectType: "notification_webhook_activation",
-      path: "/api/operations/notifications/webhooks/:webhookId/activate-draft",
-      body: {
-        expectedRevisionId: document.expectedRevisionId,
-        expectedVersion: document.expectedVersion,
-      },
-    });
-    if (state.hostile) {
-      // Split-identity contract probe: an activated identity that differs
-      // from the exact reviewed Draft identity must never render as success.
-      sendJson(res, 200, {
-        activatedRevisionId: NOTIFICATION_ACTIVE_REVISION,
-        activatedVersion: state.draftVersion,
-        revisionSequence: 4,
-        publishedFromRevisionId: NOTIFICATION_DRAFT_REVISION,
-        publishedFromVersion: state.draftVersion,
-        activeConfiguration: {
-          revisionId: NOTIFICATION_ACTIVE_REVISION,
-          version: state.draftVersion,
-          revisionSequence: 4,
-          status: "active",
-        },
-        webhook: webhookDocument(state, token),
-      });
-      return;
-    }
-    sendJson(res, 200, {
-      activatedRevisionId: NOTIFICATION_DRAFT_REVISION,
-      activatedVersion: state.draftVersion,
-      revisionSequence: 4,
-      publishedFromRevisionId: NOTIFICATION_DRAFT_REVISION,
-      publishedFromVersion: state.draftVersion,
-      activeConfiguration: {
-        revisionId: NOTIFICATION_DRAFT_REVISION,
-        version: state.draftVersion,
-        revisionSequence: 4,
-        status: "active",
-      },
-      webhook: webhookDocument(state, token),
-    });
-    return;
-  }
-  if (
-    url.pathname ===
-      `/api/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor` &&
-    req.method === "POST"
-  ) {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    await readBoundedJsonBody(req, res);
-    const state = notificationState(session);
-    state.draftCreated = true;
-    state.draftVersion = 4;
-    state.draftStatus = "draft";
-    recordManualRequestForSession({
-      method: "POST",
-      objectId: NOTIFICATION_ACTIVE_REVISION,
-      objectType: "notification_successor_draft",
-      path: "/api/configuration/revisions/:revisionId/successor",
-      body: {},
-    });
-    sendJson(res, 201, {
-      revisionId: NOTIFICATION_DRAFT_REVISION,
-      version: 4,
-      status: "draft",
-      revisionSequence: 3,
-      schemaVersion: 1,
-      createdAt: MANUAL_RECORDED_AT,
-      updatedAt: MANUAL_RECORDED_AT,
-      validatedAt: null,
-      activatedAt: null,
-      validationErrors: [],
-      created: true,
-      nextAction:
-        "open the successor Draft, edit configuration objects, validate, and activate",
-    });
-    return;
-  }
-  if (
-    url.pathname ===
-      `/api/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/validate` &&
-    req.method === "POST"
-  ) {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    await readBoundedJsonBody(req, res);
-    const state = notificationState(session);
-    state.draftStatus = "validated";
-    recordManualRequestForSession({
-      method: "POST",
-      objectId: NOTIFICATION_DRAFT_REVISION,
-      objectType: "notification_draft_validate",
-      path: "/api/configuration/revisions/:revisionId/validate",
-      body: {},
-    });
-    sendJson(res, 200, {
-      revisionId: NOTIFICATION_DRAFT_REVISION,
-      version: state.draftVersion,
-      status: "validated",
-      validationErrors: [],
-    });
-    return;
-  }
-  const notificationCreateMatch = url.pathname.match(
-    /^\/api\/configuration\/revisions\/([^/]+)\/objects\/webhooks$/,
-  );
-  if (
-    notificationCreateMatch &&
-    notificationCreateMatch[1] === NOTIFICATION_DRAFT_REVISION &&
-    req.method === "POST"
-  ) {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    const parsed = await readBoundedJsonBody(req, res);
-    if (!parsed.ok) {
-      return;
-    }
-    const document = parsed.document ?? {};
-    const state = notificationState(session);
-    if (document.expectedVersion !== state.draftVersion) {
-      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
-      return;
-    }
-    const object = document.object ?? {};
-    const createdId =
-      typeof object.id === "string" && object.id
-        ? object.id
-        : "created-webhook";
-    if (createdId === NOTIFICATION_WEBHOOK_ID) {
-      sendJson(res, 400, { error: { code: "invalid_request" } });
-      return;
-    }
-    state.createdWebhook = createdId;
-    state.draftVersion += 1;
-    recordManualRequestForSession({
-      method: "POST",
-      objectId: createdId,
-      objectType: "notification_webhook_create",
-      path: "/api/configuration/revisions/:revisionId/objects/webhooks",
-      body: { id: createdId, expectedVersion: document.expectedVersion },
-    });
-    if (state.hostile) {
-      // Wrong-revision contract probe: a success document answering for
-      // another revision must never render as this create's outcome.
-      sendJson(res, 200, {
-        revisionId: NOTIFICATION_ACTIVE_REVISION,
-        version: state.draftVersion,
-        status: state.draftStatus,
-        webhook: { id: createdId, enabled: false },
-      });
-      return;
-    }
-    sendJson(res, 200, {
-      revisionId: NOTIFICATION_DRAFT_REVISION,
-      version: state.draftVersion,
-      status: state.draftStatus,
-      webhook: { id: createdId, enabled: false },
-    });
-    return;
-  }
-  const notificationEditMatch = url.pathname.match(
-    /^\/api\/configuration\/revisions\/([^/]+)\/objects\/webhooks\/([^/]+)$/,
-  );
-  if (
-    notificationEditMatch &&
-    notificationEditMatch[1] === NOTIFICATION_DRAFT_REVISION &&
-    req.method === "PUT"
-  ) {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    const parsed = await readBoundedJsonBody(req, res);
-    if (!parsed.ok) {
-      return;
-    }
-    const document = parsed.document ?? {};
-    const state = notificationState(session);
-    if (document.expectedVersion !== state.draftVersion) {
-      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
-      return;
-    }
-    state.draftVersion += 1;
-    recordManualRequestForSession({
-      method: "PUT",
-      objectId: notificationEditMatch[2],
-      objectType: "notification_webhook_save",
-      path: "/api/configuration/revisions/:revisionId/objects/webhooks/:webhookId",
-      body: {
-        webhookId: notificationEditMatch[2],
-        expectedVersion: document.expectedVersion,
-      },
-    });
-    if (state.hostile) {
-      // Missing-definition contract probe: a success document without the
-      // saved definition must never render as this save's outcome.
-      sendJson(res, 200, {
-        revisionId: NOTIFICATION_DRAFT_REVISION,
-        version: state.draftVersion,
-        status: state.draftStatus,
-      });
-      return;
-    }
-    sendJson(res, 200, {
-      revisionId: NOTIFICATION_DRAFT_REVISION,
-      version: state.draftVersion,
-      status: state.draftStatus,
-      webhook: { id: notificationEditMatch[2] },
-    });
-    return;
-  }
-  const notificationObjectActionMatch = url.pathname.match(
-    /^\/api\/configuration\/revisions\/([^/]+)\/objects\/webhooks\/([^/]+)\/(copy|enable|disable)$/,
-  );
-  if (
-    notificationObjectActionMatch &&
-    notificationObjectActionMatch[1] === NOTIFICATION_DRAFT_REVISION &&
-    req.method === "POST"
-  ) {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    const parsed = await readBoundedJsonBody(req, res);
-    if (!parsed.ok) {
-      return;
-    }
-    const document = parsed.document ?? {};
-    const state = notificationState(session);
-    const action = notificationObjectActionMatch[3];
-    if (document.expectedVersion !== state.draftVersion) {
-      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
-      return;
-    }
-    state.draftVersion += 1;
-    let objectId = notificationObjectActionMatch[2];
-    if (action === "copy") {
-      objectId = `${notificationObjectActionMatch[2]}-copy`;
-      state.copiedWebhook = objectId;
-    }
-    recordManualRequestForSession({
-      method: "POST",
-      objectId,
-      objectType: `notification_webhook_${action}`,
-      path: "/api/configuration/revisions/:revisionId/objects/webhooks/:webhookId/:action",
-      body: {
-        webhookId: notificationObjectActionMatch[2],
-        action,
-        expectedVersion: document.expectedVersion,
-        ...(action === "copy" ? { newId: document.newId } : {}),
-      },
-    });
-    if (state.hostile) {
-      if (action === "copy") {
-        // Same-prefix wrong-object contract probe: only the exact requested
-        // newId is bound to this copy mutation.
-        sendJson(res, 200, {
-          revisionId: NOTIFICATION_DRAFT_REVISION,
-          version: state.draftVersion,
-          status: state.draftStatus,
-          object: { id: "operations-webhook-copy-malicious", enabled: false },
-        });
-      } else {
-        // Contradictory-toggle contract probe: a success document whose
-        // enabled state contradicts the submitted toggle is malformed
-        // evidence, never this toggle's outcome.
-        sendJson(res, 200, {
-          revisionId: NOTIFICATION_DRAFT_REVISION,
-          version: state.draftVersion,
-          status: state.draftStatus,
-          object: {
-            id: notificationObjectActionMatch[2],
-            enabled: action !== "enable",
-          },
-        });
-      }
-      return;
-    }
-    // The managed copy stores a disabled Draft definition; enable/disable
-    // stores the submitted toggle state.
-    sendJson(res, 200, {
-      revisionId: NOTIFICATION_DRAFT_REVISION,
-      version: state.draftVersion,
-      status: state.draftStatus,
-      object: {
-        id: objectId,
-        enabled: action === "enable" ? true : false,
-      },
     });
     return;
   }
@@ -16538,9 +16160,6 @@ const server = createServer(async (req, res) => {
       session ?? `shared-${Math.random().toString(36).slice(2, 12)}`;
     RECORDED_MANUAL_REQUESTS_BY_SESSION.set(sessionId, []);
     NOTIFICATION_STATES.set(sessionId, {
-      draftCreated: false,
-      draftVersion: 4,
-      draftStatus: "validated",
       tested: false,
       activated: false,
       createdWebhook: null,
@@ -16604,7 +16223,6 @@ const server = createServer(async (req, res) => {
             ]
           : [],
       emptyActive: false,
-      setupDraft: null,
       published: null,
       // Per-session object lifecycle state for the Task 41.6 identity proof.
       objects: new Map(),

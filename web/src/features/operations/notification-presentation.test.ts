@@ -98,12 +98,6 @@ describe("notification presentation helpers", () => {
   it("maps known backend reasons to operator language and keeps a safe fallback", () => {
     expect(
       notificationReasonLabel(
-        "an open successor Draft is required to add a Webhook definition",
-        "fallback",
-      ),
-    ).toMatch(/后继草稿/);
-    expect(
-      notificationReasonLabel(
         "the connected API principal cannot manage Webhook Definitions",
         "fallback",
       ),

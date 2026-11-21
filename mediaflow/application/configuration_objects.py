@@ -7975,9 +7975,9 @@ class ConfigurationObjectService:
         source of truth, and carries only bounded, secret-free flags plus the
         fixed, same-origin route that continues the existing V1 setup workflow.
 
-        It is a pure read.  It never creates a Draft, runs a check, activates
-        configuration or starts media work, so a page render, refresh or return
-        can never produce a duplicate Draft or replay a publication.
+        It is a pure read. It never initializes, runs a check or publishes
+        configuration, so a page render, refresh or return can never produce a
+        duplicate setup or replay a publication.
         """
 
         try:
@@ -7988,7 +7988,6 @@ class ConfigurationObjectService:
             # must never be reported as "setup is still available".
             return {
                 "setupRequired": False,
-                "setupDraftExists": False,
                 "managedActivation": False,
                 "recoveryRequired": False,
                 "health": None,
@@ -7996,10 +7995,6 @@ class ConfigurationObjectService:
             }
         return {
             "setupRequired": status.get("setupRequired") is True,
-            # An unfinished setup is resumed, not repeated.  Only the presence
-            # of the existing Draft crosses the projection; its identity stays
-            # in the configuration authority that owns it.
-            "setupDraftExists": isinstance(status.get("setupDraft"), dict),
             "managedActivation": status.get("managedActivation") is True,
             "recoveryRequired": status.get("recoveryRequired") is True,
             "health": status.get("health"),

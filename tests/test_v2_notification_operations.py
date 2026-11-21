@@ -323,7 +323,7 @@ class WebhookDefinitionsPageTests(unittest.TestCase):
                 _assert_operator_document_clean(page)
                 self.assertEqual(page["total"], 1)
                 self.assertFalse(page["truncated"])
-                self.assertFalse(page["draftState"]["present"])
+                self.assertNotIn("draftState", page)
                 self.assertEqual(
                     page["supportedEvents"],
                     ["task.completed", "task.failed", "task.cancelled", "schedule.emitted"],
@@ -332,7 +332,8 @@ class WebhookDefinitionsPageTests(unittest.TestCase):
                 self.assertEqual(
                     item["document"]["id"] if "document" in item else item["id"], WEBHOOK_ID
                 )
-                self.assertEqual(item["definitionState"], "active")
+                self.assertNotIn("definitionState", item)
+                self.assertNotIn("draftState", item)
                 self.assertEqual(
                     item["activeConfiguration"]["revisionId"],
                     harness.configuration.active().revision_id,
@@ -411,6 +412,9 @@ class WebhookDefinitionsPageTests(unittest.TestCase):
                     harness.api, f"{OPERATIONS_ROUTE}/{WEBHOOK_ID}", token=MANAGER_TOKEN
                 )
                 self.assertEqual(status, 200)
+                self.assertNotIn("draftState", detail["webhook"])
+                self.assertNotIn("definitionState", detail["webhook"])
+                self.assertIn("supportedEvents", detail)
                 self.assertFalse(detail["webhook"]["actions"]["edit"]["available"])
                 self.assertIn(
                     "activate_configuration",
@@ -444,10 +448,11 @@ class WebhookDefinitionsPageTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(page["total"], 2)
                 created = next(item for item in page["items"] if item["id"] == "copied-webhook")
-                self.assertEqual(created["definitionState"], "active")
+                self.assertNotIn("definitionState", created)
+                self.assertNotIn("draftState", created)
                 self.assertEqual(created["activeConfiguration"]["revisionId"], revision_id)
                 # Direct publication leaves no recoverable Draft.
-                self.assertFalse(page["draftState"]["present"])
+                self.assertNotIn("draftState", page)
                 self.assertFalse(
                     any(
                         revision.status.value in {"draft", "validated"}

@@ -7,7 +7,6 @@ export interface ConfigurationStatus {
   readonly setupRequired?: boolean;
   readonly emptyActive?: boolean;
   readonly active?: Record<string, unknown> | null;
-  readonly setupDraft?: Record<string, unknown> | null;
   readonly nextAction?: string | null;
   readonly canManageConfiguration?: boolean;
   readonly canActivateConfiguration?: boolean;

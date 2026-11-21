@@ -2,15 +2,16 @@
  * V2 Webhook definition create card.
  *
  * The card opens over the Notification definition list. It composes the
- * existing managed configuration object route: the bounded document is stored
- * inside the exact open successor Draft at its advertised optimistic version.
- * Only canonical Webhook fields are submitted; the server's canonical
- * validator rejects unknown fields, literal secrets, unsafe schemes and
- * credential-bearing endpoint components, so the client mirrors those bounds
- * for friction-free input but never becomes the authority.
+ * existing managed configuration object route: the tested bounded document is
+ * validated and published as the new immutable Active at its advertised
+ * optimistic version. Only canonical Webhook fields are submitted; the
+ * server's canonical validator rejects unknown fields, literal secrets, unsafe
+ * schemes and credential-bearing endpoint components, so the client mirrors
+ * those bounds for friction-free input but never becomes the authority.
  *
- * No editable Draft means no fillable form: the card explains the exact next
- * action and never lets pointer or keyboard reach an invalid submission.
+ * Without an Active baseline the card renders no fillable form: it explains
+ * the exact next action and never lets pointer or keyboard reach an invalid
+ * submission.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -32,7 +33,6 @@ import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
 import {
   buildWebhookObject,
-  draftStatusLabel,
   notificationEventLabel,
   notificationReasonLabel,
   sameWebhookForm,
@@ -413,18 +413,11 @@ export function NotificationNewPage() {
   const page = useLastSuccessfulRead(livePage);
   const readDegraded = livePage === null && page !== null;
   const create = page?.actions.create ?? null;
-  const draft = page?.draftState ?? null;
   const activeConfiguration = page?.activeConfiguration ?? null;
-  const draftReady =
-    page !== null &&
-    create?.available === true &&
-    (draft?.present === true || activeConfiguration !== null);
-  const revisionId = draft?.present
-    ? draft.revisionId
-    : (activeConfiguration?.revisionId ?? null);
-  const revisionVersion = draft?.present
-    ? draft.revisionVersion
-    : (activeConfiguration?.version ?? null);
+  const createReady =
+    page !== null && create?.available === true && activeConfiguration !== null;
+  const revisionId = activeConfiguration?.revisionId ?? null;
+  const revisionVersion = activeConfiguration?.version ?? null;
 
   const title = "新建 Webhook";
   const titleId = "notification-new-title";
@@ -450,7 +443,7 @@ export function NotificationNewPage() {
           >
             关闭
           </Button>
-          {draftReady && (
+          {createReady && (
             <Button
               type="submit"
               form="notification-new-form"
@@ -512,12 +505,12 @@ export function NotificationNewPage() {
           </div>
         </NotificationCardStatus>
       )}
-      {page !== null && !draftReady && (
+      {page !== null && !createReady && (
         <div className="mf-notification-card-scroll">
           <StatusBanner variant="info" title="当前不能新建 Webhook">
             <p>
               {notificationReasonLabel(
-                create?.reason ?? draft?.reason ?? null,
+                create?.reason ?? null,
                 "需要当前生效配置才能发布 Webhook 定义。",
               )}
             </p>
@@ -545,7 +538,7 @@ export function NotificationNewPage() {
           )}
         </div>
       )}
-      {draftReady && revisionId !== null && (
+      {createReady && revisionId !== null && (
         <form
           id="notification-new-form"
           className="mf-notification-card-scroll"
@@ -657,10 +650,7 @@ export function NotificationNewPage() {
           {!readDegraded && (
             <div className="mf-notification-state-strip">
               <span className="mf-notification-badge">
-                生效配置 · 版本 {revisionVersion ?? "未知"} ·{" "}
-                {draftStatusLabel(
-                  draft?.present ? draft.revisionStatus : "active",
-                )}
+                生效配置 · 版本 {revisionVersion ?? "未知"} · 已生效
               </span>
               <span className="mf-notification-badge">已生效配置不变</span>
               <span className="mf-notification-read-action">

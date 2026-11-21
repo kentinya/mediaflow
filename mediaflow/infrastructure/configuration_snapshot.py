@@ -190,7 +190,6 @@ def build_management_configuration_snapshot(status: Mapping[str, Any]) -> Config
             "emptyActive": status.get("emptyActive", False),
             "authority": status.get("authority"),
             "active": status.get("active"),
-            "setupDraft": status.get("setupDraft"),
             "recoveryRequired": status.get("recoveryRequired", False),
             "health": status.get("health"),
             "nextAction": status.get("nextAction"),
