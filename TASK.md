@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: DEVELOPER FIXES TASK57.1
+Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: DEVELOPER FIXES TASK57.1
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -579,6 +579,44 @@ Task Base 生成的仅配置 `12` 库和 `runtime 58` 库均在 Compose 的四�
 
 RO-1 的既有浏览器证据保留。RO-2 用户管理与 API 令牌待后续 Task。RO-3 的四服务旧库
 启动仍有阻塞，本轮完整 T4 与实际 Scheduler／Worker 撤权执行待修正候选。
+
+**Developer 修正交付记录（READY FOR B REVIEW）**
+
+- 实现候选：`a639fa953afa1da781ebff61e2d7e9f08e88b26b`（Task Base
+  `4566a74055c698aec704215dd431eb8521bcfedb`）。保留原 Slice 合同、原评审记录和
+  未授权范围；本记录只覆盖 B 本轮指出的待确认配置切换启动阻塞。
+- 根因与修复：上一版本 `config draft-import` 留下配置 schema 11 和未发布草稿，但
+  没有 runtime／当前来源标记。容器预检按通用配置版本放行，Scheduler 与 Notification
+  Worker 又从 bootstrap 直接打开运行时仓库，于是先写入 runtime 59 和 store_origin 59。
+  现在共享只读检查在普通服务启动边界识别待确认切换：Compose 四服务预检和本机
+  `worker/scheduler/notification-worker` 的 `run` 入口都在创建 runtime 表、来源标记或
+  租约前退出，错误列出受影响 revision 并指向 `config status` 与
+  `config retire-unpublished --confirm`。`config status` 仍只读，确认切换仍只在
+  `retire-unpublished --confirm` 事务内发生；`api credentials check` 与配置管理命令
+  不被误伤。
+- 自动化用例：`tests/managed_config_fixture.py` 新增上一版本 draft-era 库夹具；
+  `test_container_deployment` 覆盖四服务预检拒绝、文件哈希／标记不变、`config status`
+  只读、副本显式切换后 Active 保留及四服务预检放行；`test_resident_services` 覆盖
+  `worker run`、`scheduler run`、`notification-worker run` 在建表前退出且原文件不变。
+- 真实旧库：从 `be55d699` 的生成器与 CLI 执行 `config draft-import --file`，得到只有
+  `configuration_management 11` 和一条 draft、无 runtime／来源标记的库，SHA-256 为
+  `12372b73825e3f976d08a79c5708392be69d87eb41eb6b79f833d291562b4b7d`。候选容器入口
+  对 api／worker／scheduler／notification-worker 四个命令均退出 `1`，本机三个常驻
+  `run` 均退出 `2`，错误包含草稿 revision 与两个下一步命令；每次拒绝后哈希保持上述值。
+  另一份同源副本执行 `config status` 仍为哈希不变，`retire-unpublished --confirm` 后
+  标记为 configuration 12／store_origin 59、草稿已移除；四服务预检全部通过。
+- 带 Active 的旧库：同一旧版流程建立 Active 后再导入一份 draft，候选预检退出 `1` 且
+  哈希 `c01e3289a79f020a4afa3e479696df1db4bf8b83a380c26c0c06ae8e317f4364` 不变。
+  显式切换只移除 draft，保留原 Active 的 revision ID／digest；切换后 `scheduler tick`
+  成功读取已发布 Active 并正常退出 `0`，四服务预检全部通过。
+- 定向测试：`test_container_deployment` 20 项、`test_container_probe` 12 项、
+  `test_configuration_status` 15 项、`test_resident_services` 30 项，共 77 项通过。
+  改动文件的 `ruff format --check`、`ruff check`，完整 `compileall`、`git diff --check`
+  与治理检查 PASS。
+- 剩余风险：完整 T4、四服务真实 Compose、候选镜像、wheel／源码外安装、正式 Waitress
+  入口、Web 浏览器及其他真实 Python spec 仍由 B 在修正候选上独立验收。Developer 本轮
+  未构建镜像或运行 Compose；旧库验证使用本机容器入口与真实 CLI，证据位于本地
+  `.git/validation-evidence/task57.1-pending-switch/`。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
