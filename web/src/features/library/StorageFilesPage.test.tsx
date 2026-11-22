@@ -4400,7 +4400,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // Slice53: the recovered admission opens the preparation card on this
     // same Files page for exactly this durable discovery, not a duplicate
     // admission and not the legacy full page.
-    expect(screen.getByText(/准备完成/)).toBeVisible();
+    expect(screen.getByText("正在准备")).toBeVisible();
     expect(router.state.location.pathname).toBe("/resourcelib/files");
     expect(screen.queryByRole("heading", { name: "新建整理任务" })).toBeNull();
     // The page really did submit its own generated identity.

@@ -598,9 +598,12 @@ test("the same-page preparation links the summary and confirms one exact subset"
   // compact batch review of the exact subset before the single confirmation.
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByRole("region", { name: "整批复核" })).toBeVisible();
-  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  const batchSummary = card.locator(".mf-organize-batch-summary");
   await expect(
-    page.getByText(/零变更摘要,确认受理前不修改任何文件/),
+    batchSummary.locator("> div").filter({ hasText: "将整理" }).locator("dd"),
+  ).toHaveText("1 项");
+  await expect(
+    card.getByText("确认受理前不修改任何文件", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "确认整理 1 项" }),
@@ -694,12 +697,19 @@ test("a budget-limited preparation refuses to freeze and offers the narrowing re
   ).toBeVisible();
 
   // The honest incomplete outcome: the truncated prefix is never offered as
-  // an executable subset, and the native narrowing action is present.
-  await expect(page.getByText(/准备完成（范围不完整）/)).toBeVisible();
-  await expect(page.getByText(/不能冻结为可执行清单/)).toBeVisible();
+  // an executable subset, and the same preparation states the reason and the
+  // only legal next action.
+  await expect(page.getByText("准备未完成", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("未完整遍历：超出安全深度上限。", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "本次不会执行整理；请关闭本弹窗返回原文件页，缩小选择范围后重新发起。",
+      { exact: true },
+    ),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: /确认整理/ })).toHaveCount(0);
-  // The truncation is explained distinctly from a configured exclusion.
-  await expect(page.getByText(/未完整遍历：超出安全深度上限/)).toBeVisible();
 });
 
 test("the row Organize action admits the existing durable intent for one eligible file", async ({

@@ -82,6 +82,9 @@ function makeBackend() {
     // Leading reads of a just-admitted, still-queued preparation whose walk
     // has not started.
     queuedReads: 0 as number,
+    // Leading reads that report the saved request while no Worker advertises
+    // the discovery capability; a later read proves automatic recovery.
+    workerUnavailableReads: 0 as number,
     // The real Worker publishes the completed walk before it freezes and enters
     // analysis.  These two counts stage exactly that gap: an unfrozen completed
     // walk, then the frozen intent whose analysis is still linking the plan.
@@ -759,6 +762,33 @@ function makeBackend() {
         if (state.primaryLimit && state.primaryLimitSettlementReads > 0) {
           state.primaryLimitSettlementReads -= 1;
           if (state.primaryLimitSettlementReads === 0) state.endedFlow = true;
+        }
+        if (state.workerUnavailableReads > 0) {
+          state.workerUnavailableReads -= 1;
+          const unavailable = discoveryDocument();
+          unavailable["status"] = "queued";
+          unavailable["previewId"] = null;
+          unavailable["prepared"] = false;
+          unavailable["intentId"] = null;
+          unavailable["frozen"] = false;
+          unavailable["primarySourceCount"] = 0;
+          const progress = unavailable["progress"] as Json;
+          progress["visitedEntries"] = 0;
+          progress["visitedDirectories"] = 0;
+          progress["primarySources"] = 0;
+          progress["excludedEntries"] = 0;
+          progress["unstableEntries"] = 0;
+          progress["errorEntries"] = 0;
+          progress["message"] =
+            "the request is saved; no live Worker advertises media_discovery";
+          unavailable["worker"] = {
+            ready: false,
+            condition: "unsupported_command",
+            durableState: "live workers do not advertise the requested command",
+            nextAction:
+              "start or upgrade a resident worker that supports bounded discovery",
+          };
+          return jsonResponse(unavailable);
         }
         if (state.queuedReads > 0) {
           state.queuedReads -= 1;
@@ -2041,48 +2071,51 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
-  it("shows a queued preparation truthfully without a completed-walk claim or an empty pager", async () => {
+  it("shows the compact first-plan preparation with only the source, admitted scope and close", async () => {
     const user = userEvent.setup();
-    await openDialog(user, (value) => {
-      value.state.queuedReads = 10;
-      value.state.scopeSelections = [
-        { kind: "directory", path: "Movies" },
-        { kind: "file", path: "Movies/Movie.01.mkv" },
-      ];
-    });
-    const stage = await screen.findByText(
-      (_text, element) =>
-        element?.classList.contains("mf-organize-stage-copy") === true,
-      {},
-      { timeout: 5_000 },
+    await openDialog(
+      user,
+      (value) => {
+        value.state.queuedReads = 10;
+        value.state.scopeSelections = [
+          { kind: "file", path: "Movies/Movie.01.mkv" },
+        ];
+      },
+      [filename(0)],
     );
-    expect(stage).toHaveTextContent(
-      "所选范围已保存，正在等待后台 Worker 开始检查",
-    );
+
+    expect(await screen.findByText("正在准备")).toBeVisible();
     expect(
-      screen.getByText(
-        "Worker 尚未开始检查；已受理范围与真实计数会在此原位更新。",
-      ),
-    ).toBeVisible();
+      card().querySelector(".mf-organize-preparation-spinner"),
+    ).not.toBeNull();
+    // The shared title is the only header copy during first-plan preparation.
     expect(
-      screen.queryByText(
-        "正在检查所选范围；下方计数是同一准备已完成的真实进度。",
-      ),
+      within(card()).queryByText(/每次复核一个主文件及其关联附件/),
     ).toBeNull();
-    expect(screen.queryByText(/不会声称已完整遍历/)).toBeNull();
+    expect(card()).toHaveTextContent("来源资源库");
+    expect(card()).toHaveTextContent("library");
+    expect(card()).toHaveTextContent("受理范围");
+    expect(card()).toHaveTextContent("1 个文件");
+    expect(card()).not.toHaveTextContent("整理进度");
+    expect(card()).not.toHaveTextContent("已找到");
+    // The baseline stage card, counts, diagnostics and Worker box are gone.
+    expect(card().querySelector(".mf-organize-stage-copy")).toBeNull();
+    expect(screen.queryByText(/准备进度/)).toBeNull();
+    expect(screen.queryByText(/准备诊断/)).toBeNull();
+    expect(screen.queryByText(/处理 Worker 暂不可用/)).toBeNull();
+    expect(screen.queryByRole("region", { name: "排除与等待原因" })).toBeNull();
     expect(screen.queryByText("已完整遍历所选范围。")).toBeNull();
-    expect(card()).toHaveTextContent("已受理范围：1 个文件夹、1 个文件");
-    const scopeSummary = within(card()).getByText(/查看已受理范围/);
+    expect(screen.queryByText(/第 0 \/ 0 个/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /整批复核/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "下一项" })).toBeNull();
+
+    const scopeSummary = within(card()).getByText("查看确切路径（1 项）");
     const scopeDetails = scopeSummary.closest("details");
     expect(scopeDetails?.open).toBe(false);
     await user.click(scopeSummary);
     expect(
       within(scopeDetails as HTMLElement).getByText("Movies/Movie.01.mkv"),
     ).toBeVisible();
-    expect(screen.queryByRole("region", { name: "排除与等待原因" })).toBeNull();
-    expect(screen.queryByText(/第 0 \/ 0 个/)).toBeNull();
-    expect(screen.queryByRole("button", { name: /整批复核/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "下一项" })).toBeNull();
     expect(screen.getByRole("button", { name: "关闭" })).toBeVisible();
   }, 20_000);
 
@@ -2164,8 +2197,8 @@ describe("ManualOrganizeDialog", () => {
           {
             kind: "file",
             path: `Movies/${refusedName}`,
-            code: "source_already_owned",
-            reason: "already_owned",
+            code: "source_already_organizing",
+            reason: "source_already_organizing",
             message:
               "the source is already owned by an unfinished organizing work",
             nextAction: "open the existing work to continue or cancel it",
@@ -2177,26 +2210,21 @@ describe("ManualOrganizeDialog", () => {
       [refusedName, admittedName],
     );
 
-    await screen.findByText(
-      "所选范围已保存，正在等待后台 Worker 开始检查；开始前不会显示检查进度，无需重新提交。",
-    );
-    expect(card()).toHaveTextContent("已受理范围：0 个文件夹、1 个文件");
+    expect(await screen.findByText("正在准备")).toBeVisible();
+    expect(card()).toHaveTextContent("1 个文件");
     expect(card()).toHaveTextContent("未受理 1 项");
-
-    const scopeDetails = within(card())
-      .getByText(/查看已受理范围/)
-      .closest("details") as HTMLElement;
-    expect(within(scopeDetails).getByText(/查看已受理范围/)).toHaveTextContent(
-      "查看已受理范围（1 项）",
+    expect(card()).toHaveTextContent(
+      "未受理 1 项；展开「受理范围」可核对每项原因和下一步。",
     );
-    expect(scopeDetails).toHaveTextContent(admittedName);
-    expect(scopeDetails).not.toHaveTextContent(refusedName);
 
-    const preparationRefused = within(card())
-      .getByText(/未受理的所选条目/)
-      .closest("details") as HTMLElement;
-    await user.click(within(preparationRefused).getByText(/未受理的所选条目/));
-    expect(preparationRefused).toHaveTextContent(refusedName);
+    const scopeSummary = within(card()).getByText("查看确切路径（2 项）");
+    const scopeDetails = scopeSummary.closest("details") as HTMLElement;
+    await user.click(scopeSummary);
+    expect(scopeDetails).toHaveTextContent(admittedName);
+    expect(scopeDetails).toHaveTextContent(refusedName);
+    expect(scopeDetails).toHaveTextContent("未受理");
+    expect(scopeDetails).toHaveTextContent("已属于未结束的整理工作");
+    expect(screen.queryByText(/未受理的所选条目/)).toBeNull();
 
     await screen.findByRole(
       "heading",
@@ -2296,8 +2324,12 @@ describe("ManualOrganizeDialog", () => {
     });
 
     // The first read is an honest waiting state, and the interval keeps
-    // reading the same unchanged document without needing a render.
-    await screen.findByText("等待来源稳定");
+    // reading the same unchanged document without needing a render.  The
+    // discovered primary count is real, while no unknown percentage is shown.
+    await screen.findByText("正在准备");
+    expect(await screen.findByText("整理进度")).toBeVisible();
+    expect(screen.getByText("已找到 10 个主文件")).toBeVisible();
+    expect(card()).not.toHaveTextContent("%");
     await screen.findByRole(
       "heading",
       { name: /第 1 \/ 10 个/ },
@@ -2317,7 +2349,7 @@ describe("ManualOrganizeDialog", () => {
       value.state.frozenOnlyReads = 1;
     });
 
-    await screen.findByText("遍历已完成，正在关联分析摘要");
+    await screen.findByText("正在准备");
     // The completed walk has not frozen an intent yet: the analysis action is
     // not advertised, and the card must keep reading instead of settling here.
     expect(
@@ -2337,6 +2369,34 @@ describe("ManualOrganizeDialog", () => {
       { timeout: 5_000 },
     );
     expect(backend.state.discoveryReads).toBeGreaterThanOrEqual(3);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 20_000);
+
+  it("replaces the spinner with the saved-request Worker notice and recovers by polling the same preparation", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.workerUnavailableReads = 1;
+    });
+
+    expect(await screen.findByText("后台暂不可用")).toBeVisible();
+    expect(screen.getByText("请求已保存，请联系管理员。")).toBeVisible();
+    expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
+    expect(card().querySelector(".mf-organize-stage-copy")).toBeNull();
+    expect(screen.queryByText(/处理 Worker 暂不可用/)).toBeNull();
+    expect(screen.queryByText(/准备诊断/)).toBeNull();
+    expect(backend.calls.discoveryPosts).toHaveLength(1);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    // The same exact preparation is re-read in place; the plan then opens the
+    // ordinary per-file review without another admission.
+    await screen.findByRole(
+      "heading",
+      { name: /第 1 \/ 10 个/ },
+      { timeout: 12_000 },
+    );
+    expect(backend.calls.discoveryPosts).toHaveLength(1);
     expect(backend.calls.analyzePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 20_000);

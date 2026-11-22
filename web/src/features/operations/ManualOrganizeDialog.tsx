@@ -1347,6 +1347,14 @@ export function ManualOrganizeDialog({
 
   const pageTitle = "整理所选文件";
   const titleId = "mf-organize-dialog-title";
+  const firstPlanPreparationView =
+    session.phase === "submitting" ||
+    preparationUnavailable ||
+    preparation === undefined ||
+    (!organizeFlowEnded &&
+      preparation !== undefined &&
+      preparation.previewId === null &&
+      preview === undefined);
 
   /** The preparation's own analysis request, reported where it was made. */
   const renderPreparationNotice = () =>
@@ -1384,83 +1392,262 @@ export function ManualOrganizeDialog({
     );
 
   // ---- body -----------------------------------------------------------
-  const preparationRunning =
-    preparation !== undefined &&
-    ["queued", "running", "waiting_stability", "analyzing"].includes(
-      preparation.status,
-    );
-  const preparationStageText = (() => {
-    if (preparation === undefined) return null;
-    const visited = preparation.progress.visitedEntries;
-    switch (preparation.status) {
-      case "queued":
-        return visited === 0
-          ? "所选范围已保存，正在等待后台 Worker 开始检查；开始前不会显示检查进度，无需重新提交。"
-          : "所选范围已受理，后台 Worker 会在下一轮继续检查；无需重新提交。";
-      case "running":
-        return visited === 0
-          ? "后台 Worker 已开始检查所选范围，尚未完成第一个条目；此处会按真实进度更新。"
-          : "正在检查所选范围；下方计数是同一准备已完成的真实进度。";
-      case "waiting_stability":
-        return "所选范围已遍历；部分来源仍在等待稳定，达到条件后同一准备会自动继续，无需重新提交。";
-      case "analyzing":
-        return "范围检查已完成，正在运行零变更分析；精确方案就绪后会在此显示。";
-      case "completed":
-        return preparation.previewId === null
-          ? "范围检查已完成，正在生成并关联计划摘要；无需重新提交。"
-          : "准备已完成。";
-      case "partial_success":
-        return primaryLimitStopped
-          ? "检查已在主文件数量上限处停止；正在结束关联任务，结束后请缩小选择范围重新发起。"
-          : "范围检查已达到限制，只保留了已确认的子集；这不是完整遍历。请按下方原因缩小范围后重新准备。";
-      case "failed":
-        return "准备失败；已保存的受理记录与已知状态保留，没有修改任何文件。请核对下方原因后再决定重新读取或重新发起。";
-      case "cancelled":
-        return "准备已取消；没有执行任何整理，已记录的进度保留。";
-      default:
-        return "正在读取准备状态。";
-    }
-  })();
-  const preparationCounts = [
-    ["可整理主文件", preparation?.progress.primarySources ?? 0],
-    ["已检查条目", preparation?.progress.visitedEntries ?? 0],
-    ["已排除", preparation?.progress.excludedEntries ?? 0],
-    ["等待稳定", preparation?.progress.unstableEntries ?? 0],
-    ["读取失败", preparation?.progress.errorEntries ?? 0],
-  ].filter(([, count]) => Number(count) > 0) as [string, number][];
-  const preparationBusy =
-    session.phase === "submitting" ||
-    preparationRunning ||
-    saveMutation.isPending ||
-    preparationQuery.isFetching;
+  const submittingPaths = session.phase === "submitting" ? session.paths : [];
+  const preparationResourceLibraryId =
+    preparation?.resourceLibraryId ??
+    (session.phase === "submitting" ? session.resourceLibraryId : null);
   const preparationScopeFolders =
     preparation?.selection.scopes.filter((scope) => scope.kind === "directory")
       .length ?? 0;
   const preparationScopeFiles =
     preparation?.selection.scopes.filter((scope) => scope.kind === "file")
       .length ?? 0;
-  const preparationScopeSummary =
-    preparationScopeFolders + preparationScopeFiles === 0
-      ? "—"
-      : `${preparationScopeFolders} 个文件夹、${preparationScopeFiles} 个文件`;
-  const preparationTraversalNote = (() => {
-    if (preparation === undefined) return null;
-    if (preparation.progress.incomplete) {
-      return `未完整遍历：${label(REASON_LABELS, preparation.progress.incompleteReason ?? "")}。`;
+  const preparationScopeSummary = (() => {
+    if (preparation !== undefined) {
+      const parts: string[] = [];
+      if (preparationScopeFolders > 0) {
+        parts.push(`${preparationScopeFolders} 个文件夹`);
+      }
+      if (preparationScopeFiles > 0) {
+        parts.push(`${preparationScopeFiles} 个文件`);
+      }
+      return parts.length === 0 ? "没有已受理条目" : parts.join("、");
     }
-    if (preparation.status === "analyzing")
-      return "遍历已结束，正在分析已发现的来源。";
-    if (preparation.status === "waiting_stability")
-      return "所选范围已遍历，正在等待未稳定来源达到稳定条件。";
-    if (preparation.status === "queued" || preparation.status === "running")
-      return null;
-    if (
-      preparation.status === "completed" ||
-      preparation.status === "partial_success"
-    )
-      return "已完整遍历所选范围。";
-    return "遍历尚未开始。";
+    if (session.phase === "submitting") {
+      return `${submittingPaths.length} 项待受理`;
+    }
+    return "—";
   })();
+  const preparationScopeDetailCount =
+    preparation === undefined
+      ? submittingPaths.length
+      : preparation.selection.scopes.length +
+        preparation.selection.existing.length +
+        preparation.selection.refused.length;
+  const preparationPrimarySourceCount =
+    preparation?.progress.primarySources ?? 0;
+  const preparationWorkerUnavailable =
+    preparation !== undefined && preparation.worker.ready !== true;
+  const preparationExcludedCount =
+    preparation?.progress.reasons.reduce(
+      (total, item) => total + item.count,
+      0,
+    ) ?? 0;
+  const preparationStoppedTitle = (() => {
+    if (preparation === undefined) return null;
+    if (primaryLimitStopped) return "超出主文件上限";
+    if (preparation.status === "failed") return "准备失败";
+    if (preparation.status === "cancelled") return "准备已取消";
+    if (
+      preparation.progress.incomplete &&
+      preparation.progress.materialRefusal !== null
+    ) {
+      return "准备未完成";
+    }
+    return null;
+  })();
+
+  const renderFirstPlanPreparation = () => {
+    const canProgress =
+      !preparationWorkerUnavailable && preparationStoppedTitle === null;
+    return (
+      <div className="mf-organize-preparation">
+        <div
+          className={
+            preparationWorkerUnavailable
+              ? "mf-organize-preparation-state mf-organize-preparation-state-warning"
+              : "mf-organize-preparation-state"
+          }
+          role="status"
+          aria-busy={canProgress || undefined}
+        >
+          {canProgress ? (
+            <span
+              className="mf-organize-preparation-spinner"
+              aria-hidden="true"
+            />
+          ) : null}
+          <p className="mf-organize-preparation-title">
+            {preparationWorkerUnavailable
+              ? "后台暂不可用"
+              : (preparationStoppedTitle ?? "正在准备")}
+          </p>
+          {preparationWorkerUnavailable ? (
+            <p className="mf-organize-preparation-copy">
+              请求已保存，请联系管理员。
+            </p>
+          ) : null}
+        </div>
+        <dl className="mf-organize-preparation-facts">
+          <div>
+            <dt>来源资源库</dt>
+            <dd>{preparationResourceLibraryId ?? "—"}</dd>
+          </div>
+          <div>
+            <dt>受理范围</dt>
+            <dd>
+              <span>{preparationScopeSummary}</span>
+              {preparation !== undefined &&
+              preparation.selection.refused.length > 0 ? (
+                <span className="mf-organize-preparation-scope-note">
+                  {" "}
+                  · 未受理 {preparation.selection.refused.length} 项
+                </span>
+              ) : null}
+              {preparationScopeDetailCount > 0 ? (
+                <details className="mf-organize-scope-details">
+                  <summary>
+                    查看确切路径（{preparationScopeDetailCount} 项）
+                  </summary>
+                  <ul>
+                    {preparation === undefined ? (
+                      submittingPaths.map((path) => (
+                        <li key={`submitting:${path}`}>
+                          所选 <span className="mf-exact-identity">{path}</span>
+                        </li>
+                      ))
+                    ) : (
+                      <>
+                        {preparation.selection.scopes.map((scope) => (
+                          <li key={`admitted:${scope.kind}:${scope.path}`}>
+                            {scope.kind === "directory" ? "文件夹" : "文件"}{" "}
+                            <span className="mf-exact-identity">
+                              {scope.path}
+                            </span>
+                          </li>
+                        ))}
+                        {preparation.selection.existing.map((scope) => (
+                          <li key={`existing:${scope.kind}:${scope.path}`}>
+                            已由同一整理工作受理 ·{" "}
+                            {scope.kind === "directory" ? "文件夹" : "文件"}{" "}
+                            <span className="mf-exact-identity">
+                              {scope.path}
+                            </span>
+                          </li>
+                        ))}
+                        {preparation.selection.refused.map((refused) => (
+                          <li key={`refused:${refused.kind}:${refused.path}`}>
+                            未受理 ·{" "}
+                            {refused.kind === "directory" ? "文件夹" : "文件"}{" "}
+                            <span className="mf-exact-identity">
+                              {refused.path}
+                            </span>
+                            {" — "}
+                            {label(REASON_LABELS, refused.reason)}
+                            {refused.nextAction === ""
+                              ? null
+                              : `；${refused.nextAction}`}
+                          </li>
+                        ))}
+                      </>
+                    )}
+                  </ul>
+                </details>
+              ) : null}
+            </dd>
+          </div>
+          {preparationPrimarySourceCount >= 2 ? (
+            <div>
+              <dt>整理进度</dt>
+              <dd>已找到 {preparationPrimarySourceCount} 个主文件</dd>
+            </div>
+          ) : null}
+        </dl>
+        {primaryLimitStopped ? (
+          <div className="mf-organize-preparation-note" role="status">
+            <p>
+              {primaryLimitAwaitingSettlement
+                ? "检查已在主文件数量上限处停止；正在结束关联任务，结束后请缩小选择范围重新发起。"
+                : "检查已在主文件数量上限处停止，本次未执行整理；请关闭本弹窗返回原文件页，缩小选择范围后重新发起。"}
+            </p>
+          </div>
+        ) : preparation !== undefined && preparation.progress.incomplete ? (
+          <div className="mf-organize-preparation-note" role="status">
+            <p>
+              未完整遍历：
+              {label(
+                REASON_LABELS,
+                preparation.progress.incompleteReason ?? "",
+              )}
+              。
+            </p>
+            <p>
+              本次不会执行整理；请关闭本弹窗返回原文件页，缩小选择范围后重新发起。
+            </p>
+          </div>
+        ) : null}
+        {preparation !== undefined && preparation.failure !== null ? (
+          <div className="mf-organize-preparation-note" role="status">
+            <p>{preparation.failure}</p>
+            <p>
+              没有修改任何文件；请重新读取本准备，或关闭后从文件页重新发起。
+            </p>
+          </div>
+        ) : preparation !== undefined && preparation.status === "failed" ? (
+          <div className="mf-organize-preparation-note" role="status">
+            <p>
+              没有修改任何文件；请重新读取本准备，或关闭后从文件页重新发起。
+            </p>
+          </div>
+        ) : null}
+        {preparation !== undefined && preparation.status === "cancelled" ? (
+          <div className="mf-organize-preparation-note" role="status">
+            <p>准备已取消，没有执行任何整理；请关闭后从文件页重新发起。</p>
+          </div>
+        ) : null}
+        {preparation !== undefined &&
+        preparation.progress.reasons.length > 0 ? (
+          <div className="mf-organize-preparation-note" role="status">
+            <p>
+              已排除 {preparationExcludedCount} 个条目：
+              {preparation.progress.reasons
+                .map(
+                  (item) =>
+                    `${label(REASON_LABELS, item.reason)} × ${item.count}`,
+                )
+                .join("、")}
+              。
+            </p>
+            <p>未受影响的已受理条目会继续准备，无需重新提交。</p>
+          </div>
+        ) : null}
+        {preparation !== undefined &&
+        preparation.selection.refused.length > 0 ? (
+          <p className="mf-organize-preparation-note" role="status">
+            未受理 {preparation.selection.refused.length}{" "}
+            项；展开「受理范围」可核对每项原因和下一步。
+          </p>
+        ) : null}
+        {preparation !== undefined &&
+        !preparationWorkerUnavailable &&
+        preparationPlanExpected &&
+        preparation.frozen &&
+        preparation.status !== "analyzing" &&
+        preparation.previewId === null &&
+        preparation.actions.prepare.available ? (
+          <div className="mf-organize-preparation-action">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={saveMutation.isPending}
+              onClick={() =>
+                saveMutation.mutate({ itemId: "", onlyAnalysis: true })
+              }
+            >
+              {saveMutation.isPending &&
+              saveMutation.variables?.onlyAnalysis === true
+                ? "正在请求分析..."
+                : "运行分析并生成计划摘要"}
+            </Button>
+            <span className="mf-dashboard-meta">
+              只重新运行零变更分析;不执行任何整理。
+            </span>
+          </div>
+        ) : null}
+        {renderPreparationNotice()}
+      </div>
+    );
+  };
 
   const renderPreparationContent = () => {
     if (preparationUnavailable) {
@@ -1483,22 +1670,10 @@ export function ManualOrganizeDialog({
       );
     }
     if (session.phase === "submitting") {
-      return (
-        <div className="mf-modal-card-status" role="status" aria-busy="true">
-          <p>正在提交所选整理范围…</p>
-          <p>
-            提交完成前不会重复提交,也不会修改任何文件;准入结果确认后会在
-            本弹窗继续准备。
-          </p>
-        </div>
-      );
+      return renderFirstPlanPreparation();
     }
     if (preparation === undefined) {
-      return (
-        <div className="mf-modal-card-status" role="status">
-          <p>正在读取持久准备状态…</p>
-        </div>
-      );
+      return renderFirstPlanPreparation();
     }
     if (organizeFlowEnded) {
       return (
@@ -1642,198 +1817,7 @@ export function ManualOrganizeDialog({
         </>
       );
     }
-    return (
-      <>
-        <StatusBanner
-          variant={
-            preparation.status === "failed" || preparation.failure !== null
-              ? "error"
-              : preparation.progress.incomplete
-                ? "warning"
-                : "info"
-          }
-          title={
-            preparationPlanExpected
-              ? "遍历已完成，正在关联分析摘要"
-              : label(PREPARATION_STATUS_LABELS, preparation.status)
-          }
-        >
-          <p role="status" aria-busy={preparationBusy || undefined}>
-            {preparationBusy ? (
-              <span className="mf-organize-busy-dot" aria-hidden="true" />
-            ) : null}
-            <span className="mf-organize-stage-copy">
-              {preparationPlanExpected
-                ? "同一准备的完整零变更分析正在运行；精确计划摘要关联后会在本弹窗自动显示，无需重新提交，也不会修改任何文件。"
-                : preparationStageText}
-            </span>
-          </p>
-          {preparation.failure !== null ? (
-            <p className="mf-dashboard-meta">失败说明：{preparation.failure}</p>
-          ) : null}
-          <p className="mf-dashboard-meta">
-            来源资源库：{preparation.resourceLibraryId} · 已受理范围：
-            {preparationScopeSummary}
-            {preparation.selection.refused.length > 0
-              ? ` · 未受理 ${preparation.selection.refused.length} 项`
-              : ""}{" "}
-            · 零变更准备，不授予执行权限。
-          </p>
-          {preparation.selection.scopes.length > 0 ? (
-            <details className="mf-organize-scope-details">
-              <summary>
-                查看已受理范围（{preparation.selection.scopes.length} 项）
-              </summary>
-              <ul>
-                {preparation.selection.scopes.map((scope) => (
-                  <li key={`${scope.kind}:${scope.path}`}>
-                    {scope.kind === "directory" ? "文件夹" : "文件"}{" "}
-                    <span className="mf-exact-identity">{scope.path}</span>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          ) : null}
-        </StatusBanner>
-        <section aria-label="准备进度">
-          <div className="mf-organize-section-head">
-            <h3>准备进度</h3>
-          </div>
-          {preparationCounts.length === 0 ? (
-            <p className="mf-dashboard-meta">
-              {preparation.status === "queued"
-                ? "Worker 尚未开始检查；已受理范围与真实计数会在此原位更新。"
-                : preparationRunning
-                  ? "已开始检查，尚未完成任何条目；真实计数会在此原位更新。"
-                  : "本次准备没有可显示的正向计数。"}
-            </p>
-          ) : (
-            <dl className="mf-organize-counts">
-              {preparationCounts.map(([name, count]) => (
-                <div key={name}>
-                  <dt>{name}</dt>
-                  <dd>{count}</dd>
-                </div>
-              ))}
-            </dl>
-          )}
-          <p className="mf-dashboard-meta">{preparationTraversalNote}</p>
-          {preparation.progress.materialRefusal !== null ? (
-            <p className="mf-organize-section-note" role="status">
-              达到预算或安全上限（
-              {label(REASON_LABELS, preparation.progress.materialRefusal)}
-              ），已记录的来源只是截断前缀，不能冻结为可执行清单。
-            </p>
-          ) : null}
-        </section>
-        {preparation.progress.reasons.length > 0 ||
-        preparation.selection.refused.length > 0 ? (
-          <section aria-label="排除与等待原因">
-            <div className="mf-organize-section-head">
-              <h3>排除与等待原因</h3>
-            </div>
-            {preparation.progress.reasons.length > 0 ? (
-              <ul>
-                {preparation.progress.reasons.map((item) => (
-                  <li key={item.reason}>
-                    {label(REASON_LABELS, item.reason)} × {item.count}
-                    {item.examplePath !== null ? (
-                      <>
-                        {" "}
-                        (例如{" "}
-                        <code className="mf-exact-identity">
-                          {item.examplePath}
-                        </code>
-                        )
-                      </>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {preparation.selection.refused.length > 0 ? (
-              <details>
-                <summary>
-                  未受理的所选条目（{preparation.selection.refused.length} 项）
-                </summary>
-                <ul>
-                  {preparation.selection.refused.map((refused) => (
-                    <li key={`${refused.kind}:${refused.path}`}>
-                      <span className="mf-exact-identity">{refused.path}</span>{" "}
-                      — {label(REASON_LABELS, refused.reason)}；
-                      {refused.nextAction}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            ) : null}
-          </section>
-        ) : null}
-        <details className="mf-organize-diagnostics">
-          <summary>准备诊断（技术原话与已知状态）</summary>
-          <dl>
-            <dt>阶段</dt>
-            <dd>{preparation.status}</dd>
-            <dt>遍历状态</dt>
-            <dd>
-              {preparation.progress.incomplete
-                ? `未完整：${preparation.progress.incompleteReason ?? "—"}`
-                : "未记录不完整"}
-            </dd>
-            <dt>进度消息</dt>
-            <dd>{preparation.progress.message || "—"}</dd>
-            <dt>后端下一步</dt>
-            <dd>{preparation.nextAction}</dd>
-            {preparation.failure !== null ? (
-              <>
-                <dt>失败说明</dt>
-                <dd>{preparation.failure}</dd>
-              </>
-            ) : null}
-          </dl>
-        </details>
-        {preparation.worker.ready !== true ? (
-          <StatusBanner variant="warning" title="处理 Worker 暂不可用">
-            <p role="status">
-              本准备已受理并保存，不需要重新提交；Worker
-              恢复后会继续同一准备，已记录的进度和排除原因保留。
-            </p>
-            <p className="mf-dashboard-meta">
-              请由管理员启动或修复 Processing
-              Worker；恢复后可直接重新读取本准备。
-            </p>
-            <details className="mf-organize-diagnostics">
-              <summary>Worker 诊断原话</summary>
-              <p>{preparation.worker.durableState}</p>
-              <p>{preparation.worker.nextAction}</p>
-            </details>
-          </StatusBanner>
-        ) : null}
-        {preparation.status !== "analyzing" &&
-        preparation.previewId === null &&
-        preparation.actions.prepare.available ? (
-          <div className="mf-actions">
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={saveMutation.isPending}
-              onClick={() =>
-                saveMutation.mutate({ itemId: "", onlyAnalysis: true })
-              }
-            >
-              {saveMutation.isPending &&
-              saveMutation.variables?.onlyAnalysis === true
-                ? "正在请求分析..."
-                : "运行分析并生成计划摘要"}
-            </Button>
-            <span className="mf-dashboard-meta">
-              只重新运行零变更分析;不执行任何整理。
-            </span>
-          </div>
-        ) : null}
-        {renderPreparationNotice()}
-      </>
-    );
+    return renderFirstPlanPreparation();
   };
 
   const renderReview = () => {
@@ -2958,7 +2942,11 @@ export function ManualOrganizeDialog({
       busy={closeLocked}
       title={pageTitle}
       titleId={titleId}
-      description="每次复核一个主文件及其关联附件;分析与翻页零媒体变更,只有最后的确认才会提交执行并在任务中心查看结果。"
+      description={
+        firstPlanPreparationView
+          ? null
+          : "每次复核一个主文件及其关联附件;分析与翻页零媒体变更,只有最后的确认才会提交执行并在任务中心查看结果。"
+      }
       closeLabel="关闭整理弹窗"
       closeDisabled={closeLocked}
       onRequestClose={attemptClose}

@@ -484,6 +484,12 @@ class ResidentProcessingWorker:
             raw_commands: tuple[str, ...] = (
                 "organize",
                 "manual_organize",
+                # The Task engine that owns Files discovery is attached below
+                # in production.  Declare the command it actually consumes
+                # before the first registration, not only after the first
+                # claim: readiness must not report an idle Worker as unable to
+                # run the preparation it is about to accept.
+                *(("media_discovery",) if manual_task_worker is not None else ()),
                 *tuple(getattr(files_transfer_worker, "commands", ())),
             )
         else:
@@ -539,6 +545,16 @@ class ResidentProcessingWorker:
 
     def set_manual_task_worker(self, worker) -> None:
         self._manual_task_worker = worker
+        # Production attaches the discovery-capable Task engine after this
+        # resident wrapper is constructed.  Publish that capability through
+        # the same registration boundary, and force one re-registration if a
+        # caller had already registered the wrapper without it.
+        if worker is not None and "media_discovery" not in self._supported_commands:
+            self._supported_commands = validate_worker_commands(
+                (*self._supported_commands, "media_discovery")
+            )
+            if self._registered:
+                self._registered = False
         binder = getattr(worker, "set_worker_heartbeat", None)
         if callable(binder):
             binder(self.heartbeat)

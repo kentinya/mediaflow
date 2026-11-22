@@ -9586,6 +9586,163 @@ tr[aria-selected="true"] {
   padding: 14px 24px 22px;
 }
 
+/* First-plan preparation: one calm status and the facts the operator needs to
+   recognize the request. Stage cards, worker diagnostics and repeated
+   explanations stay out of this first-plan surface; anomalies appear below the
+   facts and keep their own next action. */
+.mf-organize-preparation {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 18px;
+  padding: 30px 8px 10px;
+}
+
+.mf-organize-preparation-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-height: 72px;
+  text-align: center;
+}
+
+.mf-organize-preparation-state p {
+  margin: 0;
+}
+
+.mf-organize-preparation-title {
+  color: #14223c;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 24px;
+}
+
+.mf-organize-preparation-copy {
+  color: #5f6b7d;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.mf-organize-preparation-state-warning .mf-organize-preparation-title {
+  color: #7a4b00;
+}
+
+.mf-organize-preparation-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #d9e4f7;
+  border-top-color: #1268f5;
+  border-radius: 50%;
+  animation: mf-organize-preparation-spin 0.9s linear infinite;
+}
+
+@keyframes mf-organize-preparation-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.mf-organize-preparation-facts {
+  width: min(100%, 560px);
+  margin: 0 auto;
+  padding: 0;
+  border-top: 1px solid #e8edf4;
+}
+
+.mf-organize-preparation-facts > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  margin: 0;
+  padding: 11px 2px;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mf-organize-preparation-facts dt {
+  color: #5f6b7d;
+  font-size: 12.5px;
+  line-height: 19px;
+}
+
+.mf-organize-preparation-facts dd {
+  margin: 0;
+  min-width: 0;
+  color: #14223c;
+  font-size: 13.5px;
+  line-height: 21px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-preparation-facts .mf-organize-scope-details {
+  margin-top: 4px;
+}
+
+.mf-organize-preparation-scope-note {
+  color: #5f6b7d;
+}
+
+.mf-organize-preparation-note,
+.mf-organize-preparation-action {
+  width: min(100%, 560px);
+  margin: 0 auto;
+}
+
+.mf-organize-preparation-note {
+  padding: 10px 12px;
+  border: 1px solid #e8eef8;
+  border-radius: 8px;
+  background: #f8faff;
+  color: #52627a;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.mf-organize-preparation-note p {
+  margin: 0;
+}
+
+.mf-organize-preparation-note p + p {
+  margin-top: 4px;
+}
+
+.mf-organize-preparation-note[role="status"] {
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-preparation-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mf-organize-preparation-spinner {
+    animation: none;
+    border-color: #1268f5;
+  }
+}
+
+@media (max-width: 640px) {
+  .mf-organize-preparation {
+    padding: 18px 0 4px;
+    gap: 14px;
+  }
+
+  .mf-organize-preparation-facts {
+    width: 100%;
+  }
+
+  .mf-organize-preparation-facts > div {
+    grid-template-columns: 78px minmax(0, 1fr);
+    gap: 10px;
+  }
+}
+
 .mf-organize-file-head {
   margin: 0 0 12px;
   padding: 2px 0 12px;

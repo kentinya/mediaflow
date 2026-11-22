@@ -24,6 +24,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.test_media_discovery import _DiscoveryFixture
 
 
 def _example_document() -> dict:
@@ -522,12 +523,184 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         self.assertEqual(popen_calls, [], "API request must not spawn subprocesses")
         self.assertEqual(thread_calls, [], "API request must not spawn threads")
 
+    def test_media_discovery_readiness_requires_a_live_compatible_advertising_worker(self) -> None:
+        """The discovery command family uses the same fail-closed conditions.
+
+        A saved preparation may only show the Worker as ready when a live,
+        schema-compatible registration really advertises ``media_discovery``.
+        Stopped, stale, schema-incompatible and command-incompatible Workers
+        remain the existing unavailable conditions with their own next action.
+        """
+
+        now = datetime.now(UTC)
+
+        self.service.register_worker(
+            worker_id="discovery-missing",
+            label="manual-only",
+            heartbeat_interval_seconds=5.0,
+            supported_commands=("manual_organize",),
+            runtime_schema_version=SCHEMA_VERSION,
+            now=now,
+        )
+        missing = self.service.evaluate_command_readiness(
+            ("media_discovery",), now=now, runtime_schema_version=SCHEMA_VERSION
+        )
+        self.assertFalse(missing["ready"])
+        self.assertEqual(missing["condition"], WorkerReadiness.UNSUPPORTED_COMMAND.value)
+        self.service.stop_worker("discovery-missing", now=now)
+
+        self.service.register_worker(
+            worker_id="discovery-schema",
+            label="old-schema",
+            heartbeat_interval_seconds=5.0,
+            supported_commands=("media_discovery",),
+            runtime_schema_version=SCHEMA_VERSION - 1,
+            now=now,
+        )
+        schema = self.service.evaluate_command_readiness(
+            ("media_discovery",), now=now, runtime_schema_version=SCHEMA_VERSION
+        )
+        self.assertFalse(schema["ready"])
+        self.assertEqual(schema["condition"], WorkerReadiness.SCHEMA_MISMATCH.value)
+        self.service.stop_worker("discovery-schema", now=now)
+
+        self.service.register_worker(
+            worker_id="discovery-stale",
+            label="stale",
+            heartbeat_interval_seconds=5.0,
+            supported_commands=("media_discovery",),
+            runtime_schema_version=SCHEMA_VERSION,
+            now=now - timedelta(hours=1),
+        )
+        stale = self.service.evaluate_command_readiness(
+            ("media_discovery",), now=now, runtime_schema_version=SCHEMA_VERSION
+        )
+        self.assertFalse(stale["ready"])
+        self.assertEqual(stale["condition"], WorkerReadiness.STALE_WORKER.value)
+        self.service.stop_worker("discovery-stale", now=now)
+
+        self.service.register_worker(
+            worker_id="discovery-stopped",
+            label="stopped",
+            heartbeat_interval_seconds=5.0,
+            supported_commands=("media_discovery",),
+            runtime_schema_version=SCHEMA_VERSION,
+            now=now,
+        )
+        self.service.stop_worker("discovery-stopped", now=now)
+        stopped = self.service.evaluate_command_readiness(
+            ("media_discovery",), now=now, runtime_schema_version=SCHEMA_VERSION
+        )
+        self.assertFalse(stopped["ready"])
+        self.assertEqual(stopped["condition"], WorkerReadiness.NO_WORKER.value)
+
+        self.service.register_worker(
+            worker_id="discovery-ready",
+            label="ready",
+            heartbeat_interval_seconds=5.0,
+            supported_commands=("manual_organize", "media_discovery"),
+            runtime_schema_version=SCHEMA_VERSION,
+            now=now,
+        )
+        ready = self.service.evaluate_command_readiness(
+            ("media_discovery",), now=now, runtime_schema_version=SCHEMA_VERSION
+        )
+        self.assertTrue(ready["ready"], ready)
+        self.assertEqual(ready["condition"], WorkerReadiness.READY.value)
+
     def test_api_request_for_workers_is_read_only(self) -> None:
         # POST/PUT/DELETE on /api/workers must be rejected with 405
         for method in ("POST", "PUT", "DELETE", "PATCH"):
             with self.subTest(method=method):
                 status, _ = _request(self.api, method, "/api/workers", token="api-secret")
                 self.assertEqual(status, 405)
+
+
+class ManualDiscoveryWorkerReadinessTests(_DiscoveryFixture):
+    """The production CLI registration feeds the preparation's real readiness.
+
+    The Worker is registered by the same ``final_main`` composition production
+    uses.  The authenticated preparation GET then reads that durable row before
+    the real Task engine publishes the first plan on the same admitted Task.
+    """
+
+    def test_cli_registration_makes_a_queued_preparation_ready_then_links_its_plan(self) -> None:
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        document = self.document()
+        config = self.root / "bootstrap.json"
+        config.write_text(json.dumps(document), encoding="utf-8")
+        with SQLiteConfigurationRepository(self.database) as configuration_repository:
+            configuration_service = ManagedConfigurationService(
+                configuration_repository,
+                bootstrap_database_path=str(self.database),
+            )
+            draft = configuration_service.import_draft(document, actor="readiness-test")
+            validated = configuration_service.validate(draft.revision_id, actor="readiness-test")
+            configuration_service.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="readiness-test",
+            )
+
+        output, errors = io.StringIO(), io.StringIO()
+        status = final_main(
+            ["--config", str(config), "worker", "run-next"],
+            stdout=output,
+            stderr=errors,
+        )
+        self.assertEqual(status, 0, errors.getvalue())
+        with SQLiteTaskRepository(self.database) as repository:
+            workers = repository.list_workers()
+            self.assertEqual(len(workers), 1, workers)
+            self.assertIn("media_discovery", workers[0].supported_commands)
+            self.assertEqual(workers[0].runtime_schema_version, SCHEMA_VERSION)
+            registered = ProcessingWorkerService(
+                repository, runtime_schema_version=SCHEMA_VERSION
+            ).evaluate_command_readiness(("media_discovery",))
+            self.assertTrue(registered["ready"], registered)
+
+        with self.journey(task_scheduling=True) as value:
+            status, admitted = self.request(
+                value,
+                "/api/resource-libraries/library/files/discoveries",
+                "POST",
+                {
+                    "paths": ["Movies"],
+                    "autoPrepare": True,
+                    "requestId": "22222222-2222-4222-8222-222222222222",
+                },
+            )
+            self.assertEqual(status, 202, admitted)
+            task_id = admitted["organizeTaskId"]
+            self.assertIsInstance(task_id, str)
+            discovery_id = admitted["discoveryId"]
+
+            status, preparation = self.request(
+                value, f"/api/operations/organize/discoveries/{discovery_id}"
+            )
+            self.assertEqual(status, 200, preparation)
+            self.assertTrue(preparation["worker"]["ready"], preparation["worker"])
+            self.assertEqual(preparation["status"], "queued")
+            self.assertIsNone(preparation["previewId"])
+            self.assertEqual(preparation["organizeTaskId"], task_id)
+
+            for _ in range(20):
+                value.task_engine.run_next()
+                status, preparation = self.request(
+                    value, f"/api/operations/organize/discoveries/{discovery_id}"
+                )
+                self.assertEqual(status, 200, preparation)
+                if preparation["previewId"] is not None:
+                    break
+
+            self.assertIsNotNone(preparation["previewId"], preparation)
+            self.assertEqual(preparation["organizeTaskId"], task_id)
+            linked = value.repository.get_media_discovery_for_task(task_id)
+            self.assertIsNotNone(linked)
+            self.assertEqual(linked.organize_task_id, task_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
 
 if __name__ == "__main__":

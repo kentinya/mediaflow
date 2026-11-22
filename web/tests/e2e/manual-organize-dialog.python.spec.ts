@@ -1034,19 +1034,16 @@ test("manual organize readability: a pending owned file beside a new sibling is 
   expect(discoveryId).toBeTruthy();
   expect(discoveryId).not.toBe(firstDiscoveryId);
 
-  // The still-queued preparation names only the admitted range it expands, and
-  // keeps the refused selection in its own independently readable detail.
+  // The still-queued preparation keeps the admitted range and the refused
+  // selection independently readable in the same scope row.
   const scopeDetails = card.locator(".mf-organize-scope-details");
   await expect(
-    scopeDetails.getByText("查看已受理范围（1 项）", { exact: true }),
+    scopeDetails.getByText("查看确切路径（2 项）", { exact: true }),
   ).toBeVisible();
+  await scopeDetails.locator("summary").click();
   await expect(scopeDetails).toContainText(siblingFile);
-  await expect(scopeDetails).not.toContainText(ownedFile);
-  const preparationRefused = card
-    .locator("details")
-    .filter({ hasText: "未受理的所选条目（1 项）" });
-  await preparationRefused.locator("summary").click();
-  await expect(preparationRefused).toContainText(ownedFile);
+  await expect(scopeDetails).toContainText(ownedFile);
+  await expect(scopeDetails).toContainText("未受理");
   await expect(card).toContainText("未受理 1 项");
 
   await driveDiscoveryFor(page, request, discoveryId as string);
@@ -1316,7 +1313,7 @@ test("follows the completed walk into the same preparation's linked plan without
 
   // The completed walk is not the end of the preparation: the card keeps
   // reading the same durable record instead of settling on a stale state.
-  await expect(card.getByText("遍历已完成，正在关联分析摘要")).toBeVisible({
+  await expect(card.getByText("正在准备", { exact: true })).toBeVisible({
     timeout: 10_000,
   });
   expect(analyzePosts()).toHaveLength(0);
@@ -1338,7 +1335,7 @@ test("follows the completed walk into the same preparation's linked plan without
   expect(executePosts()).toHaveLength(0);
 });
 
-test("reports the preparation's own analysis request as accepted while the same preparation links", async ({
+test("reports a preparation analysis refusal nearby and still follows the same preparation's linked plan", async ({
   page,
   request,
 }) => {
@@ -1381,16 +1378,23 @@ test("reports the preparation's own analysis request as accepted while the same 
       { timeout: 20_000 },
     )
     .toBe(true);
-  await expect(card.getByText("遍历已完成，正在关联分析摘要")).toBeVisible({
+  await expect(card.getByText("正在准备", { exact: true })).toBeVisible({
     timeout: 10_000,
   });
 
-  // The preparation's own action is real: its acceptance and running analysis
-  // are visible on the same preparation, and no Execute exists.
+  // While the real Worker still owns this Task stage, the preparation action
+  // is offered but the backend refuses a second analysis without mutation.
+  // The card reports that exact refusal beside the same preparation; it does
+  // not relabel the refusal as an accepted analysis.
   await card.getByRole("button", { name: "运行分析并生成计划摘要" }).click();
-  await expect(card.getByText(/零变更分析正在运行/)).toBeVisible({
+  await expect(
+    card.getByText(/分析请求未获受理\(analysis_rejected\)/),
+  ).toBeVisible({
     timeout: 10_000,
   });
+  await expect(
+    card.getByText(/没有执行任何整理,已保存的选择保持不变/),
+  ).toBeVisible();
   expect(analyzePosts()).toHaveLength(1);
 
   const released = await request.post(

@@ -366,7 +366,11 @@ export function ModalCardShell({
         <header className="mf-modal-header">
           <div>
             <h2 id={titleId}>{title}</h2>
-            <p>{description}</p>
+            {description === null ||
+            description === undefined ||
+            description === "" ? null : (
+              <p>{description}</p>
+            )}
           </div>
           <button
             type="button"
