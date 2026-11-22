@@ -4,14 +4,14 @@
 Slice ID: 58
 Name: Complete Retirement of the General CLI
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PLANNED
+Status: ACTIVE
 Base SHA: 5b2e0de4ac1c9d79e3618cef82d420ae302401e7
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: PLANNING ONLY
+Development Authorization: SLICE ACTIVE / FIRST TASK PLANNING
 Risk: High
 Target Test Level: T4
-Next Action: USER ACTIVATES SLICE / B THEN PLANS THE FIRST TASK
+Next Action: B PLANS THE FIRST TASK
 ```
 
 ## 授权与基线
@@ -19,7 +19,8 @@ Next Action: USER ACTIVATES SLICE / B THEN PLANS THE FIRST TASK
 用户授权 A 规划通用 CLI 的彻底退役，无兼容。部署与恢复只保留四组能力：四个服务的启动、
 首次管理员设置、忘记密码、停机数据库备份恢复。备份范围限 MediaFlow 的 SQLite 数据库。
 用户确认当前库内没有已受理的 CLI 任务，CLI 专属任务续作随入口退出。
-本合同处于规划状态，激活、Task 规划和验收按工作流进行。[Development Workflow](docs/development-workflow.md)
+用户授权激活 Slice 58，并确认当前没有待升级的数据库。配置 schema 11 及其切换机制按本合同退役。
+首个 Task 由 B 按工作流规划。[Development Workflow](docs/development-workflow.md)
 
 规划前 `main` 位于上述 Base，治理检查通过，工作区和暂存区干净，仓库文档和 Git 可写。
 Slice 57 已关闭，固定终审保留原范围、证据及限制。

@@ -8,7 +8,7 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice 58](../SLICE.md) is **PLANNED**. [Roadmap](roadmap.md#current-boundary) records its status.
+[Slice 58](../SLICE.md) is **ACTIVE**. [TASK.md](../TASK.md) records the current Task state.
 Slice 57 remains the latest accepted Slice.
 
 ## Latest accepted closure — Slice57

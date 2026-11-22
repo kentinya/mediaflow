@@ -43,11 +43,11 @@ only in [the development workflow](development-workflow.md).
 | 55 — Complete V1 and Migration Residue Retirement | Retire V1 and obsolete migration paths while preserving current V2 journeys, valid data and safety | PASS / CLOSED | Independent A Final Review on 2026-11-19, Base `2b2e7c1824fa5681864455714d0f97b26555c7dc` through implementation `80334ccaa30d54019934b50855f7dee00525abcc` |
 | 56 — Canonical Web and API Routes | Serve the operator Web at the root and the current API at `/api/*`, retire the old prefixes, and keep existing Tasks accessible at the new addresses | PASS / CLOSED | Accepted Slice55 and current baseline `33c70735e0a8f45426dde614587ea3d43af94e9b` |
 | 57 — Single Web Administrator and Scoped API Tokens | Start from an empty database, set up one Web administrator, keep login across navigation, issue scoped API tokens for integrations, and retire configuration-owned credentials | PASS / CLOSED | Accepted Slice56, direct configuration publication and baseline `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab` |
-| 58 — Complete Retirement of the General CLI | Remove the general CLI and configuration schema 11 support. Keep four service launches, first administrator setup, password recovery and offline SQLite backup and restore | PLANNED | Accepted Slice57 and current baseline `5b2e0de4ac1c9d79e3618cef82d420ae302401e7` |
+| 58 — Complete Retirement of the General CLI | Remove the general CLI and configuration schema 11 support. Keep four service launches, first administrator setup, password recovery and offline SQLite backup and restore | ACTIVE | Accepted Slice57 and current baseline `5b2e0de4ac1c9d79e3618cef82d420ae302401e7` |
 
 ## Current boundary
 
-[Slice 58](../SLICE.md) is **PLANNED**. The user activates the Slice before B plans the first Task.
+[Slice 58](../SLICE.md) is **ACTIVE**. [TASK.md](../TASK.md) records the current Task state.
 Slice 57 remains the latest accepted Slice.
 
 ## Accepted boundary references
