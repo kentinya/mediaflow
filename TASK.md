@@ -1,12 +1,12 @@
 # Task 57.2 — 在系统设置签发、使用和吊销 API 令牌
 
-Next Action: B REVIEWS TASK57.2
+Next Action: DEVELOPER FIXES TASK57.2
 
 ```text
 Task ID: 57.2
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c12cae6fe0226e7efe6850ac68e6581785fb87e3
 Difficulty: High
 Test Level: T4
@@ -247,6 +247,32 @@ Fix range: 58d89a26b9506a6d7d790b514011db8480aff0be..e85fba92
   - 改动文件 Ruff format/check、`python -m compileall`、`scripts/check_governance.py`、`git diff --check` 通过。
 - 用时约 25 分钟；定向测试与检查实际执行约 1.5 分钟，低于本轮 30%。
 - 剩余风险与 B 验收：完整 T4、真实 Compose 四服务重启、候选镜像、wheel/源码外安装及真实 Scheduler/Worker 在令牌轮换后的受理与文件结果仍待 B 独立执行。本轮审计证据来自进程内真实 WSGI 分发与 SQLite 运行库，未在候选镜像上复验。
+
+## Task 57.2 — B 复核令牌审计与窄屏操作
+
+```text
+Reviewed: c12cae6fe0226e7efe6850ac68e6581785fb87e3..eef4d601baabfff70f534d7a016dc4a86bbad867
+Implementation: e85fba92241dabf71aa16ac77cec136e0e5c04dc
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1 — 窄屏签发后无法从令牌列表吊销（RO-2 / AC-03）。** 管理员在 390px 触屏打开「系统设置 → API 令牌」，签发第一枚监控令牌并保存明文。列表出现后，表格把设置卡撑宽到 890px。「刷新列表」和该行「吊销」都落在屏幕右侧。B 在原列表横滑，表格没有滚动，操作仍在视口之外。管理员需要从同一张卡核对并吊销旧令牌才能完成轮换。问题随 `2f3bff35` 的令牌表格引入。截图 `settings-narrow-token-row.png` 和正式页面触屏记录 `settings-touch.log` 见下方证据目录。[设置页网格](web/src/shared/ui/styles.css#L10851) · [令牌表格](web/src/shared/ui/styles.css#L11081)
+
+### Developer 返工指导
+
+1. 让令牌卡宽度随设置页可用空间收缩。处理 `.mf-settings-page` 网格中令牌卡的最小宽度，让现有表格滚动容器承接宽表格，表单和「刷新列表」留在视口内。管理员在列表横滑可以看到同一条令牌的状态和吊销操作。
+2. 在 `web/tests/e2e/configuration-settings.python.spec.ts` 首个令牌用例之前增补 390px 真实触屏旅程。从空令牌列表签发监控令牌，保存当次明文，验证脚本能读 `/api/tasks`，再刷新列表。核对卡片和刷新按钮仍在视口内，横滑列表后能点到该行的「吊销」并确认。核对只发出一次吊销请求，同一行显示「已吊销」，原令牌调用返回 `401`。保留桌面和签发丢回包的既有测试。
+3. Developer 在 `web/` 运行 `npm run build`、`npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/configuration-settings.python.spec.ts` 及改动文件静态检查。B 对修正候选运行共享门禁并复验窄屏轮换、真实部署及全部 Slice 结果。
+
+### Slice 结果与本轮证据
+
+- **RO-1** 候选默认 Chromium 复验首位管理员、深链、会话恢复、Web 改密与主机重置。无媒体的空库部署和旧入口退役沿用 Task 57.1 证据，并通过本轮候选镜像的发布检查。
+- **RO-2** 上轮审计阻塞已修复。真实 Compose 的只读、整理分析及替换令牌都能读取 `/api/tasks`，管理员可按各自令牌 ID 读回对应 `200` 审计。分析令牌经正式入口生成方案，文件效果为零。已验证各权限边界、明文保护、轮换和四服务重启后的状态。真实设置 Chromium 9 项通过，覆盖 `504`、断线恢复和改密 `401`。窄屏列表操作仍阻塞。
+- **RO-3** 候选空库、隔离媒体、发布安全和重启故障检查均通过。旧 schema 59 库预检拒绝启动，文件摘要前后相同。轮换监控令牌并重启四服务后，原计划产生可回读的已完成任务，Worker 保留源文件并生成一份字节一致的复制。停用与重新启用保留 Task 57.1 的实测，本轮真实自动化对应场景也通过。
+- 真实自动化首跑 31 通过、1 失败。首次复制完成后，测试在列表与配置授权异步刷新期间点击第二次。页面提示尚未发送，trace 仅有第一次复制请求，第二次丢回包场景没有发生。同一用例原样单独执行通过，列表与配置授权不同步时的专门用例也通过。B 保留首跑日志，下一候选复跑原门禁。
+- Python 全量 2,359 项中 2,352 通过、7 项可选外部环境跳过。Web 单测 1,611 项、默认 Chromium 279 项通过。Python 和 Web 静态检查、两份配置样例、生产构建及源码外 wheel 冒烟通过。候选镜像 `sha256:aee8fe2e45fa18a7611e343f1616382c8b308d6cbc058044220e348ba4d25d7f`，wheel SHA-256 `a56bfb84e5ce6e77e02a890611955e1b08a15d52a9493ae5a889cc5302389244`。原始日志、截图和制品位于 `.git/validation-evidence/eef4d601baabfff70f534d7a016dc4a86bbad867/b-review/`。
 
 ## Task 57.1 — B 复核结论
 
