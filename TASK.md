@@ -1,6 +1,6 @@
 # Task PATCH-20261122-1 — 手动整理弹窗状态与排版修复
 
-Next Action: Developer 更新同一原生组的两条旧断言，按本轮修正指导交回 B。
+Next Action: B 复核候选 ab2ba01363db938a6810a870462e1f100ab8f2f3 的 Task Base..交接 Head，重点核对刷新会话与原提交跨新方案两条原生旅程。
 
 用户明确要求激活本独立修复 Task。优先级为第一屏「准备中」→ 第三屏「整批复核」→ 第二屏「逐项复核」。
 规划时 `PLANNED` 表示已激活、待 Developer 开始。 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)
@@ -9,7 +9,7 @@ Next Action: Developer 更新同一原生组的两条旧断言，按本轮修正
 Task ID: PATCH-20261122-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 8ce6c2092c328a15c44493f51ae4690b15680960
 Difficulty: Medium
 Test Level: T3
@@ -290,3 +290,30 @@ B 核对完整 Base..交接 Head。上轮两项产品问题已经修复，101 �
   原任务。隔离复跑用于确认修正方法，候选上的完整原生组仍须通过。
 - 验收命令按并行墙钟合计约 156 秒，低于本轮用时的一半。
 - 证据位于 `.git/validation-evidence/6b462f5432070bfe1cae7eef48799d94e2e8a1ef/b-review/`。
+
+## Developer 修正交接 — 两条原生断言
+
+```text
+Candidate: ab2ba01363db938a6810a870462e1f100ab8f2f3
+Fix range: 48c9694ea9c80636749293476f9fb7bf80a19152..ab2ba01363db938a6810a870462e1f100ab8f2f3
+Task range: 8ce6c2092c328a15c44493f51ae4690b15680960..ab2ba01363db938a6810a870462e1f100ab8f2f3
+```
+
+- **刷新场景按正常刷新核对。** 用例改名为 `...and a normal refresh`。真实浏览器刷新后保留仍有效的
+  管理员会话，直接等待已登录的 Account menu 和原整理卡片，不再等待 Login name 或重新签入。继续
+  核对原 Files 地址、同一 `organizeDiscovery`、第 1／1 项和原文件；未保存的候选 2 未被提交
+  （未选中，decision 请求仍为零）。取消后退、准入一次、关闭只退出弹窗及全部请求计数断言保留。
+- **原提交跨新方案场景展开诊断。** 进入整批复核后展开「方案标识与诊断」，先确认其中显示 B 的新方案
+  编号，再恢复自动核对。原方案 ID、所选条目、版本、覆盖／清理授权、执行次数、准确任务及两个文件的
+  最终效果断言均保留。
+- **实际执行（候选 ab2ba013）。**
+  - `python3 scripts/check_governance.py` → PASS。
+  - `git diff --check` → PASS。
+  - `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+    tests/e2e/manual-organize-dialog.python.spec.ts -g 'cancelled browser Back|unknown original submission'`
+    → 2 passed（16.0s），正常刷新与原提交跨新方案两条旅程通过。
+  - `web/`：`npm run typecheck`、`npm run lint`、Prettier 改动文件检查 → PASS。
+  - 本轮约 5 分钟；测试与静态检查实际执行约 46 秒（低于本轮 30%）。
+- **剩余风险。** 本轮只更新原生断言，未改产品代码，因此未重新构建；浏览器回归使用 B 已在候选
+  6b462f54 上构建的产品产物，源码身份为同一已提交实现。未运行完整原生组、全量 Python/Web 回归、
+  Task Center 继续入口及打包门禁；按分工由 B 在候选上执行。未推送、未发布。
