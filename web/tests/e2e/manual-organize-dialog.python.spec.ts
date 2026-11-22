@@ -1581,7 +1581,7 @@ test("a missing metadata candidate is corrected on the current file and confirme
   expect(finalTargets[0]).toContain("DialogRename (2024)");
 });
 
-test("keeps the exact admitted preparation across a cancelled browser Back and a normal reconnect", async ({
+test("keeps the exact admitted preparation across a cancelled browser Back and a normal refresh", async ({
   page,
   request,
 }) => {
@@ -1641,13 +1641,15 @@ test("keeps the exact admitted preparation across a cancelled browser Back and a
   expect(analyses()).toHaveLength(0);
   expect(executions()).toHaveLength(0);
 
-  // A reload discards the unsaved choice and needs the ordinary reconnect.
-  // The durable preparation identity is what the URL carries, so connecting
-  // returns to the same Files address and reopens the same preparation/summary
-  // instead of admitting a second one or landing on a guessed route.
+  // A normal refresh keeps the still-valid administrator session, so the
+  // server restores the logged-in view directly.  The durable preparation
+  // identity is what the URL carries, so the same Files address reopens the
+  // same preparation/summary instead of admitting a second one or landing on
+  // a guessed route.  The unsaved candidate was never submitted.
   await page.reload();
-  await expect(page.getByLabel("Login name")).toBeVisible();
-  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
+  await expect(page.getByRole("button", { name: "Account menu" })).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(card).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(() => new URL(page.url()).searchParams.get("organizeDiscovery"))
@@ -1662,6 +1664,7 @@ test("keeps the exact admitted preparation across a cancelled browser Back and a
   });
   await expect(card.getByRole("radio", { name: /候选 1/ })).toBeVisible();
   await expect(card.getByRole("radio", { name: /候选 2/ })).toBeVisible();
+  await expect(card.getByRole("radio", { name: /候选 2/ })).not.toBeChecked();
   expect(admissions()).toHaveLength(1);
   expect(decisions()).toHaveLength(0);
   expect(continuations()).toHaveLength(0);
@@ -1872,9 +1875,13 @@ test("an unknown original submission is reconciled under a newer sibling summary
   // The newer summary is visible for the current review and the original
   // request is still unknown: no second Execute exists.
   await card.getByRole("button", { name: /整批复核/ }).click();
-  await expect(card.getByText(`方案 ${newerPreviewId}`)).toBeVisible({
-    timeout: 30_000,
-  });
+  const planDiagnostics = card
+    .getByRole("region", { name: "整批复核" })
+    .locator("details.mf-organize-plan-diagnostics");
+  await planDiagnostics.getByText("方案标识与诊断", { exact: true }).click();
+  await expect(planDiagnostics.getByText(`方案 ${newerPreviewId}`)).toBeVisible(
+    { timeout: 30_000 },
+  );
   await expect(
     card.getByText(/原整理提交暂未确认|读取暂时失败|正在自动核对/),
   ).toBeVisible();
