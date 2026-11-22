@@ -20,8 +20,8 @@ Acceptance checkpoint: 0ef415b0c5859685d31c3d08206f7198d2930e8e
 确认以及新方案生成后核对原提交均通过。
 
 B 独立审查完整 Base..交接 Head。真实浏览器完整组 15 项、100 文件键盘补验 1 项、变更 spec 静态检查
-和生产构建通过。复用输入一致的 Python 8 项、Web 45 项。完整验收记录见
-`0ef415b0c5859685d31c3d08206f7198d2930e8e:TASK.md` 的 `PATCH-20261122-1 — B PASS`；
-本机证据位于 `.git/validation-evidence/ab2ba01363db938a6810a870462e1f100ab8f2f3/b-review/`。
+和生产构建通过。复用输入一致的 Python 8 项、Web 45 项。本机证据位于
+`.git/validation-evidence/ab2ba01363db938a6810a870462e1f100ab8f2f3/b-review/`。
+[固定 B 验收记录](https://github.com/kentinya/mediaflow/blob/0ef415b0c5859685d31c3d08206f7198d2930e8e/TASK.md#patch-20261122-1--b-pass)
 
-本次为隔离环境 T3 验收，尚未推送或部署。Slice 57 接受与关闭记录见 [A Final Review](SLICE.md#a-final-review--pass--closed)。
+本次为隔离环境 T3 验收。 [Slice 57 终审](SLICE.md#a-final-review--pass--closed)

@@ -1134,15 +1134,19 @@ and the Tasks/recovery journey below remain.
    a centered modal above the preserved directory/selection/scroll. Show actual admission,
    discovery/stability/analysis status and bounded exclusions, rather than waiting to open it.
    Preparation leads with Chinese stage guidance and meaningful actual counts; technical Worker
-   messages remain in diagnostics. Queued/running does not imply completed traversal. Before files
-   are available, omit the empty pager and batch-review action; show exclusions/read failures and
-   their recovery when present. An unavailable Worker retains the admitted preparation for reread.
+   messages remain in diagnostics. The admitted file and folder counts summarize the scope. Open
+   `查看已受理范围` for exact paths and `未受理的所选条目` for the reasons and next steps for
+   refused selections. The queue message describes waiting. Once checking starts, the progress
+   counts reflect the work completed so far. Before files are available, omit the empty pager and
+   batch-review action. Show exclusions, read failures and their recovery when present. An
+   unavailable Worker retains the admitted preparation for reread.
 2. **Review/action:** one primary file per page; show filename/path, 第 i / N 个, status,
    one primary status: the current legal decision, its saved waiting/refusal state, or the ready
-   plan. When the plan exists, show the adopted work identity, source → target, operation/source
-   retention and attachment warning compactly before optional evidence; do not repeat the source and
-   operation in a second block. Ordinary identity correction stays collapsed until wanted, and an
-   unsaved draft, refusal or error reopens it with its inputs. Do not lead with empty target,
+   plan. When the plan exists, show the adopted work identity, separate labelled rows for source
+   and destination, the operation and its effect on the source, and attachment warnings before
+   optional evidence; do not repeat the source and operation in a second block. Ordinary identity
+   correction stays collapsed until wanted, and an unsaved draft, refusal or error reopens it with
+   its inputs. Do not lead with empty target,
    operation or attachment blocks before a plan exists; state once that the zero-mutation plan is
    not generated yet. Typical two-candidate decisions and their save action remain visible without
    scrolling past placeholder facts. Exact diagnostics stay expandable under distinct item/decision
@@ -1156,9 +1160,13 @@ and the Tasks/recovery journey below remain.
    analysis fails, distinguish persisted state and give the legal next action without losing siblings.
    A saved decision whose analysis was refused keeps the same 保存并重新分析 action for analysis only;
    an accepted analysis shows a waiting state instead of a retry button.
-4. **Final confirmation:** review a compact batch summary with the exact selected files,
-   destinations/operations and actual dangerous effects. When all 10 are ready and selected,
-   click 确认整理 10 项 once. A smaller eligible subset may be selected; unready items are explained,
+4. **Final confirmation:** review the selected and unselected counts, operations and actual effects
+   at the top of `整批复核`. The summary shows an additional `未受理` count when applicable. A
+   blocked confirmation shows its reason and next step beside the button. Use the aligned file list
+   to check exact destinations, and open `未纳入本次确认的文件` to return to an affected file. The
+   dialog body uses a single scroll area. Plan identifiers are under `方案标识与诊断`.
+   When all 10 are ready and selected, click 确认整理 10 项 once. A smaller eligible subset may be
+   selected; unready items are explained,
    never silently ignored. Existing explicit overwrite/cleanup authority remains required.
 5. **Submission/success:** the button reads 正在提交… and cannot duplicate submission. Once backend
    evidence proves execution admission, close the organizer and navigate to Task Center, opening
@@ -1199,6 +1207,7 @@ files or review steps starts the body at the top; unchanged polling preserves sc
 replay the transition. Replacing a focused decision action keeps keyboard focus inside the card.
 The same organizer retains drafts, inclusion and submission identity. Reduced-motion shows usable
 content immediately; interaction and commands do not wait for animation.
+[Independent acceptance of prepare, batch and per-file readability](https://github.com/kentinya/mediaflow/blob/0ef415b0c5859685d31c3d08206f7198d2930e8e/TASK.md#patch-20261122-1--b-pass).
 **Slice53 preserved Task Center task-detail layout, content, progress, results and recovery UI.**
 The later independent preparation-entry correction follows the Manual organize journey above; it
 does not redesign progress/results/recovery.
