@@ -370,6 +370,8 @@ describe("EntryPage", () => {
       return jsonResponse({}, 503);
     });
     anonymous(true, true);
+    authStore.setIntendedPath("/operations");
+    authStore.setIntendedSearch("view=ended");
     const { router } = renderApp("/");
     await user.type(
       await screen.findByLabelText("One-time setup code"),
@@ -393,6 +395,9 @@ describe("EntryPage", () => {
         "Sign in with the username and password you submitted to continue to System Settings.",
       ),
     ).toBeVisible();
+    expect(
+      screen.queryByText(/After signing in you will return to/),
+    ).toBeNull();
 
     await user.type(screen.getByLabelText("Password"), "correct-horse");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
@@ -430,6 +435,8 @@ describe("EntryPage", () => {
       return jsonResponse({}, 503);
     });
     anonymous(true, true);
+    authStore.setIntendedPath("/operations");
+    authStore.setIntendedSearch("view=ended");
     const { router } = renderApp("/");
     await user.type(
       await screen.findByLabelText("One-time setup code"),

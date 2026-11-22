@@ -573,7 +573,7 @@ export function EntryPage() {
         />
         Keep me signed in on this device
       </label>
-      {intendedPath !== null ? (
+      {intendedPath !== null && !setupCompletedHere ? (
         <p className="mf-entry-context">
           After signing in you will return to {intendedPath}
           {intendedSearch ? `?${intendedSearch}` : ""}. The intended page is
