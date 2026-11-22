@@ -42,6 +42,16 @@ async function connectOn(
   await submitSignIn(page, accountForToken(token));
 }
 
+/**
+ * Complete the account sign-in before a measured read-only segment begins.
+ * The login POST belongs to the entry journey, not to the page being proved.
+ */
+async function connect(page: Page, token = ADMIN_TOKEN): Promise<void> {
+  await page.goto("/");
+  await submitSignIn(page, accountForToken(token));
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+}
+
 interface HarnessState {
   readonly activeRevisionId: string | null;
   readonly definitions: Array<{
@@ -280,8 +290,9 @@ test("a Rules save preserves the inventory New Automation entry", async ({
   expect(saved.object.operation).toBe("move");
 
   const before = await harnessState(page);
+  await connect(page);
   const api = recordApiCalls(page);
-  await connectOn(page, "/operations/automation");
+  await page.goto("/operations/automation");
   await page.getByRole("link", { name: "新建自动化任务" }).click();
   await expect(
     page.getByRole("heading", { name: "新建自动化任务" }),
@@ -301,6 +312,7 @@ test("a Rules save preserves the inventory New Automation entry", async ({
 test("opening the form and previewing upcoming times create nothing", async ({
   page,
 }) => {
+  await connect(page);
   const api = recordApiCalls(page);
   await openLifecycleNew(page);
   await fillCreateForm(page);
@@ -1226,7 +1238,15 @@ test("a submitting save blocks accidental departure; an unknown outcome stays re
   await expect(
     page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
-  await page.goBack().catch(() => null);
+  // This edit card was loaded directly from its durable route, so browser back
+  // is a document navigation the in-page route blocker cannot intercept. The
+  // card still protects the in-flight command through the browser's leave
+  // prompt; dismissing it keeps the exact card and command.
+  const leavePrompt = page.waitForEvent("dialog");
+  void page.evaluate(() => window.history.back()).catch(() => null);
+  const dialog = await leavePrompt;
+  expect(dialog.type()).toBe("beforeunload");
+  await dialog.dismiss();
   await expect(
     page.getByRole("heading", { name: "编辑自动化任务" }),
   ).toBeVisible();
