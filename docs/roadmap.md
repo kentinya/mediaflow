@@ -46,8 +46,9 @@ only in [the development workflow](development-workflow.md).
 
 ## Current boundary
 
-[Slice57](../SLICE.md) is **ACTIVE**. The user authorized implementation of
-[Task 57.2](../TASK.md). The latest accepted Slice is Slice56.
+[Slice57](../SLICE.md) is **FIX REQUIRED** after A Final Review. The Roadmap row stays ACTIVE
+during correction. B plans the A57-01 correction in [Task 57.1](../TASK.md) and submits renewed
+acceptance evidence. The latest accepted Slice is Slice56.
 
 ## Accepted boundary references
 

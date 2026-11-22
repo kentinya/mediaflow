@@ -4,14 +4,14 @@
 Slice ID: 57
 Name: Single Web Administrator and Scoped API Tokens
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab
 Implementation Head: 2b1042470765f5d9bf546780921de3fa499a0461
 Working Branch: main
-Development Authorization: TASK57.2 IMPLEMENTATION AUTHORIZED
+Development Authorization: ORIGINAL TASK57.1 CORRECTION SCOPE; B CORRECTION PLAN PENDING
 Risk: High
 Target Test Level: T4
-Next Action: A FINAL REVIEW OF ENTIRE SLICE BASE..IMPLEMENTATION HEAD
+Next Action: B PLANS TASK57.1 CORRECTION FOR A57-01 AND RENEWS SLICE CLOSURE PACKET AFTER ACCEPTANCE
 ```
 
 ## 授权与基线
@@ -135,5 +135,40 @@ Worker/Scheduler 执行边界，保留各项实际结果及限制。A 在独立�
 完整 Base..Implementation Head 与 Closure Packet 后决定关闭。
 [测试级别及验收分工](docs/development-workflow.md#6-test-levels)
 
-B 已验收 Task 57.1 和 Task 57.2，并核对全部合同结果。[Closure Packet](TASK.md#b-复核与-slice-57-交接)
-待 A 独立终审。
+B 已验收 Task 57.1 和 Task 57.2。原 Closure Packet 保存在
+`2961baeb5eae2028a3e6db23fc6076e3c62caf2a:TASK.md`。
+
+## A Final Review — FIX REQUIRED
+
+```text
+Review Date: 2026-11-22
+Reviewed Base: ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab
+Reviewed Implementation Head: 2b1042470765f5d9bf546780921de3fa499a0461
+B Closure Packet: 2961baeb5eae2028a3e6db23fc6076e3c62caf2a:TASK.md
+Decision: FIX REQUIRED
+Blocker: A57-01 / P1 — committed account changes presented as unapplied after response loss
+```
+
+A 核对完整 Base..Implementation Head 的 157 文件清单及生产改动，涵盖部署配置切换与预检、
+SQLite 账号、会话及令牌事务、HTTP 认证与业务权限、Web 入口及恢复、后台计划授权和停用、
+打包测试与操作文档。Implementation Head 到 B 交接提交的差异仅含 `SLICE.md` 与 `TASK.md`。
+
+**A57-01（P1）阻塞 RO-1 / AC-01、AC-02。** 在隔离空库用生成器、正式 Waitress 入口和生产
+Web 产物启动。通过主机命令领取设置码，从首页创建管理员，再从账号菜单进入改密。两次都让真实
+提交完成，在回复到达浏览器前断开。设置返回 `201`，主机状态确认唯一管理员已创建，刷新后可登录。
+改密返回 `200`，旧会话随即返回 `401`，新密码可登录。两条旅程各实际提交一次，页面却都断言
+账号或会话未变更，并要求再次提交表单。该错误提示会让部署者重用已消耗的设置码，也会让管理员
+用已失效的会话重提改密。共享认证客户端将 fetch 失败当作未写入，由 `8c0e2c850de370e4c2f832deb3c1454b95f61ee1`
+（2026-11-21）引入。[认证请求处理](web/src/shared/api/auth-api.ts)
+
+通过条件是认证表单区分已确认拒绝与结果未知，并通过正式入口读取可证实的当前设置及会话状态，
+给出能够继续的操作。结果仍不可判定时维持未知，由用户决策。用真实后端验证建号和改密的丢回包、
+可见恢复与单次提交，同时核对共享处理涉及的其他认证表单。B 在[原 Task 57.1](TASK.md)下规划修正，
+独立验收并重交 Closure Packet。
+
+A 实际运行生产构建、17 项真实 Python Chromium 用例和 39 项 Python 认证／容器部署测试，均通过。
+额外浏览器复现确认 A57-01。复现日志、脚本、截图、范围清单及测试日志位于本机
+`.git/validation-evidence/2b1042470765f5d9bf546780921de3fa499a0461/a-review/`。
+A 核对 B 的全量测试、同版本 Compose、轮换、停用和旧库拒绝日志及 wheel 摘要。B 的 7 项可选
+Storage／耐久测试跳过继续披露。当前 Docker 缓存中已找不到原候选 image ID，Compose 结论取自
+B 原始日志。
