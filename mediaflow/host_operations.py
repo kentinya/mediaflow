@@ -60,6 +60,8 @@ def render_backup(value, operation: str) -> str:
     ]
     if value.applicability_reason:
         lines.append(f"Reason: {value.applicability_reason}")
+    if value.startup_blocked_reason:
+        lines.append(f"Cannot start yet: {value.startup_blocked_reason}")
     lines.append("")
     return "\n".join(lines)
 
@@ -75,6 +77,8 @@ def render_restore(value) -> str:
             f"Schema: {value.schema_version} ({value.schema_kind})",
             f"Size: {value.size_bytes}",
             f"SHA-256: {value.sha256}",
+            f"Source backup: {value.source}",
+            f"Source SHA-256: {value.source_sha256} (unchanged)",
             f"Completed: {value.completed_at.isoformat()}",
             "",
             "Next action: start only the api service first and verify the restored "
@@ -184,7 +188,10 @@ def _database_operation(
         return 0
     with _shared_lease(database_path):
         if arguments.operation == "backup":
-            reject_pending_configuration_switch(database_path)
+            # A supported store that still waits for the explicit configuration
+            # data switch is exactly the store an operator snapshots before
+            # applying it, so the snapshot itself stays possible.  ``verify``
+            # reports the pending startup step on the produced backup.
             result = SQLiteBackupService(database_path).backup(arguments.output)
         else:
             result = SQLiteBackupService(database_path).verify(arguments.path)

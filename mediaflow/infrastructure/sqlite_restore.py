@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import tempfile
@@ -20,6 +21,8 @@ class DatabaseRestoreResult:
     size_bytes: int
     sha256: str
     schema_kind: str
+    source: str
+    source_sha256: str
 
 
 class SQLiteRestoreService:
@@ -36,10 +39,7 @@ class SQLiteRestoreService:
         _require_empty_destination(target)
         verifier = SQLiteBackupService(backup)
         verified = verifier.verify(backup)
-        if not verified.usable:
-            raise ValueError(
-                f"backup is not usable by this MediaFlow version: {verified.applicability_reason}"
-            )
+        _require_startable(verified)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=".mediaflow-restore-", suffix=".sqlite3.tmp", dir=target.parent
         )
@@ -49,6 +49,12 @@ class SQLiteRestoreService:
             os.chmod(temporary, 0o600)
             _copy_database(backup, temporary)
             staged = verifier.verify(temporary, destination=target)
+            _require_startable(staged)
+            # The published copy is what the services start from, but the
+            # backup stays the operator's preserved original.  Re-checking it
+            # before publication keeps the source digest that the restore
+            # reports identical to the one it verified.
+            _require_source_unchanged(backup, verified.sha256)
             _fsync(temporary)
             _publish(temporary, target)
             temporary.unlink()
@@ -59,10 +65,39 @@ class SQLiteRestoreService:
                 staged.size_bytes,
                 staged.sha256,
                 staged.schema_kind,
+                str(backup),
+                verified.sha256,
             )
         finally:
             if temporary.exists():
                 temporary.unlink()
+
+
+def _require_startable(verified) -> None:
+    """Refuse a backup a formal service start would not accept."""
+
+    if not verified.usable:
+        raise ValueError(
+            f"backup is not usable by this MediaFlow version: {verified.applicability_reason}"
+        )
+    if verified.startup_blocked_reason:
+        raise ValueError(
+            "backup cannot be published to an empty destination: "
+            f"{verified.startup_blocked_reason} Apply it to the source store, create a new "
+            "backup and restore that; the backup and the destination were not modified"
+        )
+
+
+def _require_source_unchanged(backup: Path, expected_sha256: str) -> None:
+    digest = hashlib.sha256()
+    with backup.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    if digest.hexdigest() != expected_sha256:
+        raise ValueError(
+            "source backup changed during restore; the destination was not published. "
+            "Keep the original backup, verify it again and repeat the restore"
+        )
 
 
 def _copy_database(source: Path, destination: Path) -> None:

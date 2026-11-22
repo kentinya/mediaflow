@@ -70,6 +70,19 @@ describe("EntryPage", () => {
       }),
     ).toBeVisible();
     expect(screen.getByLabelText("One-time setup code")).toBeVisible();
+    // Both deployment shapes name the command that runs against this instance.
+    expect(
+      screen.getByText(
+        "docker compose exec -T api python -m mediaflow.host_operations issue-setup-code",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        ".venv/bin/python -m mediaflow.host_operations issue-setup-code",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("MEDIAFLOW_CONFIG")).toBeVisible();
+    expect(screen.getByText("MEDIAFLOW_DATA_DIR")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/auth/status",
@@ -685,6 +698,16 @@ describe("EntryPage", () => {
     ).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "Reset password with a host code" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "docker compose exec -T api python -m mediaflow.host_operations issue-reset-code --username <name>",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        ".venv/bin/python -m mediaflow.host_operations issue-reset-code --username <name>",
+      ),
     ).toBeVisible();
     expect(screen.getByLabelText("One-time reset code")).toHaveValue("");
     expect(

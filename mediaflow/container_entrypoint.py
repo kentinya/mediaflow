@@ -11,9 +11,26 @@ import json
 import os
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+#: The one container port every formal Compose deployment listens, maps and
+#: probes.  The image never derives it from a mounted value: Compose maps the
+#: host port onto this port and the API healthcheck requests it, so all three
+#: stay the same port by construction.
+CONTAINER_API_PORT = 8080
+
+#: Listener settings a source installation passes to its own process.  Inside
+#: the image the container port above is fixed, so a deployment environment
+#: value must not move the listener away from the mapped and probed port.
+CONTAINER_LISTENER_SETTINGS = (
+    "MEDIAFLOW_API_HOST",
+    "MEDIAFLOW_API_PORT",
+    "MEDIAFLOW_API_THREADS",
+)
+
 _FORBIDDEN_MEDIA_ROOTS = {
     "/",
     "/data",
@@ -92,11 +109,27 @@ def _retired_api_errors(document: object) -> list[str]:
     return errors
 
 
+def _container_listener_errors(environ: Mapping[str, str]) -> list[str]:
+    present = [name for name in CONTAINER_LISTENER_SETTINGS if name in environ]
+    if not present:
+        return []
+    return [
+        "the deployment environment must not set "
+        + ", ".join(present)
+        + f": a Compose container always listens on port {CONTAINER_API_PORT}, which is the "
+        "port its mapping and API healthcheck use. Remove these settings from the mounted "
+        "environment file; choose the host port with MEDIAFLOW_API_PORT in the Compose "
+        "project (shell or project .env), and use these settings only when starting a source "
+        "installation directly"
+    ]
+
+
 def container_preflight_errors(
     config_path: str,
     data_dir: str,
     *,
-    environ: dict[str, str] | None = None,
+    environ: Mapping[str, str] | None = None,
+    container: bool = False,
     service: str | None = None,
     check_media: bool = True,
     check_database: bool = True,
@@ -104,6 +137,8 @@ def container_preflight_errors(
     """Return actionable deployment errors, or an empty list when safe."""
 
     errors: list[str] = []
+    if container:
+        errors.extend(_container_listener_errors(os.environ if environ is None else environ))
     config = Path(config_path)
     if not config.is_file():
         errors.append(
@@ -279,7 +314,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     service = args[0]
-    errors = container_preflight_errors(config_path, data_dir, service=service)
+    errors = container_preflight_errors(
+        config_path,
+        data_dir,
+        container=True,
+        service=service,
+    )
     if errors:
         sys.stderr.write("MediaFlow container preflight failed:\n")
         for error in errors:

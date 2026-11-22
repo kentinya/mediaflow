@@ -36,8 +36,8 @@ CI 使用只读仓库权限，运行 Python 质量与测试以及 wheel 检查�
 ## Offline restore procedure
 
 1. 停止全部 API、Worker、Scheduler、Notification Worker 及其他连接该数据库的 MediaFlow 命令。
-2. 用 `python -m mediaflow.host_operations --config CONFIG verify BACKUP` 验证备份；输出同时区分文件完整性和本版本可用性。另存原数据库及其 `-wal`、`-shm`、`-journal` 文件，保留原制品。
-3. 确认目标和对应的旁路文件不存在，执行 `python -m mediaflow.host_operations --config CONFIG restore BACKUP --confirm-empty-destination`。
-4. 核对恢复路径，使用创建备份的同版本制品启动一个进程验证后，再启动其余服务。
+2. 验证备份。Compose 项目在项目目录执行 `docker compose run --rm --no-deps api host verify BACKUP`；源码安装执行 `python -m mediaflow.host_operations --config CONFIG verify BACKUP`。输出分别报告文件完整性、本版本能否使用，以及当前能否启动（`Cannot start yet` 及其处理途径）。另存原数据库及其 `-wal`、`-shm`、`-journal` 文件，保留原制品。
+3. 确认目标和对应的旁路文件不存在，执行恢复。Compose 项目执行 `docker compose run --rm --no-deps api host restore BACKUP --confirm-empty-destination`；源码安装执行 `python -m mediaflow.host_operations --config CONFIG restore BACKUP --confirm-empty-destination`。待切换等当前不能启动的备份会被拒绝，目标保持不存在。
+4. 核对恢复路径，先单独启动 API：Compose 项目执行 `docker compose up -d --no-deps api`，源码安装用创建备份的同版本制品启动 `python -m mediaflow.resident_entry api`。核对账号、Active、任务、结果与审计后，再启动其余服务。
 
-POSIX 上，恢复命令必须取得独占租约。该检查限于参与租约的进程，起步时仍需停机。恢复后先检查原任务、逐项结果和源／目标状态，使用任务已有的安全续作入口处理剩余工作。[备份与重启](deployment.md#backup-and-same-version-recovery)
+POSIX 上，恢复命令必须取得独占租约。独占期间启动服务会在打开数据库前退出，空目标保持为空，恢复结束后再启动；该检查限于参与租约的进程，起步时仍需停机。恢复后先检查原任务、逐项结果和源／目标状态，使用任务已有的安全续作入口处理剩余工作。[备份与重启](deployment.md#backup-and-same-version-recovery)

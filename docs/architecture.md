@@ -1951,7 +1951,11 @@ read-only response confirms the current account before the browser uses recovery
 survive a page reload. The hints carry context only.
 
 The fixed `python -m mediaflow.resident_entry api` entry serves through the Waitress WSGI adapter.
-The container entrypoint accepts only the four service names (`api`, `worker`, `scheduler`,
+Inside the image the listener port is fixed at the container port 8080; Compose publishes the host
+port onto that port and the API healthcheck requests the same port. The mounted deployment
+environment file therefore cannot override `MEDIAFLOW_API_HOST/PORT/THREADS`; container preflight
+and the probe refuse them, and a source installation sets those variables on its own process
+instead. The container entrypoint accepts only the four service names (`api`, `worker`, `scheduler`,
 `notification-worker`) or the bounded host-maintenance operations; there is no general command
 dispatcher, arbitrary executable forwarding or startup-argument override. Neither the entry nor the
 listener claims TLS termination, certificate management or public Internet exposure; host binding

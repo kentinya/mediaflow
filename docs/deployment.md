@@ -22,9 +22,18 @@ installation, health, restart, backup, restore and failure-recovery procedures.
   container entrypoint; there is no generic command dispatcher, arbitrary
   executable forwarding or command override. No service starts another service
   and no long-lived supervisor is embedded.
-- The API runs the production Waitress listener on `0.0.0.0:8080` by default.
-  `MEDIAFLOW_API_HOST`, `MEDIAFLOW_API_PORT` and `MEDIAFLOW_API_THREADS` are the
-  bounded deployment overrides; there is no separate development listener.
+- The API runs the production Waitress listener inside the image on the fixed
+  container port `8080`. Compose maps the host port onto exactly that port and
+  the API healthcheck requests `http://127.0.0.1:8080/health` in the same
+  container, so the listener, the mapping and the probe always use one port.
+  Choose the host port with `MEDIAFLOW_API_PORT` and the host bind address with
+  `MEDIAFLOW_API_BIND` in the Compose project (shell or project `.env`). The
+  mounted deployment environment file must not set `MEDIAFLOW_API_HOST`,
+  `MEDIAFLOW_API_PORT` or `MEDIAFLOW_API_THREADS`: the container entrypoint and
+  the probe refuse them instead of letting the listener drift away from the
+  mapped and probed port. A source installation sets those three variables on
+  its own `python -m mediaflow.resident_entry api` process, which has no Compose
+  mapping; that is a separate listener configuration, not the Compose host port.
 - A local named volume is mounted at `/data`. SQLite, history, managed
   configuration evidence, Task/TaskItem/Result state, notifications, audit and logs
   must be configured under `/data`.
@@ -159,12 +168,14 @@ docker compose ps
 
 `MEDIAFLOW_IMAGE`, `MEDIAFLOW_CONFIG_FILE`, `MEDIAFLOW_ENV_FILE`,
 `MEDIAFLOW_SOURCE_MEDIA_ROOT`, `MEDIAFLOW_TARGET_MEDIA_ROOT`,
-`MEDIAFLOW_API_BIND`, `MEDIAFLOW_API_PORT`, `MEDIAFLOW_API_HOST`,
-`MEDIAFLOW_API_THREADS`, `MEDIAFLOW_UID`, and
-`MEDIAFLOW_GID` are optional overrides. The media variables are read only by the
-optional `compose.media-mounts.yaml` overlay. Defaults are shown in
-`compose.yaml` and `compose.media-mounts.yaml`.
-The default host API bind is `127.0.0.1`; set `MEDIAFLOW_API_BIND=0.0.0.0` only
+`MEDIAFLOW_API_BIND`, `MEDIAFLOW_API_PORT`, `MEDIAFLOW_UID`, and
+`MEDIAFLOW_GID` are optional Compose project settings read from the shell or the
+project `.env`; they are not container listener overrides. The media variables
+are read only by the optional `compose.media-mounts.yaml` overlay. Defaults are
+shown in `compose.yaml` and `compose.media-mounts.yaml`. `MEDIAFLOW_API_PORT`
+changes only the published host port; the container keeps listening on `8080`,
+which is what the healthcheck requests. The default host API bind is `127.0.0.1`;
+set `MEDIAFLOW_API_BIND=0.0.0.0` only
 when the host network is a trusted LAN or the port is behind an HTTPS reverse
 proxy. MediaFlow does not provide TLS. A TLS proxy must forward the original
 scheme, for example:
@@ -468,11 +479,28 @@ docker compose run --rm --no-deps api \
 ```
 
 `verify` reports file integrity separately from whether this MediaFlow version can start the
-backup; both a current runtime store and a current configuration-only store are usable. Record the
-backup's schema, SHA-256 digest and age. Same-version offline restore is an explicit,
-non-overwriting operation: all processes must be stopped, the destination empty and sidecar-free,
-and `--confirm-empty-destination` supplied. Follow the
-[offline restore procedure](release.md#offline-restore-procedure). Keep the existing database and
+backup; both a current runtime store and a current configuration-only store are usable. A
+supported store that still waits for an explicit maintenance step reports `Cannot start yet` with
+the step and its scope, and a restore refuses it until that step is applied on the source store and
+a new backup is taken. Record the backup's schema, SHA-256 digest and age. Same-version offline
+restore is an explicit, non-overwriting operation: all processes must be stopped, the destination
+empty and sidecar-free, and `--confirm-empty-destination` supplied:
+
+```bash
+docker compose run --rm --no-deps api \
+  host restore /data/runtime-backup.sqlite3 --confirm-empty-destination
+```
+
+Follow the [offline restore procedure](release.md#offline-restore-procedure). Start only the API
+first and read back the restored accounts, Active, tasks, results and audit before enabling the
+other services:
+
+```bash
+docker compose up -d --no-deps api
+docker compose ps api
+```
+
+Then enable the background services with `docker compose up -d`. Keep the existing database and
 verified backup until restored authority is verified. Restore/restart never grants new execution
 permission or proves an uncertain mutation did not occur; supported work retains pins/results/fences
 and only permitted safe remaining stages may continue.
@@ -597,6 +625,17 @@ pinned context; those are distinct signals, not hidden failures.
 
 - **Missing config or environment file:** Compose reports the bind source path
   before starting the container. Create the file and retry.
+- **Listener settings in the deployment environment file:** preflight and the
+  probe report that `MEDIAFLOW_API_HOST`, `MEDIAFLOW_API_PORT` or
+  `MEDIAFLOW_API_THREADS` must be removed from the mounted file. The container
+  port is fixed at `8080`; set the host port with `MEDIAFLOW_API_PORT` in the
+  Compose project instead. The service does not start with a listener that its
+  port mapping and healthcheck cannot reach.
+- **Runtime database in use at service start:** an offline recovery or another
+  deployment process holds the maintenance lease, so the service exits before
+  opening or creating the database file and names the service to start again.
+  Finish that recovery, then start the service again; the empty restore target
+  stays empty and no partial store is created.
 - **Missing media root:** only possible when the optional media overlay is
   applied. The overlay refuses to render and names `MEDIAFLOW_SOURCE_MEDIA_ROOT`
   or `MEDIAFLOW_TARGET_MEDIA_ROOT`. A Local Storage root declared in the

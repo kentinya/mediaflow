@@ -135,9 +135,11 @@ The explicit switch applies to eligible configuration schema 11 stores. Eligibil
 absent or current runtime schema and a successful database applicability check. Run `config status`
 to review the affected unpublished revisions, revision-bound evidence, audit rows and any admitted
 Tasks that pin those revisions. On `DATA_SWITCH_REQUIRED`, ordinary service startup, container
-preflight and configuration publication stop until the switch is applied. If preflight rejects the
-database as unsupported, keep it and use a new empty data directory or a supported same-version
-backup. [Deployment boundary](deployment.md#boundary)
+preflight and configuration publication stop until the switch is applied. The host maintenance
+`verify` reports such a backup as supported but `Cannot start yet` with this scope, and `restore`
+refuses it; apply the switch on the source store, take a new backup and restore that. If preflight
+rejects the database as unsupported, keep it and use a new empty data directory or a supported
+same-version backup. [Deployment boundary](deployment.md#boundary)
 
 Review the reported scope, then apply it explicitly. Without `--confirm` the command only prints
 the same scope and changes nothing:

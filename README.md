@@ -55,7 +55,7 @@ flowchart LR
 
    创建成功后进入「系统设置」初始化为空配置，再按需添加存储、资源库、媒体库和整理规则。日常使用账号密码登录。忘记密码时，在主机执行 `docker compose exec -T api python -m mediaflow.host_operations issue-reset-code --username '<登录名>'`。
 
-默认以管理模式启动。本地媒体目录通过 Compose 覆盖文件显式挂载。挂载、日志、备份和网络设置见[部署指南](docs/deployment.md)。
+默认以管理模式启动。容器内的 API 固定监听 8080，宿主端口由 Compose 项目的 `MEDIAFLOW_API_PORT`（shell 或项目 `.env`）决定；挂载到容器的 `.env.mediaflow` 只保存服务凭据，不设置 `MEDIAFLOW_API_HOST/PORT/THREADS`。本地媒体目录通过 Compose 覆盖文件显式挂载。挂载、日志、备份和网络设置见[部署指南](docs/deployment.md)。
 
 ### 使用 Python 源码
 
@@ -66,6 +66,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[tmdb,openlist]'
 npm --prefix web ci
 npm --prefix web run build
+mkdir -p .mediaflow
 python3 scripts/make_deployment_config.py \
   --output config/mediaflow.json \
   --database-path "$PWD/.mediaflow/mediaflow.sqlite3"
@@ -75,11 +76,27 @@ MEDIAFLOW_API_HOST=127.0.0.1 MEDIAFLOW_API_PORT=8787 \
   .venv/bin/python -m mediaflow.resident_entry api
 ```
 
-打开 <http://127.0.0.1:8787/>，在另一个终端用同一个配置执行
-`MEDIAFLOW_DATA_DIR="$PWD/.mediaflow" .venv/bin/python -m mediaflow.host_operations --config config/mediaflow.json issue-setup-code`，
-再在网页创建首位管理员。需要执行任务时用同一个配置启动
-`.venv/bin/python -m mediaflow.resident_entry worker`，定时整理另需启动
-`.venv/bin/python -m mediaflow.resident_entry scheduler`。
+打开 <http://127.0.0.1:8787/>。在另一个终端，用同一 `MEDIAFLOW_CONFIG` 和 `MEDIAFLOW_DATA_DIR` 领取一次性设置码，再在网页创建首位管理员：
+
+```bash
+.venv/bin/python -m mediaflow.host_operations issue-setup-code
+```
+
+创建成功后进入「系统设置」初始化为空配置。忘记密码时，用同一部署为对应账号领取重置码，再在登录页的找回表单中使用：
+
+```bash
+.venv/bin/python -m mediaflow.host_operations issue-reset-code --username '<登录名>'
+```
+
+需要执行任务时，用同一配置另起常驻服务；`worker` 处理整理、文件夹发现和文件传输，`scheduler` 触发定时整理，`notification-worker` 投递 Webhook：
+
+```bash
+.venv/bin/python -m mediaflow.resident_entry worker
+.venv/bin/python -m mediaflow.resident_entry scheduler
+.venv/bin/python -m mediaflow.resident_entry notification-worker
+```
+
+`MEDIAFLOW_API_HOST/PORT/THREADS` 只作为源码直启时的 API 监听设置，与 Compose 的宿主端口 `MEDIAFLOW_API_PORT` 是两处不同配置。停机备份、校验和恢复见[发布指引](docs/release.md#offline-restore-procedure)。
 
 ## ⚙️ 常用配置
 

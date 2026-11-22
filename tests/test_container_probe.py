@@ -124,6 +124,17 @@ class ContainerProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown probe service"):
             probe_preflight_errors("not-a-service")
 
+    def test_probe_refuses_a_moved_container_listener_port(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = _configuration(root)
+            environment = _environment(config, root / "data")
+            environment["MEDIAFLOW_API_PORT"] = "9000"
+            errors = probe_preflight_errors("api", environ=environment)
+            joined = "\n".join(errors)
+            self.assertIn("MEDIAFLOW_API_PORT", joined)
+            self.assertIn("always listens on port 8080", joined)
+
     def test_worker_probe_requires_live_schema_compatible_transfer_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

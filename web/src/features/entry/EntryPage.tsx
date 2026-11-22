@@ -26,6 +26,15 @@ import { TextField } from "../../shared/ui/TextField";
 type Mode = "login" | "setup" | "reset";
 type PendingSubmission = "login" | "setup" | "reset";
 
+const SETUP_CODE_COMMAND =
+  "docker compose exec -T api python -m mediaflow.host_operations issue-setup-code";
+const SOURCE_SETUP_CODE_COMMAND =
+  ".venv/bin/python -m mediaflow.host_operations issue-setup-code";
+const RESET_CODE_COMMAND =
+  "docker compose exec -T api python -m mediaflow.host_operations issue-reset-code --username <name>";
+const SOURCE_RESET_CODE_COMMAND =
+  ".venv/bin/python -m mediaflow.host_operations issue-reset-code --username <name>";
+
 interface Feedback {
   readonly kind: "error" | "success" | "warning" | "info" | "unknown";
   readonly title: string;
@@ -429,10 +438,16 @@ export function EntryPage() {
       <form className="mf-entry" onSubmit={submitSetup}>
         <h2>Create first administrator</h2>
         <p>
-          On the MediaFlow host run{" "}
-          <code>python -m mediaflow.host_operations issue-setup-code</code>,
-          then enter that short-lived one-time code here. The code can create
-          only one first administrator for this instance.
+          Issue a one-time setup code for this instance on the MediaFlow host.
+          With Docker Compose, run <code>{SETUP_CODE_COMMAND}</code> in the
+          project directory. A source installation runs{" "}
+          <code>{SOURCE_SETUP_CODE_COMMAND}</code> with the same{" "}
+          <code>MEDIAFLOW_CONFIG</code> and <code>MEDIAFLOW_DATA_DIR</code> that
+          started the API.
+        </p>
+        <p>
+          Enter the code here. It can create only one first administrator for
+          this instance and cannot be recovered later.
         </p>
         <TextField
           id="setup-code"
@@ -490,14 +505,14 @@ export function EntryPage() {
       <form className="mf-entry" onSubmit={submitReset}>
         <h2>Reset password with a host code</h2>
         <p>
-          Run{" "}
-          <code>
-            python -m mediaflow.host_operations issue-reset-code --username
-            &lt;name&gt;
-          </code>{" "}
-          on the MediaFlow host. The reset revokes every existing Web session
-          for that account.
+          Issue a one-time reset code for the account on the MediaFlow host.
+          With Docker Compose, run <code>{RESET_CODE_COMMAND}</code> in the
+          project directory. A source installation runs{" "}
+          <code>{SOURCE_RESET_CODE_COMMAND}</code> with the same{" "}
+          <code>MEDIAFLOW_CONFIG</code> and <code>MEDIAFLOW_DATA_DIR</code> that
+          started the API.
         </p>
+        <p>The reset revokes every existing Web session for that account.</p>
         <TextField
           id="reset-code"
           label="One-time reset code"

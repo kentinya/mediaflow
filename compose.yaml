@@ -66,6 +66,10 @@ services:
           "--url",
           "http://127.0.0.1:8080/health",
         ]
+    # The container listener is the fixed container port 8080, which is also
+    # what the healthcheck above requests.  MEDIAFLOW_API_PORT here is the host
+    # port a Compose project publishes; the mounted deployment environment file
+    # cannot move the container listener away from this port.
     ports:
       - "${MEDIAFLOW_API_BIND:-127.0.0.1}:${MEDIAFLOW_API_PORT:-8080}:8080"
 

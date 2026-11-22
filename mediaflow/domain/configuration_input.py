@@ -162,7 +162,7 @@ def _reject_authority(document: Mapping[str, Any], baseline: Mapping[str, Any]) 
     raise ValueError(
         "api.principals is retired; remove it from the submitted configuration. "
         "Create the first administrator through the Web sign-in page with a "
-        "one-time code from `mediaflow accounts issue-setup-code`"
+        "one-time code from `python -m mediaflow.host_operations issue-setup-code`"
     )
 
 

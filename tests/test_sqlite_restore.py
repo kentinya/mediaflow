@@ -23,8 +23,12 @@ from mediaflow.domain.task_persistence import (
 from mediaflow.host_operations import main as host_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
+)
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from tests.managed_config_fixture import seed_configuration_schema_11_store
 
 
 def run_host(config: Path, *arguments: str):
@@ -122,6 +126,75 @@ class SQLiteRestoreTests(unittest.TestCase):
             destination = root / "restored.sqlite3"
             with self.assertRaisesRegex(ValueError, "not usable by this MediaFlow version"):
                 SQLiteRestoreService(backup, destination).restore(confirmed_empty_destination=True)
+            self.assertFalse(destination.exists())
+            self.assertEqual(list(root.glob(".mediaflow-restore-*")), [])
+
+    def test_current_configuration_only_store_restores_with_its_source_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "configuration.sqlite3"
+            with SQLiteConfigurationRepository(source):
+                pass
+            backup = root / "configuration-backup.sqlite3"
+            SQLiteBackupService(source).backup(backup)
+            backup_hash = hashlib.sha256(backup.read_bytes()).hexdigest()
+            destination = root / "restored.sqlite3"
+            result = SQLiteRestoreService(backup, destination).restore(
+                confirmed_empty_destination=True
+            )
+            self.assertEqual(result.schema_kind, "configuration")
+            self.assertEqual(result.source_sha256, backup_hash)
+            self.assertEqual(hashlib.sha256(backup.read_bytes()).hexdigest(), backup_hash)
+            with SQLiteConfigurationRepository(destination):
+                pass
+
+    def test_pending_switch_backup_is_refused_before_any_destination_appears(self) -> None:
+        """A store this version refuses to start is not published to an empty target."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "mediaflow.sqlite3"
+            document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+            document["persistence"] = {"databasePath": str(source)}
+            _, unpublished = seed_configuration_schema_11_store(document)
+            backup = root / "pre-switch.sqlite3"
+            SQLiteBackupService(source).backup(backup)
+            before = (backup.stat().st_mtime_ns, hashlib.sha256(backup.read_bytes()).hexdigest())
+            destination = root / "restored.sqlite3"
+            with self.assertRaisesRegex(
+                ValueError, "cannot be published to an empty destination"
+            ) as refused:
+                SQLiteRestoreService(backup, destination).restore(confirmed_empty_destination=True)
+            self.assertIn("configuration data switch is pending", str(refused.exception))
+            self.assertIn(unpublished.revision_id, str(refused.exception))
+            self.assertFalse(destination.exists())
+            self.assertEqual(list(root.glob(".mediaflow-restore-*")), [])
+            self.assertEqual(
+                before, (backup.stat().st_mtime_ns, hashlib.sha256(backup.read_bytes()).hexdigest())
+            )
+
+    def test_changed_source_backup_blocks_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backup = self._backup(root)
+            destination = root / "restored.sqlite3"
+            from mediaflow.infrastructure import sqlite_restore
+
+            original_copy = sqlite_restore._copy_database
+
+            def copy_then_change_source(source: Path, target: Path) -> None:
+                original_copy(source, target)
+                with source.open("ab") as stream:
+                    stream.write(b"concurrent writer")
+
+            with patch(
+                "mediaflow.infrastructure.sqlite_restore._copy_database",
+                side_effect=copy_then_change_source,
+            ):
+                with self.assertRaisesRegex(ValueError, "source backup changed"):
+                    SQLiteRestoreService(backup, destination).restore(
+                        confirmed_empty_destination=True
+                    )
             self.assertFalse(destination.exists())
             self.assertEqual(list(root.glob(".mediaflow-restore-*")), [])
 

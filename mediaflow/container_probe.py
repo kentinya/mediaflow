@@ -78,6 +78,7 @@ def probe_preflight_errors(
         environment.get("MEDIAFLOW_CONFIG", "/config/mediaflow.json"),
         environment.get("MEDIAFLOW_DATA_DIR", "/data"),
         environ=environment,
+        container=True,
         service=service,
     )
 

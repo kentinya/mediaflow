@@ -76,7 +76,11 @@ from mediaflow.infrastructure.runtime_configuration import (
     load_managed_runtime_configuration,
     load_management_bootstrap,
 )
-from mediaflow.infrastructure.runtime_lease import RuntimeDatabaseLease, RuntimeLeaseMode
+from mediaflow.infrastructure.runtime_lease import (
+    RuntimeDatabaseLease,
+    RuntimeLeaseMode,
+    RuntimeLeaseUnavailable,
+)
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
@@ -1490,6 +1494,30 @@ def main(
     try:
         document = _configuration_document(configured_path)
         reject_retired_configuration_input(document)
+        database_path = _bootstrap_database_path(document)
+    except (OSError, ValueError, RuntimeError) as error:
+        error_output.write(f"mediaflow service error: {error}\n")
+        return 2
+    # The shared lease precedes every repository: resolving the API's Active
+    # opens the configuration repository, which creates tables and markers on
+    # an empty file.  An offline recovery holds the exclusive lease of an empty
+    # destination, so a service started meanwhile must leave that target empty.
+    try:
+        lease = RuntimeDatabaseLease(database_path, RuntimeLeaseMode.SHARED).acquire(
+            create_parent=True
+        )
+    except RuntimeLeaseUnavailable:
+        error_output.write(
+            "mediaflow service error: the runtime database is in use; an offline recovery or "
+            f"another MediaFlow process holds the maintenance lease. Finish it, then start the "
+            f"{arguments.service} service again. No database file was created or modified.\n"
+        )
+        return 2
+    except (OSError, ValueError, RuntimeError) as error:
+        error_output.write(f"mediaflow service error: {error}\n")
+        return 2
+    try:
+        reject_pending_configuration_switch(database_path)
         if arguments.service == "api":
             try:
                 configuration = _configuration(configured_path)
@@ -1497,14 +1525,6 @@ def main(
                 configuration = load_management_bootstrap(document)
         else:
             configuration = load_management_bootstrap(document)
-        reject_pending_configuration_switch(configuration.database_path)
-    except (OSError, ValueError, RuntimeError) as error:
-        error_output.write(f"mediaflow service error: {error}\n")
-        return 2
-    lease = RuntimeDatabaseLease(configuration.database_path, RuntimeLeaseMode.SHARED).acquire(
-        create_parent=True
-    )
-    try:
         return _service_runner(
             arguments.service,
             configuration,

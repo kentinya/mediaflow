@@ -25,6 +25,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from tests.managed_config_fixture import seed_configuration_schema_11_store
 
 
 def run_host(config: Path, *arguments: str):
@@ -154,6 +155,46 @@ class SQLiteBackupTests(unittest.TestCase):
             verified = SQLiteBackupService(source).verify(target)
             self.assertTrue(verified.usable)
             self.assertEqual(verified.schema_kind, "configuration")
+
+    def test_pending_switch_store_is_backupable_but_verify_reports_startup_step(self) -> None:
+        """File integrity, version support and service startup are separate answers.
+
+        A supported configuration schema 11 store is exactly what an operator
+        keeps a verified backup of before applying the explicit switch, so the
+        snapshot itself must stay possible.  The formal service start refuses
+        that store until the switch is applied, so ``verify`` reports the same
+        bounded startup step and the exact current handling path.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "mediaflow.sqlite3"
+            document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+            document["persistence"] = {"databasePath": str(database)}
+            _, unpublished = seed_configuration_schema_11_store(document)
+            config = root / "config.json"
+            config.write_text(
+                json.dumps({"version": 1, "persistence": document["persistence"]}),
+                encoding="utf-8",
+            )
+            backup = root / "pre-switch.sqlite3"
+
+            code, output, error = run_host(config, "backup", "--output", str(backup))
+            self.assertEqual(code, 0, error)
+            self.assertIn("Usable by this version: YES", output)
+            self.assertIn("Cannot start yet:", output)
+            self.assertIn(unpublished.revision_id, output)
+            self.assertIn("retire-unpublished --confirm", output)
+
+            verified = SQLiteBackupService(database).verify(backup)
+            self.assertTrue(verified.usable)
+            self.assertIsNone(verified.applicability_reason)
+            self.assertIn("configuration data switch is pending", verified.startup_blocked_reason)
+            code, output, error = run_host(config, "verify", str(backup))
+            self.assertEqual(code, 0, error)
+            self.assertIn("Integrity: OK", output)
+            self.assertIn("Cannot start yet:", output)
+            self.assertIn("config status", output)
 
     def test_target_validation_and_cli(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

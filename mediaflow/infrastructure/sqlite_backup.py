@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from mediaflow.infrastructure.configuration_data_switch import (
+    ConfigurationDataSwitchRequired,
+    reject_pending_configuration_switch,
+)
 from mediaflow.infrastructure.sqlite_applicability import (
     DatabaseApplicabilityError,
     evaluate_database_applicability,
@@ -29,6 +33,10 @@ class DatabaseBackupResult:
     schema_kind: str
     usable: bool
     applicability_reason: str | None
+    #: The service-startup judgment for this file, when it is a supported
+    #: database this version refuses to start until an explicit maintenance
+    #: action is applied.  ``None`` means a formal service start accepts it.
+    startup_blocked_reason: str | None = None
 
 
 class SQLiteBackupService:
@@ -101,6 +109,16 @@ class SQLiteBackupService:
             usable, reason = False, str(error)
         else:
             usable, reason = True, None
+        # File integrity and version support do not prove the formal service
+        # start accepts the file: a supported store can still wait for an
+        # explicit maintenance switch.  Report that startup judgment here, so
+        # an operator sees it before treating the file as recoverable.
+        startup_blocked_reason = None
+        if usable:
+            try:
+                reject_pending_configuration_switch(path)
+            except ConfigurationDataSwitchRequired as error:
+                startup_blocked_reason = str(error)
         digest = hashlib.sha256()
         size = 0
         with path.open("rb") as stream:
@@ -118,6 +136,7 @@ class SQLiteBackupService:
             schema_kind,
             usable,
             reason,
+            startup_blocked_reason,
         )
 
 

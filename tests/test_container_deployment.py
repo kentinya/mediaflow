@@ -19,6 +19,7 @@ from mediaflow.application.configuration_snapshot import (
     build_first_setup_starter_document,
 )
 from mediaflow.container_entrypoint import (
+    CONTAINER_API_PORT,
     container_preflight_errors,
     load_environment_file,
 )
@@ -28,6 +29,7 @@ from mediaflow.infrastructure.runtime_configuration import (
     is_minimal_management_bootstrap,
     load_minimal_management_bootstrap,
 )
+from mediaflow.infrastructure.runtime_lease import RuntimeDatabaseLease, RuntimeLeaseMode
 from mediaflow.infrastructure.sqlite_applicability import DatabaseApplicabilityError
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -139,6 +141,62 @@ def request(app, method: str, path: str, *, token: str | None = None):
 
 
 class ProductionWsgiCliTests(unittest.TestCase):
+    def test_service_start_takes_the_shared_lease_before_opening_the_store(self) -> None:
+        """An occupied maintenance lease leaves an empty restore target empty.
+
+        Resolving the API's Active opens the configuration repository, which
+        creates tables and markers on an empty file.  The lease must therefore
+        come first: an offline recovery holding the exclusive lease on an empty
+        destination must see that destination stay empty when a service is
+        started meanwhile, and the bounded message names the service to start
+        again after the recovery finishes.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "data"
+            data.mkdir()
+            database = data / "mediaflow.sqlite3"
+            bootstrap = root / "mediaflow.json"
+            bootstrap.write_text(
+                json.dumps(make_management_bootstrap(database_path=str(database))),
+                encoding="utf-8",
+            )
+            calls: list[tuple[str, int, int]] = []
+
+            def fake_serve(_app, *, host, port, threads):
+                calls.append((host, port, threads))
+
+            with (
+                RuntimeDatabaseLease(database, RuntimeLeaseMode.EXCLUSIVE),
+                patch("mediaflow.production_wsgi.serve", side_effect=fake_serve),
+            ):
+                status, _, error_text = run_service_entry(bootstrap, data, "api")
+            self.assertEqual(status, 2, error_text)
+            self.assertIn("runtime database is in use", error_text)
+            self.assertIn("start the api service again", error_text)
+            self.assertFalse(database.exists())
+            self.assertEqual(list(data.glob("mediaflow.sqlite3-*")), [])
+            self.assertEqual(calls, [])
+
+            # After the recovery releases the lease the same entry starts the
+            # API, and the source listener configuration still applies there.
+            with patch("mediaflow.production_wsgi.serve", side_effect=fake_serve):
+                status, output, error_text = run_service_entry(
+                    bootstrap,
+                    data,
+                    "api",
+                    environment={
+                        "MEDIAFLOW_API_HOST": "127.0.0.1",
+                        "MEDIAFLOW_API_PORT": "8787",
+                        "MEDIAFLOW_API_THREADS": "2",
+                    },
+                )
+            self.assertEqual(status, 0, error_text)
+            self.assertIn("listening on 127.0.0.1:8787", output)
+            self.assertEqual(calls, [("127.0.0.1", 8787, 2)])
+            self.assertTrue(database.exists())
+
     def test_production_serve_uses_waitress_adapter_and_shared_application(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -281,6 +339,77 @@ class ContainerEntrypointTests(unittest.TestCase):
 
 
 class ContainerPreflightTests(unittest.TestCase):
+    def test_deployment_environment_cannot_move_the_container_listener_port(self) -> None:
+        """The listener, Compose mapping and probe share the container port.
+
+        The mounted deployment environment is shared by all four services and
+        cannot change where the container API listens: the host port is a
+        Compose project decision.  The same three names remain the listener
+        configuration of a source installation, which has no Compose mapping.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, data, _ = self._configuration(root)
+            for name, value in (
+                ("MEDIAFLOW_API_HOST", "127.0.0.1"),
+                ("MEDIAFLOW_API_PORT", "9000"),
+                ("MEDIAFLOW_API_THREADS", "8"),
+            ):
+                with self.subTest(name=name):
+                    errors = container_preflight_errors(
+                        str(config),
+                        str(data),
+                        environ={name: value},
+                        container=True,
+                        service="api",
+                    )
+                    joined = "\n".join(errors)
+                    self.assertIn(name, joined)
+                    self.assertIn(f"always listens on port {CONTAINER_API_PORT}", joined)
+                    self.assertIn("MEDIAFLOW_API_PORT in the Compose project", joined)
+                    # The source listener setting is not a container setting.
+                    self.assertEqual(
+                        container_preflight_errors(
+                            str(config), str(data), environ={name: value}, service="api"
+                        ),
+                        [],
+                    )
+
+            environment_file = root / "deployment.env"
+            environment_file.write_text("MEDIAFLOW_API_PORT=9000\n", encoding="utf-8")
+            error_text = io.StringIO()
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "MEDIAFLOW_CONFIG": str(config),
+                        "MEDIAFLOW_DATA_DIR": str(data),
+                        "MEDIAFLOW_ENV_FILE": str(environment_file),
+                    },
+                    clear=False,
+                ),
+                patch("mediaflow.container_entrypoint.os.execvpe") as execute,
+                patch("sys.stderr", error_text),
+            ):
+                code = entrypoint_main(["api"])
+            self.assertEqual(1, code)
+            execute.assert_not_called()
+            self.assertIn("MEDIAFLOW_API_PORT", error_text.getvalue())
+            self.assertIn(f"always listens on port {CONTAINER_API_PORT}", error_text.getvalue())
+
+    def test_compose_listener_mapping_and_probe_share_the_container_port(self) -> None:
+        compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+        api = compose.split("\n  api:\n", 1)[1].split("\n  worker:\n", 1)[0]
+        self.assertIn(f"http://127.0.0.1:{CONTAINER_API_PORT}/health", api)
+        self.assertIn(
+            f'"${{MEDIAFLOW_API_BIND:-127.0.0.1}}:${{MEDIAFLOW_API_PORT:-{CONTAINER_API_PORT}}}'
+            f':{CONTAINER_API_PORT}"',
+            api,
+        )
+        self.assertNotIn("MEDIAFLOW_API_HOST", api)
+        self.assertNotIn("MEDIAFLOW_API_THREADS", api)
+
     def _configuration(self, root: Path) -> tuple[Path, Path, Path]:
         data = root / "data"
         incoming = root / "incoming"
