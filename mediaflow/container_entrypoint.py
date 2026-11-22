@@ -71,6 +71,20 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
+def _ordinary_service_command(command: tuple[str, ...]) -> bool:
+    """Return whether this command starts a process that opens the runtime store.
+
+    Configuration management keeps its own read-only review and confirmed
+    switch entrances, so the preflight must not turn those into a refusal.
+    """
+
+    if not command:
+        return False
+    if command[0] == "api":
+        return len(command) > 1 and command[1] in {"serve", "serve-production"}
+    return command[0] in {"worker", "scheduler", "notification-worker"}
+
+
 def _retired_api_errors(document: object) -> list[str]:
     if not isinstance(document, dict):
         return []
@@ -149,6 +163,10 @@ def container_preflight_errors(
                 )
             else:
                 try:
+                    from mediaflow.infrastructure.configuration_data_switch import (
+                        ConfigurationDataSwitchRequired,
+                        reject_pending_configuration_switch,
+                    )
                     from mediaflow.infrastructure.sqlite_applicability import (
                         DatabaseApplicabilityError,
                         assert_supported_database,
@@ -163,9 +181,16 @@ def container_preflight_errors(
                         current_runtime_version=SCHEMA_VERSION,
                         current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
                     )
-                except DatabaseApplicabilityError as error:
+                    if _ordinary_service_command(command):
+                        # A previous configuration schema 11 store can still
+                        # contain draft-era rows.  Ordinary service start must
+                        # stop before the runtime repository creates tables or
+                        # an origin marker; the operator reviews it with
+                        # ``config status`` and applies the explicit switch.
+                        reject_pending_configuration_switch(path)
+                except (DatabaseApplicabilityError, ConfigurationDataSwitchRequired) as error:
                     errors.append(str(error))
-                except (OSError, ValueError) as error:
+                except (OSError, ValueError, RuntimeError) as error:
                     errors.append(f"persistence.databasePath could not be checked: {error}")
     history = document.get("historyPath")
     if isinstance(history, str) and history.strip():

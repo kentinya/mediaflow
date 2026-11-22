@@ -51,8 +51,9 @@ installation, health, restart, backup, restore and failure-recovery procedures.
   another version (no current store origin marker), is refused at startup; only an empty
   database or one created by this version is supported. Configuration schema 11 requires the
   [explicit unpublished-revision data switch](configuration.md#previous-store-data-switch)
-  when the runtime schema is absent or current. V1 and obsolete migration inputs receive
-  ordinary rejection or not-found behavior. Restore uses the same artifact version that
+  when the runtime schema is absent or current; every ordinary service start and the container
+  preflight refuse that store until the switch is applied. V1 and obsolete migration inputs
+  receive ordinary rejection or not-found behavior. Restore uses the same artifact version that
   produced the supported backup.
 - The same image contains the built V2 static artifact at
   `/opt/mediaflow/web/dist`, bound to the running process through
@@ -611,6 +612,13 @@ pinned context; those are distinct signals, not hidden failures.
   matches this version. The original file is left unchanged; keep it for
   diagnosis or recovery with the version that created it. Do not edit the schema
   marker or delete the file.
+- **Pending configuration data switch:** a configuration schema 11 store that
+  still holds unpublished draft-era rows stops the container preflight and
+  every local resident service before any runtime table or marker is written.
+  Review the exact scope with `mediaflow config status`, then apply
+  `mediaflow config retire-unpublished --confirm`; the switch is atomic and
+  preserves the published Active, Task pins and results. The original file is
+  unchanged until that explicit command commits.
 - **Inaccessible published media root:** the API container stays healthy and
   `/health` keeps answering. The Storage page's `运行只读检查` (or the
   authenticated storage-management check endpoint) reports `status: failed`

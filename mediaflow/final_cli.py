@@ -89,6 +89,7 @@ from mediaflow.domain.task_scheduling import TaskControl
 from mediaflow.infrastructure.configuration_data_switch import (
     ConfigurationDataSwitchScope,
     read_configuration_data_switch,
+    reject_pending_configuration_switch,
 )
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.metadata_provider_bootstrap import (
@@ -436,6 +437,15 @@ def final_main(
             # and a first start would create the store just to read environment
             # variables.
             configuration = load_management_bootstrap(bootstrap_document)
+            if arguments.command in {"worker", "scheduler", "notification-worker"}:
+                # A previous configuration schema 11 store may still need the
+                # explicit draft-retirement switch.  Resident services would
+                # otherwise open the runtime repository first and write a
+                # runtime schema/origin marker into that file before the
+                # pending switch is noticed.  Stop read-only, before any
+                # table, marker or lease, and point at the existing review and
+                # switch commands.
+                reject_pending_configuration_switch(configuration.database_path)
         else:
             try:
                 configuration = (

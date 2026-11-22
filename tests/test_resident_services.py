@@ -45,6 +45,7 @@ from mediaflow.infrastructure.runtime_configuration import (
     load_minimal_management_bootstrap,
 )
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from tests.managed_config_fixture import seed_configuration_schema_11_store
 
 FAKE_TOKEN = "fake-resident-token"
 FAKE_WEBHOOK_SECRET = "fake-webhook-secret"
@@ -208,6 +209,74 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
                 self.assertIn("api.principals is retired", err)
                 self.assertIn("remove it", err)
                 self.assertFalse(Path(self.database).exists(), msg=err)
+
+    def test_pending_configuration_switch_is_refused_before_resident_services_open_the_database(
+        self,
+    ) -> None:
+        """A draft-era store stops every local resident entrance read-only.
+
+        The previous build's ``config draft-import`` left configuration schema
+        11 with unpublished rows and no current store origin marker.  Worker,
+        Scheduler and Notification Worker must not create the runtime schema or
+        an origin marker before the operator reviews and applies the explicit
+        switch.  The original bytes stay unchanged.
+        """
+
+        import hashlib
+        import sqlite3
+
+        document = json.loads(
+            (Path(__file__).resolve().parents[1] / "config" / "strategy.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["persistence"] = {"databasePath": self.database}
+        _, unpublished = seed_configuration_schema_11_store(document)
+        before_hash = hashlib.sha256(Path(self.database).read_bytes()).hexdigest()
+        with sqlite3.connect(self.database) as connection:
+            before_markers = connection.execute(
+                "SELECT component, version FROM schema_version ORDER BY component"
+            ).fetchall()
+            before_tables = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                ).fetchall()
+            ]
+        self.assertEqual([("configuration_management", 11)], before_markers)
+
+        for arguments in (
+            ("worker", "run"),
+            ("scheduler", "run"),
+            ("notification-worker", "run"),
+        ):
+            with self.subTest(arguments=arguments):
+                code, out, err = self.cli(*arguments)
+                self.assertEqual(code, 2, msg=err)
+                self.assertEqual("", out)
+                self.assertIn("configuration data switch is pending", err)
+                self.assertIn(unpublished.revision_id, err)
+                self.assertIn("config status", err)
+                self.assertIn("retire-unpublished --confirm", err)
+                self.assertEqual(
+                    before_hash, hashlib.sha256(Path(self.database).read_bytes()).hexdigest()
+                )
+                with sqlite3.connect(self.database) as connection:
+                    self.assertEqual(
+                        before_markers,
+                        connection.execute(
+                            "SELECT component, version FROM schema_version ORDER BY component"
+                        ).fetchall(),
+                    )
+                    self.assertEqual(
+                        before_tables,
+                        [
+                            row[0]
+                            for row in connection.execute(
+                                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                            ).fetchall()
+                        ],
+                    )
 
     def test_scheduler_tick_starts_without_active(self) -> None:
         """With a valid management-only bootstrap, the resident Scheduler and

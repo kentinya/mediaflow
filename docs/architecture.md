@@ -947,9 +947,11 @@ previous Active remains available when replacement fails.
 
 A previous supported store that still reports configuration schema 11 may contain unpublished
 revisions from the retired draft lifecycle when its runtime schema is absent or already current.
-The current build reads that scope through a read-only connection and refuses Web/API startup until
-an operator reviews the listed revisions, evidence and admitted Task pins and applies `config
-retire-unpublished --confirm`. That switch retires only the unpublished rows and advances the marker
+The current build reads that scope through a read-only connection and refuses every ordinary
+service start — Web/API, Worker, Scheduler, Notification Worker and the container preflight —
+until an operator reviews the listed revisions, evidence and admitted Task pins and applies `config
+retire-unpublished --confirm`. The read-only `config status` review and the confirmed switch stay
+their own entrances. That switch retires only the unpublished rows and advances the marker
 in one transaction; published snapshots, audits, Task pins and results are untouched. The
 configuration-only layout is unchanged across versions, so creation records a `store_origin` marker
 with the creating runtime schema; a configuration-only store without the current marker is refused

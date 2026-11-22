@@ -204,6 +204,21 @@ def _table_names(connection: sqlite3.Connection) -> frozenset[str]:
     )
 
 
+def reject_pending_configuration_switch(database_path: str | Path) -> None:
+    """Stop an ordinary service start while the explicit switch is pending.
+
+    Deployment preflight and resident-service startup call this before any
+    runtime repository opens the file.  The read is strictly read-only, so the
+    operator still gets the exact scope and the two existing formal entrances
+    keep their own behaviour: ``config status`` reviews without writing and
+    ``config retire-unpublished --confirm`` applies the atomic switch.
+    """
+
+    scope = read_configuration_data_switch(database_path)
+    if scope is not None:
+        raise ConfigurationDataSwitchRequired(scope)
+
+
 def read_configuration_data_switch(
     database_path: str | Path,
 ) -> ConfigurationDataSwitchScope | None:

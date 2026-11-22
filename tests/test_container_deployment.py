@@ -37,6 +37,7 @@ from scripts.make_deployment_config import (
     make_deployment_configuration,
     make_management_bootstrap,
 )
+from tests.managed_config_fixture import seed_configuration_schema_11_store
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -538,6 +539,148 @@ class ContainerPreflightTests(unittest.TestCase):
                         "SELECT component, version FROM schema_version ORDER BY component"
                     ).fetchall(),
                 )
+
+    def test_pending_configuration_data_switch_is_refused_before_services_start(self) -> None:
+        """A draft-era store is not adopted by an ordinary service start.
+
+        A previous build's ``config draft-import`` left configuration schema 11
+        with unpublished rows and no current store origin marker.  The four
+        service commands must stop in preflight, before the runtime repository
+        can add a runtime schema/origin marker, while ``config status`` and the
+        explicit confirmed switch remain their own read-only/mutating entrances.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "data"
+            data.mkdir()
+            database = data / "mediaflow.sqlite3"
+            document = json.loads(
+                (ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8")
+            )
+            document["persistence"] = {"databasePath": str(database)}
+            active, unpublished = seed_configuration_schema_11_store(document)
+            bootstrap = root / "mediaflow.json"
+            bootstrap.write_text(
+                json.dumps(make_management_bootstrap(database_path=str(database))),
+                encoding="utf-8",
+            )
+            before_hash = hashlib.sha256(database.read_bytes()).hexdigest()
+            with closing(sqlite3.connect(database)) as connection:
+                before_markers = connection.execute(
+                    "SELECT component, version FROM schema_version ORDER BY component"
+                ).fetchall()
+            self.assertEqual(
+                [("configuration_management", 11)],
+                before_markers,
+            )
+
+            for command in (
+                ("api", "serve-production"),
+                ("worker", "run"),
+                ("scheduler", "run"),
+                ("notification-worker", "run"),
+            ):
+                with self.subTest(command=command):
+                    errors = container_preflight_errors(
+                        str(bootstrap),
+                        str(data),
+                        environ={},
+                        command=command,
+                    )
+                    joined = "\n".join(errors)
+                    self.assertIn("configuration data switch is pending", joined)
+                    self.assertIn(unpublished.revision_id, joined)
+                    self.assertIn("config status", joined)
+                    self.assertIn("retire-unpublished --confirm", joined)
+                    self.assertEqual(
+                        before_hash, hashlib.sha256(database.read_bytes()).hexdigest(), command
+                    )
+                    with closing(sqlite3.connect(database)) as connection:
+                        self.assertEqual(
+                            before_markers,
+                            connection.execute(
+                                "SELECT component, version FROM schema_version ORDER BY component"
+                            ).fetchall(),
+                        )
+
+            # The configuration-management entrances keep their own authority:
+            # preflight does not turn the read-only review or the confirmed
+            # switch into a startup refusal.
+            self.assertEqual(
+                [],
+                container_preflight_errors(
+                    str(bootstrap),
+                    str(data),
+                    environ={},
+                    command=("config", "status"),
+                ),
+            )
+            output, error = io.StringIO(), io.StringIO()
+            status = final_main(
+                ["--config", str(bootstrap), "config", "status"],
+                stdout=output,
+                stderr=error,
+            )
+            self.assertEqual(0, status, error.getvalue())
+            self.assertEqual("DATA_SWITCH_REQUIRED", json.loads(output.getvalue())["health"])
+            self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
+
+            # Apply the documented switch to an isolated copy, then prove an
+            # ordinary service start accepts the rewritten store and reads the
+            # published Active that was preserved.
+            switch_data = root / "switch-data"
+            shutil.copytree(data, switch_data)
+            switch_database = switch_data / "mediaflow.sqlite3"
+            switch_bootstrap = root / "switch-mediaflow.json"
+            switch_bootstrap.write_text(
+                json.dumps(make_management_bootstrap(database_path=str(switch_database))),
+                encoding="utf-8",
+            )
+            output, error = io.StringIO(), io.StringIO()
+            status = final_main(
+                [
+                    "--config",
+                    str(switch_bootstrap),
+                    "config",
+                    "retire-unpublished",
+                    "--confirm",
+                ],
+                stdout=output,
+                stderr=error,
+            )
+            self.assertEqual(0, status, error.getvalue())
+            switched = json.loads(output.getvalue())
+            self.assertTrue(switched["switched"])
+            self.assertEqual(CONFIGURATION_SCHEMA_VERSION, switched["configurationSchemaVersion"])
+            self.assertEqual(active.revision_id, switched["active"]["revisionId"])
+            self.assertEqual("active", switched["active"]["status"])
+            for command in (
+                ("api", "serve-production"),
+                ("worker", "run"),
+                ("scheduler", "run"),
+                ("notification-worker", "run"),
+            ):
+                with self.subTest(switched_command=command):
+                    self.assertEqual(
+                        [],
+                        container_preflight_errors(
+                            str(switch_bootstrap),
+                            str(switch_data),
+                            environ={},
+                            command=command,
+                        ),
+                    )
+            output, error = io.StringIO(), io.StringIO()
+            status = final_main(
+                ["--config", str(switch_bootstrap), "config", "status"],
+                stdout=output,
+                stderr=error,
+            )
+            self.assertEqual(0, status, error.getvalue())
+            status_document = json.loads(output.getvalue())
+            self.assertEqual(active.revision_id, status_document["active"]["revisionId"])
+            self.assertEqual(active.digest, status_document["active"]["digest"])
 
     def test_current_configuration_only_store_reads_active_before_accounts_survive_restart(
         self,

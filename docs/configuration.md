@@ -143,8 +143,10 @@ this version records that marker. This build does not retire unpublished rows wh
 database. `config status`
 reads that file through a read-only connection and reports `DATA_SWITCH_REQUIRED` with the exact
 affected revision IDs, evidence per revision, affected audit rows and any admitted Task that pins
-one of them. Web/API startup and `config initialize`/`config publish` refuse to open the store,
-naming the same affected revision IDs, until the switch is applied.
+one of them. Every ordinary service start (Web/API, Worker, Scheduler and Notification Worker) and
+the container preflight refuse to open the store, naming the same affected revision IDs, until the
+switch is applied. `config initialize`/`config publish` keep their own refusal, while `config
+status` stays read-only and `config retire-unpublished --confirm` is the only switch entrance.
 
 Review the reported scope, then apply it explicitly. Without `--confirm` the command only prints
 the same scope and changes nothing:
