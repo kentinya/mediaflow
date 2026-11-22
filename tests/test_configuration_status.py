@@ -19,6 +19,7 @@ from mediaflow.infrastructure.runtime_configuration import (
     StorageDefinition,
     load_runtime_configuration,
 )
+from mediaflow.infrastructure.sqlite_configuration_schema import CONFIGURATION_SCHEMA_VERSION
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.managed_config_fixture import publish_managed_document
@@ -340,6 +341,7 @@ class RetiredDatabaseStartupTests(unittest.TestCase):
                     [
                         ("configuration_management", CONFIGURATION_SCHEMA_VERSION),
                         ("runtime", SCHEMA_VERSION),
+                        ("store_origin", SCHEMA_VERSION),
                     ],
                     connection.execute(
                         "SELECT component, version FROM schema_version ORDER BY component"
@@ -394,6 +396,7 @@ class ConcurrentFirstInitializationTests(unittest.TestCase):
                     [
                         ("configuration_management", CONFIGURATION_SCHEMA_VERSION),
                         ("runtime", SCHEMA_VERSION),
+                        ("store_origin", SCHEMA_VERSION),
                     ],
                     connection.execute(
                         "SELECT component, version FROM schema_version ORDER BY component"
@@ -447,6 +450,9 @@ class ConfigurationDraftRetirementTests(unittest.TestCase):
             connection.execute(
                 "UPDATE schema_version SET version=11 WHERE component='configuration_management'"
             )
+            # The seeded store was written by this build; a real previous build
+            # at configuration schema 11 had no store origin marker.
+            connection.execute("DELETE FROM schema_version WHERE component='store_origin'")
             connection.commit()
         service.repository.close()
         return active, unpublished
@@ -589,6 +595,12 @@ class ConfigurationDraftRetirementTests(unittest.TestCase):
             self.assertEqual(result["active"]["digest"], active.digest)
             self.assertEqual(self._schema_version(database), 12)
             with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT version FROM schema_version WHERE component='store_origin'"
+                    ).fetchone()[0],
+                    SCHEMA_VERSION,
+                )
                 self.assertIsNone(
                     connection.execute(
                         "SELECT revision_id FROM managed_configuration_revisions "
@@ -849,6 +861,19 @@ class ConfigurationDraftRetirementTests(unittest.TestCase):
             published = json.loads(output)
             self.assertTrue(published["published"])
             self.assertEqual(status()["active"]["revisionId"], published["revisionId"])
+            # The first publication created the file and recorded this build's origin.
+            import sqlite3
+
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    [
+                        ("configuration_management", CONFIGURATION_SCHEMA_VERSION),
+                        ("store_origin", SCHEMA_VERSION),
+                    ],
+                    connection.execute(
+                        "SELECT component, version FROM schema_version ORDER BY component"
+                    ).fetchall(),
+                )
 
             # A corrupt/missing Active requires the explicit replacement flag.
             import sqlite3

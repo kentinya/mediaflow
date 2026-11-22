@@ -4,10 +4,10 @@
 
 ## Current V2 validation boundary
 
-当前公开入口为 Web `/` 和 API `/api/*`。当前支持全新初始化和同版本重开；启动只接受空库或本版本 runtime schema 创建的数据库，其他版本创建的库在启动前拒绝并保留原文件，部署者应使用新的空数据目录。通用跨版本升级与回滚、混合版本写入和旧任务迁移均在支持范围之外。Slice 56 的入口切换验证早于本版本的 runtime schema 变化，其 Base 数据仍作为历史验证记录，但不被当前版本作为可启动数据接受。
+当前公开入口为 Web `/` 和 API `/api/*`。当前支持全新初始化和同版本重开；启动只接受空库或本版本创建的数据库（包括本版本配置命令创建的仅配置库），其他版本创建的库在启动前拒绝并保留原文件，即使它只含当前编号的配置，部署者应使用新的空数据目录。通用跨版本升级与回滚、混合版本写入和旧任务迁移均在支持范围之外。Slice 56 的入口切换验证早于本版本的 runtime schema 变化，其 Base 数据仍作为历史验证记录，但不被当前版本作为可启动数据接受。
 
 - Slice 56 终审覆盖 Base `33c70735e0a8f45426dde614587ea3d43af94e9b` 至实施 `472759665a42a73d24910464e903382adeb37e56`。验证了原任务续用、生产 Web 构建、wheel 源码外安装和四服务 Compose。[A 终审](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed) · [B 验收](https://github.com/kentinya/mediaflow/blob/38f9b407a63509580a205209139ddc424ae54666/TASK.md#b-复核与-slice-56-交接)
-- 当前 runtime schema 只接受空库或本版本创建的数据库；上一版本生成的库在启动前被拒绝，文件字节保持不变。
+- 当前 runtime schema 只接受空库或本版本创建的数据库；上一版本生成的库在启动前被拒绝，文件字节保持不变。仅配置库同样要求本版本的 store origin 标记；上一版本配置命令生成的仅配置库不会被启动流程补建 runtime。
 - 更早的结果、适用范围和测试限制可从验收账本和固定文档版本查阅。[验收账本](progress.md#closure-ledger) · [既往验证记录](https://github.com/kentinya/mediaflow/blob/a9f3022ab061c8379adfeda7d464498345e13000/docs/release.md#earlier-v2-validation)
 
 ## Quality gate

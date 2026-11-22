@@ -31,6 +31,7 @@ from mediaflow.infrastructure.sqlite_applicability import DatabaseApplicabilityE
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
+from mediaflow.infrastructure.sqlite_configuration_schema import CONFIGURATION_SCHEMA_VERSION
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from scripts.make_deployment_config import (
     make_deployment_configuration,
@@ -422,6 +423,221 @@ class ContainerPreflightTests(unittest.TestCase):
                         "SELECT version FROM schema_version WHERE component='runtime'"
                     ).fetchone()[0],
                 )
+
+    def test_configuration_only_store_from_previous_version_is_refused_before_startup(self) -> None:
+        """A previous build's configuration-only store is never adopted or upgraded.
+
+        The configuration layout has not changed, so the previous build's
+        ``config initialize`` left the current configuration marker but no
+        ``store_origin`` record.  Startup must refuse that file before any
+        runtime table or marker is created and keep its bytes unchanged.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "data"
+            data.mkdir()
+            database = data / "mediaflow.sqlite3"
+            bootstrap = root / "mediaflow.json"
+            bootstrap.write_text(
+                json.dumps(make_management_bootstrap(database_path=str(database))),
+                encoding="utf-8",
+            )
+            output, error = io.StringIO(), io.StringIO()
+            code = final_main(
+                ["--config", str(bootstrap), "config", "initialize"],
+                stdout=output,
+                stderr=error,
+            )
+            self.assertEqual(0, code, error.getvalue())
+            # The previous build wrote the same configuration tables and marker
+            # but never the current build's creation record.
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute("DELETE FROM schema_version WHERE component='store_origin'")
+                connection.commit()
+            before_hash = hashlib.sha256(database.read_bytes()).hexdigest()
+            with closing(sqlite3.connect(database)) as connection:
+                before_tables = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                    ).fetchall()
+                ]
+                before_markers = connection.execute(
+                    "SELECT component, version FROM schema_version ORDER BY component"
+                ).fetchall()
+
+            errors = container_preflight_errors(
+                str(bootstrap),
+                str(data),
+                environ={},
+                command=("api", "serve-production"),
+            )
+            self.assertTrue(
+                any(
+                    "configuration-only database created by a previous MediaFlow version" in error
+                    for error in errors
+                ),
+                errors,
+            )
+            self.assertTrue(any("new empty data directory" in error for error in errors), errors)
+            self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
+
+            for arguments in (("config", "status"), ("config", "publish")):
+                command_error = io.StringIO()
+                status = final_main(
+                    ["--config", str(bootstrap), *arguments],
+                    stdout=io.StringIO(),
+                    stderr=command_error,
+                )
+                self.assertEqual(2, status, arguments)
+                self.assertIn("configuration-only database", command_error.getvalue())
+                self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
+
+            with self.assertRaises(DatabaseApplicabilityError) as refused:
+                SQLiteTaskRepository(database)
+            self.assertIn("configuration-only database", str(refused.exception))
+            self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
+
+            stderr = io.StringIO()
+            with patch(
+                "wsgiref.simple_server.make_server",
+                side_effect=AssertionError("a previous configuration-only store must not listen"),
+            ):
+                status = final_main(
+                    [
+                        "--config",
+                        str(bootstrap),
+                        "api",
+                        "serve",
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        "45678",
+                    ],
+                    stdout=io.StringIO(),
+                    stderr=stderr,
+                )
+            self.assertEqual(2, status)
+            self.assertIn("configuration-only database created by a previous", stderr.getvalue())
+            self.assertIn("new empty data directory", stderr.getvalue())
+            self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
+            with closing(sqlite3.connect(database)) as connection:
+                self.assertEqual(
+                    before_tables,
+                    [
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                        ).fetchall()
+                    ],
+                )
+                self.assertEqual(
+                    before_markers,
+                    connection.execute(
+                        "SELECT component, version FROM schema_version ORDER BY component"
+                    ).fetchall(),
+                )
+
+    def test_current_configuration_only_store_reads_active_before_accounts_survive_restart(
+        self,
+    ) -> None:
+        """This build's configuration-only store starts, becomes an account store and reopens."""
+
+        class Server:
+            app = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def serve_forever(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "data"
+            data.mkdir()
+            database = data / "mediaflow.sqlite3"
+            bootstrap = root / "mediaflow.json"
+            bootstrap.write_text(
+                json.dumps(make_management_bootstrap(database_path=str(database))),
+                encoding="utf-8",
+            )
+            output, error = io.StringIO(), io.StringIO()
+            code = final_main(
+                ["--config", str(bootstrap), "config", "initialize"],
+                stdout=output,
+                stderr=error,
+            )
+            self.assertEqual(0, code, error.getvalue())
+            initialized = json.loads(output.getvalue())
+            with closing(sqlite3.connect(database)) as connection:
+                self.assertEqual(
+                    [
+                        ("configuration_management", CONFIGURATION_SCHEMA_VERSION),
+                        ("store_origin", SCHEMA_VERSION),
+                    ],
+                    connection.execute(
+                        "SELECT component, version FROM schema_version ORDER BY component"
+                    ).fetchall(),
+                )
+            self.assertEqual(
+                [],
+                container_preflight_errors(
+                    str(bootstrap),
+                    str(data),
+                    environ={},
+                    command=("api", "serve-production"),
+                ),
+            )
+
+            server = Server()
+
+            def make_server(host, port, app):
+                server.app = app
+                return server
+
+            with patch("wsgiref.simple_server.make_server", side_effect=make_server):
+                code = final_main(
+                    [
+                        "--config",
+                        str(bootstrap),
+                        "api",
+                        "serve",
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        "45678",
+                    ],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+            self.assertEqual(0, code)
+            self.assertIsNotNone(server.app)
+            system_status = server.app._system_status.as_document()["system"]
+            self.assertTrue(system_status["configuration_valid"])
+
+            with SQLiteTaskRepository(database) as repository:
+                service = AccountService(repository)
+                setup_code, _ = service.issue_first_admin_code()
+                service.bootstrap(
+                    code=setup_code,
+                    username="admin",
+                    password="current-release-password",
+                    remember=False,
+                )
+
+            # Restart: both stores reopen without rewriting the origin or Active.
+            with SQLiteTaskRepository(database) as reopened:
+                self.assertEqual(SCHEMA_VERSION, reopened.schema_version)
+                self.assertEqual(1, reopened.count_accounts())
+            with SQLiteConfigurationRepository(database) as reopened:
+                stored = reopened.get_active_revision()
+                self.assertIsNotNone(stored)
+                self.assertEqual(initialized["revisionId"], stored.revision_id)
 
     def test_empty_and_current_version_stores_pass_startup_and_same_version_restart(self) -> None:
         """A fresh empty store and a current store with an account and Active survive restart."""

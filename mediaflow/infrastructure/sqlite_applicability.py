@@ -2,10 +2,13 @@
 
 The decision is read-only and runs before a repository creates a table, writes
 a schema marker or registers a publishing authority.  A current empty path, a
-zero-table SQLite file, a database created by the current runtime schema and a
-configuration-only first-setup database are supported.  A runtime database
-created by any other MediaFlow version, a retired V1 Job schema, a newer
-schema, a foreign file and a partially written store are not.
+zero-table SQLite file, and a database created by this build are supported.
+Creation records a ``store_origin`` marker with the creating runtime schema, so
+a configuration-only first-setup store is accepted only when this build wrote
+that marker.  A configuration-only store from an earlier build (its
+configuration marker can equal the current number), a runtime database created
+by any other MediaFlow version, a retired V1 Job schema, a newer schema, a
+foreign file and a partially written store are not.
 
 Repositories repeat the same decision on their own connection inside the
 ``BEGIN IMMEDIATE`` transaction that creates the current structure, so two
@@ -35,6 +38,13 @@ MIN_RUNTIME_SCHEMA_VERSION = 58
 #: only through the explicit operator-confirmed data switch.  Any older marker
 #: remains unsupported.
 MIN_CONFIGURATION_SCHEMA_VERSION = 11
+
+#: The marker a build writes when it first creates a database file, or when the
+#: explicit configuration data switch rewrites a supported previous store into
+#: the current layout.  Its value is the creating build's runtime schema.
+#: Configuration-only stores from earlier builds have no such marker even when
+#: their configuration marker already equals the current number.
+STORE_ORIGIN_COMPONENT = "store_origin"
 
 #: Tables that prove a pre-V2 database even when its runtime marker is absent.
 RETIRED_TABLE_NAMES = frozenset(
@@ -86,6 +96,7 @@ class DatabaseApplicabilityError(ValueError):
 class DatabaseMarkers:
     runtime_version: int | None
     configuration_version: int | None
+    origin_version: int | None
     tables: frozenset[str]
 
 
@@ -105,7 +116,7 @@ def read_database_markers_from_connection(
         raise DatabaseApplicabilityError("the file is not a readable SQLite database") from error
     tables = frozenset(str(row[0]) for row in rows)
     if "schema_version" not in tables:
-        return DatabaseMarkers(None, None, tables)
+        return DatabaseMarkers(None, None, None, tables)
     try:
         version_rows = connection.execute(
             "SELECT component, version FROM schema_version"
@@ -118,6 +129,7 @@ def read_database_markers_from_connection(
     return DatabaseMarkers(
         versions.get("runtime"),
         versions.get("configuration_management"),
+        versions.get(STORE_ORIGIN_COMPONENT),
         tables,
     )
 
@@ -127,7 +139,7 @@ def read_database_markers(database_path: str | Path) -> DatabaseMarkers:
 
     path = Path(database_path)
     if not path.exists() or path.stat().st_size == 0:
-        return DatabaseMarkers(None, None, frozenset())
+        return DatabaseMarkers(None, None, None, frozenset())
     try:
         connection = sqlite3.connect(
             path.resolve().as_uri() + "?mode=ro",
@@ -167,6 +179,32 @@ def evaluate_database_applicability(
     elif tables & RETIRED_TABLE_NAMES:
         raise DatabaseApplicabilityError(
             "it contains the retired V1 Job schema without a current runtime marker"
+        )
+    if markers.origin_version is not None:
+        if markers.origin_version > current_runtime_version:
+            raise DatabaseApplicabilityError(
+                "its store origin marker is newer than this MediaFlow version"
+            )
+        if markers.origin_version < current_runtime_version:
+            raise DatabaseApplicabilityError(
+                "its store origin marker was written by a previous MediaFlow version "
+                f"(found {markers.origin_version}, expected {current_runtime_version}); "
+                "this version only opens an empty database or one it created"
+            )
+    elif (
+        markers.runtime_version is None
+        and markers.configuration_version == current_configuration_version
+    ):
+        # The configuration-only layout has been unchanged across versions, so
+        # its marker alone cannot prove this build created the file.  Only a
+        # store that explicitly records this build's origin is a first-setup
+        # database; an earlier `config initialize`/`config publish` store has
+        # the same configuration marker but no origin marker.
+        raise DatabaseApplicabilityError(
+            "it is a configuration-only database created by a previous MediaFlow "
+            f"version (configuration schema {markers.configuration_version}, no store "
+            f"origin marker; expected origin {current_runtime_version}); this version "
+            "only opens an empty database or one it created"
         )
     if markers.configuration_version is not None:
         if markers.configuration_version > current_configuration_version:

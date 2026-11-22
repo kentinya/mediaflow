@@ -49,6 +49,7 @@ from mediaflow.infrastructure.configuration_data_switch import (
     read_configuration_data_switch,
 )
 from mediaflow.infrastructure.sqlite_applicability import (
+    STORE_ORIGIN_COMPONENT,
     assert_supported_database,
     evaluate_database_applicability,
     read_database_markers_from_connection,
@@ -2373,6 +2374,7 @@ class SQLiteConfigurationRepository:
             "INSERT INTO schema_version VALUES ('configuration_management', ?)",
             (CONFIGURATION_SCHEMA_VERSION,),
         )
+        self._record_store_origin_locked()
         self._insert_internal_key_locked()
 
     def _initialize_existing_configuration_locked(self) -> None:
@@ -2406,7 +2408,25 @@ class SQLiteConfigurationRepository:
                 "UPDATE schema_version SET version=? WHERE component='configuration_management'",
                 (CONFIGURATION_SCHEMA_VERSION,),
             )
+            # The explicit switch rewrites a supported previous store into the
+            # current layout.  Record this build as the store's origin so the
+            # documented post-switch startup remains available; an ordinary open
+            # of a previous configuration-only store never reaches this branch.
+            self._record_store_origin_locked()
         self._insert_internal_key_locked()
+
+    def _record_store_origin_locked(self) -> None:
+        """Declare that this build created or explicitly migrated the store.
+
+        The value is the creating runtime schema, so a later build refuses a
+        configuration-only store it did not create even though the
+        configuration marker has not changed.
+        """
+
+        self._connection.execute(
+            "INSERT OR IGNORE INTO schema_version VALUES (?, ?)",
+            (STORE_ORIGIN_COMPONENT, SCHEMA_VERSION),
+        )
 
     def _retire_unpublished_revisions_locked(self) -> None:
         """Switch a supported previous store to published-history-only structure.

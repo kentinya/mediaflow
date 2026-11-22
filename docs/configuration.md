@@ -137,7 +137,10 @@ A store that still reports configuration schema 11 may contain unpublished revis
 draft-only evidence from the retired draft lifecycle. This switch is available only while the
 store's runtime schema is absent or already current; a store that already contains another
 MediaFlow runtime schema is refused at startup and must be replaced with a new empty data
-directory. This build does not retire unpublished rows while opening the database. `config status`
+directory. A configuration-only store written by an earlier build at configuration schema 12 has no
+current store origin marker and is likewise refused; only `config initialize`/`config publish` from
+this version records that marker. This build does not retire unpublished rows while opening the
+database. `config status`
 reads that file through a read-only connection and reports `DATA_SWITCH_REQUIRED` with the exact
 affected revision IDs, evidence per revision, affected audit rows and any admitted Task that pins
 one of them. Web/API startup and `config initialize`/`config publish` refuse to open the store,
@@ -155,8 +158,9 @@ One transaction removes only the listed unpublished revisions, their revision-bo
 their lifecycle audits, then advances the configuration marker to 12. Published Active and
 Superseded revisions keep their IDs, digests, audits, Task pins and results. A Task pin to an
 affected revision blocks the switch and is named with its Task ID; an SQLite failure rolls the
-transaction back and leaves the previous store intact. Start or restart the services after a
-successful switch.
+transaction back and leaves the previous store intact. The same transaction also records this
+build's store origin marker, because it rewrites the supported previous store into the current
+layout. Start or restart the services after a successful switch.
 
 Web settings, business forms and `系统设置` → `高级配置` → `导入配置` share the same direct
 publication services. The import entry accepts either the complete configuration JSON or a
@@ -555,7 +559,8 @@ and notification data retain their identities, relationships and digests. Existi
 pins, results and audit history. Completed or uncertain effects retain their recorded outcomes.
 For configuration schema 11 in a store whose runtime schema is absent or current, use the
 [explicit data switch](#previous-store-data-switch) before starting the current version. A store
-that already contains another MediaFlow runtime schema is refused at startup before any table is
+that already contains another MediaFlow runtime schema, or a configuration-only store created by an
+earlier build without the current store origin marker, is refused at startup before any table is
 created or rewritten. The [deployment boundary](deployment.md#boundary) and
 [release validation](release.md#current-v2-validation-boundary) describe supported recovery.
 

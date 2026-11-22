@@ -242,6 +242,7 @@ from mediaflow.domain.task_scheduling import (
 )
 from mediaflow.infrastructure.sqlite_applicability import (
     CONFIGURATION_TABLES,
+    STORE_ORIGIN_COMPONENT,
     assert_supported_database,
     evaluate_database_applicability,
     read_database_markers_from_connection,
@@ -19942,6 +19943,10 @@ class SQLiteTaskRepository:
         self._connection.execute(_TASK_SCHEDULING_CAPACITY_INDEX)
         self._connection.execute(_TASK_INITIAL_EXECUTIONS_CREATE)
         execute_script(self._connection, _ACCOUNT_TABLES_CREATE)
+        self._connection.execute(
+            "INSERT OR IGNORE INTO schema_version VALUES (?, ?)",
+            (STORE_ORIGIN_COMPONENT, SCHEMA_VERSION),
+        )
         self._advance_runtime_schema_marker()
 
     def _initialize_existing_runtime_locked(self) -> None:
