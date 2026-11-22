@@ -1,8 +1,8 @@
 # Task 58.1 — 切换正式部署和主机恢复入口
 
-Next Action: DEVELOPER COMPLETES THE OFFLINE RECOVERY GUIDE FOR TASK 58.1
+Next Action: B INDEPENDENT REVIEW AND ACCEPTANCE OF TASK 58.1 OFFLINE RECOVERY GUIDE
 
-用户已授权实施 Task 58.1。Developer 开始本轮返工时将状态改为 `IN PROGRESS`。
+用户已授权实施 Task 58.1。Developer 返工已完成，状态为 `READY FOR B REVIEW`。
 用户授权 A 代 B 规划首个 Task，角色例外限于首个 Task 的规划。B 独立验收，A 按工作流终审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -10,7 +10,7 @@ Next Action: DEVELOPER COMPLETES THE OFFLINE RECOVERY GUIDE FOR TASK 58.1
 Task ID: 58.1
 Task Type: SLICE
 Parent Slice: 58
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
 Difficulty: High
 Test Level: T4
@@ -305,6 +305,63 @@ Next: SAME TASK FIX LOOP
 
 证据在 `.git/validation-evidence/9f4e526ac7b8eb7a5f71b926a4d82e6c71b07d87/b-review/`。
 Slice 58 仍需完成通用业务 CLI、专属任务路径和 schema 11 切换退役，并验收 Base 合法任务续作。
+
+## Developer fix handoff — Task 58.1 offline recovery guide
+
+```text
+Fix Implementation Head: 58daac8478d868c94df81f9c9663c20eeb6401fb
+Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
+Reviewed Candidate: 9f4e526ac7b8eb7a5f71b926a4d82e6c71b07d87
+Candidate state: READY FOR B REVIEW
+```
+
+### 本轮改动
+
+- 重写 [离线恢复步骤](docs/release.md#offline-restore-procedure)，分成源码安装和 Compose 两条
+  可从停机状态接续的实际流程。两者都先记录原库摘要，再备份、校验，生成指向同一数据目录／
+  卷内新文件的 bootstrap，恢复到新文件，重新核对原库摘要，最后只启动 API 读回。原库、旁路
+  文件和原备份始终保留。
+- 源码流程在新终端显式导出 README 使用的 `.venv`、`MEDIAFLOW_CONFIG` 和
+  `MEDIAFLOW_DATA_DIR`；备份、校验、`config/mediaflow.restore.json` 生成、恢复和单独启动
+  API 都使用同一组部署变量。目标示例为
+  `$MEDIAFLOW_DATA_DIR/mediaflow-restored.sqlite3`。
+- Compose 流程从默认 `/data/mediaflow.sqlite3` 和 `/data/runtime-backup.sqlite3` 接续，用
+  `scripts/make_deployment_config.py --database-path /data/mediaflow-restored.sqlite3` 生成
+  `config/mediaflow.restore.json`，再用 `MEDIAFLOW_CONFIG_FILE` 让一次性恢复容器和仅启动的
+  API 挂载新 bootstrap。说明后续 Compose 命令必须继续使用该变量或写入项目 `.env`，否则会
+  重新打开原库；启用后台前仍要核对文件效果和待处理任务。
+- [部署指南](docs/deployment.md#backup-and-same-version-recovery) 不再列出会覆盖现有库的恢复
+  命令，改为保留备份步骤并链接到唯一的离线恢复步骤；README 的源码段落补充同一变量和“新文件、
+  保留原库”的说明。
+
+### 实际验证
+
+- 源码安装（新维护终端、隔离配置／数据目录、仓库 `.venv`）：按文档命令验证原库
+  `fa5da657...`，生成并验证备份 `4fe41eaf...`，用新 bootstrap 恢复出新库 `4fe41eaf...`；
+  恢复输出 `Source SHA-256 ... (unchanged)`，恢复后原库摘要仍为 `fa5da657...`。仅用新
+  bootstrap 启动 API 后 `/health` 为 `firstAdministratorRequired: false`，原管理员 `admin`
+  登录返回 200，`/api/auth/session` 返回同一 accountId。
+- Compose（隔离项目、候选镜像 `mediaflow:b-task581-9f4e526a` / `68ff7c437891`、无宿主
+  MediaFlow Python 包）：默认库摘要 `0e8a0e10...` 在备份和恢复前后不变；备份与恢复目标摘要
+  均为 `cd79113f...`，恢复输出的源摘要未变。仅用 `MEDIAFLOW_CONFIG_FILE` 启动 API 后
+  `/health` 为 `firstAdministratorRequired: false`，原管理员登录返回 200 并读回同一 accountId；
+  再用同一 bootstrap 启动四个服务，API 健康且四服务运行。隔离项目、网络和卷已清理。
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_container_deployment test_container_probe test_api_credentials test_runtime_lease test_sqlite_backup test_sqlite_restore`：65 项通过。
+- `npm --prefix web run test -- run src/features/entry/EntryPage.test.tsx`：17 项通过。
+- `.venv/bin/ruff format --check .`、`.venv/bin/ruff check .`、`git diff --check`、
+  `python3 scripts/check_governance.py` 通过。
+
+证据在 `.git/validation-evidence/58daac8478d868c94df81f9c9663c20eeb6401fb/developer-fix/`，
+含源码和 Compose 的命令输出、原库／备份／恢复目标摘要、健康状态及登录会话记录。
+
+### 剩余风险与待 B 验收
+
+- 本轮只改文档，未改运行时代码；Compose 实测使用已由 B 在 `9f4e526a` 复核的候选镜像，文档
+  提交本身不改变镜像内容。B 仍需用最终候选重新构建／打标镜像并执行本 Task 的 T4 门禁。
+- Developer 的 API 读回使用真实 HTTP 登录和会话，不替代 B 的真实浏览器 E2E；全量回归、精确
+  wheel 候选、发布安全检查和 Chrome 旅程仍按 Task 分工由 B 执行。
+- 全量测试未在本轮重跑；既有 `test_configuration_package_exchange` 失败仍是父版本可复现的
+  既有问题，未用跳过或弱断言掩盖。
 
 ## Latest accepted Task — PATCH-20261122-3
 
