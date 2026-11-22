@@ -1,6 +1,6 @@
 # Task 57.2 — 在系统设置签发、使用和吊销 API 令牌
 
-Next Action: AWAIT IMPLEMENTATION AUTHORIZATION FOR TASK57.2
+Next Action: DEVELOPER STARTS TASK57.2 IMPLEMENTATION
 
 ```text
 Task ID: 57.2
@@ -11,8 +11,10 @@ Task Base: c12cae6fe0226e7efe6850ac68e6581785fb87e3
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Implementation Authorization: PENDING USER AUTHORIZATION FOR TASK57.2
+Implementation Authorization: AUTHORIZED BY USER FOR TASK57.2
 ```
+
+用户已授权激活 Task 57.2。Developer 开始实施时将状态从 `PLANNED` 转为 `IN PROGRESS`。
 
 ## 目标与范围
 

@@ -8,7 +8,7 @@ Status: ACTIVE
 Base SHA: ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: TASK57.1 IMPLEMENTATION AUTHORIZED
+Development Authorization: TASK57.2 IMPLEMENTATION AUTHORIZED
 Risk: High
 Target Test Level: T4
 Next Action: SEE TASK.md
@@ -26,6 +26,8 @@ B 独立验收，A 独立终审。A 代 B 的角色例外限于首个 Task 的�
 用户授权 A 将产品范围调整为单管理员和分权限 API 令牌，并授权同步调整当前 Task。
 Task 57.1 的登录、恢复和部署证据仍按对应提交核对。后台停止改以自动化停用入口验收。
 Web 多用户管理延期，令牌管理继续作为本 Slice 的交付结果。
+
+Task 57.1 已由 B 验收通过。用户已授权实施 [Task 57.2](TASK.md)。
 
 规划基线为上面的 Base，规划前治理检查 PASS，工作区与暂存区干净。Slice 56 的关闭事实、
 原验收范围和验证证据见固定终审。配置草稿退役的 B PASS 见当前 Task 指针。
