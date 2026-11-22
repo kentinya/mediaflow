@@ -1,17 +1,9 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task PATCH-20261122-1 — 手动整理弹窗状态与排版修复
 
-Slice 57 **PASS / CLOSED**. Task 57.1（含 A57-01 修正）和 Task 57.2 均由 B 独立验收。
+Next Action: Developer 按本 Task 开始实施，完成受影响验证后交 B 独立审查。
 
-- 已关闭范围 `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab..5d2f215fb7afaceeae677877fdb4990fc6815077`。
-- B Closure Packet 保存在 `c20bfd1ef9d9752ffa02f76bf37cf735b819444d:TASK.md`。
-- [A Final Review](SLICE.md#a-final-review--pass--closed)
-
-Next Action: PATCH-20261122-1 已规划，等待实施授权。
-
-## 规划草案 — PATCH-20261122-1 — 手动整理弹窗状态与排版修复
-
-本节仅用于规划。用户授权对现有手动整理弹窗安排一个独立修复 Task，优先级为第一屏「准备中」→
-第三屏「整批复核」→ 第二屏「逐项复核」。[Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)
+用户明确要求激活本独立修复 Task。优先级为第一屏「准备中」→ 第三屏「整批复核」→ 第二屏「逐项复核」。
+`PLANNED` 表示已激活、待 Developer 开始。 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)
 
 ```text
 Task ID: PATCH-20261122-1
@@ -22,7 +14,7 @@ Task Base: 8ce6c2092c328a15c44493f51ae4690b15680960
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: PLANNING ONLY
+Implementation Authorization: USER AUTHORIZED
 ```
 
 ### 目标与调查基线
@@ -44,6 +36,9 @@ Implementation Authorization: PLANNING ONLY
   100 文件样本中，90 条入选记录的窄屏首屏只读得完一条，未纳入的 10 条及确认受阻原因在下方。
   该样本的后端返回方案失效，确认关闭，观察结果用于验收信息位置与排版。[整批复核](web/src/features/operations/ManualOrganizeDialog.tsx#L2308)
 - **第二屏**把来源和目标合成一个文本块，完整路径换行时难以区分起止。[来源与目标](web/src/features/operations/ManualOrganizeDialog.tsx#L1953)
+
+激活前 `main` 指向规划提交 `44349174a2569a1bbe236279e3623b065316eecc`，工作区与暂存区干净，
+治理检查通过。Base 至激活前仅有规划文档变更。 [Slice 57 终审](SLICE.md#a-final-review--pass--closed)
 
 ### 实施顺序
 
