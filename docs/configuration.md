@@ -133,20 +133,13 @@ labels the audit record for `initialize` and `publish`. The retired `draft-impor
 
 ### Previous-store data switch
 
-A store that still reports configuration schema 11 may contain unpublished revisions and their
-draft-only evidence from the retired draft lifecycle. This switch is available only while the
-store's runtime schema is absent or already current; a store that already contains another
-MediaFlow runtime schema is refused at startup and must be replaced with a new empty data
-directory. A configuration-only store written by an earlier build at configuration schema 12 has no
-current store origin marker and is likewise refused; only `config initialize`/`config publish` from
-this version records that marker. This build does not retire unpublished rows while opening the
-database. `config status`
-reads that file through a read-only connection and reports `DATA_SWITCH_REQUIRED` with the exact
-affected revision IDs, evidence per revision, affected audit rows and any admitted Task that pins
-one of them. Every ordinary service start (Web/API, Worker, Scheduler and Notification Worker) and
-the container preflight refuse to open the store, naming the same affected revision IDs, until the
-switch is applied. `config initialize`/`config publish` keep their own refusal, while `config
-status` stays read-only and `config retire-unpublished --confirm` is the only switch entrance.
+The explicit switch applies to eligible configuration schema 11 stores. Eligibility requires an
+absent or current runtime schema and a successful database applicability check. Run `config status`
+to review the affected unpublished revisions, revision-bound evidence, audit rows and any admitted
+Tasks that pin those revisions. On `DATA_SWITCH_REQUIRED`, ordinary service startup, container
+preflight and configuration publication stop until the switch is applied. If preflight rejects the
+database as unsupported, keep it and use a new empty data directory or a supported same-version
+backup. [Deployment boundary](deployment.md#boundary)
 
 Review the reported scope, then apply it explicitly. Without `--confirm` the command only prints
 the same scope and changes nothing:
@@ -513,16 +506,18 @@ evidence remains scoped to explicit work. No independent Scan or Preview product
 Scripts that need the same API outside a browser session use a scoped token from
 **系统设置 → API 令牌**. The default is read-only for 90 days; the analysis option adds
 `SUBMIT_DRY_RUN` for the existing organize preparation/analysis entries. The plaintext is shown
-once, and each token has an independent expiry and revocation status. Token issuance,
-expiration and revocation reject missing, stale or insufficient credentials with `401`/`403` as
-appropriate; see the runnable `curl` example in [Deployment](deployment.md#script-api-tokens).
+once, and each token has an independent expiry and revocation status. Token management requires
+the administrator's Web session. Business requests with missing, expired or revoked credentials
+receive `401`. A valid credential without the required permission receives `403`.
+[Script API example](deployment.md#script-api-tokens)
 
 ## Secret boundary
 
 Normal configuration stores secret references such as `tokenEnv`, `passwordEnv` or `secretEnv`, not
-secret values. Resolved values are read from the process environment only at the adapter or
-authentication boundary. Redaction applies to configuration projections, audits, evidence, results,
-logs, errors and Web responses. Authorization headers, cookies, tokens, passwords, API keys and
+secret values. The relevant service resolves external credentials from its process environment.
+MediaFlow sign-in and API token verification use the runtime database. Redaction applies to
+configuration projections, audits, evidence, results, logs, errors and Web responses.
+Authorization headers, cookies, tokens, passwords, API keys and
 private endpoint credentials must not appear in SQLite evidence, Git, fixtures or test output.
 Issued API tokens persist only their stable identity, scope, times, revocation state and a SHA-256
 digest of the secret; browser storage holds neither the plaintext nor the digest.
@@ -569,16 +564,14 @@ Do not infer a feature or permission to rebuild user data from an old schema num
 Published V2 configurations and the supported Storage, library, rules, system settings, Automation
 and notification data retain their identities, relationships and digests. Existing Tasks keep their
 pins, results and audit history. Completed or uncertain effects retain their recorded outcomes.
-For configuration schema 11 in a store whose runtime schema is absent or current, use the
-[explicit data switch](#previous-store-data-switch) before starting the current version. A store
-that already contains another MediaFlow runtime schema, or a configuration-only store created by an
-earlier build without the current store origin marker, is refused at startup before any table is
-created or rewritten. The [deployment boundary](deployment.md#boundary) and
-[release validation](release.md#current-v2-validation-boundary) describe supported recovery.
+For an eligible configuration schema 11 store, follow the explicit data switch if `config status`
+reports `DATA_SWITCH_REQUIRED`. Preflight refuses another runtime schema and a previous
+configuration-only store at the current configuration schema without the required origin marker.
+[Explicit data switch](#previous-store-data-switch) · [Deployment boundary](deployment.md#boundary)
 
 ## Current limitations
 
-Provider switching/new Providers, built-in users/sessions/OIDC, general Secret Store/Docker Secrets,
+Provider switching/new Providers, Web multi-user administration, OIDC, general Secret Store/Docker Secrets,
 automatic uncertain replay and historical rollback remain outside the accepted baseline. No arbitrary
 host paths or mutation-based capability probes. Native Settings, Rules and Slice43's Automation
 workspace are delivered on the sole current V2 Web surface. Task Center is organizing-only with

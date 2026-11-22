@@ -1009,9 +1009,10 @@ cannot be fabricated as passed; applicable stale/failed evidence still blocks at
 Native `/configuration` owns explicit empty initialization, checked full-document publication,
 labelled Active JSON, portable secret-free export and schema/field-allowlisted editing for supported
 fields absent elsewhere. Read/navigation creates no candidate or work. JSON defaults to
-runtime-consumed Active, never cache or a historical substitute. Database locator and principal/role/token authority stay deployment
-owned and cannot be changed by managed edits or imported portable configuration. Export excludes
-that authority while retaining all portable supported settings and safe secret references. Existing
+runtime-consumed Active, never cache or a historical substitute. The database locator belongs
+to deployment. The runtime database owns the administrator, sessions and issued tokens.
+Business configuration edits and imports cannot change these authorities. Export retains
+portable business settings and safe secret references. Existing
 published snapshot identities remain verifiable; this is no permission to rewrite historical pins.
 
 All three resident services initialize their process/infrastructure boundary independently of media
@@ -1702,7 +1703,7 @@ intent; unreferenced Storage changes do not expand it. Effective context include
 source ResourceLibrary, strategy graph, destination libraries and referenced Storage configurations.
 Legacy activation audit supplies its actual actor, never a fabricated administrator. Local CLI
 publication records the invoking OS uid; `--actor` cannot impersonate remote authority. Workers
-require that same trusted uid or the real configured principal's current capability.
+require that same trusted uid or the publishing administrator's current capability.
 
 The existing Scheduler checks current authority before normal due admission; enable itself admits
 nothing. Tasks keep immutable revision/definition/scope pins. Worker/Executor checks current permission
@@ -2071,9 +2072,10 @@ new providers, stream inspection or FFmpeg/FFprobe are introduced.
 
 ### V1.x/V2 deferrals
 
-Provider switching and additional production providers, built-in users/sessions/OIDC, general Secret
-Store/Docker Secrets integration, automatic uncertain-mutation replay, historical rollback and
-specialized notification channels remain outside the V1 architecture above.
+The V1 baseline deferred Provider switching, additional production providers, built-in accounts and
+sessions, OIDC, general Secret Store/Docker Secrets integration, automatic uncertain-mutation
+replay, historical rollback and specialized notification channels. Slice57 updates the V2 account
+and session boundary. [Current V2 authentication](#current--single-web-administrator-and-scoped-api-tokens-slice57-pass--closed)
 
 ## UI-V2 Files and Manual Organize authority update — 2026-09-13
 

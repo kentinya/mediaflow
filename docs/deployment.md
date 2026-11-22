@@ -8,15 +8,13 @@ installation, health, restart, backup, restore and failure-recovery procedures.
 ## Boundary
 
 - The current `main` deployment supports fresh initialization and same-version
-  reopen/restart. Startup accepts only an empty database or one created by this
-  version, including a configuration-only store written by this version's
-  `config initialize`/`config publish`. A database created by another MediaFlow
-  version is refused before tables are created or rewritten, even when it only
-  holds configuration at the current configuration schema number: the creating
-  version did not record this build's store origin marker. Keep the original
-  file and start a fresh deployment with a new empty data directory. Slice 56
-  verified the route cutover against data from its Base before this Slice's
-  runtime schema change. See [Release](release.md#current-v2-validation-boundary).
+  reopen/restart. Ordinary startup accepts an empty database or a supported
+  same-version store, including a configuration-only store written by this
+  version's `config initialize`/`config publish`. For a database rejected as
+  unsupported, keep the original file and start with a new empty data directory.
+  The explicit schema 11 configuration switch is available for eligible stores
+  that pass the applicability check and report `DATA_SWITCH_REQUIRED`.
+  [Database maintenance](#backup-and-same-version-recovery) · [Release](release.md#current-v2-validation-boundary)
 - One image runs the installed `mediaflow` package. The image runs as UID/GID
   `10001:10001` by default and never needs root.
 - `compose.yaml` defines exactly `api`, `worker`, `scheduler`, and
@@ -44,17 +42,8 @@ installation, health, restart, backup, restore and failure-recovery procedures.
 - Deployment secrets are values in a host-owned environment file mounted at
   `/run/mediaflow/deployment.env`. Compose source and rendered Compose output
   contain only the file path and variable references, never secret values.
-- Supported V2 published configurations, business objects, Task/request/result/audit rows and
-  original pins retain their IDs, relationships, digests and target semantics within one
-  runtime schema. Completed or uncertain effects retain their original outcomes. A database
-  that already contains another runtime schema, or a configuration-only store created by
-  another version (no current store origin marker), is refused at startup; only an empty
-  database or one created by this version is supported. Configuration schema 11 requires the
-  [explicit unpublished-revision data switch](configuration.md#previous-store-data-switch)
-  when the runtime schema is absent or current; every ordinary service start and the container
-  preflight refuse that store until the switch is applied. V1 and obsolete migration inputs
-  receive ordinary rejection or not-found behavior. Restore uses the same artifact version that
-  produced the supported backup.
+- Same-version reopen and restore retain the original published configurations, work, audit,
+  pins and recorded effects. Use the artifact version that created the backup.
 - The same image contains the built V2 static artifact at
   `/opt/mediaflow/web/dist`, bound to the running process through
   `MEDIAFLOW_UI_V2_ASSET_ROOT`. Node, npm and the frontend source tree exist
@@ -472,12 +461,13 @@ the repository creates or rewrites any table; the file remains unchanged, even w
 configuration at the current schema number. Keep it for diagnosis or recovery with the version
 that created it, then use a new empty data directory for this version. General cross-version
 upgrade and rollback, mixed-version writers and old Task/Job migrations are deferred. See
-[Slice 56 A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed).
+[Current validation boundary](release.md#current-v2-validation-boundary).
 
-One configuration data switch is explicitly supported from configuration schema 11 to 12 for a
-store whose runtime schema is absent or already current. Stop the services and keep a verified
-backup, run `mediaflow config status` and review the listed unpublished revisions, evidence and
-Task pins, then run `mediaflow config retire-unpublished --confirm`. The switch is atomic: an
+The configuration switch from schema 11 to 12 applies to stores with an absent or current
+runtime schema that pass the applicability check and report `DATA_SWITCH_REQUIRED`.
+Stop the services and keep a verified backup. Run `mediaflow config status` and review the
+listed unpublished revisions, evidence and Task pins, then run
+`mediaflow config retire-unpublished --confirm`. The switch is atomic. An
 admitted Task pinning an unpublished revision or a database failure blocks it without changing the
 file. Start the services after it succeeds; the switch also records this build's store origin marker
 because it rewrites the supported previous store into the current layout. Other cross-version
@@ -643,9 +633,9 @@ pinned context; those are distinct signals, not hidden failures.
   matches this version. The original file is left unchanged; keep it for
   diagnosis or recovery with the version that created it. Do not edit the schema
   marker or delete the file.
-- **Pending configuration data switch:** a configuration schema 11 store that
-  still holds unpublished draft-era rows stops the container preflight and
-  every local resident service before any runtime table or marker is written.
+- **Pending configuration data switch.** For an eligible configuration schema 11
+  store, container preflight and local resident services stop before any runtime
+  table or marker is written.
   Review the exact scope with `mediaflow config status`, then apply
   `mediaflow config retire-unpublished --confirm`; the switch is atomic and
   preserves the published Active, Task pins and results. The original file is

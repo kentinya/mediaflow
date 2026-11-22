@@ -15,8 +15,7 @@ Slice57 is **PASS / CLOSED**. A selects the next large Slice.
 Fresh deployments set up one Web administrator with a host-issued code. The administrator signs in
 with a password and issues scoped integration tokens from System Settings. A57-01 was corrected and
 independently verified through the first setup and password change journeys.
-[A Final Review](../SLICE.md#a-final-review--pass--closed) · B Closure Packet
-`c20bfd1ef9d9752ffa02f76bf37cf735b819444d:TASK.md`.
+[Fixed A Final Review](https://github.com/kentinya/mediaflow/blob/f3b52c7ff188c502ef711fbc354ca40d90d5ac9e/SLICE.md#a-final-review--pass--closed) · [B Closure Packet](https://github.com/kentinya/mediaflow/blob/c20bfd1ef9d9752ffa02f76bf37cf735b819444d/TASK.md#b-复核与-slice-57-交接)
 
 ## Prior accepted closure — Slice56
 
@@ -28,8 +27,9 @@ test results and limits are in the [A Final Review](https://github.com/kentinya/
 
 V2 is the sole current Web product. The retirement covers V1 UI and migration handoffs, old schedules,
 tickets, independent grants, transports and obsolete formats. The current Task kernel, supported V2 data,
-original pins and unknown-request reconciliation remain available. The OpenList example follows checked
-Draft publication. Exact results and limits are in the [A Final Review](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed) and
+original pins and unknown-request reconciliation remain available. The accepted OpenList example used
+the Draft lifecycle at that checkpoint. It now follows checked direct publication.
+Exact results and limits are in the [A Final Review](https://github.com/kentinya/mediaflow/blob/f1a0b10e29ec6fdbdad67fd97345065113f45626/SLICE.md#a-final-review--pass--closed) and
 the B Closure Packet at `db079872dd348569d6f5f2e86682aaebf7e28325:TASK.md`.
 
 ## Prior accepted closure — Slice54

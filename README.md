@@ -85,7 +85,7 @@ export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
 | Web「系统设置」 | 初始化、检查和直接应用配置。运行服务读取已发布快照。 |
 | Web「存储」「文件」「媒体库」「整理规则」 | 配置输入、目标和整理方式。首次整理时可先用少量文件复核方案。 |
 
-Web 从 `/` 进入。API 使用 `/api/*`，`GET /health` 查看进程状态。[换址说明](docs/deployment.md#v2-frontend-artifact-and-serving)
+Web 从 `/` 登录，脚本使用分权限令牌访问 `/api/*`。`GET /health` 可查看进程和首次设置状态。[脚本令牌](docs/deployment.md#script-api-tokens) · [部署边界](docs/deployment.md#boundary)
 
 ## 📚 文档与开发
 
