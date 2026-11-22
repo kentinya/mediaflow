@@ -84,6 +84,41 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.1
 - 按[共享全量门禁](docs/development-workflow.md#shared-full-regression-commands)运行适用的
   T4 全量、生产打包与 wheel 验收。Developer 先交付受影响用例结果，B 用对应候选验收。
 
+### B 本轮复核 — FIX REQUIRED
+
+```text
+Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..0c55e8e17fe318692033af93a8a32e7192395a70
+Implementation: 3c7c7a1ff8fb77c1d8a16354c0e782261fab6ae0
+Decision: FIX REQUIRED
+Next: SAME TASK FIX LOOP
+```
+
+- **P1｜停用后重新启用，旧任务的执行记录丢失了停止原因。** 管理员在「自动化」启用计划，等任务入队，
+  再从「编辑」停用并保存。在 Worker 领取前重新启用并保存，随后打开「执行记录 → 查看详情」。
+  生产 Worker 在处理文件前停止了原任务，详情却显示「具体原因当前不可读」，并引导检查文件。
+  此时计划已启用，管理员只需等下次定时执行，旧任务会保留为已停止的记录。
+- 停用状态下领取原任务时，Worker 记录 `definition_disabled`。重新启用后领取时，Worker 从发布记录
+  查到中间的停用版本，使用 `scheduled_intent_stopped` 停止原任务。`3c7c7a1f` 的显示逻辑覆盖了
+  第一种记录，第二种回落到通用提示。
+
+#### Developer 修正指导
+
+1. 沿 `assert_schedule_continuity` 到 `automation_record_display` 的现有路径传递已确认的停用原因。
+   用已发布的停用版本确认原因，保留「无法确认发布记录」的原有语义。复用现有执行详情，说明这次任务
+   因停用而停止，按该次任务记录说明实际文件效果。计划已重新启用时，指引等待下一次定时执行，
+   并说明新一轮会单独受理，原任务留在执行记录中。
+2. 扩充现有 `automation-lifecycle.python.spec.ts` 的停用旅程。从编辑卡停用并保存，再在原任务领取前
+   重新启用并保存。验证真实 Worker 结束原任务、零新增文件效果、执行详情显示原因和下一步，
+   下一次 Scheduler 受理有独立身份的新任务。按本 Task 的 Developer 验证计划运行自动化相关用例。
+
+账号 Python 15 项及真实 Python 浏览器 5 项通过。生产 Web 构建、停用保持至 Worker 领取的定向浏览器
+用例通过。生产 Waitress 与真实 CLI 验证到期前停用零入队、入队后停用零文件效果、重新启用后新任务
+完成，及上述旧任务显示问题。T4、Compose 和 wheel 门禁留待修正候选。原始日志和截图位于本地
+`.git/validation-evidence/0c55e8e17fe318692033af93a8a32e7192395a70/b-review/`。
+
+Slice 57 的 RO-1 已有首位设置、登录恢复和改密重置证据。RO-3 仍需解决本轮执行记录问题并完成部署验收。
+RO-2 的 API 令牌签发、权限、吊销、轮换和定时计划独立性待后续 Task。
+
 ### Developer 本轮交付记录（READY FOR B REVIEW）
 
 - 实现候选：`3c7c7a1ff8fb77c1d8a16354c0e782261fab6ae0`（本轮起点 `adecce34`，Task Base
