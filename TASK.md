@@ -4,7 +4,7 @@
 Task ID: PATCH-20261122-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c714e0806620bb54701639a8776517ba5e1e9685
 Difficulty: Medium
 Test Level: T3
@@ -130,3 +130,48 @@ Task range: c714e0806620bb54701639a8776517ba5e1e9685..6bda4d4533cde0e6890c05a7f4
   390px 截图，也未用真实 Worker 覆盖后台从不可用到恢复的浏览器旅程。来源资源库仍显示准备记录中的
   库标识（既有模型未发布名称）；准备页在后台自动关联方案期间仍可能显示后端公布的分析恢复动作，
   该动作在 Task 阶段仍被持有时会得到上述可见拒绝，而不是静默失败。
+
+## B 复核 — FIX REQUIRED
+
+```text
+Reviewed Base: c714e0806620bb54701639a8776517ba5e1e9685
+Reviewed Implementation: 6bda4d4533cde0e6890c05a7f47315637463994f
+Reviewed Handoff Head: d83789e802ed8ab39ba6c0882b168695866d8797
+Decision: FIX REQUIRED
+Next: SAME TASK FIX LOOP
+```
+
+- 在「文件」选择一个视频并发起整理。后台正在生成首份方案时，弹窗给出「运行分析并生成计划摘要」。
+  点击后同一任务拒绝这次请求，后台继续原分析。正常等待多出了一次无效操作。
+- 在 390px 下从同一入口发起单文件整理。当后台已生成方案、浏览器仍在读取摘要时，来源和受理范围消失，
+  复核说明提前出现。首个文件要等同一份摘要读到后才出现。
+- 在「文件」选择只有文本文件的文件夹并发起整理。后台完成检查，找到 0 个主文件，未生成方案。
+  弹窗仍转圈，且提示条目会继续准备。用户等不到复核，也看不到应该返回文件页重新选择。
+
+### 开发指导
+
+1. 用同一个准备视图贯穿提交、读取准备、后台生成方案和读取首份摘要。以首份摘要成功读到作为进入逐文件
+   复核的切换点。摘要读取失败时，在原准备上下文里保留同一份摘要的重新读取入口。继续用已存方案承接
+   复核内重分析。
+2. 让准备页的分析动作反映同一 Task 当前能实际受理的操作。核对 `service_api.py` 的 `actions.prepare`
+   与 `_requeue_kernel_analysis` 使用的既有任务调度条件。后台正在生成首份方案时，保留等待和轮询。
+   确实需要人工恢复且具备权限时，保留原分析动作。后端继续负责权限、版本和受理判断。
+3. 文件夹检查结束且没有主文件时，显示「未找到可整理的主文件」，保留有用的排除原因，说明本次没有生成
+   方案或整理文件，给出关闭并返回原文件页重新选择的下一步。按既有检查结果显示，沿用现有任务与文件类型规则。
+
+### 本轮回归与判定依据
+
+- Developer 在既有 `manual-organize-dialog.python.spec.ts` 的 Files 旅程上验证三个结果。正常自动分析
+  期间只有等待，首份真实摘要延迟时继续保留紧凑等待视图，零主文件文件夹完成检查后结束等待并给出下一步。
+  用同一摘要读取入口验证失败后重新读取。确需人工恢复时验证同一任务仍可受理分析。
+  统计同一任务仅一次受理，进入复核前执行请求为零。
+  在 `web/` 运行 `npm run typecheck`、`npm run build`、
+  `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx`，以及
+  `npm run test:e2e -- --config playwright.python.config.ts manual-organize-dialog.python.spec.ts -g 'preparation|linked plan'`。
+  修改后端动作投影时，按原计划运行直接受影响的 Python 用例。
+- B 已核对全部 Base..Head。重新构建候选 Web 产物并运行 Worker 就绪与整理引擎测试，66 项通过。
+  真实 Chromium 中，部分未受理、点击分析得到拒绝、101 个主文件超限三个现有用例通过。其中分析用例
+  通过证明该按钮在自动准备时会被拒绝。另用真实 Files 入口验证桌面零主文件和 390px 摘要延迟，
+  两个定向复现均观察到上述结果。窄屏首跑未打开移动导航而超时，沿既有用例在 Files 打开弹窗后切到 390px
+  并完成复现。完整 T3 验收留待修正候选。
+- 本地日志和截图在 `.git/validation-evidence/6bda4d4533cde0e6890c05a7f47315637463994f/b-review/`。
