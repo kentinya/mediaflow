@@ -1950,10 +1950,12 @@ The browser holds no session secret: the server sets an HttpOnly session cookie,
 read-only response confirms the current account before the browser uses recovery hints that
 survive a page reload. The hints carry context only.
 
-The `api serve` HTTP listener uses `wsgiref.simple_server` and remains a development/trusted-loopback
-boundary. Production Compose uses the explicitly selected `api serve-production` command with the
-Waitress WSGI adapter. Neither path claims TLS termination, certificate management or public
-Internet exposure; host binding and reverse-proxy trust remain deployment boundaries.
+The fixed `python -m mediaflow.resident_entry api` entry serves through the Waitress WSGI adapter.
+The container entrypoint accepts only the four service names (`api`, `worker`, `scheduler`,
+`notification-worker`) or the bounded host-maintenance operations; there is no general command
+dispatcher, arbitrary executable forwarding or startup-argument override. Neither the entry nor the
+listener claims TLS termination, certificate management or public Internet exposure; host binding
+and reverse-proxy trust remain deployment boundaries.
 
 The resident processing Worker durably registers before claiming work, heartbeats while live,
 records clean stop, binds to an immutable runtime snapshot and uses Worker identity plus a per-claim

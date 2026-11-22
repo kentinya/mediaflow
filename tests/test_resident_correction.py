@@ -78,7 +78,7 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
         self.publish_successor(
             lambda document: document.__setitem__("webhooks", [original.document()])
         )
-        from mediaflow.final_cli import _resolve_resident_configuration
+        from mediaflow.resident_entry import _resolve_resident_configuration
 
         environment = patch.dict(os.environ, {original.secret_env: "fake"})
         environment.start()

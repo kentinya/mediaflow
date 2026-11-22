@@ -9,7 +9,7 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
-from contextlib import closing
+from contextlib import ExitStack, closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +22,7 @@ from mediaflow.container_entrypoint import (
     container_preflight_errors,
     load_environment_file,
 )
+from mediaflow.container_entrypoint import main as entrypoint_main
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import (
     is_minimal_management_bootstrap,
@@ -33,6 +34,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_configuration_schema import CONFIGURATION_SCHEMA_VERSION
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.resident_entry import main as resident_main
 from scripts.make_deployment_config import (
     make_deployment_configuration,
     make_management_bootstrap,
@@ -40,6 +42,32 @@ from scripts.make_deployment_config import (
 from tests.managed_config_fixture import seed_configuration_schema_11_store
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def run_service_entry(
+    config: Path,
+    data: Path,
+    service: str,
+    *,
+    skip_preflight: bool = False,
+    environment: dict[str, str] | None = None,
+):
+    """Run one fixed service entry against an isolated deployment."""
+
+    output, error = io.StringIO(), io.StringIO()
+    values = {
+        "MEDIAFLOW_CONFIG": str(config),
+        "MEDIAFLOW_DATA_DIR": str(data),
+    }
+    values.update(environment or {})
+    with ExitStack() as stack:
+        stack.enter_context(patch.dict(os.environ, values, clear=False))
+        if skip_preflight:
+            stack.enter_context(
+                patch("mediaflow.resident_entry.container_preflight_errors", return_value=[])
+            )
+        code = resident_main([service], stdout=output, stderr=error)
+    return code, output.getvalue(), error.getvalue()
 
 
 def compose_source_bind_mounts() -> dict[str, dict[str, str]]:
@@ -146,22 +174,14 @@ class ProductionWsgiCliTests(unittest.TestCase):
                     side_effect=AssertionError("production command must not use wsgiref"),
                 ),
             ):
-                status = final_main(
-                    [
-                        "--config",
-                        str(config),
-                        "api",
-                        "serve-production",
-                        "--host",
-                        "0.0.0.0",
-                        "--port",
-                        "8080",
-                        "--threads",
-                        "8",
-                    ],
-                    stdout=io.StringIO(),
-                    stderr=io.StringIO(),
+                status, _, error_text = run_service_entry(
+                    config,
+                    root,
+                    "api",
+                    skip_preflight=True,
+                    environment={"MEDIAFLOW_API_PORT": "8080", "MEDIAFLOW_API_THREADS": "8"},
                 )
+                self.assertIn("WARNING", error_text)
             self.assertEqual(status, 0)
             self.assertEqual(calls, [("0.0.0.0", 8080, 8)])
 
@@ -175,26 +195,89 @@ class ProductionWsgiCliTests(unittest.TestCase):
             config = root / "mediaflow.json"
             config.write_text(json.dumps(document), encoding="utf-8")
             with patch.dict(os.environ, {"MEDIAFLOW_API_TOKEN": "production-secret"}, clear=True):
-                for extra in (["--threads", "0"], ["--threads", "65"]):
+                for extra in (("MEDIAFLOW_API_THREADS", "0"), ("MEDIAFLOW_API_THREADS", "65")):
                     with self.subTest(extra=extra):
-                        error = io.StringIO()
-                        status = final_main(
-                            [
-                                "--config",
-                                str(config),
-                                "api",
-                                "serve-production",
-                                "--host",
-                                "127.0.0.1",
-                                "--port",
-                                "8080",
-                                *extra,
-                            ],
-                            stdout=io.StringIO(),
-                            stderr=error,
+                        name, value = extra
+                        status, _, text = run_service_entry(
+                            config,
+                            root,
+                            "api",
+                            skip_preflight=True,
+                            environment={name: value},
                         )
                         self.assertEqual(status, 2)
-                        self.assertIn("threads", error.getvalue())
+                        self.assertIn(name, text)
+
+
+class ContainerEntrypointTests(unittest.TestCase):
+    def test_valid_service_executes_only_the_fixed_resident_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, data, _ = ContainerPreflightTests._configuration(self, root)
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "MEDIAFLOW_CONFIG": str(config),
+                        "MEDIAFLOW_DATA_DIR": str(data),
+                        "MEDIAFLOW_COMMAND": "/bin/true",
+                    },
+                    clear=False,
+                ),
+                patch("mediaflow.container_entrypoint.os.execvpe") as execute,
+            ):
+                code = entrypoint_main(["worker"])
+        self.assertEqual(127, code)
+        executable, arguments, _ = execute.call_args.args
+        self.assertEqual(executable, os.sys.executable)
+        self.assertEqual(arguments, [os.sys.executable, "-m", "mediaflow.resident_entry", "worker"])
+
+    def test_invalid_services_retired_arguments_and_arbitrary_commands_are_rejected(self) -> None:
+        cases = (
+            [],
+            ["api", "serve-production", "--host", "0.0.0.0", "--port", "8080"],
+            ["worker", "run"],
+            ["scheduler", "tick"],
+            ["notification-worker", "run-next"],
+            ["host", "not-an-operation"],
+            ["python", "-m", "mediaflow.resident_entry", "api"],
+        )
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                with patch("mediaflow.container_entrypoint.os.execvpe") as execute:
+                    code = entrypoint_main(arguments)
+                self.assertEqual(1, code)
+                execute.assert_not_called()
+
+    def test_host_mode_executes_only_the_fixed_maintenance_entry(self) -> None:
+        with patch("mediaflow.container_entrypoint.os.execvpe") as execute:
+            code = entrypoint_main(["host", "verify", "/data/backup.sqlite3"])
+        self.assertEqual(127, code)
+        executable, arguments, _ = execute.call_args.args
+        self.assertEqual(executable, os.sys.executable)
+        self.assertEqual(
+            arguments,
+            [
+                os.sys.executable,
+                "-m",
+                "mediaflow.host_operations",
+                "verify",
+                "/data/backup.sqlite3",
+            ],
+        )
+
+    def test_general_cli_no_longer_dispatches_service_account_or_database_commands(self) -> None:
+        for command in (
+            ["api", "serve"],
+            ["worker", "run"],
+            ["scheduler", "tick"],
+            ["notification-worker", "run"],
+            ["accounts", "issue-setup-code"],
+            ["database", "backup", "--output", "/tmp/backup.sqlite3"],
+        ):
+            with self.subTest(command=command), self.assertRaises(SystemExit) as raised:
+                final_main(command, stdout=io.StringIO(), stderr=io.StringIO())
+            self.assertEqual(2, raised.exception.code)
 
 
 class ContainerPreflightTests(unittest.TestCase):
@@ -233,7 +316,7 @@ class ContainerPreflightTests(unittest.TestCase):
                     str(config),
                     str(data),
                     environ=environment,
-                    command=("api", "serve-production"),
+                    service="api",
                 ),
                 [],
             )
@@ -242,7 +325,7 @@ class ContainerPreflightTests(unittest.TestCase):
                 str(config),
                 str(data),
                 environ=environment,
-                command=("api", "serve-production"),
+                service="api",
             )
             self.assertTrue(any("media mount is missing" in error for error in errors))
 
@@ -288,7 +371,7 @@ class ContainerPreflightTests(unittest.TestCase):
                 str(config),
                 str(data),
                 environ={"MEDIAFLOW_API_TOKEN": "deployment-secret"},
-                command=("api", "serve-production"),
+                service="api",
             )
             self.assertTrue(any("api.principals is retired" in error for error in errors))
             self.assertTrue(
@@ -369,7 +452,7 @@ class ContainerPreflightTests(unittest.TestCase):
                 str(config),
                 str(data),
                 environ={},
-                command=("api", "serve-production"),
+                service="api",
             )
             self.assertTrue(any("previous MediaFlow version" in error for error in errors), errors)
             self.assertTrue(any("new empty data directory" in error for error in errors), errors)
@@ -385,28 +468,10 @@ class ContainerPreflightTests(unittest.TestCase):
             self.assertIn("previous MediaFlow version", str(refused_configuration.exception))
             self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
 
-            stderr = io.StringIO()
-            with patch(
-                "wsgiref.simple_server.make_server",
-                side_effect=AssertionError("an unsupported database must not start a listener"),
-            ):
-                status = final_main(
-                    [
-                        "--config",
-                        str(config),
-                        "api",
-                        "serve",
-                        "--host",
-                        "127.0.0.1",
-                        "--port",
-                        "45678",
-                    ],
-                    stdout=io.StringIO(),
-                    stderr=stderr,
-                )
-            self.assertEqual(2, status)
-            self.assertIn("previous MediaFlow version", stderr.getvalue())
-            self.assertIn("new empty data directory", stderr.getvalue())
+            status, _, stderr = run_service_entry(config, data, "api")
+            self.assertEqual(1, status)
+            self.assertIn("previous MediaFlow version", stderr)
+            self.assertIn("new empty data directory", stderr)
             self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
             with closing(sqlite3.connect(database)) as connection:
                 self.assertEqual(
@@ -472,7 +537,7 @@ class ContainerPreflightTests(unittest.TestCase):
                 str(bootstrap),
                 str(data),
                 environ={},
-                command=("api", "serve-production"),
+                service="api",
             )
             self.assertTrue(
                 any(
@@ -500,28 +565,10 @@ class ContainerPreflightTests(unittest.TestCase):
             self.assertIn("configuration-only database", str(refused.exception))
             self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
 
-            stderr = io.StringIO()
-            with patch(
-                "wsgiref.simple_server.make_server",
-                side_effect=AssertionError("a previous configuration-only store must not listen"),
-            ):
-                status = final_main(
-                    [
-                        "--config",
-                        str(bootstrap),
-                        "api",
-                        "serve",
-                        "--host",
-                        "127.0.0.1",
-                        "--port",
-                        "45678",
-                    ],
-                    stdout=io.StringIO(),
-                    stderr=stderr,
-                )
-            self.assertEqual(2, status)
-            self.assertIn("configuration-only database created by a previous", stderr.getvalue())
-            self.assertIn("new empty data directory", stderr.getvalue())
+            status, _, stderr = run_service_entry(bootstrap, data, "api")
+            self.assertEqual(1, status)
+            self.assertIn("configuration-only database created by a previous", stderr)
+            self.assertIn("new empty data directory", stderr)
             self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
             with closing(sqlite3.connect(database)) as connection:
                 self.assertEqual(
@@ -576,17 +623,17 @@ class ContainerPreflightTests(unittest.TestCase):
             )
 
             for command in (
-                ("api", "serve-production"),
-                ("worker", "run"),
-                ("scheduler", "run"),
-                ("notification-worker", "run"),
+                "api",
+                "worker",
+                "scheduler",
+                "notification-worker",
             ):
                 with self.subTest(command=command):
                     errors = container_preflight_errors(
                         str(bootstrap),
                         str(data),
                         environ={},
-                        command=command,
+                        service=command,
                     )
                     joined = "\n".join(errors)
                     self.assertIn("configuration data switch is pending", joined)
@@ -613,7 +660,7 @@ class ContainerPreflightTests(unittest.TestCase):
                     str(bootstrap),
                     str(data),
                     environ={},
-                    command=("config", "status"),
+                    service=None,
                 ),
             )
             output, error = io.StringIO(), io.StringIO()
@@ -656,10 +703,10 @@ class ContainerPreflightTests(unittest.TestCase):
             self.assertEqual(active.revision_id, switched["active"]["revisionId"])
             self.assertEqual("active", switched["active"]["status"])
             for command in (
-                ("api", "serve-production"),
-                ("worker", "run"),
-                ("scheduler", "run"),
-                ("notification-worker", "run"),
+                "api",
+                "worker",
+                "scheduler",
+                "notification-worker",
             ):
                 with self.subTest(switched_command=command):
                     self.assertEqual(
@@ -668,7 +715,7 @@ class ContainerPreflightTests(unittest.TestCase):
                             str(switch_bootstrap),
                             str(switch_data),
                             environ={},
-                            command=command,
+                            service=command,
                         ),
                     )
             output, error = io.StringIO(), io.StringIO()
@@ -733,32 +780,19 @@ class ContainerPreflightTests(unittest.TestCase):
                     str(bootstrap),
                     str(data),
                     environ={},
-                    command=("api", "serve-production"),
+                    service="api",
                 ),
             )
 
             server = Server()
 
-            def make_server(host, port, app):
+            def make_server(app, *, host, port, threads):
                 server.app = app
                 return server
 
-            with patch("wsgiref.simple_server.make_server", side_effect=make_server):
-                code = final_main(
-                    [
-                        "--config",
-                        str(bootstrap),
-                        "api",
-                        "serve",
-                        "--host",
-                        "127.0.0.1",
-                        "--port",
-                        "45678",
-                    ],
-                    stdout=io.StringIO(),
-                    stderr=io.StringIO(),
-                )
-            self.assertEqual(0, code)
+            with patch("mediaflow.production_wsgi.serve", side_effect=make_server):
+                code, _, error_text = run_service_entry(bootstrap, data, "api")
+            self.assertEqual(0, code, error_text)
             self.assertIsNotNone(server.app)
             system_status = server.app._system_status.as_document()["system"]
             self.assertTrue(system_status["configuration_valid"])
@@ -794,7 +828,7 @@ class ContainerPreflightTests(unittest.TestCase):
                     str(config),
                     str(data),
                     environ={},
-                    command=("api", "serve-production"),
+                    service="api",
                 ),
                 [],
             )
@@ -831,7 +865,7 @@ class ContainerPreflightTests(unittest.TestCase):
                     str(config),
                     str(data),
                     environ={},
-                    command=("api", "serve-production"),
+                    service="api",
                 ),
                 [],
             )
@@ -1190,10 +1224,10 @@ class ContainerArtifactTests(unittest.TestCase):
         services = document["services"]
         self.assertEqual(set(services), {"api", "worker", "scheduler", "notification-worker"})
         expected_commands = {
-            "api": ["api", "serve-production", "--host", "0.0.0.0", "--port", "8080"],
-            "worker": ["worker", "run"],
-            "scheduler": ["scheduler", "run"],
-            "notification-worker": ["notification-worker", "run"],
+            "api": ["api"],
+            "worker": ["worker"],
+            "scheduler": ["scheduler"],
+            "notification-worker": ["notification-worker"],
         }
         expected_probes = {
             "api": [

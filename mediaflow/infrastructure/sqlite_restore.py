@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 
 
 @dataclass(frozen=True)
@@ -20,7 +19,7 @@ class DatabaseRestoreResult:
     schema_version: int
     size_bytes: int
     sha256: str
-    migration_required: bool
+    schema_kind: str
 
 
 class SQLiteRestoreService:
@@ -36,7 +35,11 @@ class SQLiteRestoreService:
             raise ValueError("restore backup and destination must be different files")
         _require_empty_destination(target)
         verifier = SQLiteBackupService(backup)
-        verifier.verify(backup)
+        verified = verifier.verify(backup)
+        if not verified.usable:
+            raise ValueError(
+                f"backup is not usable by this MediaFlow version: {verified.applicability_reason}"
+            )
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=".mediaflow-restore-", suffix=".sqlite3.tmp", dir=target.parent
         )
@@ -55,7 +58,7 @@ class SQLiteRestoreService:
                 staged.schema_version,
                 staged.size_bytes,
                 staged.sha256,
-                staged.schema_version < SCHEMA_VERSION,
+                staged.schema_kind,
             )
         finally:
             if temporary.exists():

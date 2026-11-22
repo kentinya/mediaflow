@@ -10,6 +10,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from mediaflow.infrastructure.sqlite_applicability import (
+    DatabaseApplicabilityError,
+    evaluate_database_applicability,
+    read_database_markers,
+)
+from mediaflow.infrastructure.sqlite_configuration_schema import CONFIGURATION_SCHEMA_VERSION
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 
 
@@ -20,6 +26,9 @@ class DatabaseBackupResult:
     schema_version: int
     size_bytes: int
     sha256: str
+    schema_kind: str
+    usable: bool
+    applicability_reason: str | None
 
 
 class SQLiteBackupService:
@@ -43,6 +52,11 @@ class SQLiteBackupService:
             ):
                 source_connection.backup(output)
             result = self.verify(temporary, destination=target)
+            if not result.usable:
+                raise ValueError(
+                    "backup source is not usable by this MediaFlow version: "
+                    f"{result.applicability_reason}"
+                )
             with temporary.open("rb") as stream:
                 os.fsync(stream.fileno())
             try:
@@ -66,23 +80,27 @@ class SQLiteBackupService:
                 integrity = connection.execute("PRAGMA integrity_check(1)").fetchone()
                 if integrity is None or integrity[0] != "ok":
                     raise ValueError("backup failed SQLite integrity check")
-                marker = connection.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
-                ).fetchone()
-                row = (
-                    connection.execute(
-                        "SELECT version FROM schema_version WHERE component='runtime'"
-                    ).fetchone()
-                    if marker
-                    else None
-                )
-        except sqlite3.Error as error:
+            markers = read_database_markers(path)
+        except (sqlite3.Error, DatabaseApplicabilityError) as error:
             raise ValueError("backup is not a valid MediaFlow SQLite database") from error
-        if row is None or isinstance(row[0], bool) or not isinstance(row[0], int):
-            raise ValueError("backup is missing the MediaFlow runtime schema marker")
-        version = int(row[0])
-        if version > SCHEMA_VERSION:
-            raise ValueError("backup schema is newer than this MediaFlow version")
+        if markers.runtime_version is not None:
+            schema_kind = "runtime"
+            version = markers.runtime_version
+        elif markers.configuration_version is not None:
+            schema_kind = "configuration"
+            version = markers.configuration_version
+        else:
+            raise ValueError("backup is missing the MediaFlow schema marker")
+        try:
+            evaluate_database_applicability(
+                markers,
+                current_runtime_version=SCHEMA_VERSION,
+                current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
+            )
+        except DatabaseApplicabilityError as error:
+            usable, reason = False, str(error)
+        else:
+            usable, reason = True, None
         digest = hashlib.sha256()
         size = 0
         with path.open("rb") as stream:
@@ -92,7 +110,14 @@ class SQLiteBackupService:
         if size == 0:
             raise ValueError("backup is empty")
         return DatabaseBackupResult(
-            str(destination or path), datetime.now(UTC), version, size, digest.hexdigest()
+            str(destination or path),
+            datetime.now(UTC),
+            version,
+            size,
+            digest.hexdigest(),
+            schema_kind,
+            usable,
+            reason,
         )
 
 

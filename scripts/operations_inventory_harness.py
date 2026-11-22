@@ -2738,7 +2738,7 @@ def _run_manual_task_once(state: AppState, *, task_id: str | None = None):
     """
     from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
     from mediaflow.application.task_scheduling import TaskSchedulingService
-    from mediaflow.final_cli import _automatic_task_runner
+    from mediaflow.resident_entry import _automatic_task_runner
 
     register_manual_worker(state)
     if task_id is not None:
@@ -2790,7 +2790,7 @@ def _run_manual_task_once(state: AppState, *, task_id: str | None = None):
     with (
         patch.object(scheduling, "claim_next", claim),
         patch(
-            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            "mediaflow.resident_entry.metadata_provider_registry_from_environment",
             lambda _ids: state.managed.metadata_registry,
         ),
     ):
@@ -5419,8 +5419,8 @@ def run_automation_definition_worker_once(
 
     from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
     from mediaflow.application.task_scheduling import TaskSchedulingService
-    from mediaflow.final_cli import _automatic_task_runner
     from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+    from mediaflow.resident_entry import _automatic_task_runner
 
     resolved_definition_id = definition_id or AUTOMATION_LIFECYCLE_DEFINITION_ID
     occurrence = state.repository.get_latest_automation_definition_occurrence(
@@ -5467,7 +5467,7 @@ def run_automation_definition_worker_once(
         notice=lambda line: None,
     )
     with patch(
-        "mediaflow.final_cli.metadata_provider_registry_from_environment",
+        "mediaflow.resident_entry.metadata_provider_registry_from_environment",
         lambda _provider_ids: state.managed.metadata_registry,
     ):
         completed = worker.run_next()

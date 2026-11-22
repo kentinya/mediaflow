@@ -18,12 +18,12 @@ from mediaflow.domain.automation import (
     WorkerStatus,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.resident_entry_fixtures import run_resident_step
 from tests.test_media_discovery import _DiscoveryFixture
 
 
@@ -291,13 +291,8 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                     actor="worker-test",
                 )
 
-            output, errors = io.StringIO(), io.StringIO()
-            status = final_main(
-                ["--config", str(config), "worker", "run-next"],
-                stdout=output,
-                stderr=errors,
-            )
-            self.assertEqual(status, 0, errors.getvalue())
+            status, output_text = run_resident_step("worker", config)
+            self.assertEqual(status, 0, output_text)
             with SQLiteTaskRepository(runtime) as repository:
                 workers = repository.list_workers()
                 self.assertEqual(len(workers), 1)
@@ -314,13 +309,8 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
             config = root / "bootstrap.json"
             config.write_text(json.dumps(document), encoding="utf-8")
 
-            output, errors = io.StringIO(), io.StringIO()
-            status = final_main(
-                ["--config", str(config), "worker", "run-next"],
-                stdout=output,
-                stderr=errors,
-            )
-            self.assertEqual(status, 0, errors.getvalue())
+            status, output_text = run_resident_step("worker", config)
+            self.assertEqual(status, 0, output_text)
             with SQLiteTaskRepository(runtime) as repository:
                 workers = repository.list_workers()
                 self.assertEqual(len(workers), 1)
@@ -619,7 +609,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
 class ManualDiscoveryWorkerReadinessTests(_DiscoveryFixture):
     """The production CLI registration feeds the preparation's real readiness.
 
-    The Worker is registered by the same ``final_main`` composition production
+    The Worker is registered by the same resident service composition production
     uses.  The authenticated preparation GET then reads that durable row before
     the real Task engine publishes the first plan on the same admitted Task.
     """
@@ -643,13 +633,8 @@ class ManualDiscoveryWorkerReadinessTests(_DiscoveryFixture):
                 actor="readiness-test",
             )
 
-        output, errors = io.StringIO(), io.StringIO()
-        status = final_main(
-            ["--config", str(config), "worker", "run-next"],
-            stdout=output,
-            stderr=errors,
-        )
-        self.assertEqual(status, 0, errors.getvalue())
+        status, output_text = run_resident_step("worker", config)
+        self.assertEqual(status, 0, output_text)
         with SQLiteTaskRepository(self.database) as repository:
             workers = repository.list_workers()
             self.assertEqual(len(workers), 1, workers)

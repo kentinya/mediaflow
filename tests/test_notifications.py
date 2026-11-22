@@ -31,6 +31,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.resident_entry_fixtures import run_resident_step
 from tests.test_media_discovery import _DiscoveryFixture
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
@@ -398,7 +399,7 @@ class TerminalTaskNotificationTests(_DiscoveryFixture):
     """A real admission, the production Worker and the durable outbox.
 
     Each case starts at the supported Files entrance, advances the admitted
-    Task through ``final_cli worker run-next`` (the resident composition with
+    Task through one real resident Worker step (the same composition with
     its Task engine and terminal observer), and reads the real notification
     outbox.  No test calls the publisher to fake the terminal publication.
     """
@@ -469,17 +470,12 @@ class TerminalTaskNotificationTests(_DiscoveryFixture):
     def _run_worker(self, config: Path):
         from mediaflow.application.metadata import MetadataProviderRegistry
 
-        output, errors = io.StringIO(), io.StringIO()
         with patch(
-            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            "mediaflow.resident_entry.metadata_provider_registry_from_environment",
             return_value=MetadataProviderRegistry((self._provider(),)),
         ):
-            code = final_main(
-                ["--config", str(config), "worker", "run-next"],
-                stdout=output,
-                stderr=errors,
-            )
-        return code, output.getvalue(), errors.getvalue()
+            code, output = run_resident_step("worker", config)
+        return code, output, ""
 
     def _confirm_summary(self, value, task_id: str, item_id: str):
         status, detail = self.request(value, f"/api/tasks/{task_id}/items/{item_id}/recovery")
@@ -583,7 +579,7 @@ class TerminalTaskNotificationTests(_DiscoveryFixture):
             # replayed and the terminal event is not published twice.
             code, output, errors = self._run_worker(config)
             self.assertEqual(0, code, errors)
-            self.assertIn("No pending work", output)
+            self.assertIn("Worker stopped", output)
             self.assertEqual(1, len(self._deliveries()))
             self.assertEqual(1, len(value.repository.list_results(task_id)))
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())

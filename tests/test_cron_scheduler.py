@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from mediaflow.domain.cron import CronExpression
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
+from tests.resident_entry_fixtures import run_resident_step
 
 
 class CronExpressionTests(unittest.TestCase):
@@ -117,16 +118,8 @@ class SchedulerDefinitionBoundaryTests(unittest.TestCase):
             document["persistence"] = {"databasePath": str(Path(directory, "runtime.sqlite3"))}
             config = Path(directory, "config.json")
             config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-            output, error = io.StringIO(), io.StringIO()
-            self.assertEqual(
-                final_main(
-                    ["--config", str(config), "scheduler", "tick"],
-                    stdout=output,
-                    stderr=error,
-                ),
-                0,
-                error.getvalue(),
-            )
+            status, output = run_resident_step("scheduler", config)
+            self.assertEqual(status, 0, output)
 
     def test_scheduler_list_and_audit_are_not_registered(self) -> None:
         import contextlib

@@ -365,7 +365,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         """One real resident Worker pass over the production automatic routing.
 
         The consumer is the production ``ManualTaskEngineWorker``; its automatic
-        branch is the production ``final_cli._automatic_task_runner`` that
+        branch is the production ``resident_entry._automatic_task_runner`` that
         reconstructs the Task's admitted pin and routes remote/direct organize
         admissions and continuation passes through the shared pipeline.
         """
@@ -375,7 +375,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         )
         from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
         from mediaflow.application.task_scheduling import TaskSchedulingService
-        from mediaflow.final_cli import _automatic_task_runner
+        from mediaflow.resident_entry import _automatic_task_runner
 
         scheduling = TaskSchedulingService(value.repository, capacity=100)
         runner = _automatic_task_runner(value.repository, str(value.config), scheduling)
@@ -410,9 +410,15 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             clock=value.clock,
             automatic_runner=runner,
         )
-        with patch(
-            "mediaflow.final_cli.metadata_provider_registry_from_environment",
-            return_value=value.provider_registry,
+        with (
+            patch(
+                "mediaflow.resident_entry.metadata_provider_registry_from_environment",
+                return_value=value.provider_registry,
+            ),
+            patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                return_value=value.provider_registry,
+            ),
         ):
             settled = worker.run_next()
         value.repository.stop_worker(worker_id, value.clock.now)

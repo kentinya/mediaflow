@@ -14,8 +14,10 @@ from mediaflow.application.accounts import AccountService, hash_password
 from mediaflow.domain.accounts import Account
 from mediaflow.domain.security import ApiPermission, ApiRole, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
+from mediaflow.host_operations import main as host_main
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from mediaflow.resident_entry import main as resident_main
 
 
 class FakeServer:
@@ -54,6 +56,31 @@ def api_request(api, authorization: str | None):
     return int(statuses[0].split()[0]), dict(headers), json.loads(body)
 
 
+def run_host(config: Path, *arguments: str):
+    output, error = io.StringIO(), io.StringIO()
+    with patch.dict(os.environ, {"MEDIAFLOW_DATA_DIR": str(config.parent)}, clear=False):
+        code = host_main(
+            ["--config", str(config), *arguments],
+            stdout=output,
+            stderr=error,
+        )
+    return code, output.getvalue(), error.getvalue()
+
+
+def run_service(config: Path, service: str):
+    output, error = io.StringIO(), io.StringIO()
+    with (
+        patch.dict(
+            os.environ,
+            {"MEDIAFLOW_CONFIG": str(config), "MEDIAFLOW_DATA_DIR": str(config.parent)},
+            clear=False,
+        ),
+        patch("mediaflow.resident_entry.container_preflight_errors", return_value=[]),
+    ):
+        code = resident_main([service], stdout=output, stderr=error)
+    return code, output.getvalue(), error.getvalue()
+
+
 class ApiCredentialTests(unittest.TestCase):
     def test_retired_bearer_generator_and_credential_commands_are_unknown(self) -> None:
         for argv in (["api", "token", "generate"], ["api", "credentials", "check"]):
@@ -62,37 +89,20 @@ class ApiCredentialTests(unittest.TestCase):
                     final_main(argv, stdout=io.StringIO(), stderr=io.StringIO())
                 self.assertEqual(2, raised.exception.code)
 
-    def test_account_setup_code_status_and_reset_are_host_local_and_secret_free(self) -> None:
+    def test_account_setup_code_and_reset_are_host_local_and_secret_free(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             path = self._configuration(directory)
             with patch.dict(
                 os.environ, {"MEDIAFLOW_API_TOKEN": "retired-environment-secret"}, clear=True
             ):
-                output, error = io.StringIO(), io.StringIO()
-                status = final_main(
-                    ["--config", str(path), "accounts", "status"],
-                    stdout=output,
-                    stderr=error,
-                )
-                self.assertEqual(0, status, error.getvalue())
-                self.assertEqual(
-                    {"accountCount": 0, "firstAdministratorRequired": True},
-                    json.loads(output.getvalue()),
-                )
-
-                output, error = io.StringIO(), io.StringIO()
-                status = final_main(
-                    ["--config", str(path), "accounts", "issue-setup-code", "--json"],
-                    stdout=output,
-                    stderr=error,
-                )
-                self.assertEqual(0, status, error.getvalue())
-                issued = json.loads(output.getvalue())
+                status, output, error = run_host(path, "issue-setup-code", "--json")
+                self.assertEqual(0, status, error)
+                issued = json.loads(output)
                 self.assertEqual("first_administrator", issued["purpose"])
                 self.assertGreaterEqual(len(issued["code"]), 32)
-                self.assertNotIn("retired-environment-secret", output.getvalue())
-                self.assertNotIn(issued["code"], error.getvalue())
+                self.assertNotIn("retired-environment-secret", output)
+                self.assertNotIn(issued["code"], error)
 
                 with SQLiteTaskRepository(database) as repository:
                     now = datetime.now(UTC)
@@ -109,25 +119,14 @@ class ApiCredentialTests(unittest.TestCase):
                         hash_password("correct-horse"),
                     )
 
-                output, error = io.StringIO(), io.StringIO()
-                status = final_main(
-                    [
-                        "--config",
-                        str(path),
-                        "accounts",
-                        "issue-reset-code",
-                        "--username",
-                        "admin",
-                        "--json",
-                    ],
-                    stdout=output,
-                    stderr=error,
+                status, output, error = run_host(
+                    path, "issue-reset-code", "--username", "admin", "--json"
                 )
-                self.assertEqual(0, status, error.getvalue())
-                reset = json.loads(output.getvalue())
+                self.assertEqual(0, status, error)
+                reset = json.loads(output)
                 self.assertEqual("reset_password", reset["purpose"])
                 self.assertEqual("admin", reset["username"])
-                self.assertNotIn("retired-environment-secret", output.getvalue())
+                self.assertNotIn("retired-environment-secret", output)
 
     def test_account_setup_code_refuses_a_second_administrator(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -142,15 +141,10 @@ class ApiCredentialTests(unittest.TestCase):
                     password="correct-horse",
                     remember=False,
                 )
-            output, error = io.StringIO(), io.StringIO()
-            status = final_main(
-                ["--config", str(path), "accounts", "issue-setup-code"],
-                stdout=output,
-                stderr=error,
-            )
+            status, output, error = run_host(path, "issue-setup-code")
             self.assertEqual(2, status)
-            self.assertEqual("", output.getvalue())
-            self.assertIn("first administrator already exists", error.getvalue())
+            self.assertEqual("", output)
+            self.assertIn("first administrator already exists", error)
 
     def test_retired_principals_are_rejected_by_startup_and_config_validation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -163,13 +157,7 @@ class ApiCredentialTests(unittest.TestCase):
             }
             config.write_text(json.dumps(document), encoding="utf-8")
 
-            for argv, expected in (
-                (["config", "validate"], "api.principals is retired"),
-                (
-                    ["api", "serve", "--host", "127.0.0.1", "--port", "0"],
-                    "api.principals is retired",
-                ),
-            ):
+            for argv, expected in ((["config", "validate"], "api.principals is retired"),):
                 with self.subTest(argv=argv):
                     error = io.StringIO()
                     status = final_main(
@@ -180,6 +168,10 @@ class ApiCredentialTests(unittest.TestCase):
                     self.assertEqual(2, status)
                     self.assertIn(expected, error.getvalue())
                     self.assertIn("remove it", error.getvalue())
+            status, output, error = run_service(config, "api")
+            self.assertEqual(2, status)
+            self.assertEqual("", output)
+            self.assertIn("api.principals is retired", error)
 
             document["api"] = {"tokenEnv": "MEDIAFLOW_API_TOKEN"}
             config.write_text(json.dumps(document), encoding="utf-8")
@@ -207,15 +199,10 @@ class ApiCredentialTests(unittest.TestCase):
             document["persistence"] = {"databasePath": str(database)}
             path.write_text(json.dumps(document), encoding="utf-8")
             before = hashlib.sha256(database.read_bytes()).hexdigest()
-            output, error = io.StringIO(), io.StringIO()
-            status = final_main(
-                ["--config", str(path), "accounts", "status"],
-                stdout=output,
-                stderr=error,
-            )
+            status, output, error = run_host(path, "issue-setup-code")
             self.assertEqual(2, status)
-            self.assertEqual("", output.getvalue())
-            self.assertIn("not usable by this MediaFlow version", error.getvalue())
+            self.assertEqual("", output)
+            self.assertIn("not usable by this MediaFlow version", error)
             self.assertEqual(before, hashlib.sha256(database.read_bytes()).hexdigest())
             with closing(sqlite3.connect(database)) as connection:
                 self.assertEqual(
@@ -229,72 +216,47 @@ class ApiCredentialTests(unittest.TestCase):
                     connection.execute("SELECT note_id, body FROM notes").fetchall(),
                 )
 
-    def test_non_loopback_requires_explicit_insecure_acknowledgement(self) -> None:
+    def test_production_api_rejects_invalid_deployment_endpoint_settings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = self._configuration(directory)
-            environment = {"MEDIAFLOW_API_TOKEN": "api-secret"}
-            for host in ("0.0.0.0", "192.168.1.20", "mediaflow.internal", "::"):
-                with self.subTest(host=host), patch.dict(os.environ, environment, clear=True):
-                    error = io.StringIO()
-                    status = final_main(
-                        ["--config", str(config), "api", "serve", f"--host={host}"],
-                        stdout=io.StringIO(),
-                        stderr=error,
-                    )
-                    self.assertEqual(status, 2)
-                    self.assertIn("--allow-insecure-remote-http", error.getvalue())
-
-            fake = FakeServer()
-            with (
-                patch.dict(os.environ, environment, clear=True),
-                patch("wsgiref.simple_server.make_server", return_value=fake),
+            for name, value in (
+                ("MEDIAFLOW_API_HOST", "bad host"),
+                ("MEDIAFLOW_API_PORT", "0"),
+                ("MEDIAFLOW_API_THREADS", "65"),
+                ("MEDIAFLOW_API_PORT", "not-a-number"),
             ):
-                error = io.StringIO()
-                status = final_main(
-                    [
-                        "--config",
-                        str(config),
-                        "api",
-                        "serve",
-                        "--host",
-                        "0.0.0.0",
-                        "--allow-insecure-remote-http",
-                    ],
-                    stdout=io.StringIO(),
-                    stderr=error,
-                )
-            self.assertEqual(status, 0)
-            self.assertTrue(fake.served)
-            self.assertIn("WARNING", error.getvalue())
-            self.assertNotIn("api-secret", error.getvalue())
+                with self.subTest(name=name, value=value):
+                    with (
+                        patch.dict(
+                            os.environ,
+                            {"MEDIAFLOW_CONFIG": str(config), name: value},
+                            clear=False,
+                        ),
+                        patch(
+                            "mediaflow.resident_entry.container_preflight_errors",
+                            return_value=[],
+                        ),
+                        patch(
+                            "mediaflow.production_wsgi.serve",
+                            side_effect=AssertionError("invalid endpoint must not listen"),
+                        ),
+                    ):
+                        error = io.StringIO()
+                        status = resident_main(["api"], stdout=io.StringIO(), stderr=error)
+                    self.assertEqual(2, status)
+                    self.assertIn(name, error.getvalue())
 
-    def test_loopback_hosts_start_and_invalid_hosts_fail_before_repository(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            config = self._configuration(directory)
-            for host in ("127.0.0.1", "::1", "localhost", "LOCALHOST"):
-                fake = FakeServer()
-                with (
-                    self.subTest(host=host),
-                    patch.dict(os.environ, {"MEDIAFLOW_API_TOKEN": "api-secret"}, clear=True),
-                    patch("wsgiref.simple_server.make_server", return_value=fake),
-                ):
-                    status = final_main(
-                        ["--config", str(config), "api", "serve", f"--host={host}"],
-                        stdout=io.StringIO(),
-                        stderr=io.StringIO(),
-                    )
-                    self.assertEqual(status, 0)
-                    self.assertTrue(fake.served)
-            for host in ("", "bad host", "https://host", "-invalid", "host/part"):
-                with self.subTest(host=host):
-                    error = io.StringIO()
-                    status = final_main(
-                        ["--config", str(config), "api", "serve", f"--host={host}"],
-                        stdout=io.StringIO(),
-                        stderr=error,
-                    )
-                    self.assertEqual(status, 2)
-                    self.assertIn("valid hostname or IP", error.getvalue())
+    def test_old_api_command_arguments_are_rejected_at_the_service_entry(self) -> None:
+        for arguments in (
+            ["api", "serve"],
+            ["api", "serve-production", "--host", "0.0.0.0"],
+            ["worker", "run"],
+            ["scheduler", "tick"],
+            ["notification-worker", "run-next"],
+        ):
+            with self.subTest(arguments=arguments), self.assertRaises(SystemExit) as raised:
+                resident_main(arguments, stdout=io.StringIO(), stderr=io.StringIO())
+            self.assertEqual(2, raised.exception.code)
 
     def test_json_headers_challenge_and_malformed_authorization(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

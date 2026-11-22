@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mediaflow.final_cli import final_main
+from mediaflow.host_operations import main as host_main
 from mediaflow.infrastructure.runtime_lease import (
     RuntimeDatabaseLease,
     RuntimeLeaseMode,
@@ -20,6 +21,13 @@ from mediaflow.infrastructure.runtime_lease import (
 from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+
+
+def run_host(config: Path, *arguments: str):
+    output, error = io.StringIO(), io.StringIO()
+    with patch.dict(os.environ, {"MEDIAFLOW_DATA_DIR": str(config.parent)}, clear=False):
+        code = host_main(["--config", str(config), *arguments], stdout=output, stderr=error)
+    return code, output.getvalue(), error.getvalue()
 
 
 @unittest.skipUnless(os.name == "posix", "POSIX advisory lock regression")
@@ -115,31 +123,17 @@ class RuntimeLeaseTests(unittest.TestCase):
                 return original_verify(service, candidate, **kwargs)
 
             with patch.object(SQLiteBackupService, "verify", new=verify_with_observation):
-                code = final_main(
-                    ["--config", str(config), "database", "verify", str(backup)],
-                    stdout=io.StringIO(),
-                    stderr=io.StringIO(),
-                )
-            self.assertEqual(code, 0)
+                code, _, error = run_host(config, "verify", str(backup))
+            self.assertEqual(code, 0, error)
 
             destination = root / "restored.sqlite3"
             restore_config = self._configuration(root, destination)
             with RuntimeDatabaseLease(destination, RuntimeLeaseMode.SHARED):
-                error = io.StringIO()
-                code = final_main(
-                    [
-                        "--config",
-                        str(restore_config),
-                        "database",
-                        "restore",
-                        str(backup),
-                        "--confirm-empty-destination",
-                    ],
-                    stdout=io.StringIO(),
-                    stderr=error,
+                code, _, error = run_host(
+                    restore_config, "restore", str(backup), "--confirm-empty-destination"
                 )
                 self.assertEqual(code, 2)
-                self.assertIn("another MediaFlow process", error.getvalue())
+                self.assertIn("another MediaFlow process", error)
                 self.assertFalse(destination.exists())
                 self.assertEqual(list(root.glob(".mediaflow-restore-*")), [])
             original_restore = SQLiteRestoreService.restore
@@ -150,19 +144,10 @@ class RuntimeLeaseTests(unittest.TestCase):
                 return original_restore(service, **kwargs)
 
             with patch.object(SQLiteRestoreService, "restore", new=restore_with_observation):
-                code = final_main(
-                    [
-                        "--config",
-                        str(restore_config),
-                        "database",
-                        "restore",
-                        str(backup),
-                        "--confirm-empty-destination",
-                    ],
-                    stdout=io.StringIO(),
-                    stderr=io.StringIO(),
+                code, _, error = run_host(
+                    restore_config, "restore", str(backup), "--confirm-empty-destination"
                 )
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 0, error)
 
     def test_exempt_commands_and_missing_confirmation_create_no_lock(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -172,19 +157,14 @@ class RuntimeLeaseTests(unittest.TestCase):
             lock_path = RuntimeDatabaseLease(database, RuntimeLeaseMode.SHARED).path
             for arguments in (
                 ["--config", str(config), "config", "validate"],
-                ["--config", str(config), "accounts", "status"],
                 ["--config", str(config), "storage", "list"],
             ):
                 with self.subTest(arguments=arguments):
                     final_main(arguments, stdout=io.StringIO(), stderr=io.StringIO())
                     self.assertFalse(lock_path.exists())
-            error = io.StringIO()
-            code = final_main(
-                ["--config", str(config), "database", "restore", str(root / "backup.sqlite3")],
-                stdout=io.StringIO(),
-                stderr=error,
-            )
+            code, _, error = run_host(config, "restore", str(root / "backup.sqlite3"))
             self.assertEqual(code, 2)
+            self.assertIn("confirm-empty-destination", error)
             self.assertFalse(lock_path.exists())
 
 

@@ -10,7 +10,7 @@ installation, health, restart, backup, restore and failure-recovery procedures.
 - The current `main` deployment supports fresh initialization and same-version
   reopen/restart. Ordinary startup accepts an empty database or a supported
   same-version store, including a configuration-only store written by this
-  version's `config initialize`/`config publish`. For a database rejected as
+  version's first setup or configuration management. For a database rejected as
   unsupported, keep the original file and start with a new empty data directory.
   The explicit schema 11 configuration switch is available for eligible stores
   that pass the applicability check and report `DATA_SWITCH_REQUIRED`.
@@ -18,11 +18,13 @@ installation, health, restart, backup, restore and failure-recovery procedures.
 - One image runs the installed `mediaflow` package. The image runs as UID/GID
   `10001:10001` by default and never needs root.
 - `compose.yaml` defines exactly `api`, `worker`, `scheduler`, and
-  `notification-worker`. Each service runs one MediaFlow command. No service
-  starts another service and no long-lived supervisor is embedded.
-- The API command is `mediaflow api serve-production --host 0.0.0.0 --port 8080`,
-  which uses Waitress. The standard-library `wsgiref.simple_server` path remains
-  `api serve` and is development/trusted-loopback only.
+  `notification-worker`. Each service passes one fixed service name through the
+  container entrypoint; there is no generic command dispatcher, arbitrary
+  executable forwarding or command override. No service starts another service
+  and no long-lived supervisor is embedded.
+- The API runs the production Waitress listener on `0.0.0.0:8080` by default.
+  `MEDIAFLOW_API_HOST`, `MEDIAFLOW_API_PORT` and `MEDIAFLOW_API_THREADS` are the
+  bounded deployment overrides; there is no separate development listener.
 - A local named volume is mounted at `/data`. SQLite, history, managed
   configuration evidence, Task/TaskItem/Result state, notifications, audit and logs
   must be configured under `/data`.
@@ -71,7 +73,7 @@ needs and it starts every service without any media mount. After starting Compos
 run the setup command on the deployment host.
 
 ```bash
-docker compose exec -T api mediaflow accounts issue-setup-code
+docker compose exec -T api python -m mediaflow.host_operations issue-setup-code
 ```
 
 Enter the code at `/` to create the sole administrator, then initialize an empty
@@ -101,36 +103,15 @@ Both generated files are Git-ignored. To use a remote Storage template from the 
 the [Storage configuration guide](configuration.md#storage-configuration-model).
 
 After `docker compose up -d` has started the project (with the media overlay when
-the deployment uses Local Storage), publish the generated input directly through
-the image entrypoint and the same Compose file set:
+the deployment uses Local Storage), open the Web UI and use `系统设置` → `配置工具` →
+`导入配置`. Paste the generated document (or an eligible redacted package), review the checks and
+choose `核对并应用`. The same form runs the applicable read-only Storage, recognition-strategy and
+destination checks, then atomically publishes the new Active configuration; it creates no Task,
+delivery or media mutation, and the running services adopt the snapshot without a restart.
 
-```bash
-docker compose -f compose.yaml -f compose.media-mounts.yaml run --rm --no-deps -T api \
-  config publish --file /dev/stdin < config/mediaflow.activation.json
-```
-
-`-T` keeps stdin available, and the generated file is streamed into the
-container, so it never needs to be mounted. The image entrypoint dispatches the
-`mediaflow` command, so the arguments start at `config`. The command runs the
-same applicable read-only Storage, recognition-strategy and destination checks
-as the Web form, then atomically publishes the new Active configuration; it
-creates no Task, delivery or media mutation, and the running services adopt the
-snapshot without a restart. Without `--file`, `config publish` republishes the
-current Active (or requires `config initialize` on a fresh instance).
-
-If the stored Active revision is missing or corrupt, `config status` reports it
-and the normal publish refuses to guess a replacement. Supply the complete
-document and make the replacement explicit:
-
-```bash
-docker compose -f compose.yaml -f compose.media-mounts.yaml run --rm --no-deps -T api \
-  config publish --file /dev/stdin --replace-active < config/mediaflow.activation.json
-```
-
-In the Web UI, open `系统设置` → `配置工具` → `导入配置`, paste the complete JSON or an eligible
-redacted package, then choose `核对并应用`. To inspect the published JSON, use `配置工具` →
-`配置内容` → `配置 JSON`. If Settings shows `生效配置需要恢复`, paste a complete configuration in
-that banner and choose `应用完整替换`. See the [System Settings guide](configuration.md#system-settings-web).
+To inspect the published JSON, use `配置工具` → `配置内容` → `配置 JSON`. If Settings shows
+`生效配置需要恢复`, paste a complete configuration in that banner and choose `应用完整替换`.
+See the [System Settings guide](configuration.md#system-settings-web).
 
 - A deployment-owned environment file. Copy
   [deploy/mediaflow.env.example](../deploy/mediaflow.env.example) to
@@ -178,7 +159,8 @@ docker compose ps
 
 `MEDIAFLOW_IMAGE`, `MEDIAFLOW_CONFIG_FILE`, `MEDIAFLOW_ENV_FILE`,
 `MEDIAFLOW_SOURCE_MEDIA_ROOT`, `MEDIAFLOW_TARGET_MEDIA_ROOT`,
-`MEDIAFLOW_API_BIND`, `MEDIAFLOW_API_PORT`, `MEDIAFLOW_UID`, and
+`MEDIAFLOW_API_BIND`, `MEDIAFLOW_API_PORT`, `MEDIAFLOW_API_HOST`,
+`MEDIAFLOW_API_THREADS`, `MEDIAFLOW_UID`, and
 `MEDIAFLOW_GID` are optional overrides. The media variables are read only by the
 optional `compose.media-mounts.yaml` overlay. Defaults are shown in
 `compose.yaml` and `compose.media-mounts.yaml`.
@@ -202,17 +184,20 @@ cookie usable without `Secure`. Same-origin write protection still compares the
 browser `Origin`/`Referer` with the forwarded `Host`; do not rewrite the host to
 a different name. `X-Forwarded-Proto` never grants an account, role or request
 authority. Startup and every new configuration input, including `config
-validate`, `config publish` and System Settings, reject `api.principals` and
+validate` and System Settings, reject `api.principals` and
 `api.tokenEnv`; remove those keys and create the first administrator through the
-Web sign-in page with `mediaflow accounts issue-setup-code`.
+Web sign-in page with
+`python -m mediaflow.host_operations issue-setup-code` in the host maintenance
+entry.
 
-The container entrypoint performs a bounded preflight before each command: it
-verifies the config file and `/data` are present and writable, checks every
-Local Storage root declared in the deployment configuration file for a mounted
-directory with the intended read-only/read-write access, rejects host-root and
-Docker-socket paths, rejects retired identity keys in every configuration input
-(`api.principals` and `api.tokenEnv`) with the exact removal guidance, and refuses
-an unsupported database file without modification. A database created by a
+Each fixed service start performs a bounded preflight: it verifies the config
+file and `/data` are present and writable, checks every Local Storage root
+declared in the deployment configuration file for a mounted directory with the
+intended read-only/read-write access, rejects host-root and Docker-socket paths,
+rejects retired identity keys in every configuration input (`api.principals` and
+`api.tokenEnv`) with the exact removal guidance, and refuses an unsupported
+database file without modification. Host maintenance applies the applicable
+configuration and database checks but does not require a media mount. A database created by a
 previous MediaFlow version is unsupported, including a configuration-only store
 whose configuration schema number already matches this version: startup stops
 before the repository creates or rewrites a table and directs the operator to a
@@ -335,16 +320,14 @@ readback's freshness is refreshed by the owning process rather than by an API re
 at its next safe boundary; admitted work keeps its immutable pin and is never repinned, cancelled,
 requeued or replayed by a settings publication.
 
-`worker run`/`scheduler run --poll-seconds N` and any deployment-owned override keep precedence over
-the published value. Such a process reports its effective value as an *override*, never as adoption,
-and the Web Save cannot rewrite it. To adopt the published cadence, remove the explicit override from
-the Compose command/CLI and restart that service once. `automation.maximumActiveJobs` is read at
-admission/re-entry and is not a resident cadence. The retired stale-age field is neither reported
-nor consumed; existing Worker heartbeat staleness, execution claims and adapter call timeouts remain
-separate mechanisms.
+The published value is the only resident cadence. The former `--poll-seconds` service arguments are
+retired, so a process that starts before or after a publication always reports the value it actually
+installed as adoption. `automation.maximumActiveJobs` is read at admission/re-entry and is not a
+resident cadence. The retired stale-age field is neither reported nor consumed; existing Worker
+heartbeat staleness, execution claims and adapter call timeouts remain separate mechanisms.
 
-The settings page evaluates every fresh live registration, so a second live instance with an
-override, missing report or older publication still blocks collective adoption. Normal service stop
+The settings page evaluates every fresh live registration, so a second live instance with a missing
+report or older publication still blocks collective adoption. Normal service stop
 and replacement preserve the predecessor as diagnostic history; it cannot veto the replacement or
 prove current adoption. With no fresh live instance, check that the service is running and reaching
 the shared database. Unreadable registration/adoption evidence remains unproven; restore database
@@ -471,18 +454,22 @@ another MediaFlow version is refused at startup before this switch can run. Exac
 recovery behavior are in the
 [configuration guide](configuration.md#previous-store-data-switch).
 
-Stop the stack and retain a verified backup under `/data` before maintenance. Backup is read-only
-with respect to live media and never overwrites an existing destination:
+Stop the stack and retain a verified backup under `/data` before maintenance. The `host` argument is
+the fixed container-entrypoint maintenance mode; a direct source installation runs the same
+operations with `python -m mediaflow.host_operations`. Backup is read-only with respect to live
+media and never overwrites an existing destination:
 
 ```bash
 docker compose stop
 docker compose run --rm --no-deps api \
-  mediaflow database backup --output /data/runtime-backup.sqlite3
+  host backup --output /data/runtime-backup.sqlite3
 docker compose run --rm --no-deps api \
-  mediaflow database verify /data/runtime-backup.sqlite3
+  host verify /data/runtime-backup.sqlite3
 ```
 
-Record the backup's schema, SHA-256 digest and age. Same-version offline restore is an explicit,
+`verify` reports file integrity separately from whether this MediaFlow version can start the
+backup; both a current runtime store and a current configuration-only store are usable. Record the
+backup's schema, SHA-256 digest and age. Same-version offline restore is an explicit,
 non-overwriting operation: all processes must be stopped, the destination empty and sidecar-free,
 and `--confirm-empty-destination` supplied. Follow the
 [offline restore procedure](release.md#offline-restore-procedure). Keep the existing database and
@@ -646,7 +633,8 @@ pinned context; those are distinct signals, not hidden failures.
   `firstAdministratorRequired: true`, enter the host-issued setup code within
   15 minutes. If the response is lost, use **Check current status** and follow
   the displayed setup or sign-in action. If the administrator has forgotten
-  their password, run `docker compose exec -T api mediaflow accounts issue-reset-code --username '<login name>'`
+  their password, run
+  `docker compose exec -T api python -m mediaflow.host_operations issue-reset-code --username '<login name>'`
   and enter the code in the password reset form on the sign-in page.
 - **Healthcheck becomes unhealthy after startup:** correct the named `/data`
   mount, configuration-file or environment-file reference, then `docker compose
@@ -703,7 +691,7 @@ Task, delivery or mutation. An eligible Local Storage,
 ResourceLibrary, schedule and Webhook are published against a container-local
 isolated root; the **same** container identities produce an eligible occurrence
 and a signed delivery to a controlled local HTTPS receiver. The harness runs the
-container CLI through the official entrypoint so it receives the mounted
+host maintenance entry through the official container entrypoint so it receives the mounted
 deployment environment, and checks the retry stays blocked after a target change
 until the original recipient is restored. The second stack is a separate project
 with the optional media overlay applied *before* startup; it completes real

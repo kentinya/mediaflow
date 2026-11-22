@@ -139,10 +139,10 @@ class ReleaseSecurityPolicyTests(unittest.TestCase):
         self.assertNotIn('source: "/"', compose)
         self.assertNotIn("pid: host", compose)
         for command in (
-            '"api", "serve-production", "--host", "0.0.0.0", "--port", "8080"',
-            '"worker", "run"',
-            '"scheduler", "run"',
-            '"notification-worker", "run"',
+            'command: ["api"]',
+            'command: ["worker"]',
+            'command: ["scheduler"]',
+            'command: ["notification-worker"]',
         ):
             self.assertIn(command, compose)
         self.assertEqual(compose.count("user: "), 1)

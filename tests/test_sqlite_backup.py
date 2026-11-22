@@ -19,9 +19,20 @@ from mediaflow.domain.task_persistence import (
     PersistentTask,
     PersistentTaskStatus,
 )
-from mediaflow.final_cli import final_main
+from mediaflow.host_operations import main as host_main
 from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
+)
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+
+
+def run_host(config: Path, *arguments: str):
+    output, error = io.StringIO(), io.StringIO()
+    with patch.dict(os.environ, {"MEDIAFLOW_DATA_DIR": str(config.parent)}, clear=False):
+        code = host_main(["--config", str(config), *arguments], stdout=output, stderr=error)
+    return code, output.getvalue(), error.getvalue()
+
 
 NOW = datetime(2026, 8, 22, 12, tzinfo=UTC)
 
@@ -126,8 +137,23 @@ class SQLiteBackupTests(unittest.TestCase):
                     "INSERT INTO schema_version VALUES ('runtime', ?)", (SCHEMA_VERSION + 1,)
                 )
                 connection.commit()
-            with self.assertRaisesRegex(ValueError, "newer"):
-                SQLiteBackupService(source).verify(newer)
+            result = SQLiteBackupService(source).verify(newer)
+            self.assertFalse(result.usable)
+            self.assertIn("newer", result.applicability_reason)
+
+    def test_current_configuration_only_store_is_verifiable_and_backupable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "configuration.sqlite3"
+            target = root / "configuration-backup.sqlite3"
+            with SQLiteConfigurationRepository(source):
+                pass
+            result = SQLiteBackupService(source).backup(target)
+            self.assertTrue(result.usable)
+            self.assertEqual(result.schema_kind, "configuration")
+            verified = SQLiteBackupService(source).verify(target)
+            self.assertTrue(verified.usable)
+            self.assertEqual(verified.schema_kind, "configuration")
 
     def test_target_validation_and_cli(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -164,23 +190,16 @@ class SQLiteBackupTests(unittest.TestCase):
             document["persistence"] = {"databasePath": str(source)}
             config = root / "config.json"
             config.write_text(json.dumps(document), encoding="utf-8")
-            output, error = io.StringIO(), io.StringIO()
             backup = root / "cli-backup.sqlite3"
-            code = final_main(
-                ["--config", str(config), "database", "backup", "--output", str(backup)],
-                stdout=output,
-                stderr=error,
-            )
-            self.assertEqual(code, 0, error.getvalue())
-            self.assertIn("DATABASE BACKUP", output.getvalue())
-            output = io.StringIO()
-            code = final_main(
-                ["--config", str(config), "database", "verify", str(backup)],
-                stdout=output,
-                stderr=error,
-            )
-            self.assertEqual(code, 0, error.getvalue())
-            self.assertIn("DATABASE VERIFY", output.getvalue())
+            code, output, error = run_host(config, "backup", "--output", str(backup))
+            self.assertEqual(code, 0, error)
+            self.assertIn("DATABASE BACKUP", output)
+            self.assertIn("Usable by this version: YES", output)
+            code, output, error = run_host(config, "verify", str(backup))
+            self.assertEqual(code, 0, error)
+            self.assertIn("DATABASE VERIFY", output)
+            self.assertIn("Integrity: OK", output)
+            self.assertIn("Usable by this version: YES", output)
             self.assertEqual(os.stat(source).st_size > 0, True)
 
 

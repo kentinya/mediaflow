@@ -1,7 +1,7 @@
 """Automated browser proof: rules object identity through the real Python boundary.
 
 Slice 41, Task 41.6. This script starts the production-shaped Python API
-(``mediaflow.final_cli api serve``) with a temporary throwaway configuration —
+(``python -m mediaflow.resident_entry api``) with a temporary throwaway configuration —
 temporary SQLite repositories, temporary Local Storage roots, a throwaway API
 token and the current built V2 artifact served by the real
 ``mediaflow.interfaces.v2_ui`` boundary — and drives a real Chromium browser
@@ -302,7 +302,9 @@ def render_configuration(root: Path) -> dict:
     document = json.loads((ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8"))
     (root / "source" / "incoming").mkdir(parents=True)
     (root / "target" / "Movies").mkdir(parents=True)
-    document["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
+    data = root / "data"
+    data.mkdir(exist_ok=True)
+    document["persistence"]["databasePath"] = str(data / "runtime.sqlite3")
     document["storages"][0]["rootPath"] = str(root / "source")
     document["storages"][1]["rootPath"] = str(root / "target")
     document["resourceLibraries"][0]["storagePath"] = "incoming"
@@ -368,19 +370,15 @@ def main() -> int:
         encoding="utf-8",
     )
     process = subprocess.Popen(
-        [
-            str(ROOT / ".venv" / "bin" / "mediaflow"),
-            "--config",
-            str(configuration_path),
-            "api",
-            "serve",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(PORT),
-        ],
+        [sys.executable, "-m", "mediaflow.resident_entry", "api"],
         cwd=ROOT,
-        env=environment,
+        env={
+            **environment,
+            "MEDIAFLOW_CONFIG": str(configuration_path),
+            "MEDIAFLOW_DATA_DIR": str(configuration_path.parent / "data"),
+            "MEDIAFLOW_API_HOST": "127.0.0.1",
+            "MEDIAFLOW_API_PORT": str(PORT),
+        },
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

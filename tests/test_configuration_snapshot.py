@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import sqlite3
 import tempfile
 import threading
@@ -42,15 +43,41 @@ from mediaflow.domain.metadata import (
 )
 from mediaflow.domain.security import ApiPermission, ApiRole, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
-from mediaflow.final_cli import (
-    _configuration,
-    _ConfiguredPermissionAuthority,
-    _task_snapshot_identity,
-    final_main,
-)
+from mediaflow.final_cli import _configuration
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from mediaflow.resident_entry import _ConfiguredPermissionAuthority
+from mediaflow.runtime_support import task_snapshot_identity as _task_snapshot_identity
+from tests.resident_entry_fixtures import run_resident_step
+
+
+def _serve_once(factory):
+    """Adapt an old ``make_server`` fixture to the production Waitress seam."""
+
+    def serve(app, *, host, port, threads):
+        with factory(host, port, app) as server:
+            server.serve_forever()
+
+    return serve
+
+
+def run_api_entry(config, *, stdout, stderr) -> int:
+    """Run the fixed production API entry once with a fake Waitress boundary."""
+
+    from mediaflow.resident_entry import main as service_main
+
+    with (
+        patch.dict(
+            os.environ,
+            {
+                "MEDIAFLOW_CONFIG": str(config),
+                "MEDIAFLOW_DATA_DIR": str(Path(config).parent),
+            },
+        ),
+        patch("mediaflow.resident_entry.container_preflight_errors", return_value=[]),
+    ):
+        return service_main(["api"], stdout=stdout, stderr=stderr)
 
 
 def example_document() -> dict:
@@ -1719,11 +1746,11 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 return server
 
             with (
-                patch("wsgiref.simple_server.make_server", side_effect=make_server),
+                patch("mediaflow.production_wsgi.serve", side_effect=_serve_once(make_server)),
             ):
                 output, error = io.StringIO(), io.StringIO()
-                status = final_main(
-                    ["--config", str(bootstrap), "api", "serve"],
+                status = run_api_entry(
+                    bootstrap,
                     stdout=output,
                     stderr=error,
                 )
@@ -1847,7 +1874,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     {"TMDB_ACCESS_TOKEN": "test-token", "MEDIAFLOW_API_TOKEN": "admin-token"},
                     clear=True,
                 ),
-                patch("wsgiref.simple_server.make_server", side_effect=make_server),
+                patch("mediaflow.production_wsgi.serve", side_effect=_serve_once(make_server)),
                 patch(
                     "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBProvider",
                     FakeTMDBProvider,
@@ -1858,8 +1885,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 ),
             ):
                 output, error = io.StringIO(), io.StringIO()
-                api_status = final_main(
-                    ["--config", str(config), "api", "serve"],
+                api_status = run_api_entry(
+                    config,
                     stdout=output,
                     stderr=error,
                 )
@@ -1877,13 +1904,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 active_id = server.active_result[1]["revisionId"]
                 active_digest = server.active_result[1]["digest"]
 
-                worker_output, worker_error = io.StringIO(), io.StringIO()
-                worker_status = final_main(
-                    ["--config", str(config), "worker", "run-next"],
-                    stdout=worker_output,
-                    stderr=worker_error,
-                )
-                self.assertEqual(worker_status, 0, worker_error.getvalue())
+                worker_status, worker_output = run_resident_step("worker", config)
+                self.assertEqual(worker_status, 0, worker_output)
 
             with SQLiteTaskRepository(runtime) as repository:
                 task = repository.get_task(task_id)
@@ -2087,13 +2109,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                         return_value=object(),
                     ),
                 ):
-                    output, error = io.StringIO(), io.StringIO()
-                    status = final_main(
-                        ["--config", str(config), "worker", "run-next"],
-                        stdout=output,
-                        stderr=error,
-                    )
-                self.assertEqual(status, 0, (output.getvalue(), error.getvalue()))
+                    status, output_text = run_resident_step("worker", config)
+                self.assertEqual(status, 0, output_text)
                 task = repository.get_task(emitted[0].task_id)
                 # Slice 48 RO-1: the file failure stays on its item; the
                 # flow completed.
@@ -2127,14 +2144,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 restore_current_principal()
                 # A settled Task is never replayed by a later Worker pass.
-                output, error = io.StringIO(), io.StringIO()
-                status = final_main(
-                    ["--config", str(config), "worker", "run-next"],
-                    stdout=output,
-                    stderr=error,
-                )
-                self.assertEqual(status, 0)
-                self.assertIn("No pending work", output.getvalue())
+                status, output_text = run_resident_step("worker", config)
+                self.assertEqual(status, 0, output_text)
                 self.assertEqual(len(effect_calls), 1)
             account_repository.close()
 
@@ -2200,20 +2211,13 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 if status != 200:
                     raise AssertionError((status, self.first_job))
                 self.second_check, self.second_active = self.checked_activate(self.second_document)
-                worker_output, worker_error = io.StringIO(), io.StringIO()
                 with patch(
                     "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBClient",
                     return_value=object(),
                 ):
-                    worker_status = final_main(
-                        ["--config", str(self.config), "worker", "run-next"],
-                        stdout=worker_output,
-                        stderr=worker_error,
-                    )
+                    worker_status, worker_output = run_resident_step("worker", self.config)
                 if worker_status != 0:
-                    raise AssertionError(
-                        (worker_status, worker_output.getvalue(), worker_error.getvalue())
-                    )
+                    raise AssertionError((worker_status, worker_output))
                 task_id = self.first_job["task_id"]
                 status, self.task_detail = request(
                     self.app,
@@ -2283,15 +2287,15 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     {"TMDB_ACCESS_TOKEN": "test-token", "MEDIAFLOW_API_TOKEN": "admin-token"},
                     clear=True,
                 ),
-                patch("wsgiref.simple_server.make_server", side_effect=make_server),
+                patch("mediaflow.production_wsgi.serve", side_effect=_serve_once(make_server)),
                 patch(
                     "mediaflow.infrastructure.metadata_provider_bootstrap.TMDBProvider",
                     FakeTMDBProvider,
                 ),
             ):
                 output, error = io.StringIO(), io.StringIO()
-                api_status = final_main(
-                    ["--config", str(config), "api", "serve"],
+                api_status = run_api_entry(
+                    config,
                     stdout=output,
                     stderr=error,
                 )
@@ -2379,14 +2383,9 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     side_effect=AssertionError("worker bootstrap must not construct Provider"),
                 ),
             ):
-                output, error = io.StringIO(), io.StringIO()
-                status = final_main(
-                    ["--config", str(config), "worker", "run-next"],
-                    stdout=output,
-                    stderr=error,
-                )
-            self.assertEqual(status, 0, error.getvalue())
-            self.assertIn("No pending work", output.getvalue())
+                status, output_text = run_resident_step("worker", config)
+            self.assertEqual(status, 0, output_text)
+            self.assertIn("Worker stopped", output_text)
 
     def test_worker_reports_actionable_saved_revision_failures_without_media_io(self) -> None:
         cases = {
@@ -2502,14 +2501,9 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                         side_effect=AssertionError("failed snapshot must not construct Provider"),
                     ),
                 ):
-                    output, error = io.StringIO(), io.StringIO()
-                    status = final_main(
-                        ["--config", str(config), "worker", "run-next"],
-                        stdout=output,
-                        stderr=error,
-                    )
-                self.assertEqual(status, 1)
-                self.assertNotIn("test-token", output.getvalue() + error.getvalue())
+                    status, output_text = run_resident_step("worker", config)
+                self.assertEqual(status, 0, output_text)
+                self.assertNotIn("test-token", output_text)
                 with (
                     SQLiteConfigurationRepository(runtime) as configuration_repository,
                     SQLiteTaskRepository(runtime) as task_repository,

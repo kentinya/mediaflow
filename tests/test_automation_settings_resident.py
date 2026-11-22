@@ -14,6 +14,7 @@ No production media, Storage, Provider, database or secret is touched.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -55,23 +56,22 @@ class ResidentAdoptionFixture(ResidentDeploymentFixture):
             time.sleep(0.1)
         self.fail(message)
 
-    def start(self, service, *, extra: tuple[str, ...] = ()):
-        """Start one real resident command and wait for its durable registration."""
+    def start(self, service):
+        """Start one real resident service and wait for its durable registration."""
 
         log = self.root / f"{service}.log"
         stream = log.open("w+")
         self.addCleanup(stream.close)
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "MEDIAFLOW_CONFIG": str(self.config),
+                "MEDIAFLOW_DATA_DIR": str(self.data),
+            }
+        )
         process = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                "from mediaflow.cli import main; raise SystemExit(main())",
-                "--config",
-                str(self.config),
-                service,
-                "run",
-                *extra,
-            ],
+            [sys.executable, "-m", "mediaflow.resident_entry", service],
+            env=environment,
             stdout=stream,
             stderr=subprocess.STDOUT,
         )
@@ -201,14 +201,6 @@ class SchedulerCadenceAdoptionTests(ResidentAdoptionFixture):
                 .active()
                 .digest
             )
-
-    def test_explicit_poll_override_keeps_precedence_and_is_reported_as_override(self) -> None:
-        self.publish_first_draft(self.empty_baseline())
-        self.start("scheduler", extra=("--poll-seconds", "0.4"))
-        digest = self.publish_engine(scheduler_poll=7200)
-        row = self.wait_adoption("scheduler", digest, "automation.schedulerPollSeconds")
-        self.assertEqual(row.override_source, "cli")
-        self.assertEqual(row.effective_values["automation.schedulerPollSeconds"], 0.4)
 
 
 class SchedulerBusinessPollTests(ResidentAdoptionFixture):
@@ -596,7 +588,7 @@ class BusyStepAdoptionBoundaryTests(ResidentAdoptionFixture):
         import io
 
         from mediaflow.application.resident_runtime import resident_cadence_adoption
-        from mediaflow.final_cli import _resident_published_cadence_resolver
+        from mediaflow.resident_entry import _resident_published_cadence_resolver
 
         self.publish_first_draft(self.empty_baseline())
         self.publish_engine(scheduler_poll=1.0)
@@ -1141,31 +1133,6 @@ class CurrentConsumerMembershipTests(ResidentAdoptionFixture):
         self.assertFalse(document["adoption"]["allAdopted"])
         self.assertTrue(worker["adopted"])
         self.assertEqual(worker["historyCount"], 0)
-
-    def test_override_on_one_live_replica_keeps_the_service_pending(self) -> None:
-        self.publish_first_draft(self.empty_baseline())
-        self.start("worker")
-        self.start("worker", extra=("--poll-seconds", "0.4"))
-        digest = self.publish_engine(worker_poll=0.3)
-
-        def both_reported() -> bool:
-            rows = self.adoption_rows("worker")
-            return (
-                len({row.instance_id for row in rows if row.published_revision_digest == digest})
-                == 2
-            )
-
-        self.wait_for(both_reported, message="both Worker replicas never reported")
-        document = self.settings_document()
-        worker = document["consumers"]["worker"]
-        self.assertEqual(len(worker["instances"]), 2)
-        self.assertFalse(worker["adopted"])
-        overrides = [item for item in worker["instances"] if item["status"] == "override"]
-        self.assertEqual(len(overrides), 1)
-        self.assertEqual(overrides[0]["overrideSource"], "cli")
-        # A real live override keeps its own next action instead of being
-        # collapsed into a generic "wait for the next boundary".
-        self.assertIn("override", overrides[0]["nextAction"])
 
     def test_later_publication_is_pending_until_the_live_instance_adopts(self) -> None:
         self.publish_first_draft(self.empty_baseline())

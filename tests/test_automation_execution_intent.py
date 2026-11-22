@@ -530,7 +530,7 @@ class ExecutionIntentTests(unittest.TestCase):
         self,
     ):
         from mediaflow.domain.security import ApiPermission
-        from mediaflow.final_cli import (
+        from mediaflow.resident_entry import (
             _ConfiguredPermissionAuthority,
             _current_automation_configuration,
         )

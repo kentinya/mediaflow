@@ -31,9 +31,9 @@ from mediaflow.domain.task_persistence import (  # noqa: E402
     FILES_TRANSFER_TASK_COMMAND,
     direct_command_task_command,
 )
-from mediaflow.final_cli import _files_transfer_worker_context  # noqa: E402
 from mediaflow.infrastructure.local_storage import LocalStorage  # noqa: E402
 from mediaflow.interfaces.v2_ui import asset_root  # noqa: E402
+from mediaflow.resident_entry import _files_transfer_worker_context  # noqa: E402
 from scripts import operations_inventory_harness as inventory  # noqa: E402
 
 GATED_WORKER_STATE: dict[str, object] | None = None

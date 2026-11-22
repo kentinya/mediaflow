@@ -1,6 +1,6 @@
 # Task 58.1 — 切换正式部署和主机恢复入口
 
-Next Action: DEVELOPER STARTS TASK 58.1 IMPLEMENTATION
+Next Action: DEVELOPER IMPLEMENTS TASK 58.1
 
 用户已授权激活 Task 58.1。Developer 开始实施时将状态从 `PLANNED` 转为 `IN PROGRESS`。
 用户授权 A 代 B 规划首个 Task，角色例外限于首个 Task 的规划。B 独立验收，A 按工作流终审。
@@ -10,7 +10,7 @@ Next Action: DEVELOPER STARTS TASK 58.1 IMPLEMENTATION
 Task ID: 58.1
 Task Type: SLICE
 Parent Slice: 58
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
 Difficulty: High
 Test Level: T4

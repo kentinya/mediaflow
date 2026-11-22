@@ -44,12 +44,7 @@ from mediaflow.domain.task_persistence import (
 from mediaflow.infrastructure.runtime_configuration import load_management_bootstrap
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 
-PROBE_SERVICE_COMMANDS: dict[str, tuple[str, ...]] = {
-    "api": ("api", "serve-production"),
-    "worker": ("worker", "run"),
-    "scheduler": ("scheduler", "run"),
-    "notification-worker": ("notification-worker", "run"),
-}
+PROBE_SERVICES = ("api", "worker", "scheduler", "notification-worker")
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 _MAX_LIVENESS_BODY_BYTES = 4096
@@ -74,17 +69,16 @@ def probe_preflight_errors(
 ) -> list[str]:
     """Return bounded, secret-free startup boundary errors for ``service``."""
 
-    if service not in PROBE_SERVICE_COMMANDS:
+    if service not in PROBE_SERVICES:
         raise ValueError(
-            f"unknown probe service {service!r}; expected "
-            + ", ".join(sorted(PROBE_SERVICE_COMMANDS))
+            f"unknown probe service {service!r}; expected " + ", ".join(sorted(PROBE_SERVICES))
         )
     environment = probe_environment(environ)
     return container_preflight_errors(
         environment.get("MEDIAFLOW_CONFIG", "/config/mediaflow.json"),
         environment.get("MEDIAFLOW_DATA_DIR", "/data"),
         environ=environment,
-        command=PROBE_SERVICE_COMMANDS[service],
+        service=service,
     )
 
 
@@ -195,7 +189,7 @@ def resident_service_readiness_error(
     status surface instead, where an operator is present to act on it.
     """
 
-    if service not in PROBE_SERVICE_COMMANDS:
+    if service not in PROBE_SERVICES:
         raise ValueError(f"unknown probe service {service!r}")
     if service == "api":
         # The API container proves liveness through its own loopback request,
@@ -235,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
         default="check",
         help="probe operation (check is the only supported operation)",
     )
-    parser.add_argument("--service", required=True, choices=sorted(PROBE_SERVICE_COMMANDS))
+    parser.add_argument("--service", required=True, choices=sorted(PROBE_SERVICES))
     parser.add_argument(
         "--url",
         help="loopback liveness URL for the API service healthcheck",

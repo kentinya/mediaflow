@@ -430,9 +430,9 @@ export function EntryPage() {
         <h2>Create first administrator</h2>
         <p>
           On the MediaFlow host run{" "}
-          <code>mediaflow accounts issue-setup-code</code>, then enter that
-          short-lived one-time code here. The code can create only one first
-          administrator for this instance.
+          <code>python -m mediaflow.host_operations issue-setup-code</code>,
+          then enter that short-lived one-time code here. The code can create
+          only one first administrator for this instance.
         </p>
         <TextField
           id="setup-code"
@@ -492,7 +492,8 @@ export function EntryPage() {
         <p>
           Run{" "}
           <code>
-            mediaflow accounts issue-reset-code --username &lt;name&gt;
+            python -m mediaflow.host_operations issue-reset-code --username
+            &lt;name&gt;
           </code>{" "}
           on the MediaFlow host. The reset revokes every existing Web session
           for that account.

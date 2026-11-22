@@ -3,7 +3,7 @@
 Task 51.2 removes the Dashboard route, command, service and aggregation. These
 tests keep the retirement honest through real entry points:
 
-- the production ``api serve`` composition over real local HTTP proves a legal
+- the production fixed API entry over real local HTTP proves a legal
   READ identity still reads a supported route, while the retired route (with
   its original query) is an ordinary unknown route with no business effect;
 - the CLI entry rejects the retired command at parse stage and keeps a normal
@@ -42,14 +42,27 @@ HEALTH_TIMEOUT_SECONDS = 30.0
 
 _SERVE_SNIPPET = (
     "import sys;\n"
-    "from mediaflow.final_cli import final_main;\n"
-    "sys.exit(final_main(sys.argv[1:], stdout=sys.stdout, stderr=sys.stderr))\n"
+    "from mediaflow.resident_entry import main;\n"
+    "sys.exit(main(sys.argv[1:], stdout=sys.stdout, stderr=sys.stderr))\n"
 )
+
+
+def _without_resource_warnings(value: str) -> str:
+    """Keep the parser's own output; ignore GC-timed warnings from other fixtures."""
+
+    return "\n".join(
+        line
+        for line in value.splitlines()
+        if line.startswith("usage:") or line.startswith("mediaflow: error:")
+    )
 
 
 def _write_configuration(root: Path, storages: tuple[Path, ...]) -> Path:
     document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
-    document["persistence"] = {"databasePath": str(root / "runtime.sqlite3")}
+    data = root / "data"
+    data.mkdir()
+    document["persistence"] = {"databasePath": str(data / "runtime.sqlite3")}
+    document["historyPath"] = str(data / "history.jsonl")
     for storage, location in zip(document.get("storages", []), storages):
         location.mkdir(parents=True, exist_ok=True)
         storage["rootPath"] = str(location)
@@ -82,7 +95,7 @@ class DashboardApiRetirementTests(unittest.TestCase):
             root = Path(directory)
             config = _write_configuration(root, (root / "source", root / "target"))
             now = datetime.now(UTC)
-            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
+            with SQLiteTaskRepository(root / "data" / "runtime.sqlite3") as repository:
                 repository.create_account(
                     Account(
                         "account-probe-reader",
@@ -108,23 +121,19 @@ class DashboardApiRetirementTests(unittest.TestCase):
                 )
             port = _free_port()
             base = f"http://127.0.0.1:{port}"
-            environment_patch = patch.dict(os.environ, {"DASHBOARD_RETIREMENT_TOKEN": READER_TOKEN})
-            environment_patch.start()
-            self.addCleanup(environment_patch.stop)
+            process_environment = os.environ.copy()
+            process_environment.update(
+                {
+                    "DASHBOARD_RETIREMENT_TOKEN": READER_TOKEN,
+                    "MEDIAFLOW_CONFIG": str(config),
+                    "MEDIAFLOW_DATA_DIR": str(root / "data"),
+                    "MEDIAFLOW_API_HOST": "127.0.0.1",
+                    "MEDIAFLOW_API_PORT": str(port),
+                }
+            )
             process = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-c",
-                    _SERVE_SNIPPET,
-                    "--config",
-                    str(config),
-                    "api",
-                    "serve",
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    str(port),
-                ],
+                [sys.executable, "-c", _SERVE_SNIPPET, "api"],
+                env=process_environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -140,9 +149,9 @@ class DashboardApiRetirementTests(unittest.TestCase):
                     pass
                 if process.poll() is not None:
                     output = process.stdout.read() if process.stdout else ""
-                    self.fail(f"api serve exited before health: {output}")
+                    self.fail(f"resident API entry exited before health: {output}")
                 if time.monotonic() > deadline:
-                    self.fail("api serve did not become healthy in time")
+                    self.fail("resident API entry did not become healthy in time")
                 time.sleep(0.2)
 
             # A supported read answers 200 for the legal READ identity.
@@ -172,7 +181,7 @@ class DashboardApiRetirementTests(unittest.TestCase):
 
             # Public audit survives: the retired request is still recorded with
             # the generic route classification, and no Business state appears.
-            with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
+            with SQLiteTaskRepository(root / "data" / "runtime.sqlite3") as repository:
                 audit = repository.list_security_audit(limit=50)
                 self.assertTrue(
                     any(
@@ -187,7 +196,7 @@ class DashboardApiRetirementTests(unittest.TestCase):
                 )
                 self.assertEqual((), repository.list_tasks())
                 self.assertNotIn("recentLimit", repr(audit))
-            connection = sqlite3.connect(root / "runtime.sqlite3")
+            connection = sqlite3.connect(root / "data" / "runtime.sqlite3")
             try:
                 rows = connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -260,7 +269,10 @@ class DashboardCliRetirementTests(unittest.TestCase):
                         stderr=io.StringIO(),
                     )
             self.assertEqual(raised_broken.exception.code, 2)
-            self.assertEqual(rejected.getvalue(), broken.getvalue())
+            self.assertEqual(
+                _without_resource_warnings(rejected.getvalue()),
+                _without_resource_warnings(broken.getvalue()),
+            )
 
             # The same temporary configuration still serves a normal bounded
             # read: the retirement did not disturb supported CLI work.

@@ -1356,6 +1356,7 @@ class TransitionBoundaryTests(unittest.TestCase):
             # scheduling row for its Run once admission principal.
             "application/automation_execution_authority.py",
             "final_cli.py",
+            "resident_entry.py",
             "interfaces/service_api.py",
             "domain/task_scheduling.py",
             "application/task_scheduling.py",

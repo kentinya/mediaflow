@@ -20,11 +20,19 @@ from mediaflow.domain.task_persistence import (
     PersistentTask,
     PersistentTaskStatus,
 )
-from mediaflow.final_cli import final_main
+from mediaflow.host_operations import main as host_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+
+
+def run_host(config: Path, *arguments: str):
+    output, error = io.StringIO(), io.StringIO()
+    with patch.dict(os.environ, {"MEDIAFLOW_DATA_DIR": str(config.parent)}, clear=False):
+        code = host_main(["--config", str(config), *arguments], stdout=output, stderr=error)
+    return code, output.getvalue(), error.getvalue()
+
 
 NOW = datetime(2026, 8, 22, 14, tzinfo=UTC)
 
@@ -88,7 +96,6 @@ class SQLiteRestoreTests(unittest.TestCase):
                 confirmed_empty_destination=True
             )
             self.assertEqual(result.schema_version, SCHEMA_VERSION)
-            self.assertFalse(result.migration_required)
             self.assertEqual(result.size_bytes, destination.stat().st_size)
             self.assertEqual(result.sha256, hashlib.sha256(destination.read_bytes()).hexdigest())
             self.assertEqual(
@@ -102,7 +109,7 @@ class SQLiteRestoreTests(unittest.TestCase):
                 self.assertEqual(restored.list_security_audit(limit=10)[0].audit_id, "audit-1")
                 self.assertEqual(restored.list_operational_logs(limit=10)[0].log_id, "log-1")
 
-    def test_older_schema_is_restored_without_migration(self) -> None:
+    def test_older_schema_backup_is_refused_without_touching_the_destination(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             backup = self._backup(root)
@@ -113,15 +120,10 @@ class SQLiteRestoreTests(unittest.TestCase):
                 )
                 connection.commit()
             destination = root / "restored.sqlite3"
-            result = SQLiteRestoreService(backup, destination).restore(
-                confirmed_empty_destination=True
-            )
-            self.assertTrue(result.migration_required)
-            with closing(sqlite3.connect(destination)) as connection:
-                value = connection.execute(
-                    "SELECT version FROM schema_version WHERE component='runtime'"
-                ).fetchone()[0]
-            self.assertEqual(value, SCHEMA_VERSION - 1)
+            with self.assertRaisesRegex(ValueError, "not usable by this MediaFlow version"):
+                SQLiteRestoreService(backup, destination).restore(confirmed_empty_destination=True)
+            self.assertFalse(destination.exists())
+            self.assertEqual(list(root.glob(".mediaflow-restore-*")), [])
 
     def test_restore_refuses_unsafe_destinations_and_requires_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -232,37 +234,22 @@ class SQLiteRestoreTests(unittest.TestCase):
             document["persistence"] = {"databasePath": str(destination)}
             config = root / "config.json"
             config.write_text(json.dumps(document), encoding="utf-8")
-            output, error = io.StringIO(), io.StringIO()
-            code = final_main(
-                ["--config", str(config), "database", "restore", str(backup)],
-                stdout=output,
-                stderr=error,
-            )
+            code, output, error = run_host(config, "restore", str(backup))
             self.assertEqual(code, 2)
-            self.assertIn("confirm-empty-destination", error.getvalue())
+            self.assertIn("confirm-empty-destination", error)
             self.assertFalse(destination.exists())
-            output, error = io.StringIO(), io.StringIO()
             with patch.object(
                 RuntimeConfiguration,
                 "create_storages",
                 side_effect=AssertionError("Storage must not be constructed"),
             ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(config),
-                        "database",
-                        "restore",
-                        str(backup),
-                        "--confirm-empty-destination",
-                    ],
-                    stdout=output,
-                    stderr=error,
+                code, output, error = run_host(
+                    config, "restore", str(backup), "--confirm-empty-destination"
                 )
-            self.assertEqual(code, 0, error.getvalue())
+            self.assertEqual(code, 0, error)
             self.assertTrue(destination.exists())
-            self.assertIn("Status: RESTORED", output.getvalue())
-            self.assertNotIn("token", output.getvalue().lower())
+            self.assertIn("Status: RESTORED", output)
+            self.assertNotIn("token", output.lower())
 
 
 if __name__ == "__main__":

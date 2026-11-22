@@ -64,20 +64,14 @@ def wait_for_health(process: subprocess.Popen, base: str, timeout: float = 40.0)
 
 def process_for(config: Path, port: int) -> subprocess.Popen:
     return subprocess.Popen(
-        [
-            str(ROOT / ".venv" / "bin" / "mediaflow"),
-            "--config",
-            str(config),
-            "api",
-            "serve",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-        ],
+        [sys.executable, "-m", "mediaflow.resident_entry", "api"],
         cwd=ROOT,
         env={
             **os.environ,
+            "MEDIAFLOW_CONFIG": str(config),
+            "MEDIAFLOW_DATA_DIR": str(config.parent / "data"),
+            "MEDIAFLOW_API_HOST": "127.0.0.1",
+            "MEDIAFLOW_API_PORT": str(port),
             "MEDIAFLOW_API_TOKEN": TOKEN,
             "MEDIAFLOW_UI_V2_ASSET_ROOT": str(ROOT / "web" / "dist"),
         },
@@ -304,7 +298,9 @@ def run_management_only(root: Path) -> None:
 
 
 def run_healthy_local(root: Path) -> None:
-    database = root / "healthy.sqlite3"
+    data = root / "data"
+    data.mkdir(exist_ok=True)
+    database = data / "healthy.sqlite3"
     config = root / "healthy.json"
     document = json.loads((ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8"))
     source = root / "source"

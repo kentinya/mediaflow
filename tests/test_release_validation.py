@@ -48,6 +48,9 @@ class ReleaseValidationTests(unittest.TestCase):
                 for name in (
                     "mediaflow/cli.py",
                     "mediaflow/final_cli.py",
+                    "mediaflow/resident_entry.py",
+                    "mediaflow/host_operations.py",
+                    "mediaflow/runtime_support.py",
                     "mediaflow/infrastructure/sqlite_backup.py",
                     "mediaflow/infrastructure/sqlite_restore.py",
                     "mediaflow/infrastructure/runtime_lease.py",
@@ -60,6 +63,9 @@ class ReleaseValidationTests(unittest.TestCase):
                     for name in (
                         "mediaflow/cli.py",
                         "mediaflow/final_cli.py",
+                        "mediaflow/resident_entry.py",
+                        "mediaflow/host_operations.py",
+                        "mediaflow/runtime_support.py",
                         "mediaflow/infrastructure/sqlite_backup.py",
                         "mediaflow/infrastructure/sqlite_restore.py",
                         "mediaflow/infrastructure/runtime_lease.py",

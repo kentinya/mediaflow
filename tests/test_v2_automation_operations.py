@@ -30,13 +30,13 @@ from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
 from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.domain.automation import AutomationTaskDefinition, SchedulerConfigurationSnapshot
 from mediaflow.domain.security import ApiRole
-from mediaflow.final_cli import _automatic_task_runner
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from mediaflow.resident_entry import _automatic_task_runner
 from tests.account_fixtures import AccountSessions
 from tests.task_engine_test_helpers import claim_and_run
 

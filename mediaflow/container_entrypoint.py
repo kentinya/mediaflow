@@ -71,20 +71,6 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
-def _ordinary_service_command(command: tuple[str, ...]) -> bool:
-    """Return whether this command starts a process that opens the runtime store.
-
-    Configuration management keeps its own read-only review and confirmed
-    switch entrances, so the preflight must not turn those into a refusal.
-    """
-
-    if not command:
-        return False
-    if command[0] == "api":
-        return len(command) > 1 and command[1] in {"serve", "serve-production"}
-    return command[0] in {"worker", "scheduler", "notification-worker"}
-
-
 def _retired_api_errors(document: object) -> list[str]:
     if not isinstance(document, dict):
         return []
@@ -96,7 +82,7 @@ def _retired_api_errors(document: object) -> list[str]:
         errors.append(
             "api.principals is retired; remove it from the startup configuration. "
             "Create the first administrator through the Web sign-in page with a "
-            "one-time code from `mediaflow accounts issue-setup-code`"
+            "one-time setup code from `python -m mediaflow.host_operations issue-setup-code`"
         )
     if "tokenEnv" in api:
         errors.append(
@@ -111,7 +97,9 @@ def container_preflight_errors(
     data_dir: str,
     *,
     environ: dict[str, str] | None = None,
-    command: tuple[str, ...] = (),
+    service: str | None = None,
+    check_media: bool = True,
+    check_database: bool = True,
 ) -> list[str]:
     """Return actionable deployment errors, or an empty list when safe."""
 
@@ -147,7 +135,7 @@ def container_preflight_errors(
     errors.extend(_retired_api_errors(document))
 
     persistence = document.get("persistence")
-    if isinstance(persistence, dict):
+    if check_database and isinstance(persistence, dict):
         database = persistence.get("databasePath")
         if isinstance(database, str) and database.strip():
             path = Path(database)
@@ -181,7 +169,7 @@ def container_preflight_errors(
                         current_runtime_version=SCHEMA_VERSION,
                         current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
                     )
-                    if _ordinary_service_command(command):
+                    if service is not None:
                         # A previous configuration schema 11 store can still
                         # contain draft-era rows.  Ordinary service start must
                         # stop before the runtime repository creates tables or
@@ -192,56 +180,64 @@ def container_preflight_errors(
                     errors.append(str(error))
                 except (OSError, ValueError, RuntimeError) as error:
                     errors.append(f"persistence.databasePath could not be checked: {error}")
-    history = document.get("historyPath")
-    if isinstance(history, str) and history.strip():
-        path = Path(history)
-        if not path.is_absolute():
-            errors.append(
-                f"historyPath must be an absolute path inside the {data_dir} persistence volume"
-            )
-        elif not _is_within(path, data):
-            errors.append(f"historyPath must be inside the local {data_dir} persistence volume")
+    if check_media:
+        history = document.get("historyPath")
+        if isinstance(history, str) and history.strip():
+            path = Path(history)
+            if not path.is_absolute():
+                errors.append(
+                    f"historyPath must be an absolute path inside the {data_dir} persistence volume"
+                )
+            elif not _is_within(path, data):
+                errors.append(f"historyPath must be inside the local {data_dir} persistence volume")
 
-    storages = document.get("storages")
-    if isinstance(storages, list):
-        for item in storages:
-            if not isinstance(item, dict) or str(item.get("type", "")).casefold() != "local":
-                continue
-            storage_id = str(item.get("id") or "<unnamed>")
-            root = item.get("rootPath")
-            if not isinstance(root, str) or not root.strip():
-                errors.append(f"Local Storage {storage_id!r} rootPath must be non-empty")
-                continue
-            root_path = Path(root)
-            normalized = root_path.resolve(strict=False)
-            if (
-                not root_path.is_absolute()
-                or normalized.as_posix() in _FORBIDDEN_MEDIA_ROOTS
-                or _is_within(normalized, data)
-            ):
-                errors.append(
-                    f"Local Storage {storage_id!r} rootPath {root!r} is unsupported; "
-                    "use an explicitly bind-mounted media path separate from /data and /config"
-                )
-                continue
-            if not root_path.is_dir():
-                errors.append(
-                    f"Local Storage {storage_id!r} media mount is missing or not a directory: "
-                    f"{root}; mount the directory into the container before starting"
-                )
-                continue
-            if not os.access(root_path, os.R_OK):
-                errors.append(f"Local Storage {storage_id!r} media mount is not readable: {root}")
-            read_only = item.get("readOnly", False)
-            if not isinstance(read_only, bool):
-                errors.append(f"Local Storage {storage_id!r} readOnly must be boolean")
-            elif not read_only and not os.access(root_path, os.W_OK):
-                errors.append(
-                    f"Local Storage {storage_id!r} media mount is not writable: {root}; "
-                    "mount it read-write for the container UID/GID"
-                )
+    if check_media:
+        storages = document.get("storages")
+        if isinstance(storages, list):
+            for item in storages:
+                if not isinstance(item, dict) or str(item.get("type", "")).casefold() != "local":
+                    continue
+                storage_id = str(item.get("id") or "<unnamed>")
+                root = item.get("rootPath")
+                if not isinstance(root, str) or not root.strip():
+                    errors.append(f"Local Storage {storage_id!r} rootPath must be non-empty")
+                    continue
+                root_path = Path(root)
+                normalized = root_path.resolve(strict=False)
+                if (
+                    not root_path.is_absolute()
+                    or normalized.as_posix() in _FORBIDDEN_MEDIA_ROOTS
+                    or _is_within(normalized, data)
+                ):
+                    errors.append(
+                        f"Local Storage {storage_id!r} rootPath {root!r} is unsupported; "
+                        "use an explicitly bind-mounted media path separate from /data and /config"
+                    )
+                    continue
+                if not root_path.is_dir():
+                    errors.append(
+                        f"Local Storage {storage_id!r} media mount is missing or not a directory: "
+                        f"{root}; mount the directory into the container before starting"
+                    )
+                    continue
+                if not os.access(root_path, os.R_OK):
+                    errors.append(
+                        f"Local Storage {storage_id!r} media mount is not readable: {root}"
+                    )
+                read_only = item.get("readOnly", False)
+                if not isinstance(read_only, bool):
+                    errors.append(f"Local Storage {storage_id!r} readOnly must be boolean")
+                elif not read_only and not os.access(root_path, os.W_OK):
+                    errors.append(
+                        f"Local Storage {storage_id!r} media mount is not writable: {root}; "
+                        "mount it read-write for the container UID/GID"
+                    )
 
     return errors
+
+
+SERVICE_NAMES = ("api", "worker", "scheduler", "notification-worker")
+HOST_OPERATIONS = ("issue-setup-code", "issue-reset-code", "backup", "verify", "restore")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -255,21 +251,45 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     config_path = os.environ.get("MEDIAFLOW_CONFIG", "/config/mediaflow.json")
     data_dir = os.environ.get("MEDIAFLOW_DATA_DIR", "/data")
-    errors = container_preflight_errors(
-        config_path,
-        data_dir,
-        command=tuple(args),
-    )
+    if not args:
+        sys.stderr.write(
+            "mediaflow container entrypoint requires one service "
+            f"({', '.join(SERVICE_NAMES)}) or the host maintenance entry\n"
+        )
+        return 1
+    if args[0] == "host":
+        if len(args) < 2 or args[1] not in HOST_OPERATIONS:
+            sys.stderr.write(
+                "mediaflow host entrypoint requires one operation: "
+                + ", ".join(HOST_OPERATIONS)
+                + "\n"
+            )
+            return 1
+        os.execvpe(
+            sys.executable,
+            [sys.executable, "-m", "mediaflow.host_operations", *args[1:]],
+            os.environ,
+        )
+        return 127
+    if len(args) != 1 or args[0] not in SERVICE_NAMES:
+        sys.stderr.write(
+            "mediaflow container entrypoint accepts exactly one service "
+            f"({', '.join(SERVICE_NAMES)}); arbitrary commands and retired "
+            "startup arguments are not supported\n"
+        )
+        return 1
+    service = args[0]
+    errors = container_preflight_errors(config_path, data_dir, service=service)
     if errors:
         sys.stderr.write("MediaFlow container preflight failed:\n")
         for error in errors:
             sys.stderr.write(f"- {error}\n")
         return 1
-    if not args:
-        sys.stderr.write("mediaflow container entrypoint requires a MediaFlow command\n")
-        return 1
-    executable = os.environ.get("MEDIAFLOW_COMMAND", "mediaflow")
-    os.execvpe(executable, [executable, *args], os.environ)
+    os.execvpe(
+        sys.executable,
+        [sys.executable, "-m", "mediaflow.resident_entry", service],
+        os.environ,
+    )
     return 127
 
 

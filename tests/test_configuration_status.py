@@ -23,6 +23,7 @@ from mediaflow.infrastructure.sqlite_configuration_schema import CONFIGURATION_S
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.managed_config_fixture import publish_managed_document
+from tests.resident_entry_fixtures import run_api_entry, serve_once
 
 
 def example_document():
@@ -159,7 +160,6 @@ class ConfigurationSnapshotTests(unittest.TestCase):
         self.assertGreaterEqual(len(repository.audit), 7)
 
     def test_production_api_bootstrap_injects_snapshot_without_storage(self) -> None:
-        from mediaflow.final_cli import final_main
 
         class Server:
             app = None
@@ -188,15 +188,15 @@ class ConfigurationSnapshotTests(unittest.TestCase):
 
             with (
                 patch.dict(os.environ, {"MEDIAFLOW_API_TOKEN": "viewer-token"}, clear=True),
-                patch("wsgiref.simple_server.make_server", side_effect=make_server),
+                patch("mediaflow.production_wsgi.serve", side_effect=serve_once(make_server)),
                 patch.object(
                     RuntimeConfiguration,
                     "create_storages",
                     side_effect=AssertionError("API status bootstrap constructed Storage"),
                 ),
             ):
-                status = final_main(
-                    ["--config", str(config), "api", "serve"],
+                status = run_api_entry(
+                    config,
                     stdout=io.StringIO(),
                     stderr=io.StringIO(),
                 )
@@ -218,8 +218,6 @@ class RetiredDatabaseStartupTests(unittest.TestCase):
         import hashlib
         import sqlite3
 
-        from mediaflow.final_cli import final_main
-
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "v1.sqlite3")
             with sqlite3.connect(database) as connection:
@@ -239,21 +237,13 @@ class RetiredDatabaseStartupTests(unittest.TestCase):
             config.write_text(json.dumps(source), encoding="utf-8")
             before = hashlib.sha256(database.read_bytes()).hexdigest()
             stderr = io.StringIO()
-            code = final_main(
-                [
-                    "--config",
-                    str(config),
-                    "api",
-                    "serve",
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    "45678",
-                ],
+            code = run_api_entry(
+                config,
                 stdout=io.StringIO(),
                 stderr=stderr,
+                skip_preflight=False,
             )
-            self.assertEqual(2, code)
+            self.assertEqual(1, code)
             self.assertIn("retired V1 Job schema", stderr.getvalue())
             self.assertIn("file was not modified", stderr.getvalue())
             self.assertEqual(before, hashlib.sha256(database.read_bytes()).hexdigest())
@@ -271,8 +261,6 @@ class RetiredDatabaseStartupTests(unittest.TestCase):
         import hashlib
         import sqlite3
 
-        from mediaflow.final_cli import final_main
-
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "notes.sqlite3")
             with sqlite3.connect(database) as connection:
@@ -285,21 +273,13 @@ class RetiredDatabaseStartupTests(unittest.TestCase):
             config.write_text(json.dumps(source), encoding="utf-8")
             before = hashlib.sha256(database.read_bytes()).hexdigest()
             stderr = io.StringIO()
-            code = final_main(
-                [
-                    "--config",
-                    str(config),
-                    "api",
-                    "serve",
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    "45678",
-                ],
+            code = run_api_entry(
+                config,
                 stdout=io.StringIO(),
                 stderr=stderr,
+                skip_preflight=False,
             )
-            self.assertEqual(2, code)
+            self.assertEqual(1, code)
             self.assertIn("tables but no current MediaFlow schema marker", stderr.getvalue())
             self.assertIn("file was not modified", stderr.getvalue())
             self.assertEqual(before, hashlib.sha256(database.read_bytes()).hexdigest())

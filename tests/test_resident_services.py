@@ -46,6 +46,7 @@ from mediaflow.infrastructure.runtime_configuration import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from tests.managed_config_fixture import seed_configuration_schema_11_store
+from tests.resident_entry_fixtures import run_resident_step
 
 FAKE_TOKEN = "fake-resident-token"
 FAKE_WEBHOOK_SECRET = "fake-webhook-secret"
@@ -108,6 +109,22 @@ class ResidentDeploymentFixture(unittest.TestCase):
             code = int(exit_error.code or 0)
         except Exception as error:  # noqa: BLE001 - surface the real failure
             return -1, "", f"{type(error).__name__}: {error}"
+        return code, out.getvalue(), err.getvalue()
+
+    def service(self, service: str) -> tuple[int, str, str]:
+        """Start the real fixed service entry once against this deployment."""
+
+        from mediaflow.resident_entry import main as service_main
+
+        out, err = io.StringIO(), io.StringIO()
+        with patch.dict(
+            os.environ,
+            {
+                "MEDIAFLOW_CONFIG": str(self.config),
+                "MEDIAFLOW_DATA_DIR": str(self.data),
+            },
+        ):
+            code = service_main([service], stdout=out, stderr=err)
         return code, out.getvalue(), err.getvalue()
 
     def publish_first_draft(self, document: dict) -> str:
@@ -197,14 +214,10 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
         self.config.write_text(
             json.dumps(_retired_bootstrap(self.database), indent=2), encoding="utf-8"
         )
-        for arguments in (
-            ("worker", "run"),
-            ("scheduler", "run"),
-            ("notification-worker", "run"),
-        ):
-            with self.subTest(arguments=arguments):
-                code, out, err = self.cli(*arguments)
-                self.assertEqual(code, 2, msg=err)
+        for service in ("worker", "scheduler", "notification-worker"):
+            with self.subTest(service=service):
+                code, out, err = self.service(service)
+                self.assertEqual(code, 1, msg=err)
                 self.assertEqual("", out)
                 self.assertIn("api.principals is retired", err)
                 self.assertIn("remove it", err)
@@ -245,14 +258,10 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
             ]
         self.assertEqual([("configuration_management", 11)], before_markers)
 
-        for arguments in (
-            ("worker", "run"),
-            ("scheduler", "run"),
-            ("notification-worker", "run"),
-        ):
-            with self.subTest(arguments=arguments):
-                code, out, err = self.cli(*arguments)
-                self.assertEqual(code, 2, msg=err)
+        for service in ("worker", "scheduler", "notification-worker"):
+            with self.subTest(service=service):
+                code, out, err = self.service(service)
+                self.assertEqual(code, 1, msg=err)
                 self.assertEqual("", out)
                 self.assertIn("configuration data switch is pending", err)
                 self.assertIn(unpublished.revision_id, err)
@@ -278,15 +287,14 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
                         ],
                     )
 
-    def test_scheduler_tick_starts_without_active(self) -> None:
-        """With a valid management-only bootstrap, the resident Scheduler and
-        the one-shot ``scheduler tick`` start, wait and emit nothing; the
-        retired ``scheduler list``/``audit`` subcommands are unregistered."""
+    def test_scheduler_step_starts_without_active(self) -> None:
+        """With a valid management-only bootstrap, one Scheduler step runs and
+        emits nothing; retired one-shot list/audit arguments are rejected."""
 
-        code, out, err = self.cli("scheduler", "tick")
-        self.assertEqual(code, 0, msg=f"tick: {err}")
-        self.assertNotIn("AttributeError", err)
-        self.assertNotIn("Traceback", err)
+        code, output = run_resident_step("scheduler", self.config)
+        self.assertEqual(code, 0, msg=output)
+        self.assertNotIn("AttributeError", output)
+        self.assertNotIn("Traceback", output)
         for arguments in (["scheduler", "list"], ["scheduler", "audit", "nightly"]):
             with self.subTest(arguments=arguments):
                 import contextlib
@@ -299,24 +307,28 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
     def test_notification_worker_waits_instead_of_crashing_without_active(self) -> None:
         """Reproduction of the reviewed defect.
 
-        ``notification-worker run-next`` previously raised AttributeError for
-        ``resolve_webhook_targets``.  It must now wait, exit successfully, and
-        leave the durable outbox untouched.
+        A resident Notification step without Active must wait, leave the durable
+        outbox untouched, and not raise AttributeError for
+        ``resolve_webhook_targets``.
         """
 
-        code, out, err = self.cli("notification-worker", "run-next")
-        self.assertEqual(code, 0, msg=err)
-        self.assertNotIn("AttributeError", err)
-        self.assertIn("waiting", out)
+        code, out = run_resident_step("notification-worker", self.config)
+        self.assertEqual(code, 0, msg=out)
+        self.assertNotIn("AttributeError", out)
+        self.assertIn("Notification worker stopped", out)
         with SQLiteTaskRepository(self.database) as repository:
             self.assertEqual(repository.list_deliveries(limit=10), ())
 
     def test_worker_starts_and_registers_its_transfer_consumers(self) -> None:
         """The Worker keeps its pre-existing management-only bootstrap behavior."""
 
-        code, out, err = self.cli("worker", "run-next")
-        self.assertEqual(code, 0, msg=err)
-        self.assertIn("No pending work", out)
+        code, out = run_resident_step("worker", self.config)
+        self.assertEqual(code, 0, msg=out)
+        self.assertIn("Worker stopped", out)
+        with SQLiteTaskRepository(self.database) as repository:
+            worker = repository.list_workers()[0]
+            self.assertIn("files_transfer", worker.supported_commands)
+            self.assertIn("media_files_transfer", worker.supported_commands)
 
     def test_reads_and_empty_activation_create_no_media_work_or_delivery(self) -> None:
         """Safety invariant: first setup and empty activation start nothing.
@@ -331,7 +343,7 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
             self.assertEqual(repository.list_deliveries(limit=50), ())
             self.assertEqual(repository.list_tasks(limit=50), ())
         # Scheduler/Notification services remain no-ops against an empty Active.
-        self.assertEqual(self.cli("scheduler", "tick")[0], 0)
+        self.assertEqual(run_resident_step("scheduler", self.config)[0], 0)
         with SQLiteTaskRepository(self.database) as repository:
             self.assertEqual((), repository.list_tasks())
             self.assertEqual(repository.list_deliveries(limit=50), ())
@@ -527,7 +539,7 @@ class ConfigurationAdoptionTests(ResidentDeploymentFixture):
     """Current Active governs new work; nothing is bound at process start."""
 
     def test_current_runtime_configuration_is_none_without_active(self) -> None:
-        from mediaflow.final_cli import _current_runtime_configuration
+        from mediaflow.resident_entry import _current_runtime_configuration
 
         self.assertIsNone(_current_runtime_configuration(str(self.config)))
         self.publish_first_draft(self.empty_baseline())
@@ -538,7 +550,7 @@ class ConfigurationAdoptionTests(ResidentDeploymentFixture):
     def test_a_new_activation_is_visible_to_a_running_process_without_restart(self) -> None:
         """The same resolved path is re-evaluated, never cached at startup."""
 
-        from mediaflow.final_cli import _current_runtime_configuration
+        from mediaflow.resident_entry import _current_runtime_configuration
 
         self.publish_first_draft(self.empty_baseline())
         first = _current_runtime_configuration(str(self.config))
@@ -595,7 +607,7 @@ class ConfigurationAdoptionTests(ResidentDeploymentFixture):
         published.
         """
 
-        from mediaflow.final_cli import _current_runtime_configuration
+        from mediaflow.resident_entry import _current_runtime_configuration
 
         self.publish_first_draft(self.empty_baseline())
         self.assertIsNotNone(_current_runtime_configuration(str(self.config)))
@@ -607,18 +619,18 @@ class ConfigurationAdoptionTests(ResidentDeploymentFixture):
             repository._connection.commit()
         self.assertIsNone(_current_runtime_configuration(str(self.config)))
 
-    def test_scheduler_tick_under_unavailable_active_emits_nothing(self) -> None:
+    def test_scheduler_step_under_unavailable_active_emits_nothing(self) -> None:
         """No Active means no occurrence, and no advancing of a due one."""
 
-        code, out, err = self.cli("scheduler", "tick")
-        self.assertEqual(code, 0, msg=err)
+        code, out = run_resident_step("scheduler", self.config)
+        self.assertEqual(code, 0, msg=out)
         with SQLiteTaskRepository(self.database) as repository:
             self.assertEqual((), repository.list_tasks())
 
     def test_worker_publishes_no_delivery_without_a_configured_webhook(self) -> None:
         self.publish_first_draft(self.empty_baseline())
-        code, out, err = self.cli("worker", "run-next")
-        self.assertEqual(code, 0, msg=err)
+        code, out = run_resident_step("worker", self.config)
+        self.assertEqual(code, 0, msg=out)
         with SQLiteTaskRepository(self.database) as repository:
             self.assertEqual(repository.list_deliveries(limit=50), ())
 

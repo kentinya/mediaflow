@@ -955,7 +955,7 @@ class DueOccurrenceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
             AutomationTaskDefinition,
             SchedulerConfigurationSnapshot,
         )
-        from mediaflow.final_cli import _automatic_task_runner
+        from mediaflow.resident_entry import _automatic_task_runner
 
         one = self.media("One.2001.mkv")
         with history_journey(self, operation="COPY", definitions="nightly") as value:
@@ -1058,7 +1058,7 @@ class DueOccurrenceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
                 automatic_runner=runner,
             )
             with (
-                patch("mediaflow.final_cli._configuration", return_value=runtime),
+                patch("mediaflow.resident_entry._configuration", return_value=runtime),
                 patch(
                     "mediaflow.application.automation_definition_execution.OrganizerExecutor",
                     _ExplodingExecutor,
@@ -1079,7 +1079,7 @@ class DueOccurrenceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
             self.clock.advance(60)
             emitted = list(scheduler.tick(self.clock.now))
             self.assertEqual(1, len(emitted))
-            with patch("mediaflow.final_cli._configuration", return_value=runtime):
+            with patch("mediaflow.resident_entry._configuration", return_value=runtime):
                 worker.run_next()
             (excluded_task,) = [
                 task

@@ -47,8 +47,8 @@ from mediaflow.domain.task_scheduling import (
     TaskSchedulingError,
     TaskTrigger,
 )
-from mediaflow.final_cli import _automatic_task_runner
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.resident_entry import _automatic_task_runner
 from tests import test_v2_automation_run_once as run_once_tests
 from tests.task_engine_test_helpers import claim_and_run
 
@@ -114,8 +114,11 @@ class RunOnceSourceOwnershipTests(unittest.TestCase):
             return answer
 
         with (
-            patch("mediaflow.final_cli._configuration", return_value=value.runtime),
-            patch("mediaflow.final_cli._definition_scoped_service", return_value=service),
+            patch("mediaflow.resident_entry._configuration", return_value=value.runtime),
+            patch(
+                "mediaflow.resident_entry._definition_scoped_service",
+                return_value=service,
+            ),
             patch.object(value.repository, "find_owned_source_work", interleaved_precheck),
         ):
             with ThreadPoolExecutor(max_workers=2) as executor:
@@ -261,8 +264,11 @@ class RunOnceSourceOwnershipTests(unittest.TestCase):
                 self.assertEqual(202, status, reply)
                 task_id = reply["taskId"]
                 with (
-                    patch("mediaflow.final_cli._configuration", return_value=value.runtime),
-                    patch("mediaflow.final_cli._definition_scoped_service", return_value=service),
+                    patch("mediaflow.resident_entry._configuration", return_value=value.runtime),
+                    patch(
+                        "mediaflow.resident_entry._definition_scoped_service",
+                        return_value=service,
+                    ),
                 ):
                     self.assertIsNotNone(workers[0].run_next())
                 return task_id
@@ -335,8 +341,11 @@ class RunOnceSourceOwnershipTests(unittest.TestCase):
             )
             workers = self._workers(value, scheduling)
             with (
-                patch("mediaflow.final_cli._configuration", return_value=value.runtime),
-                patch("mediaflow.final_cli._definition_scoped_service", return_value=service),
+                patch("mediaflow.resident_entry._configuration", return_value=value.runtime),
+                patch(
+                    "mediaflow.resident_entry._definition_scoped_service",
+                    return_value=service,
+                ),
             ):
                 self.assertIsNotNone(workers[0].run_next())
 

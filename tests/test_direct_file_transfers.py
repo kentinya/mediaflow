@@ -5806,10 +5806,10 @@ class StaleWorkerRevisionTests(TransferTestCase):
         """The real resident composition survives setup without replacement."""
 
         from mediaflow.application.direct_file_transfers import DirectFileTransferService
-        from mediaflow.final_cli import _files_transfer_worker_context
         from mediaflow.infrastructure.runtime_configuration import load_management_bootstrap
         from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
         from mediaflow.interfaces.service_api import MediaFlowApi
+        from mediaflow.resident_entry import _files_transfer_worker_context
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -5905,7 +5905,7 @@ class StaleWorkerRevisionTests(TransferTestCase):
     def _pinned_rebuilder(self, api, service):
         """Rebuild one persisted revision exactly like the resident Worker does.
 
-        It reproduces ``mediaflow.final_cli._files_transfer_worker_context``:
+        It reproduces ``mediaflow.resident_entry._files_transfer_worker_context``:
         the claimed transfer's own revision is loaded from durable
         configuration state and resolved into an equivalent service, or
         ``None`` when this process cannot lawfully reconstruct it.

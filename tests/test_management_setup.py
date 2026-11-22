@@ -29,7 +29,6 @@ from mediaflow.domain.configuration_management import (
     ManagedConfigurationStatus,
 )
 from mediaflow.domain.security import ApiPermission, ApiRole, ResolvedApiPrincipal
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import (
     is_minimal_management_bootstrap,
     load_minimal_management_bootstrap,
@@ -39,6 +38,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.resident_entry_fixtures import run_api_entry, serve_once
 
 
 def request(api, path, *, method="GET", token="admin-token", body=None, cookie=None, origin=None):
@@ -310,7 +310,7 @@ class ManagementSetupTests(unittest.TestCase):
                     {"MF_ADMIN_TOKEN": "admin-token", "MF_VIEWER_TOKEN": "viewer-token"},
                     clear=True,
                 ),
-                patch("wsgiref.simple_server.make_server", side_effect=make_server),
+                patch("mediaflow.production_wsgi.serve", side_effect=serve_once(make_server)),
                 patch(
                     "mediaflow.infrastructure.runtime_configuration.RuntimeConfiguration.create_storages",
                     side_effect=AssertionError("fresh API must not construct Storage"),
@@ -320,10 +320,11 @@ class ManagementSetupTests(unittest.TestCase):
                     side_effect=AssertionError("fresh API must not construct Provider"),
                 ),
             ):
-                status = final_main(
-                    ["--config", str(config), "api", "serve"],
+                status = run_api_entry(
+                    config,
                     stdout=io.StringIO(),
                     stderr=io.StringIO(),
+                    skip_preflight=False,
                 )
 
         self.assertEqual(status, 0)
@@ -591,7 +592,7 @@ class ManagementSetupTests(unittest.TestCase):
 
         The reviewed blocker activated a document whose ``api.principals`` had
         been replaced with a Viewer token holding the admin role; after a real
-        ``api serve`` restart with the unchanged bootstrap that Viewer token
+        fixed API entry restart with the unchanged bootstrap that Viewer token
         held administrative configuration permissions.  The boundary must now
         reject the edit, and the restarted deployment must keep the bootstrap
         permission projection.
@@ -736,16 +737,17 @@ class ManagementSetupTests(unittest.TestCase):
                     {"MF_ADMIN_TOKEN": "retired-secret", "MF_VIEWER_TOKEN": "retired-secret"},
                     clear=True,
                 ),
-                patch("wsgiref.simple_server.make_server", side_effect=make_server),
+                patch("mediaflow.production_wsgi.serve", side_effect=serve_once(make_server)),
                 patch(
                     "mediaflow.infrastructure.runtime_configuration.RuntimeConfiguration.create_storages",
                     side_effect=AssertionError("management API must not construct Storage"),
                 ),
             ):
-                status = final_main(
-                    ["--config", str(config), "api", "serve"],
+                status = run_api_entry(
+                    config,
                     stdout=io.StringIO(),
                     stderr=io.StringIO(),
+                    skip_preflight=False,
                 )
             self.assertEqual(status, 0)
             self.assertIsNotNone(server.app)

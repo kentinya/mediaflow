@@ -50,10 +50,10 @@ flowchart LR
 3. 在主机上领取一次性设置码，打开 <http://127.0.0.1:8080/> 创建首位管理员。
 
    ```bash
-   docker compose exec -T api mediaflow accounts issue-setup-code
+   docker compose exec -T api python -m mediaflow.host_operations issue-setup-code
    ```
 
-   创建成功后进入「系统设置」初始化为空配置，再按需添加存储、资源库、媒体库和整理规则。日常使用账号密码登录。忘记密码时，在主机执行 `docker compose exec -T api mediaflow accounts issue-reset-code --username '<登录名>'`。
+   创建成功后进入「系统设置」初始化为空配置，再按需添加存储、资源库、媒体库和整理规则。日常使用账号密码登录。忘记密码时，在主机执行 `docker compose exec -T api python -m mediaflow.host_operations issue-reset-code --username '<登录名>'`。
 
 默认以管理模式启动。本地媒体目录通过 Compose 覆盖文件显式挂载。挂载、日志、备份和网络设置见[部署指南](docs/deployment.md)。
 
@@ -70,10 +70,16 @@ python3 scripts/make_deployment_config.py \
   --output config/mediaflow.json \
   --database-path "$PWD/.mediaflow/mediaflow.sqlite3"
 export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
-.venv/bin/mediaflow api serve --host 127.0.0.1 --port 8787
+export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"
+MEDIAFLOW_API_HOST=127.0.0.1 MEDIAFLOW_API_PORT=8787 \
+  .venv/bin/python -m mediaflow.resident_entry api
 ```
 
-打开 <http://127.0.0.1:8787/>，在另一个终端用同一个 `MEDIAFLOW_CONFIG` 执行 `.venv/bin/mediaflow accounts issue-setup-code`，再在网页创建首位管理员。需要执行任务时用同一个配置启动 `.venv/bin/mediaflow worker run`。定时整理另需启动 Scheduler。
+打开 <http://127.0.0.1:8787/>，在另一个终端用同一个配置执行
+`.venv/bin/python -m mediaflow.host_operations --config config/mediaflow.json issue-setup-code`，
+再在网页创建首位管理员。需要执行任务时用同一个配置启动
+`.venv/bin/python -m mediaflow.resident_entry worker`，定时整理另需启动
+`.venv/bin/python -m mediaflow.resident_entry scheduler`。
 
 ## ⚙️ 常用配置
 

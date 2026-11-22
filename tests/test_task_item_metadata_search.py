@@ -226,8 +226,8 @@ class MetadataSearchYearTests(unittest.TestCase):
         )
         from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
         from mediaflow.application.task_scheduling import TaskSchedulingService
-        from mediaflow.final_cli import _automatic_task_runner
         from mediaflow.infrastructure.local_storage import LocalStorage
+        from mediaflow.resident_entry import _automatic_task_runner
 
         scheduling = TaskSchedulingService(value.repository, capacity=100)
         runner = _automatic_task_runner(value.repository, str(value.config), scheduling)
@@ -263,7 +263,7 @@ class MetadataSearchYearTests(unittest.TestCase):
             automatic_runner=runner,
         )
         with patch(
-            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            "mediaflow.resident_entry.metadata_provider_registry_from_environment",
             return_value=value.provider_registry,
         ):
             settled = worker.run_next()

@@ -51,10 +51,10 @@ RELEASE_PREFIX = f"{PROJECT_PREFIX}-security"
 IMAGE_TAG = "mediaflow:task29.6-local"
 EXPECTED_SERVICES = {"api", "worker", "scheduler", "notification-worker"}
 SERVICE_COMMANDS = {
-    "api": ["api", "serve-production", "--host", "0.0.0.0", "--port", "8080"],
-    "worker": ["worker", "run"],
-    "scheduler": ["scheduler", "run"],
-    "notification-worker": ["notification-worker", "run"],
+    "api": ["api"],
+    "worker": ["worker"],
+    "scheduler": ["scheduler"],
+    "notification-worker": ["notification-worker"],
 }
 
 
@@ -1539,11 +1539,6 @@ def unsupported_host_access_failure(image: str, canaries) -> None:
                 "MEDIAFLOW_ENV_FILE=/run/mediaflow/deployment.env",
                 image,
                 "api",
-                "serve-production",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                "8080",
             ],
             cwd=ROOT,
             text=True,
@@ -1599,11 +1594,6 @@ def retired_identity_input_failure(image: str, canaries) -> None:
                 "MEDIAFLOW_ENV_FILE=/run/mediaflow/deployment.env",
                 image,
                 "api",
-                "serve-production",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                "8080",
             ],
             cwd=ROOT,
             text=True,

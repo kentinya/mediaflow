@@ -1016,17 +1016,20 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
                 "api",
                 "python",
                 "-m",
-                "mediaflow.container_entrypoint",
-                "accounts",
-                "status",
+                "mediaflow.host_operations",
+                "issue-reset-code",
+                "--username",
+                stack.username,
+                "--json",
             ],
             environment=stack.environment,
         )
-        if '"firstAdministratorRequired": false' not in account_check.stdout:
-            raise RuntimeError("container CLI did not report the initialized account state")
+        issued = json.loads(account_check.stdout.strip().splitlines()[-1])
+        if issued.get("purpose") != "reset_password":
+            raise RuntimeError("host maintenance entry did not issue the reset code")
         if stack.token in account_check.stdout or stack.token in account_check.stderr:
-            raise RuntimeError("container CLI account check exposed the retired API token")
-        print("   container CLI loaded deployment environment via its official entrypoint")
+            raise RuntimeError("host maintenance entry exposed the retired API token")
+        print("   host maintenance entry loaded the deployment environment")
 
         signed = receiver.received[0]
         if not signed["signature"].startswith("sha256="):

@@ -35,6 +35,9 @@ def inspect_wheel(wheel: Path) -> None:
     required = {
         "mediaflow/cli.py",
         "mediaflow/final_cli.py",
+        "mediaflow/resident_entry.py",
+        "mediaflow/host_operations.py",
+        "mediaflow/runtime_support.py",
         "mediaflow/infrastructure/sqlite_backup.py",
         "mediaflow/infrastructure/sqlite_restore.py",
         "mediaflow/infrastructure/runtime_lease.py",
@@ -112,6 +115,29 @@ def smoke(wheel: Path, project: Path) -> None:
         if "site-packages" not in module_path:
             raise RuntimeError(f"installed module did not load from site-packages: {module_path}")
         print(f"Installed Automation module: {module_path}")
+        service_help = capture(
+            [str(python), "-m", "mediaflow.resident_entry", "--help"],
+            cwd=root,
+            environment=environment,
+        )
+        if service_help.returncode:
+            raise RuntimeError("installed fixed service entry is unavailable")
+        for service in ("api", "worker", "scheduler", "notification-worker"):
+            if service not in service_help.stdout:
+                raise RuntimeError(f"installed service entry does not offer {service}")
+        for retired in (
+            ["api", "serve"],
+            ["worker", "run"],
+            ["scheduler", "tick"],
+            ["notification-worker", "run-next"],
+        ):
+            rejected = capture(
+                [str(python), "-m", "mediaflow.resident_entry", *retired],
+                cwd=root,
+                environment=environment,
+            )
+            if rejected.returncode != 2:
+                raise RuntimeError(f"retired service arguments were not rejected: {retired}")
         database = root / "runtime.sqlite3"
         run(
             [
@@ -131,13 +157,15 @@ def smoke(wheel: Path, project: Path) -> None:
             cwd=root,
             environment=environment,
         )
+        environment["MEDIAFLOW_DATA_DIR"] = str(root)
         backup = root / "backup.sqlite3"
         run(
             [
-                str(mediaflow),
+                str(python),
+                "-m",
+                "mediaflow.host_operations",
                 "--config",
                 str(configuration),
-                "database",
                 "backup",
                 "--output",
                 str(backup),
@@ -168,10 +196,11 @@ def smoke(wheel: Path, project: Path) -> None:
                 raise RuntimeError("installed-wheel runtime lease holder did not start")
             blocked = subprocess.run(
                 [
-                    str(mediaflow),
+                    str(python),
+                    "-m",
+                    "mediaflow.host_operations",
                     "--config",
                     str(restore_configuration),
-                    "database",
                     "restore",
                     str(backup),
                     "--confirm-empty-destination",
@@ -190,10 +219,11 @@ def smoke(wheel: Path, project: Path) -> None:
             holder.communicate(timeout=5)
         run(
             [
-                str(mediaflow),
+                str(python),
+                "-m",
+                "mediaflow.host_operations",
                 "--config",
                 str(restore_configuration),
-                "database",
                 "restore",
                 str(backup),
                 "--confirm-empty-destination",
@@ -203,10 +233,11 @@ def smoke(wheel: Path, project: Path) -> None:
         )
         run(
             [
-                str(mediaflow),
+                str(python),
+                "-m",
+                "mediaflow.host_operations",
                 "--config",
                 str(restore_configuration),
-                "database",
                 "verify",
                 str(restored),
             ],
@@ -215,10 +246,11 @@ def smoke(wheel: Path, project: Path) -> None:
         )
         run(
             [
-                str(mediaflow),
+                str(python),
+                "-m",
+                "mediaflow.host_operations",
                 "--config",
                 str(configuration),
-                "database",
                 "verify",
                 str(backup),
             ],

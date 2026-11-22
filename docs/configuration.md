@@ -27,7 +27,8 @@ A fresh deployment starts from the minimal management bootstrap:
 ```
 
 The bootstrap contains no credential or account identity. Create the first administrator with a
-host-issued one-time code (`mediaflow accounts issue-setup-code`) from the Web sign-in page.
+host-issued one-time code (`python -m mediaflow.host_operations issue-setup-code`) from the
+Web sign-in page.
 
 It declares no Storage, ResourceLibrary, MediaLibrary, rule, policy or Webhook, so a fresh
 installation can start all services, expose status/recovery and initialize an empty configuration
@@ -53,17 +54,13 @@ generated input and update its settings. Set the library's `storageId` to the ne
 To use a new organize policy, set `organizePolicy` on the corresponding `recognitionTypePolicies`
 entry to the policy ID.
 
-```bash
-mediaflow --config config/mediaflow.json config publish \
-  --file config/mediaflow.activation.json
-```
+Open `系统设置` → `配置工具` → `导入配置` in the Web UI, paste the generated input (or an eligible
+redacted package) and choose `核对并应用`. The bootstrap named by `MEDIAFLOW_CONFIG` selects the
+database for publication; use the same deployment when you start the services. For the container
+layout, the default is `/data/mediaflow.sqlite3`.
 
-The bootstrap named by `--config` or `MEDIAFLOW_CONFIG` selects the database for publication. Use
-the same bootstrap when you start the services. For the container layout, omit
-`--database-path` to use the default `/data/mediaflow.sqlite3`.
-
-The command validates the candidate, binds deployment authority and publishes atomically. It runs
-the same applicable read-only checks as the Web form: read-only checks for every referenced enabled
+The form validates the candidate, binds deployment authority and publishes atomically. It runs
+the same applicable read-only checks as the checked Web form: read-only checks for every referenced enabled
 Storage, the offline recognition strategy test, and the destination precheck. A failed check leaves
 the previous Active and the submitted input intact and names the correction. A typical recoverable
 first-setup case: while the target directory does not exist yet, the destination precheck fails —
@@ -115,24 +112,21 @@ Storage/kind-relative root and preserves hidden fields. Save uses optimistic con
 validation, applicable evidence and atomic binding. It changes configuration only, never creates/
 migrates/moves/deletes media; admitted work keeps its old pin. Removal is reference-safe and media-free.
 
-The general configuration CLI exposes direct publication:
+Ordinary configuration publication and recovery are Web paths: `系统设置` → `配置工具` for import
+and `核对并应用`, and the recovery banner's `应用完整替换` when Settings reports that the current
+Active needs recovery. The remaining host/CLI inspection commands for the explicit schema 11 store
+switch are:
 
 ```bash
 mediaflow config status
-mediaflow config initialize
-mediaflow config publish --file config/mediaflow.activation.json
-mediaflow config publish --file config/mediaflow.activation.json --replace-active
 mediaflow config retire-unpublished
 mediaflow config retire-unpublished --confirm
 ```
 
 Each command selects the deployment bootstrap with `--config PATH` or `MEDIAFLOW_CONFIG`; the
-example above relies on the `export` in the preceding section. `config initialize` publishes an
-empty Active only when managed activation has never existed. `config publish` runs the same
-applicable read-only checks as the Web form and publishes the supplied document. If a published
-Active revision is missing or corrupt, `--replace-active` is the explicit recovery command; it
-requires `--file` and never infers a replacement from retained history. The optional `--actor`
-labels the audit record for `initialize` and `publish`. The retired `draft-import`,
+example above relies on the `export` in the preceding section. `config status` is read-only and
+lists the exact pending switch scope. `config retire-unpublished --confirm` applies that one
+explicit switch. The retired `draft-import`,
 `draft-validate` and `activate` commands, aliases and parameters are unknown command-line inputs.
 
 ### Previous-store data switch
@@ -425,7 +419,8 @@ To configure OpenList from JSON, copy the object at `_examples.storages.openlist
 `mediaflow.activation.json`'s top-level `storages` array. Set `rootPath` and `options.baseUrl`
 for your service, and provide `OPENLIST_TOKEN` in the deployment environment. Connection fields
 belong under `Storage.options`. Set the ResourceLibrary's `storageId` to the new OpenList Storage ID
-and set `storagePath` relative to its root. Run the same `config publish --file` command above.
+and set `storagePath` relative to its root. Import the updated document through the same Web
+`配置工具` → `导入配置` path above.
 Publication checks the connection for a referenced OpenList Storage. If the check fails, correct
 the endpoint or credential and publish the same input again.
 [Example configuration](../config/strategy.example.json)
@@ -592,7 +587,8 @@ a disabled definition with a new ID, and retains an edit/reconciliation entry ev
 filters. It uses saved values and their matching publication baseline, never unsaved editor input.
 The list's Run once directly submits the saved bounded scope under
 current permissions; publishing itself starts no media work. Scan/Preview/FileIndex retirement remains intact.
-Production uses Waitress `api serve-production`; standard-library `api serve` stays trusted-loopback.
+Production uses the fixed `python -m mediaflow.resident_entry api` Waitress entry; there is no
+separate development listener or command override.
 See [Roadmap](roadmap.md), [Progress](progress.md) and [Deployment](deployment.md) for their own facts.
 
 ### Operational setting meanings

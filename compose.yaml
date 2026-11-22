@@ -51,7 +51,7 @@ x-mediaflow-healthcheck: &mediaflow-healthcheck
 services:
   api:
     <<: *mediaflow-service
-    command: ["api", "serve-production", "--host", "0.0.0.0", "--port", "8080"]
+    command: ["api"]
     healthcheck:
       <<: *mediaflow-healthcheck
       test:
@@ -71,7 +71,7 @@ services:
 
   worker:
     <<: *mediaflow-service
-    command: ["worker", "run"]
+    command: ["worker"]
     healthcheck:
       <<: *mediaflow-healthcheck
       test:
@@ -87,7 +87,7 @@ services:
 
   scheduler:
     <<: *mediaflow-service
-    command: ["scheduler", "run"]
+    command: ["scheduler"]
     healthcheck:
       <<: *mediaflow-healthcheck
       test:
@@ -103,7 +103,7 @@ services:
 
   notification-worker:
     <<: *mediaflow-service
-    command: ["notification-worker", "run"]
+    command: ["notification-worker"]
     healthcheck:
       <<: *mediaflow-healthcheck
       test:

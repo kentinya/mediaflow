@@ -1,6 +1,6 @@
 """Real-Python acceptance: reference-aligned Rules workspace and forms (Task PATCH-20261029-4).
 
-This harness starts the production-shaped Python API (``mediaflow api serve``)
+This harness starts the production-shaped Python API (``python -m mediaflow.resident_entry api``)
 against a temporary throwaway configuration — temporary SQLite repositories,
 temporary Local Storage roots, a throwaway API token and the current built V2
 artifact served by the real ``mediaflow.interfaces.v2_ui`` boundary — and drives
@@ -1134,7 +1134,9 @@ def render_configuration(root: Path) -> dict:
     document = json.loads((ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8"))
     (root / "source" / "incoming").mkdir(parents=True)
     (root / "target" / "Movies").mkdir(parents=True)
-    document["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
+    data = root / "data"
+    data.mkdir(exist_ok=True)
+    document["persistence"]["databasePath"] = str(data / "runtime.sqlite3")
     document["storages"][0]["rootPath"] = str(root / "source")
     document["storages"][1]["rootPath"] = str(root / "target")
     document["resourceLibraries"][0]["storagePath"] = "incoming"
@@ -1319,20 +1321,14 @@ def main() -> int:
         encoding="utf-8",
     )
     process = subprocess.Popen(
-        [
-            str(ROOT / ".venv" / "bin" / "mediaflow"),
-            "--config",
-            str(configuration_path),
-            "api",
-            "serve",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(PORT),
-        ],
+        [sys.executable, "-m", "mediaflow.resident_entry", "api"],
         cwd=ROOT,
         env={
             **os.environ,
+            "MEDIAFLOW_CONFIG": str(configuration_path),
+            "MEDIAFLOW_DATA_DIR": str(Path(configuration_path).parent),
+            "MEDIAFLOW_API_HOST": "127.0.0.1",
+            "MEDIAFLOW_API_PORT": str(PORT),
             "MEDIAFLOW_API_TOKEN": TOKEN,
             "MEDIAFLOW_UI_V2_ASSET_ROOT": str(ROOT / "web" / "dist"),
         },
