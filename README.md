@@ -76,7 +76,7 @@ MEDIAFLOW_API_HOST=127.0.0.1 MEDIAFLOW_API_PORT=8787 \
 ```
 
 打开 <http://127.0.0.1:8787/>，在另一个终端用同一个配置执行
-`.venv/bin/python -m mediaflow.host_operations --config config/mediaflow.json issue-setup-code`，
+`MEDIAFLOW_DATA_DIR="$PWD/.mediaflow" .venv/bin/python -m mediaflow.host_operations --config config/mediaflow.json issue-setup-code`，
 再在网页创建首位管理员。需要执行任务时用同一个配置启动
 `.venv/bin/python -m mediaflow.resident_entry worker`，定时整理另需启动
 `.venv/bin/python -m mediaflow.resident_entry scheduler`。
