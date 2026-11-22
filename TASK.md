@@ -1,6 +1,6 @@
 # Task 58.1 — 切换正式部署和主机恢复入口
 
-Next Action: DEVELOPER IMPLEMENTS TASK 58.1
+Next Action: B INDEPENDENT REVIEW AND ACCEPTANCE
 
 用户已授权激活 Task 58.1。Developer 开始实施时将状态从 `PLANNED` 转为 `IN PROGRESS`。
 用户授权 A 代 B 规划首个 Task，角色例外限于首个 Task 的规划。B 独立验收，A 按工作流终审。
@@ -10,7 +10,7 @@ Next Action: DEVELOPER IMPLEMENTS TASK 58.1
 Task ID: 58.1
 Task Type: SLICE
 Parent Slice: 58
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
 Difficulty: High
 Test Level: T4
@@ -112,6 +112,56 @@ API 核对状态。预检、发码或恢复失败时说明实际状态、已有�
 完成整个通用 CLI 的源码和制品删除、退役业务命令与 CLI 专属整理分支、结束 schema 11
 切换支持属于本 Slice 的剩余范围。此 Task 内维持现有数据库适用性拒绝和历史保护，
 不引入新的升级或兼容入口。认证机制、业务 API 权限、Web 整理交互和媒体备份沿用 Slice 边界。
+
+## Developer handoff — Task 58.1 Candidate
+
+```text
+Implementation Head: 5b6d966995cddc37e29a7442efa68300812f600b
+Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
+Candidate state: READY FOR B REVIEW
+```
+
+### 实际改动
+
+- 新增 `mediaflow/resident_entry.py`，固定四服务入口只接受一个职责名。API、Worker、Scheduler、
+  Notification Worker 直接复用原装配；共享数据库租约、只读预检、Active/admission 边界、心跳、
+  原任务 pin 和终端通知保留。API 仍使用 Waitress，默认 `0.0.0.0:8080`，仅通过
+  `MEDIAFLOW_API_HOST/PORT/THREADS` 提供有界部署覆盖。
+- 新增 `mediaflow/runtime_support.py`，承载服务与剩余业务 CLI 共用的数据库定位、managed Active
+  解析、pin 和 Task 终端通知逻辑，避免服务入口依赖通用 CLI。
+- `container_entrypoint` 只接受四个服务名或固定 `host` 维护模式；删除 `MEDIAFLOW_COMMAND`、
+  任意可执行文件转发和旧服务参数。Compose 四服务命令改为 `["api"]`、`["worker"]`、
+  `["scheduler"]`、`["notification-worker"]`；探针按服务职责复用同一预检。
+- 新增 `mediaflow/host_operations.py`，只支持 `issue-setup-code`、`issue-reset-code`、`backup`、
+  `verify`、`restore`。发码复用 `AccountService` 和共享租约；恢复使用独占租约、显式确认、空目标
+  和旁路文件检查。`verify` 分开报告 SQLite 完整性、schema 和本版本可用性；当前 runtime store 与
+  当前 configuration-only store 可备份/恢复，旧版本或不适用备份在写入前拒绝。
+- 从通用 CLI 删除 `api`、`worker`、`scheduler`、`notification-worker`、`accounts`、`database`
+  的分派和参数面；保留本 Task 外的剩余业务命令与 schema 11 切换，未扩大 Slice 范围。
+- 同步更新 README、部署/配置/发布/架构指引、首页首次设置与重置提示、wheel/容器/浏览器脚手架。
+
+### 实际验证
+
+- `PYTHONPATH=tests .venv/bin/python -m unittest discover -s tests`：2365 项中通过 2364，
+  7 项跳过；唯一失败为 `test_configuration_package_exchange.PackageRedactionTests.test_environment_references_preserved_and_literal_secrets_redacted`。
+  该失败已在未改动的 `HEAD:c8d8d30f` 隔离 worktree 复现，是既有失败，不是本候选引入。
+- Developer 受影响清单：196 项通过（含容器部署、探针、四服务、Worker readiness、租约、配置快照、
+  resident correction、调度、通知、账户入口、SQLite 备份/恢复、发布校验）。
+- 最终定向：60 项通过（容器入口/预检、探针、SQLite、租约、账户入口、发布校验）。
+- 轮子：`pip wheel` 生成 `mediaflow-2.0.0.dev0-py3-none-any.whl`，`scripts/wheel_smoke_test.py`
+  通过；源码外验证覆盖四职责入口拒绝旧参数及五个主机操作。
+- Web：`npm run test -- run src/features/entry/EntryPage.test.tsx` 17 项通过；
+  `npm run typecheck`、`npm run lint`、`npm run format:check` 通过。
+- `python3 scripts/check_governance.py`、`ruff format --check .`、`ruff check .`、
+  `python -m compileall -q mediaflow tests scripts`、`git diff --check` 通过。
+
+### 剩余风险与待 B 验收
+
+- Docker/真实 Compose、候选镜像发布安全检查、真实浏览器 E2E、wheel 精确候选门禁按 Task 分工留给 B。
+- 本 Task 删除了 `--poll-seconds` 服务参数；发布 cadence 是唯一来源，相关旧覆盖测试已退役。
+  Slice 合同中的 chunk 级服务启动源码/制品删除、事务性 schema 11 切换退役仍属本 Slice 剩余范围。
+- `test_configuration_package_exchange` 既有失败仍保留，未用跳过或削弱断言掩盖；本地 ResourceWarning
+  噪声存在于既有 SQLite 测试夹具，不影响断言结果。
 
 ## Latest accepted Task — PATCH-20261122-3
 
