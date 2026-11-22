@@ -1,12 +1,12 @@
 # Task 57.2 — 在系统设置签发、使用和吊销 API 令牌
 
-Next Action: DEVELOPER FIXES TASK57.2
+Next Action: B REVIEWS TASK57.2
 
 ```text
 Task ID: 57.2
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c12cae6fe0226e7efe6850ac68e6581785fb87e3
 Difficulty: High
 Test Level: T4
@@ -273,6 +273,23 @@ Next: SAME TASK FIX LOOP
 - **RO-3** 候选空库、隔离媒体、发布安全和重启故障检查均通过。旧 schema 59 库预检拒绝启动，文件摘要前后相同。轮换监控令牌并重启四服务后，原计划产生可回读的已完成任务，Worker 保留源文件并生成一份字节一致的复制。停用与重新启用保留 Task 57.1 的实测，本轮真实自动化对应场景也通过。
 - 真实自动化首跑 31 通过、1 失败。首次复制完成后，测试在列表与配置授权异步刷新期间点击第二次。页面提示尚未发送，trace 仅有第一次复制请求，第二次丢回包场景没有发生。同一用例原样单独执行通过，列表与配置授权不同步时的专门用例也通过。B 保留首跑日志，下一候选复跑原门禁。
 - Python 全量 2,359 项中 2,352 通过、7 项可选外部环境跳过。Web 单测 1,611 项、默认 Chromium 279 项通过。Python 和 Web 静态检查、两份配置样例、生产构建及源码外 wheel 冒烟通过。候选镜像 `sha256:aee8fe2e45fa18a7611e343f1616382c8b308d6cbc058044220e348ba4d25d7f`，wheel SHA-256 `a56bfb84e5ce6e77e02a890611955e1b08a15d52a9493ae5a889cc5302389244`。原始日志、截图和制品位于 `.git/validation-evidence/eef4d601baabfff70f534d7a016dc4a86bbad867/b-review/`。
+
+## Developer 返工交接（第四轮）— TASK 57.2
+
+```text
+Candidate: 2b1042470765f5d9bf546780921de3fa499a0461
+Fix range: eef4d601baabfff70f534d7a016dc4a86bbad867..2b104247
+```
+
+- `.mf-settings-page` 网格改为单列 `minmax(0, 1fr)`，直接子项补 `min-width: 0`。令牌卡宽度随设置页可用空间收缩，860px 表格继续由既有 `.mf-settings-token-table-wrap` 横向滚动承接；表单和「刷新列表」不再被表格撑出 390px 视口，横滑后同一条令牌的状态与吊销操作可达。
+- `configuration-settings.python.spec.ts` 在首个令牌用例前新增 390px 真实触屏旅程：从空列表签发 `narrow-monitor`（核对默认只读、90 天），保存明文并用 `/api/tasks` 验证 `200`；刷新列表后核对页面无横向溢出、令牌卡和「刷新列表」仍在视口内；将令牌表横滑到底后点击该行「吊销」并确认。核对只发出一次吊销请求、该行显示「已吊销」、原令牌再次调用 `/api/tasks` 返回 `401`。桌面签发、丢回包、代理超时和会话恢复旅程保留并通过。
+- 实际执行（最终工作树）：
+  - `web/`：`npm run build` 通过。
+  - `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/configuration-settings.python.spec.ts` → **10 passed**（含新增触屏用例）。
+  - `npm run typecheck`、改动文件 ESLint/Prettier、`python3 scripts/check_governance.py`、`git diff --check` 通过。
+- 反向核对：临时移除本轮 CSS 规则后重建并单跑新增用例，令牌卡越出视口断言失败；恢复规则后重建，新增用例和整套 10 项通过，说明用例实际覆盖本阻塞。
+- 用时约 18 分钟；构建与测试实际执行约 1 分钟，低于本轮 30%。
+- 剩余风险与 B 验收：完整 T4、真实 Compose 四服务重启、真实 Scheduler/Worker 在令牌轮换后的受理与文件结果、候选镜像及 wheel/源码外安装仍待 B 独立执行。本轮只改设置页网格和真实页面用例，未改令牌后端、权限或持久状态。
 
 ## Task 57.1 — B 复核结论
 
