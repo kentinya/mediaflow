@@ -8,20 +8,20 @@ in [`requirements.md`](requirements.md). Slice-specific architecture and proof d
 remain in [`SLICE.md`](../SLICE.md) and the architecture document; this file records only durable
 product and authority boundaries.
 
-## TARGET — Web accounts and sessions for fresh deployments (Slice57 ACTIVE)
+## TARGET — Single Web administrator and scoped API tokens (Slice57 ACTIVE)
 
-验收后以 `V2-AUTH-004–009` 取代 V2 的 `V2-AUTH-001/002`，并更新 `V2-ROUTE-001/002/004`
+验收后以 `V2-AUTH-004/005/007–009` 取代 V2 的 `V2-AUTH-001/002`，并更新 `V2-ROUTE-001/002/004`
 的认证和恢复语义。V1 历史基线、`V2-AUTH-003` 与现行后端安全要求继续适用。
 [Slice 57](../SLICE.md)
 
 | ID | 目标 | 完成条件 |
 |---|---|---|
-| V2-AUTH-004 | 通过主机授权初始化首位管理员和找回访问。 | 空库可启动。短期一次性码只用于明确的初始化或重置，原子消耗。 |
-| V2-AUTH-005 | 使用个人账号完成登录、保持登录、回跳和退出。 | 刷新和新标签延续有效会话。过期后恢复允许的页面，恢复写操作先核对原请求。 |
-| V2-AUTH-006 | 管理员在 Web 管理本地账号及现有角色。 | 创建、初设、改角色、重置和启停有明确结果和安全恢复。账号 ID 独立，最后管理员受保护。 |
-| V2-AUTH-007 | 对外脚本按需使用有期限、可单独吊销的令牌。 | 管理员在账号详情签发，明文只显示一次。有效权限取签发权限与账号当前权限的交集，脚本使用现有业务 API。 |
+| V2-AUTH-004 | 通过主机授权初始化唯一管理员和找回访问。 | 空库可启动。短期一次性码用于初始化或重置，原子消耗。并发初始化只创建一个管理员。 |
+| V2-AUTH-005 | 管理员用账号密码登录、保持登录、回跳和退出。 | 刷新和新标签延续有效会话。过期后恢复允许的页面，恢复写操作先核对原请求。 |
+| V2-AUTH-006 | Web 管理多个本地账号及其角色。 | 延期。 |
+| V2-AUTH-007 | 对外脚本按需使用分权限、有期限、可单独吊销的令牌。 | 管理员从系统设置签发。明文只显示一次。脚本在令牌权限内调用现有业务 API，审计标识具体令牌。 |
 | V2-AUTH-008 | 从空库部署，退役配置中的身份和部署环境中的 API 令牌。 | 首次设置以主机生成的一次性码创建管理员。启动配置和新配置输入拒绝 `api.principals`。旧令牌环境变量不提供认证。 |
-| V2-AUTH-009 | 同版本重启后继续访问和处理本版本的工作。 | 业务配置、任务、结果与审计保持可读。后台执行使用原有业务快照，按当前数据库账号权限检查。 |
+| V2-AUTH-009 | 同版本重启后继续访问和处理本版本的工作。 | 业务配置、任务、结果与审计保持可读。定时执行使用管理员发布的授权、当前计划和原业务快照。停用计划后，Scheduler 停止受理，Worker 在执行检查处停止后续效果，页面说明原因。 |
 
 ## CURRENT — Canonical Web and API routes (Slice56 PASS / CLOSED)
 

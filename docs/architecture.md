@@ -11,15 +11,16 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Web accounts and sessions for fresh deployments (Slice57 ACTIVE)
+## TARGET — Single Web administrator and scoped API tokens (Slice57 ACTIVE)
 
-SQLite 成为当前账号、角色和凭证状态的唯一来源。HTTP 认证把服务端会话或新签发的
-Bearer 令牌解析为同一类账号身份。现有 API、Scheduler 与 Worker 按当前权限判断；
-已受理业务使用原任务的固定快照和效果证据。Web 会话维护与业务命令分离。
+SQLite 保存唯一管理员、会话和 API 令牌状态。HTTP 将会话解析为管理员身份，将 Bearer
+令牌解析为可审计的独立令牌身份，两类身份进入同一套业务权限检查。令牌只授予签发时
+选定的业务权限。
 
-最小部署 bootstrap 提供数据库路径等启动信息，账号由空库初始化，认证状态独立于业务
-配置。启动配置和新配置输入拒绝已退役的认证字段。同版本重启时重新读取数据库的账号和
-权限。后台工作继续遵循既有授权检查、快照固定引用与效果保护。
+最小部署 bootstrap 提供数据库路径等启动信息，管理员由空库初始化，认证状态独立于
+业务配置。启动配置和新配置输入拒绝已退役的认证字段。Scheduler 和 Worker 核对管理员
+发布的授权及当前生效计划。已受理任务保留原快照和已有结果。停用生效后后续执行检查停止
+相应工作，脚本令牌的生命周期由 HTTP 入口独立校验。
 
 [Slice 57](../SLICE.md)
 
