@@ -1,6 +1,6 @@
 # Task 57.1 — 单管理员 Web 登录与定时计划停用
 
-Next Action: B REVIEWS TASK57.1
+Next Action: DEVELOPER FIXES TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3 中的部署、管理员和定时计划旅程。按用户授权，A 更新合同，
 B 根据已提交的 `b22af92f4434a1f343da2b3cddfe2747dc6e1b37` 调整同一 Task。当前返工以本节的
@@ -11,7 +11,7 @@ B 根据已提交的 `b22af92f4434a1f343da2b3cddfe2747dc6e1b37` 调整同一 Tas
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -84,7 +84,39 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.1
 - 按[共享全量门禁](docs/development-workflow.md#shared-full-regression-commands)运行适用的
   T4 全量、生产打包与 wheel 验收。Developer 先交付受影响用例结果，B 用对应候选验收。
 
-### B 本轮复核 — FIX REQUIRED
+### B 最新复核 — FIX REQUIRED
+
+```text
+Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..0e134204a46d86e80444ba385c52f28cf81b473c
+Implementation: fba3279c4d444829bc388a5a8263e519c61ba05a
+Decision: FIX REQUIRED
+Next: SAME TASK FIX LOOP
+```
+
+- **P1｜计划再次停用后，旧执行记录仍让用户等下一次定时执行。** 管理员让计划先入队，停用后重新启用。
+  Worker 停止旧任务，执行详情正确显示停用原因及零文件效果。管理员随后从列表打开「编辑」再次停用并保存，
+  列表显示「停用」。回到「执行记录 → 查看详情」，旧任务仍提示「计划已重新启用」和「等待下一次定时执行」。
+  管理员照提示等待时，这条停用的计划不会产生新任务。
+- `fba3279c`（2026-11-22）在 `automation_record_display.py` 按旧任务的停止分类固定展示「计划已重新启用」。
+  发布记录证明的是旧任务停止的原因，该分类无法代表管理员后来保存的计划状态。
+
+#### Developer 修正指导
+
+1. 让执行详情分别说明旧任务的停用原因和此刻适用的下一步。沿用现有记录展示，可以直接指引管理员在
+   自动化列表确认计划状态，并说明启用后的下一次定时执行会单独受理，旧任务保留在执行记录中。
+   保留已验证的文件效果和停止原因。
+2. 在现有浏览器停用用例追加「再次从列表编辑停用 → 确认列表停用 → 重开旧执行详情」。
+   核对下一步与列表状态一致，原任务及文件结果仍可查。运行本 Task 的自动化定向验证计划。
+
+正式 Web 构建通过。用原生 Chromium、真实 Python API 和 SQLite 重跑上轮两条停用用例，均通过。
+沿同一浏览器旅程再次停用后，页面状态与旧记录提示冲突，复现失败。T4、生产 Compose 和 wheel 留待修正候选。
+日志、两页截图和浏览器 trace 位于本地
+`.git/validation-evidence/0e134204a46d86e80444ba385c52f28cf81b473c/b-review/`。
+
+Slice 57 的 RO-1 已有单管理员初始化、会话恢复、改密和主机重置证据。RO-3 仍需修正执行详情并完成部署验收。
+RO-2 的 API 令牌管理与定时计划独立性仍待后续 Task。
+
+### B 上轮复核 — FIX REQUIRED
 
 ```text
 Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..0c55e8e17fe318692033af93a8a32e7192395a70
