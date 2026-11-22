@@ -7,6 +7,8 @@
  * replayed automatically.
  */
 
+import { ApiReadError, type ApiReadErrorCategory } from "./api-errors";
+
 export type ApiTokenScope = "read_only" | "read_and_analysis";
 export type ApiTokenStatus = "active" | "expired" | "revoked";
 
@@ -27,11 +29,14 @@ export interface IssuedApiToken extends ApiTokenSummary {
   readonly plaintextShownOnce: true;
 }
 
-export type ApiTokensFailureCategory =
-  "unauthorized" | "forbidden" | "rejected" | "unavailable" | "malformed";
+export type ApiTokensFailureCategory = ApiReadErrorCategory;
 
-export class ApiTokensApiError extends Error {
-  readonly category: ApiTokensFailureCategory;
+/**
+ * Token administration failure. Extending the shared read error lets the
+ * protected-read boundary recognise a rejected list read and apply the same
+ * session-invalidating transition every other authenticated read uses.
+ */
+export class ApiTokensApiError extends ApiReadError {
   readonly status: number | null;
   readonly code: string | null;
   readonly nextAction: string | null;
@@ -45,7 +50,6 @@ export class ApiTokensApiError extends Error {
   ) {
     super(category);
     this.name = "ApiTokensApiError";
-    this.category = category;
     this.status = status;
     this.code = code;
     this.nextAction =

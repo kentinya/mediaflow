@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiReadError } from "../api/api-errors";
 import { useAuthToken, useRejected } from "../api/auth-context";
@@ -80,6 +80,41 @@ export function useAuthorizedReadAuthorityRecovery<T>(
       queryClient.clear();
     }
   }, [token, rejected, queryClient]);
+}
+
+/**
+ * Explicit entry into the same rejected-authority transition for an
+ * authenticated API mutation that answered 401.
+ *
+ * A mutation cannot feed the read-query recovery hook its error, so this hook
+ * applies the identical two-phase lifecycle: clear the rejected in-memory
+ * principal first (which disables every enabled authenticated read), then
+ * clear the authenticated Query cache once no query can replay. The operator
+ * decides after re-signing in whether an unconfirmed write is issued again.
+ */
+export function useRejectedAuthorityEntry(): () => void {
+  const token = useAuthToken();
+  const rejected = useRejected();
+  const queryClient = useQueryClient();
+  const pending = useRef(false);
+  const [attempt, rerender] = useReducer((value: number) => value + 1, 0);
+
+  useEffect(() => {
+    if (!pending.current) return;
+    if (authStore.getToken() !== null) {
+      authStore.clearRejectedAuthority();
+      return;
+    }
+    if (rejected) {
+      queryClient.clear();
+      pending.current = false;
+    }
+  }, [attempt, token, rejected, queryClient]);
+
+  return useCallback(() => {
+    pending.current = true;
+    rerender();
+  }, []);
 }
 
 /**

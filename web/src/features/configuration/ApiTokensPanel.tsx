@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
@@ -13,6 +13,10 @@ import {
   type ApiTokenStatus,
   type IssuedApiToken,
 } from "../../shared/api/api-tokens-api";
+import {
+  useAuthorizedReadAuthorityRecovery,
+  useRejectedAuthorityEntry,
+} from "../../shared/auth/AuthorizedReadBoundary";
 
 const QUERY_KEY = ["api-tokens"] as const;
 const DEFAULT_DAYS = 90;
@@ -55,18 +59,35 @@ function permissionsLabel(values: readonly string[]): string {
   return values.map((value) => PERMISSION_LABELS[value] ?? value).join(" + ");
 }
 
+function reconciledNotice(action: "签发" | "吊销"): Notice {
+  return {
+    tone: "error",
+    title: `${action}结果待核实`,
+    text:
+      action === "签发"
+        ? "列表已重新读取。请按名称和签发时间找到对应记录；无法取得明文的令牌请先吊销，再重新签发一枚给脚本使用。"
+        : "列表已重新读取，请核对令牌状态；仍显示有效时再执行一次吊销。",
+  };
+}
+
 function failureNotice(
   error: unknown,
   action: "读取" | "签发" | "吊销",
+  listReconciled: boolean | null = null,
 ): Notice {
   if (error instanceof ApiTokensUnknownOutcomeError) {
+    const reread =
+      action === "签发"
+        ? listReconciled === true
+          ? "列表已按最新持久状态重新读取。请按名称和签发时间找到对应记录；无法取得明文的令牌请先吊销，再重新签发一枚给脚本使用。"
+          : "随后重新读取列表也没有成功，核对仍未完成。连接恢复后请重新读取列表，按名称和签发时间找到记录；无法取得明文的令牌先吊销，再重新签发。"
+        : listReconciled === true
+          ? "列表已按最新持久状态重新读取，请核对令牌状态；仍显示有效时再执行一次吊销。"
+          : "随后重新读取列表也没有成功，核对仍未完成。连接恢复后请重新读取列表，确认令牌状态；仍显示有效时再执行一次吊销。";
     return {
       tone: "error",
       title: `${action}结果待核实`,
-      text:
-        action === "签发"
-          ? "本次签发没有收到可确认的回包。系统不会自动重试；列表已重新读取，请按名称和创建时间核对最新记录。无法取得明文的令牌请先吊销，再重新签发。"
-          : "本次吊销没有收到可确认的回包。系统不会自动重试；列表已重新读取，请核对令牌状态，仍显示有效时再执行一次吊销。",
+      text: `${action === "签发" ? "本次签发没有收到可确认的回包。" : "本次吊销没有收到可确认的回包。"}系统不会自动重试；${reread}`,
     };
   }
   if (error instanceof ApiTokensApiError) {
@@ -181,7 +202,6 @@ function TokenRow({
 }
 
 export function ApiTokensPanel() {
-  const client = useQueryClient();
   const query = useQuery({
     queryKey: QUERY_KEY,
     queryFn: () => fetchApiTokens(),
@@ -197,11 +217,26 @@ export function ApiTokensPanel() {
   const [copyState, setCopyState] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
+  // A rejected list read enters the same session-invalidating authority
+  // transition as every other protected read in the shell; issuance and
+  // revocation use the explicit mutation entry to that same transition.
+  useAuthorizedReadAuthorityRecovery(query);
+  const enterRejectedAuthority = useRejectedAuthorityEntry();
+
   const items = query.data ?? [];
 
-  async function refresh(): Promise<void> {
-    await client.invalidateQueries({ queryKey: QUERY_KEY });
-    await query.refetch();
+  async function refresh(): Promise<boolean> {
+    const result = await query.refetch();
+    return !result.isError;
+  }
+
+  async function retryListRead(): Promise<void> {
+    if (!(await refresh())) return;
+    setNotice((previous) =>
+      previous !== null && previous.title.endsWith("结果待核实")
+        ? reconciledNotice(previous.title.startsWith("签发") ? "签发" : "吊销")
+        : previous,
+    );
   }
 
   async function submitIssue(): Promise<void> {
@@ -231,17 +266,23 @@ export function ApiTokensPanel() {
       });
       setIssued(result);
       setName("");
+      await refresh();
       setNotice({
         tone: "success",
         title: "令牌已签发",
         text: "明文只在本页当前状态显示一次；复制后妥善保存。刷新或重新打开页面后只能看到非秘密状态。",
       });
-      await refresh();
     } catch (error) {
+      let listReconciled: boolean | null = null;
       if (error instanceof ApiTokensUnknownOutcomeError) {
-        await refresh();
+        listReconciled = await refresh();
+      } else if (
+        error instanceof ApiTokensApiError &&
+        error.category === "unauthorized"
+      ) {
+        enterRejectedAuthority();
       }
-      setNotice(failureNotice(error, "签发"));
+      setNotice(failureNotice(error, "签发", listReconciled));
     } finally {
       setBusy(null);
     }
@@ -253,20 +294,30 @@ export function ApiTokensPanel() {
     try {
       const result = await revokeApiToken(item.tokenId);
       if (issued?.tokenId === item.tokenId) setIssued(null);
+      const listReconciled = await refresh();
       setNotice({
         tone: "success",
         title: `已吊销 ${result.name}`,
         text:
           result.revokedAt === null
-            ? "列表已更新。"
-            : `已从 ${timeLabel(result.revokedAt)} 起拒绝这枚令牌；其他令牌和定时计划不受影响。`,
+            ? "后端已确认吊销；列表重读后核对当前状态。"
+            : `已从 ${timeLabel(result.revokedAt)} 起拒绝这枚令牌；其他令牌和定时计划不受影响。${
+                listReconciled
+                  ? "列表已重新读取。"
+                  : "列表重读未成功，请重新读取核对状态。"
+              }`,
       });
-      await refresh();
     } catch (error) {
+      let listReconciled: boolean | null = null;
       if (error instanceof ApiTokensUnknownOutcomeError) {
-        await refresh();
+        listReconciled = await refresh();
+      } else if (
+        error instanceof ApiTokensApiError &&
+        error.category === "unauthorized"
+      ) {
+        enterRejectedAuthority();
       }
-      setNotice(failureNotice(error, "吊销"));
+      setNotice(failureNotice(error, "吊销", listReconciled));
     } finally {
       setConfirmingId(null);
       setBusy(null);
@@ -424,7 +475,7 @@ export function ApiTokensPanel() {
               <Button
                 type="button"
                 variant="secondary"
-                onClick={() => void query.refetch()}
+                onClick={() => void retryListRead()}
               >
                 重新读取
               </Button>

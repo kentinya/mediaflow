@@ -1152,4 +1152,205 @@ describe("V2 configuration direct publication", () => {
       `${JSON.stringify(window.localStorage)}${JSON.stringify(window.sessionStorage)}`,
     ).not.toContain("mf_test_only_secret_value");
   });
+
+  it("keeps a lost issuance reconciliation pending when the list reread also fails", async () => {
+    let tokenItem: Record<string, unknown> | null = null;
+    let issueWrites = 0;
+    let failNextList = false;
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.endsWith("/auth/tokens") && init?.method === "POST") {
+        issueWrites += 1;
+        tokenItem = {
+          tokenId: "token-lost",
+          name: "lost-monitor",
+          scope: "read_only",
+          permissions: ["read"],
+          createdAt: "2026-01-01T00:00:00+00:00",
+          expiresAt: "2026-04-01T00:00:00+00:00",
+          lastUsedAt: null,
+          revokedAt: null,
+          status: "active",
+        };
+        failNextList = true;
+        throw new TypeError("issuance answer lost");
+      }
+      if (input.endsWith("/auth/tokens/token-lost/revoke")) {
+        tokenItem = {
+          ...(tokenItem ?? {}),
+          status: "revoked",
+          revokedAt: "2026-01-02T00:00:00+00:00",
+        };
+        return response(tokenItem);
+      }
+      if (input.endsWith("/auth/tokens")) {
+        if (failNextList) {
+          failNextList = false;
+          throw new TypeError("token list unavailable");
+        }
+        return response({ items: tokenItem === null ? [] : [tokenItem] });
+      }
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings")) return response(activeSettings());
+      return response(activeStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+
+    const panel = await screen.findByRole("region", { name: "API 令牌" });
+    await userEvent.type(
+      within(panel).getByLabelText("令牌名称"),
+      "lost-monitor",
+    );
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "签发令牌" }),
+    );
+
+    expect(await screen.findByText("签发结果待核实")).toBeVisible();
+    expect(screen.getByText(/核对仍未完成/)).toBeVisible();
+    expect(screen.queryByText(/列表已重新读取/)).toBeNull();
+    expect(issueWrites).toBe(1);
+    expect(
+      await screen.findByText("API 令牌读取失败", { exact: true }),
+    ).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "重新读取" }));
+    expect(await screen.findByText("lost-monitor")).toBeVisible();
+    expect(within(panel).getByLabelText("令牌状态 有效")).toBeVisible();
+    await waitFor(() => expect(screen.queryByText(/核对仍未完成/)).toBeNull());
+    expect(
+      screen.getByText(/列表已重新读取。请按名称和签发时间找到对应记录/),
+    ).toBeVisible();
+    // The reconciliation only reread the durable list; the lost issue was
+    // never replayed and no new issuance happened automatically.
+    expect(issueWrites).toBe(1);
+
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "吊销令牌 lost-monitor" }),
+    );
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "确认吊销 lost-monitor" }),
+    );
+    expect(await screen.findByText("已吊销 lost-monitor")).toBeVisible();
+    expect(issueWrites).toBe(1);
+  });
+
+  it("enters the shared session recovery when the token list is rejected", async () => {
+    let listRejected = false;
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.endsWith("/auth/tokens")) {
+        return listRejected
+          ? response({ error: { code: "unauthorized" } }, 401)
+          : response({ items: [] });
+      }
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings")) return response(activeSettings());
+      return response(activeStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+
+    const panel = await screen.findByRole("region", { name: "API 令牌" });
+    listRejected = true;
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "刷新列表" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Not authorized" }),
+    ).toBeVisible();
+    await waitFor(() => expect(authStore.getToken()).toBeNull());
+    expect(authStore.isRejected()).toBe(true);
+    expect(screen.queryByText(/Signed in as/)).toBeNull();
+    expect(screen.getByRole("link", { name: "Sign in" })).toBeVisible();
+  });
+
+  it("enters the same session recovery when issuance is rejected", async () => {
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.endsWith("/auth/tokens") && init?.method === "POST")
+        return response({ error: { code: "unauthorized" } }, 401);
+      if (input.endsWith("/auth/tokens")) return response({ items: [] });
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings")) return response(activeSettings());
+      return response(activeStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+
+    const panel = await screen.findByRole("region", { name: "API 令牌" });
+    await userEvent.type(
+      within(panel).getByLabelText("令牌名称"),
+      "rejected-issue",
+    );
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "签发令牌" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Not authorized" }),
+    ).toBeVisible();
+    await waitFor(() => expect(authStore.getToken()).toBeNull());
+    expect(authStore.isRejected()).toBe(true);
+  });
+
+  it("enters the same session recovery when revocation is rejected", async () => {
+    const item = {
+      tokenId: "token-revoke",
+      name: "revoke-rejected",
+      scope: "read_only",
+      permissions: ["read"],
+      createdAt: "2026-01-01T00:00:00+00:00",
+      expiresAt: "2026-04-01T00:00:00+00:00",
+      lastUsedAt: null,
+      revokedAt: null,
+      status: "active",
+    };
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.endsWith("/auth/tokens/token-revoke/revoke"))
+        return response({ error: { code: "unauthorized" } }, 401);
+      if (input.endsWith("/auth/tokens")) return response({ items: [item] });
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings")) return response(activeSettings());
+      return response(activeStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+
+    const panel = await screen.findByRole("region", { name: "API 令牌" });
+    await userEvent.click(
+      within(panel).getByRole("button", {
+        name: "吊销令牌 revoke-rejected",
+      }),
+    );
+    await userEvent.click(
+      within(panel).getByRole("button", {
+        name: "确认吊销 revoke-rejected",
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Not authorized" }),
+    ).toBeVisible();
+    await waitFor(() => expect(authStore.getToken()).toBeNull());
+    expect(authStore.isRejected()).toBe(true);
+  });
 });

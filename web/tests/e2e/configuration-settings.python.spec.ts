@@ -4,7 +4,7 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
-import { accountForToken, submitSignIn } from "./auth";
+import { accountForToken, E2E_ACCOUNT_PASSWORD, submitSignIn } from "./auth";
 
 /**
  * Real-Python browser proof for the current System Settings direct-publication
@@ -413,4 +413,183 @@ test("desktop Settings issues scoped tokens, reconciles a lost answer and revoke
   });
   expect(revoked.status()).toBe(401);
   await expect(page.getByLabel("配置状态摘要")).toContainText("配置已生效");
+});
+
+test("a lost issuance with a failed list reread stays pending until the operator rereads and revokes", async ({
+  page,
+  request,
+}) => {
+  await connectOn(page, "/configuration");
+  const panel = page.getByRole("region", { name: "API 令牌" });
+  await expect(panel).toBeVisible();
+
+  const issueRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (request.method() === "POST" && url.pathname === "/api/auth/tokens") {
+      issueRequests.push(request.postData() ?? "");
+    }
+  });
+  let lostToken: string | null = null;
+  let loseNextIssue = true;
+  let failNextList = false;
+  await page.route("**/api/auth/tokens", async (route) => {
+    if (route.request().method() === "POST") {
+      if (!loseNextIssue) {
+        await route.continue();
+        return;
+      }
+      loseNextIssue = false;
+      const answer = await route.fetch();
+      expect(answer.status()).toBe(201);
+      const body = (await answer.json()) as { token?: string };
+      lostToken = body.token ?? null;
+      failNextList = true;
+      await route.abort();
+      return;
+    }
+    if (failNextList) {
+      failNextList = false;
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+
+  await panel.getByLabel("令牌名称").fill("browser-lost-monitor");
+  await panel.getByRole("button", { name: "签发令牌" }).click();
+  await expect(
+    panel.getByText("签发结果待核实", { exact: true }),
+  ).toBeVisible();
+  await expect(panel.getByText(/核对仍未完成/)).toBeVisible();
+  await expect(panel.getByText(/列表已重新读取/)).toHaveCount(0);
+  expect(issueRequests).toHaveLength(1);
+  expect(lostToken).not.toBeNull();
+  await expect(
+    panel.getByText("API 令牌读取失败", { exact: true }),
+  ).toBeVisible();
+
+  // Recovery rereads only the durable list. The original issuance is never
+  // replayed, and the operator locates the record by name and issue time.
+  await panel.getByRole("button", { name: "重新读取" }).click();
+  const lostRow = panel.getByRole("row", { name: /browser-lost-monitor/ });
+  await expect(lostRow).toBeVisible();
+  await expect(lostRow.getByLabel("令牌状态 有效")).toBeVisible();
+  await expect(panel.getByText(/核对仍未完成/)).toHaveCount(0);
+  await expect(
+    panel.getByText(/列表已重新读取。请按名称和签发时间找到对应记录/),
+  ).toBeVisible();
+  expect(issueRequests).toHaveLength(1);
+
+  await panel
+    .getByRole("button", { name: "吊销令牌 browser-lost-monitor" })
+    .click();
+  await panel
+    .getByRole("button", { name: "确认吊销 browser-lost-monitor" })
+    .click();
+  await expect(
+    panel.getByText("已吊销 browser-lost-monitor", { exact: true }),
+  ).toBeVisible();
+  const oldToken = await request.get("/api/tasks", {
+    headers: { Authorization: `Bearer ${lostToken}` },
+  });
+  expect(oldToken.status()).toBe(401);
+
+  // The replacement is a separate administrator click, not an automatic
+  // retry of the issuance whose answer was lost.
+  await panel.getByLabel("令牌名称").fill("browser-lost-monitor-replacement");
+  await panel.getByRole("button", { name: "签发令牌" }).click();
+  await expect(panel.getByText("令牌已签发", { exact: true })).toBeVisible();
+  expect(issueRequests).toHaveLength(2);
+  const replacement = (await panel.getByLabel("新令牌明文").innerText()).trim();
+  const replacementTasks = await request.get("/api/tasks", {
+    headers: { Authorization: `Bearer ${replacement}` },
+  });
+  expect(replacementTasks.status()).toBe(200);
+  await page.unroute("**/api/auth/tokens");
+});
+
+test("a rejected token list after a real password change signs the old page out and returns to Settings", async ({
+  browser,
+  page,
+}) => {
+  const newPassword = "e2e-password-changed";
+  await connectOn(page, "/configuration");
+  const panel = page.getByRole("region", { name: "API 令牌" });
+  await expect(panel).toBeVisible();
+
+  await panel.getByLabel("令牌名称").fill("browser-session-token");
+  await panel.getByRole("button", { name: "签发令牌" }).click();
+  await expect(panel.getByText("令牌已签发", { exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "我已保存" }).click();
+  await expect(
+    panel.getByRole("row", { name: /browser-session-token/ }),
+  ).toBeVisible();
+
+  const otherContext = await browser.newContext();
+  try {
+    const other = await otherContext.newPage();
+    await connectOn(other, "/configuration");
+    await other.getByRole("button", { name: "Account menu" }).click();
+    await other.getByRole("menuitem", { name: "Change password" }).click();
+    await other.getByLabel("Current password").fill(E2E_ACCOUNT_PASSWORD);
+    await other.getByLabel("New password", { exact: true }).fill(newPassword);
+    await other.getByLabel("Confirm new password").fill(newPassword);
+    await other.getByRole("button", { name: "Change password" }).click();
+    await expect(other.getByRole("heading", { name: "Sign in" })).toBeVisible();
+
+    // The other device's real password change revoked this page's server
+    // session. The next protected read answers 401 from the real API.
+    const rejected = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/auth/tokens" &&
+        response.status() === 401,
+    );
+    await panel.getByRole("button", { name: "刷新列表" }).click();
+    expect((await rejected).status()).toBe(401);
+    await expect(
+      page.getByRole("heading", { name: "Not authorized" }),
+    ).toBeVisible();
+    await expect(page.getByText("Signed in as admin")).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Sign in", exact: true }),
+    ).toBeVisible();
+
+    const writesBeforeSignIn: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST") writesBeforeSignIn.push(request.url());
+    });
+    await page.getByRole("link", { name: "Sign in again" }).click();
+    await page.getByLabel("Login name").fill("admin");
+    await page.getByLabel("Password").fill(newPassword);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(
+      page.getByRole("heading", { name: "系统设置", exact: true }),
+    ).toBeVisible();
+    const restored = page.getByRole("region", { name: "API 令牌" });
+    await expect(
+      restored.getByRole("row", { name: /browser-session-token/ }),
+    ).toBeVisible();
+    // Re-entry reread the durable list; the administrator, not the page,
+    // decides whether any token write is issued again.
+    expect(
+      writesBeforeSignIn.filter((url) =>
+        new URL(url).pathname.startsWith("/api/auth/tokens"),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    // Restore the shared harness credential for any later suite.
+    const login = await otherContext.request.post("/api/auth/login", {
+      data: { username: "admin", password: newPassword, remember: true },
+    });
+    if (login.ok()) {
+      await otherContext.request.post("/api/auth/password", {
+        data: {
+          currentPassword: newPassword,
+          newPassword: E2E_ACCOUNT_PASSWORD,
+        },
+      });
+    }
+    await otherContext.close();
+  }
 });
