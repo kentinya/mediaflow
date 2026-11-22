@@ -1,8 +1,8 @@
 # Task 58.1 — 切换正式部署和主机恢复入口
 
-Next Action: B INDEPENDENT REVIEW AND ACCEPTANCE OF TASK 58.1 FIXES
+Next Action: DEVELOPER COMPLETES THE OFFLINE RECOVERY GUIDE FOR TASK 58.1
 
-用户已授权实施 Task 58.1。Developer 返工已完成，状态为 `READY FOR B REVIEW`。
+用户已授权实施 Task 58.1。Developer 开始本轮返工时将状态改为 `IN PROGRESS`。
 用户授权 A 代 B 规划首个 Task，角色例外限于首个 Task 的规划。B 独立验收，A 按工作流终审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -10,7 +10,7 @@ Next Action: B INDEPENDENT REVIEW AND ACCEPTANCE OF TASK 58.1 FIXES
 Task ID: 58.1
 Task Type: SLICE
 Parent Slice: 58
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
 Difficulty: High
 Test Level: T4
@@ -272,6 +272,39 @@ Candidate state: READY FOR B REVIEW
 - `test_configuration_package_exchange` 既有失败仍未修复（父版本可复现），未用跳过或弱断言掩盖。
 - 待切换库的 `verify` 处理途径仍引用保留中的 `mediaflow config status`/`config retire-unpublished`；
   该切换的源码与制品退役仍属本 Slice 剩余范围。
+
+## B 返工复核 — FIX REQUIRED
+
+```text
+Reviewed Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
+Reviewed Head: 9f4e526ac7b8eb7a5f71b926a4d82e6c71b07d87
+Decision: FIX REQUIRED
+Slice Outcomes / Surfaces complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+复验通过源码空库启动、主机发码建号、非默认 Compose 宿主端口和正式探针、待切换备份拒绝
+恢复、独占租约保护空目标，以及恢复后单独启动 API 读回管理员。离线恢复指引仍缺少两种部署
+从停机到选定空目标的实际操作。源码安装按 README 建号后停机，在新终端照发布指引只传
+`--config` 验证备份，命令到 `/data` 查找数据目录并退出。Compose 按部署指南生成备份并保留
+原库时，直接执行所列恢复命令仍指向现有库而被拒绝。使用与启动一致的部署目录，并将 bootstrap
+指向同一持久卷中的新文件后，两个入口均可恢复。
+
+### 本轮开发指导与验收
+
+1. 在 [离线恢复步骤](docs/release.md#offline-restore-procedure) 写出可从新终端接续的源码命令。
+   沿用 README 已创建的本地 `.venv`、`MEDIAFLOW_CONFIG` 和 `MEDIAFLOW_DATA_DIR`，把这两项部署
+   变量明确带入备份、校验、恢复和单独启动 API 的步骤。
+2. 从 Compose 部署指南默认的 `/data/mediaflow.sqlite3` 和 `/data/runtime-backup.sqlite3` 接续，
+   写出使用现有 bootstrap 配置方法把数据库定位改为同一卷内的新文件的步骤。源码示例也给出
+   新文件路径。应能按所列步骤保留原库及旁路文件、校验备份、恢复到新文件、单独启动 API 并读回。
+   保持同一份离线恢复步骤作为两处指引的链接目标。
+3. Developer 用全新维护终端和隔离数据目录逐条执行修正后的源码、Compose 示例，核对命令退出状态、
+   原库及备份摘要、目标是否正确，以及 API 读回原管理员。运行 `git diff --check` 及
+   `python3 scripts/check_governance.py`。B 用修正后的指引复验，再完成本 Task 的 T4 验收。
+
+证据在 `.git/validation-evidence/9f4e526ac7b8eb7a5f71b926a4d82e6c71b07d87/b-review/`。
+Slice 58 仍需完成通用业务 CLI、专属任务路径和 schema 11 切换退役，并验收 Base 合法任务续作。
 
 ## Latest accepted Task — PATCH-20261122-3
 
