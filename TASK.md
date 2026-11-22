@@ -1,8 +1,8 @@
 # Task 58.1 — 切换正式部署和主机恢复入口
 
-Next Action: B INDEPENDENT REVIEW AND ACCEPTANCE
+Next Action: DEVELOPER FIXES TASK 58.1
 
-用户已授权激活 Task 58.1。Developer 开始实施时将状态从 `PLANNED` 转为 `IN PROGRESS`。
+用户已授权实施 Task 58.1。Developer 开始返工时将状态改为 `IN PROGRESS`。
 用户授权 A 代 B 规划首个 Task，角色例外限于首个 Task 的规划。B 独立验收，A 按工作流终审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -10,7 +10,7 @@ Next Action: B INDEPENDENT REVIEW AND ACCEPTANCE
 Task ID: 58.1
 Task Type: SLICE
 Parent Slice: 58
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
 Difficulty: High
 Test Level: T4
@@ -162,6 +162,58 @@ Candidate state: READY FOR B REVIEW
   Slice 合同中的 chunk 级服务启动源码/制品删除、事务性 schema 11 切换退役仍属本 Slice 剩余范围。
 - `test_configuration_package_exchange` 既有失败仍保留，未用跳过或削弱断言掩盖；本地 ResourceWarning
   噪声存在于既有 SQLite 测试夹具，不影响断言结果。
+
+## B 独立复核 — FIX REQUIRED
+
+```text
+Reviewed Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
+Reviewed Head: 9a49bcea2cc52de945f973e065009b4c954699c3
+Decision: FIX REQUIRED
+Slice Outcomes / Surfaces complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+从候选镜像启动无媒体挂载的四服务，`/health` 可访问，根地址提供生产资源。用部署指引的
+Compose 命令发码后成功建立管理员。停机备份与校验成功，已有目标拒绝恢复，换到空目标
+恢复后单独启动 API，读回管理员已存在。以下返工留在 58.1。B 在修正候选上完成原 T4 验收。
+
+### 开发指导与返工验收
+
+1. **新部署到首次登录与密码找回。** README 的源码步骤先创建本地数据目录，再启动 API，
+   后台和发码示例也使用同一 bootstrap 与数据目录。把根页首次设置和重置提示指向可执行的
+   同实例命令，说明 Compose 在项目目录用 `docker compose exec -T api`，源码安装使用自己的
+   Python 和相同部署变量。同步现行配置拒绝提示以及部署指南所链接的离线恢复步骤，为 Compose
+   写出 `host verify`、`host restore` 和仅启动 API 的实际命令。验收从无 `.mediaflow` 的源码
+   安装和无宿主 Python 包的 Compose 项目分别起步，沿页面指引领码并完成建号、重置和重新登录，
+   沿发布指南恢复同一部署的备份。
+2. **Compose 端口与健康一致。** 保持正式 Compose 中的监听、端口映射和探针使用同一个容器端口。
+   将宿主端口的 `MEDIAFLOW_API_PORT` 与源码直启的监听配置说明区分清楚，消除部署环境文件能让
+   Compose 的监听端口与探针分离的情况。验收在默认部署和明确更换宿主端口的部署中，浏览器和
+   主机 `/health` 能访问，Compose 自带 API probe 通过。复测在部署环境文件设置端口后的实际结果。
+3. **校验能否启动再恢复。** 让 `SQLiteBackupService.verify` 和 `SQLiteRestoreService.restore`
+   复用正式服务启动对待切换库的判定。校验可确认文件完整，并显示当前不能启动及现行处理途径。
+   还原前验证原备份与暂存副本的可用性，待切换备份无法发布到空目标，源备份摘要保持一致。
+   继续验证当前 runtime 库和当前 configuration-only 库的成功路径。沿用现有 schema 11 切换边界。
+4. **先取得租约再打开会写入的配置仓储。** `resident_entry.main` 从 bootstrap 取得数据库定位，
+   在共享租约内解析 API 的 Active 和初始化仓储。租约竞争沿用有界启动错误，说明恢复完成后
+   再启动服务。验收从空恢复目标开始，独占租约占用时走正式 API 启动入口，该进程退出且目标仍空，
+   随后继续从确认恢复到 API 读回。
+
+Developer 从仓库根目录定向运行：
+
+```bash
+PYTHONPATH=tests .venv/bin/python -m unittest \
+  test_container_deployment test_container_probe test_api_credentials \
+  test_runtime_lease test_sqlite_backup test_sqlite_restore
+npm --prefix web run test -- run src/features/entry/EntryPage.test.tsx
+```
+
+使用隔离数据目录按修正指引核对源码空库启动、Compose 领码和端口、停机恢复。
+B 在修正候选上复现本节四条旅程，并运行本 Task 的 T4 门禁。
+
+证据在 `.git/validation-evidence/9a49bcea2cc52de945f973e065009b4c954699c3/b-review/`。
+Slice 58 的通用业务 CLI、专属任务路径和 schema 11 切换退役仍待交付。切换后的合法任务续作
+与原效果保留仍待按合同复验。
 
 ## Latest accepted Task — PATCH-20261122-3
 
