@@ -96,7 +96,7 @@ MEDIAFLOW_API_HOST=127.0.0.1 MEDIAFLOW_API_PORT=8787 \
 .venv/bin/python -m mediaflow.resident_entry notification-worker
 ```
 
-`MEDIAFLOW_API_HOST/PORT/THREADS` 只作为源码直启时的 API 监听设置，与 Compose 的宿主端口 `MEDIAFLOW_API_PORT` 是两处不同配置。停机备份、校验和恢复见[发布指引](docs/release.md#offline-restore-procedure)。
+`MEDIAFLOW_API_HOST/PORT/THREADS` 只作为源码直启时的 API 监听设置，与 Compose 的宿主端口 `MEDIAFLOW_API_PORT` 是两处不同配置。停机备份、校验和恢复见[发布指引](docs/release.md#offline-restore-procedure)：恢复会沿用同一 `.venv`、`MEDIAFLOW_CONFIG` 和 `MEDIAFLOW_DATA_DIR`，把快照发布到同一数据目录中的新数据库文件，并保留原库及原备份。
 
 ## ⚙️ 常用配置
 

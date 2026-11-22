@@ -482,26 +482,27 @@ docker compose run --rm --no-deps api \
 backup; both a current runtime store and a current configuration-only store are usable. A
 supported store that still waits for an explicit maintenance step reports `Cannot start yet` with
 the step and its scope, and a restore refuses it until that step is applied on the source store and
-a new backup is taken. Record the backup's schema, SHA-256 digest and age. Same-version offline
-restore is an explicit, non-overwriting operation: all processes must be stopped, the destination
-empty and sidecar-free, and `--confirm-empty-destination` supplied:
+a new backup is taken. Record the backup's schema, SHA-256 digest and age. Keep
+`/data/mediaflow.sqlite3` and its sidecars in place; never restore over the configured database.
+
+Same-version offline restore is an explicit, non-overwriting operation to a **new** database file in
+the same `mediaflow-data` volume. Create a bootstrap for that new locator with the same generator,
+then follow the [offline restore procedure](release.md#offline-restore-procedure) for the exact
+verify, restore, original-database check and API-only start commands:
 
 ```bash
-docker compose run --rm --no-deps api \
-  host restore /data/runtime-backup.sqlite3 --confirm-empty-destination
+python3 scripts/make_deployment_config.py \
+  --output config/mediaflow.restore.json \
+  --database-path /data/mediaflow-restored.sqlite3
 ```
 
-Follow the [offline restore procedure](release.md#offline-restore-procedure). Start only the API
-first and read back the restored accounts, Active, tasks, results and audit before enabling the
-other services:
-
-```bash
-docker compose up -d --no-deps api
-docker compose ps api
-```
-
-Then enable the background services with `docker compose up -d`. Keep the existing database and
-verified backup until restored authority is verified. Restore/restart never grants new execution
+The procedure uses `MEDIAFLOW_CONFIG_FILE` so the one-off restore container and the API-only start
+mount `config/mediaflow.restore.json`, while the original bootstrap, database, sidecars and backup
+stay untouched. Start only the API first and read back the restored accounts, Active, tasks,
+results and audit before enabling the other services. Keep the existing database and verified
+backup until restored authority is verified. When enabling the background services, keep the same
+`MEDIAFLOW_CONFIG_FILE` (or write it to the project `.env`) so they open the restored database
+rather than the original one. Restore/restart never grants new execution
 permission or proves an uncertain mutation did not occur; supported work retains pins/results/fences
 and only permitted safe remaining stages may continue.
 

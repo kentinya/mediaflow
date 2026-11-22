@@ -35,9 +35,144 @@ CI 使用只读仓库权限，运行 Python 质量与测试以及 wheel 检查�
 
 ## Offline restore procedure
 
-1. 停止全部 API、Worker、Scheduler、Notification Worker 及其他连接该数据库的 MediaFlow 命令。
-2. 验证备份。Compose 项目在项目目录执行 `docker compose run --rm --no-deps api host verify BACKUP`；源码安装执行 `python -m mediaflow.host_operations --config CONFIG verify BACKUP`。输出分别报告文件完整性、本版本能否使用，以及当前能否启动（`Cannot start yet` 及其处理途径）。另存原数据库及其 `-wal`、`-shm`、`-journal` 文件，保留原制品。
-3. 确认目标和对应的旁路文件不存在，执行恢复。Compose 项目执行 `docker compose run --rm --no-deps api host restore BACKUP --confirm-empty-destination`；源码安装执行 `python -m mediaflow.host_operations --config CONFIG restore BACKUP --confirm-empty-destination`。待切换等当前不能启动的备份会被拒绝，目标保持不存在。
-4. 核对恢复路径，先单独启动 API：Compose 项目执行 `docker compose up -d --no-deps api`，源码安装用创建备份的同版本制品启动 `python -m mediaflow.resident_entry api`。核对账号、Active、任务、结果与审计后，再启动其余服务。
+恢复只支持与备份同版本、同部署环境的数据库，并且总是发布到**新的**数据库文件。原数据库及其
+`-wal`、`-shm`、`-journal` 文件保持原位，不删除、不改名；原备份保留到从恢复后的 API 读回并
+核对完成。开始前停止 API、Worker、Scheduler、Notification Worker 和任何其他会打开该数据库的
+MediaFlow 进程。恢复命令会取得独占租约；租约被占用时启动服务会在打开数据库前退出，空目标
+保持为空。
 
-POSIX 上，恢复命令必须取得独占租约。独占期间启动服务会在打开数据库前退出，空目标保持为空，恢复结束后再启动；该检查限于参与租约的进程，起步时仍需停机。恢复后先检查原任务、逐项结果和源／目标状态，使用任务已有的安全续作入口处理剩余工作。[备份与重启](deployment.md#backup-and-same-version-recovery)
+校验输出分别报告 SQLite 完整性、本版本能否使用，以及当前能否启动（`Cannot start yet` 及其处理
+途径）。待切换等当前不能启动的备份会被拒绝，目标保持不存在。若恢复目标或它的任一旁路文件已
+存在，恢复也会拒绝且不修改文件；另选一个同一数据目录内的新文件名并重新生成恢复用 bootstrap。
+
+### 源码安装
+
+在新的维护终端进入仓库根目录，沿用 README 启动该部署时创建的本地 `.venv`、
+`MEDIAFLOW_CONFIG` 和 `MEDIAFLOW_DATA_DIR`。下面以 README 的默认路径为例；安装时用了其他
+路径就替换为当时的实际值：
+
+```bash
+cd /path/to/mediaflow
+export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
+export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"
+```
+
+1. 记录原库摘要并确认当前版本能否启动它。`verify` 只读地检查数据库，不改写库内容：
+
+   ```bash
+   .venv/bin/python -m mediaflow.host_operations verify \
+     "$MEDIAFLOW_DATA_DIR/mediaflow.sqlite3"
+   ```
+
+2. 生成并校验备份。备份已存在时不要覆盖，改用另一个新文件名：
+
+   ```bash
+   .venv/bin/python -m mediaflow.host_operations backup \
+     --output "$MEDIAFLOW_DATA_DIR/runtime-backup.sqlite3"
+   .venv/bin/python -m mediaflow.host_operations verify \
+     "$MEDIAFLOW_DATA_DIR/runtime-backup.sqlite3"
+   ```
+
+3. 用现有 bootstrap 生成方法把恢复目标放到同一 `MEDIAFLOW_DATA_DIR` 中的新文件。不要复用原
+   `config/mediaflow.json`，也不要预先创建目标或它的旁路文件：
+
+   ```bash
+   .venv/bin/python scripts/make_deployment_config.py \
+     --output config/mediaflow.restore.json \
+     --database-path "$MEDIAFLOW_DATA_DIR/mediaflow-restored.sqlite3"
+   ```
+
+4. 用新 bootstrap 执行恢复。恢复会再次校验原备份和暂存副本，并在发布前核对源摘要不变：
+
+   ```bash
+   MEDIAFLOW_CONFIG="$PWD/config/mediaflow.restore.json" \
+     .venv/bin/python -m mediaflow.host_operations restore \
+     "$MEDIAFLOW_DATA_DIR/runtime-backup.sqlite3" --confirm-empty-destination
+   ```
+
+5. 核对原库未变化（第 1 步和第 5 步的 SHA-256 应相同），然后只启动 API：
+
+   ```bash
+   MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json" \
+     .venv/bin/python -m mediaflow.host_operations verify \
+     "$MEDIAFLOW_DATA_DIR/mediaflow.sqlite3"
+
+   MEDIAFLOW_CONFIG="$PWD/config/mediaflow.restore.json" \
+   MEDIAFLOW_API_HOST=127.0.0.1 MEDIAFLOW_API_PORT=8787 \
+     .venv/bin/python -m mediaflow.resident_entry api
+   ```
+
+6. 打开 `http://127.0.0.1:8787/`，用原管理员登录，核对账号、Active、任务、结果与审计。核对
+   通过后，再用同一 `MEDIAFLOW_CONFIG` 和 `MEDIAFLOW_DATA_DIR` 启动 `worker`、`scheduler` 和
+   `notification-worker`。无法确认备份时点之后的实际文件效果或仍待处理的任务时，保持后台服务
+   停用。
+
+### Compose 部署
+
+在 Compose 项目目录执行。默认 bootstrap 是 `config/mediaflow.json`，容器内数据库是
+`/data/mediaflow.sqlite3`，停机和恢复都使用同一个 `mediaflow-data` 卷：
+
+```bash
+cd /path/to/mediaflow
+docker compose stop
+```
+
+1. 记录原库摘要并确认当前版本能否启动它：
+
+   ```bash
+   docker compose run --rm --no-deps api host verify /data/mediaflow.sqlite3
+   ```
+
+2. 生成并校验备份。备份已存在时不要覆盖，改用另一个新文件名：
+
+   ```bash
+   docker compose run --rm --no-deps api \
+     host backup --output /data/runtime-backup.sqlite3
+   docker compose run --rm --no-deps api \
+     host verify /data/runtime-backup.sqlite3
+   ```
+
+3. 在主机用现有 bootstrap 生成方法把恢复目标放到同一 `/data` 卷中的新文件。这里只使用
+   `scripts/make_deployment_config.py`，不需要在主机安装 MediaFlow Python 包：
+
+   ```bash
+   python3 scripts/make_deployment_config.py \
+     --output config/mediaflow.restore.json \
+     --database-path /data/mediaflow-restored.sqlite3
+   ```
+
+4. 用 `MEDIAFLOW_CONFIG_FILE` 让恢复容器挂载新的 bootstrap。`mediaflow-data` 卷、原数据库和
+   原备份都保留：
+
+   ```bash
+   MEDIAFLOW_CONFIG_FILE="$PWD/config/mediaflow.restore.json" \
+     docker compose run --rm --no-deps api \
+     host restore /data/runtime-backup.sqlite3 --confirm-empty-destination
+   ```
+
+5. 核对原库摘要未变，然后仅启动 API。容器仍监听 8080，浏览器使用 Compose 项目配置的宿主端口：
+
+   ```bash
+   docker compose run --rm --no-deps api host verify /data/mediaflow.sqlite3
+
+   MEDIAFLOW_CONFIG_FILE="$PWD/config/mediaflow.restore.json" \
+     docker compose up -d --no-deps api
+   docker compose ps api
+   ```
+
+6. 打开 `http://127.0.0.1:${MEDIAFLOW_API_PORT:-8080}/`，用原管理员登录，核对账号、Active、
+   任务、结果与审计。核对通过后，让后续 Compose 命令固定使用恢复后的 bootstrap 再启用其余
+   服务：
+
+   ```bash
+   export MEDIAFLOW_CONFIG_FILE="$PWD/config/mediaflow.restore.json"
+   docker compose up -d
+   ```
+
+   要把恢复后的库作为该项目今后的数据源，把
+   `MEDIAFLOW_CONFIG_FILE=./config/mediaflow.restore.json` 写入项目 `.env`，或在每个维护终端
+   导出同一变量；否则普通的 `docker compose up -d` 会重新挂载原 bootstrap 并打开原库。启用后台
+   之前仍需核对备份时点之后的实际文件效果和待处理任务，无法确认时保持后台服务停用。
+
+POSIX 上，恢复命令必须取得独占租约。恢复后先检查原任务、逐项结果和源／目标状态，使用任务
+已有的安全续作入口处理剩余工作。[备份与重启](deployment.md#backup-and-same-version-recovery)
