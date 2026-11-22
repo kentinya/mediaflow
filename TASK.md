@@ -1,12 +1,12 @@
 # Task 57.2 — 在系统设置签发、使用和吊销 API 令牌
 
-Next Action: DEVELOPER FIXES TASK57.2
+Next Action: B REVIEWS TASK57.2
 
 ```text
 Task ID: 57.2
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c12cae6fe0226e7efe6850ac68e6581785fb87e3
 Difficulty: High
 Test Level: T4
@@ -184,6 +184,25 @@ Next: SAME TASK FIX LOOP
 Developer 从 `web/` 运行 `npm run test:e2e -- tests/e2e/configuration-settings.spec.ts` 和 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/configuration-settings.python.spec.ts`，先执行 `npm run build`，并检查类型和改动文件。
 
 B 通过了治理、全范围 `git diff --check`、Web 类型检查、Lint、格式检查、Web 构建和候选镜像构建。系统设置真实 Chromium 8 项通过，代理回包用例复现失败。默认 Chromium 中止时为 117 通过、2 失败、1 中断、159 未运行。Python 和 Web 单元全量在确认阻塞后停止。真实整理分析、Compose 四服务重启和轮换后定时执行、wheel 与其余 T4 门禁待下一候选。日志位于 `.git/validation-evidence/981870752f8490e2520b5a383e5c7ebaa7e00506/b-review/`。
+
+## Developer 返工交接（第二轮）— TASK 57.2
+
+```text
+Candidate: afb945180fa351f2c7ed8ba09bae9ea77bf2c169
+Fix range: 981870752f8490e2520b5a383e5c7ebaa7e00506..afb94518
+```
+
+- `api-tokens-api.ts` 把签发、吊销的 `>=500` 写入结果接入既有「结果待核实」流程：没有明确持久状态声明的代理超时（如 `504`）或服务端错误不再报成「拒绝」，而是标记结果未知，只重读持久令牌列表，不重放写请求。`401/403`、显式 `4xx` 拒绝和 2xx 但无法解析的结果沿用原有分类。签发与吊销共用同一写入通道。
+- 默认 Node 测试服务补齐已登录账号的 `GET /api/auth/tokens` 空列表投影；设置页回归的「刷新／重新读取」断言改为精确名称，继续核对旧配置刷新入口，并断言令牌卡处于「尚未签发 API 令牌」而非读取失败。
+- 真实 Python 设置页新增代理超时旅程：从原「签发令牌」按钮发起写请求，真实后端返回 `201` 并持久化令牌，浏览器侧拿到 `504`；页面显示「签发结果待核实」并只重读列表，按请求数核对只有一次签发、无明文展示，读回有效记录后从列表吊销，原凭证调用返回 `401`。
+- 单元测试新增两个 `504` 场景：已提交的签发、已提交的吊销都显示待核实并从列表重读，写请求各只发一次。
+- 实际执行（最终工作树）：
+  - `web/`：`npm run test -- run src/features/configuration/ConfigurationPage.test.tsx` → **21 passed**。
+  - `npm run typecheck`、改动文件 ESLint/Prettier、`npm run build` 通过。
+  - `npm run test:e2e -- tests/e2e/configuration-settings.spec.ts` → **4 passed**；`npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/configuration-settings.python.spec.ts` → **9 passed**（含新增 `504` 用例）。
+  - `python3 scripts/check_governance.py`、全范围 `git diff --check` 通过。
+- 用时约 12 分钟；测试与定向检查执行约 1.5 分钟，低于本轮 30%。
+- 剩余风险与 B 验收：完整 T4、真实 Compose 四服务重启、真实 Scheduler/Worker 在令牌轮换后的受理与文件结果、候选镜像和 wheel/源码外安装仍待 B 独立执行。默认 Node 测试服务只提供空令牌列表读取，不承载签发/吊销；本轮未改动 Python 后端。
 
 ## Task 57.1 — B 复核结论
 
