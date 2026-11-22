@@ -651,7 +651,10 @@ class AutomationDisabledScheduleJourneyTests(unittest.TestCase):
             record = records["items"][0]
             self.assertEqual("failed", record["recordOutcome"]["status"])
             self.assertIn("自动化已停用", record["recordOutcome"]["failureReason"])
-            self.assertIn("重新启用", record["recordOutcome"]["nextStep"])
+            self.assertEqual(
+                "在自动化列表确认计划当前状态；启用后只受理新的执行，这个原任务不会重跑",
+                record["recordOutcome"]["nextStep"],
+            )
             self.assertIn("没有产生文件效果", record["recordOutcome"]["statement"])
             self.assertEqual("definition_disabled", record["failureStage"]["category"])
             self.assertEqual(0, record["recordOutcome"]["successItems"])
@@ -701,8 +704,11 @@ class AutomationDisabledScheduleJourneyTests(unittest.TestCase):
             record = records["items"][0]
             self.assertEqual("failed", record["recordOutcome"]["status"])
             self.assertIn("计划停用", record["recordOutcome"]["failureReason"])
-            self.assertIn("等待下一次定时执行", record["recordOutcome"]["nextStep"])
-            self.assertIn("新一轮会单独受理", record["recordOutcome"]["nextStep"])
+            self.assertEqual(
+                "在自动化列表确认计划当前状态；启用后的下一次定时执行会单独受理，"
+                "这个原任务保留在执行记录中",
+                record["recordOutcome"]["nextStep"],
+            )
             self.assertIn("没有产生文件效果", record["recordOutcome"]["statement"])
             self.assertEqual("schedule_disabled", record["failureStage"]["category"])
             self.assertEqual(0, record["recordOutcome"]["successItems"])
@@ -716,3 +722,36 @@ class AutomationDisabledScheduleJourneyTests(unittest.TestCase):
                 2,
                 len(value.runtime.list_automation_definition_occurrences(_DEFINITION["id"])),
             )
+
+            # Disabling the same plan again must not leave the old record
+            # telling the operator to wait for a run the disabled plan will
+            # never admit.  It keeps the original stop reason and effects and
+            # only points at the list for the plan's current state.
+            self._disable(value)
+            self.assertEqual((), self._scheduler(value).tick(now + timedelta(hours=3)))
+            status, page = _request(value.api, OPERATIONS_ROUTE)
+            self.assertEqual(200, status, page)
+            self.assertIs(page["items"][0]["enabled"], False)
+            status, records = _request(
+                value.api,
+                "/api/operations/automation/records",
+                query=f"definition={_DEFINITION['id']}",
+            )
+            self.assertEqual(200, status, records)
+            self.assertEqual(2, records["total"], records)
+            original = next(
+                item
+                for item in records["items"]
+                if item["handoff"]["taskCenter"]["runId"] == queued.task_id
+            )
+            self.assertEqual("failed", original["recordOutcome"]["status"])
+            self.assertEqual(
+                "在自动化列表确认计划当前状态；启用后的下一次定时执行会单独受理，"
+                "这个原任务保留在执行记录中",
+                original["recordOutcome"]["nextStep"],
+            )
+            self.assertEqual(
+                "本次因自动化已停用，在开始处理文件前停止；没有产生文件效果。",
+                original["recordOutcome"]["statement"],
+            )
+            self.assertEqual(0, original["recordOutcome"]["successItems"])

@@ -581,7 +581,9 @@ test("disabling a plan stops new and queued work with a readable reason", async 
     ),
   ).toBeVisible();
   await expect(
-    detail.getByText(/重新启用只受理新的执行，这个原任务不会重跑/),
+    detail.getByText(
+      /在自动化列表确认计划当前状态；启用后只受理新的执行，这个原任务不会重跑/,
+    ),
   ).toBeVisible();
 
   // Re-enabling admits a new occurrence only; the stopped original Task stays
@@ -690,7 +692,7 @@ test("re-enabling before the queued worker keeps the stop reason on the original
     "本次运行因计划停用而停止",
   );
   expect(originalRecord?.recordOutcome?.nextStep).toBe(
-    "计划已重新启用；等待下一次定时执行，新一轮会单独受理，这个原任务保留在执行记录中",
+    "在自动化列表确认计划当前状态；启用后的下一次定时执行会单独受理，这个原任务保留在执行记录中",
   );
   expect(originalRecord?.recordOutcome?.statement).toBe(
     "本次因自动化已停用，在开始处理文件前停止；没有产生文件效果。",
@@ -718,7 +720,7 @@ test("re-enabling before the queued worker keeps the stop reason on the original
   ).toBeVisible();
   await expect(
     detail.getByText(
-      "计划已重新启用；等待下一次定时执行，新一轮会单独受理，这个原任务保留在执行记录中",
+      "在自动化列表确认计划当前状态；启用后的下一次定时执行会单独受理，这个原任务保留在执行记录中",
       { exact: true },
     ),
   ).toBeVisible();
@@ -762,6 +764,74 @@ test("re-enabling before the queued worker keeps the stop reason on the original
       (item) => item.handoff?.taskCenter?.runId === originalTaskId,
     )?.recordOutcome?.status,
   ).toBe("failed");
+
+  // The operator disables the same plan again from its list row. The old
+  // execution detail must no longer tell them to wait for a run this disabled
+  // plan will not admit: it keeps the original stop reason and effects and
+  // points at the list for the plan's current state.
+  await connectOn(page, "/operations/automation");
+  const planRow = page
+    .getByRole("row")
+    .filter({ has: page.getByText("Harness automation", { exact: true }) });
+  await planRow.getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "编辑自动化任务" }),
+  ).toBeVisible();
+  await page.getByLabel("启用定时计划").uncheck();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page).toHaveURL(/\/operations\/automation(\?.*)?$/);
+  await expect(
+    page.getByRole("heading", { name: "已保存，当前停用" }),
+  ).toBeVisible();
+  await expect(
+    planRow.getByText(
+      "计划已停用，不会产生新的定时执行；重新启用后只受理新的执行",
+    ),
+  ).toBeVisible();
+  const disabledAgainTick = await page.request.post(
+    `/__harness__/run-automation-scheduler-tick?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
+  );
+  const disabledAgainBody = (await disabledAgainTick.json()) as {
+    emitted?: string[];
+    occurrenceTotal?: number;
+  };
+  expect(disabledAgainBody.emitted).toEqual([]);
+  expect(disabledAgainBody.occurrenceTotal).toBe(2);
+
+  await connectOn(page, "/operations/automation?tab=records");
+  const recordsRegion = page.getByRole("region", {
+    name: "自动化执行记录",
+  });
+  await page.getByLabel("定义").fill(DEFINITION_ID);
+  await page.getByLabel("定义").press("Enter");
+  const failedRecordRow = recordsRegion
+    .getByRole("row")
+    .filter({ has: page.getByText("失败", { exact: true }) });
+  await expect(failedRecordRow).toHaveCount(1);
+  const oldDetailToggle = failedRecordRow.getByRole("button", {
+    name: "查看详情",
+  });
+  const oldDetailId = await oldDetailToggle.getAttribute("aria-controls");
+  await oldDetailToggle.click();
+  const oldDetail = page.locator(`[id="${oldDetailId}"]`);
+  await expect(
+    oldDetail.getByText("本次运行因计划停用而停止", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    oldDetail.getByText(
+      "本次因自动化已停用，在开始处理文件前停止；没有产生文件效果。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    oldDetail.getByText(
+      "在自动化列表确认计划当前状态；启用后的下一次定时执行会单独受理，这个原任务保留在执行记录中",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    oldDetail.getByText("计划已重新启用", { exact: false }),
+  ).toHaveCount(0);
 });
 
 test("retained occurrence history stays readable after removal", async ({
