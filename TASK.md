@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: DEVELOPER FIXES TASK57.1
+Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: DEVELOPER FIXES TASK57.1
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -493,6 +493,43 @@ B 独立使用候选镜像 `sha256:09cb1fe4b9a516ac931ba6c54429896e29e1b340764c9
 RO-1 的既有浏览器证据保留，RO-2 用户管理和 API 令牌仍待后续 Task。RO-3 的旧库拒绝待
 修正，本轮以已复现的阻塞结束验收。当前候选的完整 T4、同版本浏览器重启及实际
 Scheduler／Worker 撤权执行仍待验收。
+
+**Developer 修正交付记录（READY FOR B REVIEW）**
+
+- 实现候选：`da0b246054d7f5faa8279672a4c7a46b682728b4`（Task Base
+  `4566a74055c698aec704215dd431eb8521bcfedb`）。保留原 Slice 合同、原评审记录和
+  未授权范围；本记录只覆盖 B 本轮指出的仅配置旧库启动阻塞。
+- 根因与修复：配置 schema 12 在各版本间未变，上一版本 `config initialize`／`config
+  publish` 创建的仅配置库只有配置标记，没有可区分创建来源的记录；候选按通用配置版本
+  接受后补建 runtime 表并写入 `runtime 59`。现在本版本首次创建数据库（配置仓库或运行时
+  仓库）在同一事务写入 `store_origin`，其值为创建构建的 runtime schema；共享适用性入口
+  在打开仓库、容器预检、健康探针、`config status`／`config publish` 和本机启动时要求
+  仅配置库带有当前来源标记。缺少标记的旧库在任何建表、标记或监听前退出，错误保留
+  found/expected 配置版本、缺少来源标记和新的空数据目录指引。
+- 已接受的配置 schema 11 显式 data switch 保留：其事务在把受支持的旧库改写到当前布局时
+  一并记录当前来源标记，所以文档中的切换后启动仍然有效；普通打开旧库不会进入该分支。
+  自动启动边界仍只接受空库或本版本创建的库。
+- 定向 Python：`test_container_deployment` 19 项、`test_container_probe` 12 项、
+  `test_configuration_status` 15 项、`test_api_credentials` 8 项；此前直接受影响的
+  `test_task_persistence` 22、`test_configuration_snapshot` 41、`test_api_security` 13、
+  `test_web_account_auth` 15、`test_resident_services` 29、`test_sqlite_restore` 5、
+  `test_sqlite_backup` 3 项通过。新增用例覆盖旧仅配置库的预检／配置命令／仓库／本机 API
+  拒绝与文件哈希不变，以及本版本 CLI 首次建库读取 Active、建首位管理员并同版本重开。
+- 真实旧库：从 Task Base `4566a740` 的代码与生成器执行 `config initialize`，得到只有
+  `configuration_management 12` 和一条 Active、无 runtime／来源标记的库，SHA-256 为
+  `1b3cfeffeb066ddf1a7cb1657d9e1135751ebb6ac89a71240dfa813cd5cba7d5`。候选容器入口
+  预检退出 `1`，本机 `api serve` 退出 `2`，端口未监听；`config status`／`config publish`
+  退出 `2`；每次拒绝后哈希保持上述值，标记仍只有配置 12。
+- 当前 CLI 旅程：用本版本生成器生成最小 bootstrap，`config initialize` 留下
+  `configuration_management 12` 与 `store_origin 59`；真实本机 API 首次启动读取原 Active
+  （`/health` 的 `configurationRequired=false`），主机签发设置码后经 HTTP 建立首位管理员，
+  停止并以同一数据目录重启后 `/api/auth/session` 仍返回该管理员，账户数与 Active 各为 1。
+- 静态检查：改动 Python 文件 `ruff format --check`、`ruff check`，完整 `compileall`、
+  `git diff --check` 和治理检查 PASS。
+- 剩余风险：完整 T4、四服务真实 Compose、候选镜像、wheel/源码外安装、正式 Waitress
+  生产入口、Web 浏览器与其他真实 Python spec 仍由 B 在修正候选上独立验收。Developer 本轮
+  未构建镜像；旧库验证使用本机容器入口与本机 API，不替代 B 的 Compose 验收。
+  测试只跑上述定向模块和两条真实旅程，未运行完整套件。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
