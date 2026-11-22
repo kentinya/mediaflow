@@ -1,12 +1,12 @@
 # Task 57.2 — 在系统设置签发、使用和吊销 API 令牌
 
-Next Action: B REVIEWS TASK57.2
+Next Action: DEVELOPER FIXES TASK57.2
 
 ```text
 Task ID: 57.2
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c12cae6fe0226e7efe6850ac68e6581785fb87e3
 Difficulty: High
 Test Level: T4
@@ -116,6 +116,31 @@ Candidate: 2f3bff357fb5dad7894c7a9437fc6451e0d5acb8
   在令牌轮换后的受理与文件结果、候选镜像、wheel/源码外安装仍待 B 独立执行。本轮定向测试
   在无 Active 的隔离库验证了整理分析令牌通过既有分析入口的权限边界，但实际准备/分析成功、
   零文件效果与结果回读需在 B 的真实 Active/Worker 环境中完成。
+
+## Task 57.2 — B 独立复核
+
+```text
+Reviewed: c12cae6fe0226e7efe6850ac68e6581785fb87e3..8cc082a14212aa4691a0e908f5f87740970e2732
+Implementation: 2f3bff357fb5dad7894c7a9437fc6451e0d5acb8
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1 — 丢回包后的列表核对提示不实（RO-2 / AC-03）。** 管理员签发监控令牌时，服务端已签发，浏览器收不到回包，随后列表读取也因断网失败。页面同时显示「列表已重新读取」和「API 令牌读取失败」，管理员此时无法找到那枚已签发的令牌来吊销。`refresh()` 未把读取结果交给签发或吊销的提示。见 [ApiTokensPanel](web/src/features/configuration/ApiTokensPanel.tsx#L202)。
+- **P1 — 令牌管理收到 401 后没有进入重新登录流程（RO-1 / AC-02）。** 管理员在一台设备打开令牌卡，在另一台设备改密后回到旧页面点「刷新列表」。真实 API 返回 `401`，令牌卡提示重新登录，页面仍显示管理员菜单。令牌卡只在内部处理错误，未接入现有会话失效处理。见 [令牌 API](web/src/shared/api/api-tokens-api.ts#L165) 和 [共用会话恢复](web/src/shared/auth/AuthorizedReadBoundary.tsx#L40)。
+
+### Developer 返工指导
+
+1. 在令牌卡复用一次列表重读，把这次读取的结果交给签发、吊销的核对提示。成功后引导按名称和签发时间找到对应记录。读取失败时显示核对仍待完成，引导连接恢复后重新读取。以签发为例，管理员看到对应记录后先吊销取不到明文的令牌，再签发一枚给脚本使用。整个核对过程只重读列表。
+2. 将令牌列表的 `401` 接入现有受保护读取的会话失效流程。签发和吊销收到 `401` 时也使用同一会话恢复入口。重新登录后回到系统设置并读取令牌列表，原写请求由管理员根据列表结果决定是否再次发起。
+3. 在 `web/tests/e2e/configuration-settings.python.spec.ts` 补齐两个真实页面旅程。服务端成功签发但回包及随后列表读取丢失时，验证失败提示、恢复读取、找到并吊销原令牌后重新签发，按请求数核对每次签发来自管理员点击。用独立浏览器会话通过账号菜单改密，在旧页面点「刷新列表」触发真实 `401`，验证旧管理员菜单消失，并用新密码回到系统设置读到原列表。
+
+**Developer 受影响检查**。从 `web/` 执行 `npm run test -- run src/features/configuration/ConfigurationPage.test.tsx`、`npm run typecheck` 和 `npm run build`，再运行 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/configuration-settings.python.spec.ts`。检查改动文件及 `git diff --check`。
+
+**B 本轮实测**。Python 凭证、Web 账号和容器部署定向测试 46 项通过。Web 生产构建通过，原有系统设置真实 Chromium 测试 6 项通过。独立追加检查复现了以上两项阻塞。首次用同一浏览器两标签退出，原页面已由现有跨标签同步移走，未触发令牌列表请求。后续以独立会话中的真实改密完成复现。测试命令累计约 18 秒。原始日志位于 `.git/validation-evidence/8cc082a14212aa4691a0e908f5f87740970e2732/b-review/`。
+
+**Slice 结果核对**。首次设置和密码恢复保留 Task 57.1 的验收记录。RO-1 的令牌卡会话恢复与 RO-2 的丢回包恢复等本 Task 修正。RO-3 中令牌轮换后计划仍正常执行、当前候选的四服务同版本重启还需实测。B 在修正候选上复核这两项阻塞，再执行 T4、真实整理分析及零文件效果、Compose 和 wheel 验收。
 
 ## Task 57.1 — B 复核结论
 
