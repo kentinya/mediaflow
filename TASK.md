@@ -1,9 +1,10 @@
-# Task 57.1 — 从空实例创建管理员并完成 Web 登录
+# Task 57.1 — 单管理员 Web 登录与定时计划停用
 
 Next Action: DEVELOPER FIXES TASK57.1
 
-本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
-`PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
+本 Task 落实 Slice 57 的 RO-1 与 RO-3 中的部署、管理员和定时计划旅程。按用户授权，A 更新合同，
+B 根据已提交的 `b22af92f4434a1f343da2b3cddfe2747dc6e1b37` 调整同一 Task。当前返工以本节的
+实施指导和验收为准。令牌与定时计划的独立性随 RO-2 交付一起验收。
 [Slice 57 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
@@ -21,34 +22,25 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.1
 
 ### 目标与现有缺口
 
-部署者启动空实例，从主机生成一次性码，在首页创建首位管理员，再到系统设置初始化业务
+部署者启动空实例，从主机生成一次性码，在首页创建实例唯一的管理员，再到系统设置初始化业务
 配置。之后用账号密码登录，刷新和新标签继续使用。管理员可改密码、退出或凭主机重置码
 找回访问。设置码过期时指引从主机重新生成，密码错或服务不可用时留在入口修正或重试。
 
-目前部署生成器写入 `api.principals`，API 启动解析环境变量令牌，Web 表单仅检查非空后
-跳页。浏览器凭证和自动化权限来源还依赖旧模型。本 Task 交付首位管理员的完整认证旅程，
-同时将所有现行入口的身份判断接入数据库账号。相关入口见
-[部署生成器](scripts/make_deployment_config.py)、[API 启动](mediaflow/final_cli.py)、
-[API 权限](mediaflow/interfaces/service_api.py) 和 [Web 入口](web/src/features/entry/EntryPage.tsx)。
+当前候选已有数据库管理员会话、设置及重置码、生产部署预检。管理员从「自动化 → 编辑」取消
+「启用定时计划」并保存，用现有列表和执行记录核对停止。Scheduler 已记录停用，Worker 已在
+入队后的执行检查读取当前定义。复核以这个实际入口确认页面是否给出明确结果和下一步。
+[入口](web/src/features/entry/EntryPage.tsx) · [编辑卡](web/src/features/operations/AutomationEditDialog.tsx) · [Scheduler](mediaflow/application/automation.py) · [执行授权](mediaflow/application/automation_execution_authority.py)
 
-### 实施顺序
+### 当前开发指导
 
-1. 建立独立的账号、密码哈希、会话和一次性码持久层及应用服务。事务内校验实例、用途、
-   到期状态和首位管理员创建条件，原子消耗码并写入审计。改密或重置原子撤销目标账号的
-   Web 会话。后端按当前数据库角色使用现有 RBAC，Scheduler 和 Worker 共用该权限判断，
-   延续已受理工作的业务快照、效果范围和 claim/fence。
-2. 更新部署生成、容器预检、配置输入与启动装配。空库在等待首位管理员时提供首页和独立
-   健康状态，业务 API 要求有效身份。预检拒绝退役字段以及不受支持的数据库，并保留原
-   文件。提供主机本地管理命令生成首位设置码和目标管理员重置码，同步更新生产部署指引。
-   旧浏览器 Bearer 流程和环境令牌授权随当前入口一起退役。
-3. 提供首页状态、首位设置、登录、会话身份、退出、改密码和重置入口。服务端验证成功后
-   签发 Cookie，落实当期会话及「保持登录」到期规则，跨设备走 HTTPS，回环支持本机 HTTP。
-   Cookie 写请求按同源规则校验，失败尝试限流，凭证和码按敏感信息处理。业务接口仍使用
-   现有路径与 RBAC，`401` 清除失效登录状态，`403` 显示权限不足。
-4. Web 从服务端恢复会话再加载保护页。首次建号进入系统设置，正常从根登录进入探索。
-   保存安全站内深链及查询，过期登录后仅恢复读取和原请求结果核对。退出撤销服务端会话，
-   清理客户端身份相关缓存并显示根登录页。多标签、账号切换及迟到响应按身份隔离，
-   调整随仓测试和诊断消费者，使它们使用新链路及隔离夹具。
+1. 沿首页设置、主机 `accounts issue-setup-code` 和密码重置核对单管理员旅程。复用现有账号表
+   和原子设置事务。用同一管理员的多标签登录、退出或改密验证会话同步和原深链恢复。
+2. 从现有编辑卡分别停用尚未触发和已经入队的计划。用实际 Scheduler 确认停用后的计划零新增，
+   用实际 Worker 验证已入队的原任务在执行检查处停止。复用当前计划校验、原任务固定快照及
+   现有效果保护。
+3. 在现有自动化列表和执行记录核对用户可见结果。列表应说明计划已停用。已入队后停止的原任务
+   应展示停用原因、已发生的效果和下一步。发现显示缺口时，沿现有调度状态和任务级失败投影修正，
+   复用真实发布和任务证据。重新启用后验证只受理新的执行，旧任务和结果仍可打开。
 
 ### 验收标准
 
@@ -56,46 +48,50 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.1
   设置初始化业务配置。匿名业务请求和旧环境令牌返回 `401`。预检给出现行配置指引，
   拒绝退役字段及不支持的库，原文件保持完整。
 - [ ] Web 在桌面和窄屏验证错码、过期、重试、账号密码正常登录、真实账号菜单、退出、
-  改密和主机重置。并发使用同一码或不同首位设置码，整个实例最多创建一位初始管理员。
+  改密和主机重置。并发使用同一码或不同设置码，只创建实例唯一的管理员。
   重置码绑定账号，改密和重置后旧 Web 会话在下一次请求失效。
 - [ ] 持有效会话刷新、新开标签及同版本重启后回到合法深链。验证保持登录的到期和退出后
   访问保护页。过期重新登录后保留原目录或原任务，核对未知提交时原受理次数及效果计数
-  保持准确。验证跨站写入防护、不同账号的缓存隔离、受限身份 `403` 和秘密脱敏。
-- [ ] 用新建账号发布业务配置并受理任务，以真实 Scheduler 和 Worker 验证数据库身份
-  检查及任务、结果、审计可回读。通过隔离夹具收回权限，验证后续适用检查明确拒绝执行。
+  保持准确。验证退出和改密后的多标签会话同步、跨站写入防护和秘密脱敏。
+- [ ] 管理员发布业务配置、启用计划并受理任务，以实际 Scheduler 和 Worker 验证可执行工作及
+  同版本重启后的任务、结果和审计回读。到期前停用时，列表显示已停用，Scheduler 零新增。
+  入队后停用时，Worker 保留原任务，执行详情显示停用原因和实际效果。已完成的结果保留，
+  后续检查零新增文件效果。重新启用后只受理新执行。
 
 ### 验证计划
 
 **Developer — 新增／修改与直接受影响测试**
 
-- `.venv/bin/python -m unittest discover -s tests -p test_web_account_auth.py`
-  验证新增的身份、一次性码、会话、并发及原子撤销用例。
-- 分别执行 `.venv/bin/python -m unittest discover -s tests -p test_api_security.py`、
-  `.venv/bin/python -m unittest discover -s tests -p test_container_deployment.py`、
-  `.venv/bin/python -m unittest discover -s tests -p test_container_probe.py` 和
-  `.venv/bin/python -m unittest discover -s tests -p test_execution_authorization.py`，
-  验证 HTTP 权限、预检及后台执行边界。
-- 在 `web/` 执行 `npm run test -- run src/features/entry/EntryPage.test.tsx src/shared/api/auth-store.test.ts src/shared/auth/AuthBoundary.test.tsx src/shared/auth/AuthorizedReadBoundary.test.tsx`，
-  覆盖登录、恢复、错误状态和缓存清理。执行 `npm run typecheck`、`npm run build` 及
-  改动文件静态检查与 `git diff --check`。如测试文件随重构改名，同步更新命令。
+- `.venv/bin/python -m unittest discover -s tests -p test_v2_automation_lifecycle.py` 和
+  `.venv/bin/python -m unittest discover -s tests -p test_v2_automation_operations.py`，
+  验证入队前后停用、原任务记录及可见原因所用的 API 数据。
+- 在 `web/` 构建正式产物后，运行
+  `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-workspace.python.spec.ts`，
+  从现有编辑卡保存停用，核对列表和执行记录。
+- 账号入口或会话测试有改动时，运行 `.venv/bin/python -m unittest discover -s tests -p test_web_account_auth.py`，
+  并在 `web/` 运行 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/web-account-auth.python.spec.ts`，
+  验证并发初始化、会话恢复及改密重置。运行改动文件静态检查、`npm run typecheck`（Web 改动时）与 `git diff --check`。
 
 **B — 独立验收与完整回归**
 
 - 在 `web/` 构建正式产物后执行
   `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/web-account-auth.python.spec.ts`，
-  新增用例使用隔离的真实 Python/SQLite 空库，覆盖首位设置、深链、重启、撤销及非重放。
-- 执行 `.venv/bin/python scripts/docker_web_account_auth_smoke_test.py --image <candidate-image>`。
-  新增验收脚本从随仓配置生成器和真实 Compose 空库启动，并验证设置、恢复及重启。使用
-  隔离库与测试凭证完成执行授权检查。记录候选镜像身份及实际验证结果。
+  使用隔离的真实 Python/SQLite 空库，覆盖唯一管理员设置、深链、重启、退出改密及非重放。
+- 按[部署指引](docs/deployment.md#prerequisites)使用仓内配置生成器和 `compose.yaml`，从真实
+  Compose 空库验证设置、恢复、同版本重启和不支持的旧库拒绝。用隔离文件从网页发布及停用
+  计划，以实际 `scheduler tick` 和 `worker run-next` 核对两种停用顺序、文件效果和页面回读。
+  记录候选镜像和任务身份。
 - 按[共享全量门禁](docs/development-workflow.md#shared-full-regression-commands)运行适用的
   T4 全量、生产打包与 wheel 验收。Developer 先交付受影响用例结果，B 用对应候选验收。
 
-### Slice 后续范围
+### Slice 后续交付
 
-网页用户清单及新增用户、角色管理、普通用户初设和重置、API 令牌签发和轮换属于 Slice
-后续成果。Task 57.1 内的权限变化验证通过隔离测试夹具完成。
+Task 57.1 通过后，按 RO-2 规划「系统设置 → API 令牌」，一次交付签发、权限、核对、吊销和
+轮换旅程，并验证令牌轮换期间原定时计划继续正常运行。Web 多用户、角色管理和普通用户恢复延期。
 
-### 交付与评审记录
+### 范围调整前的交付与评审记录
+
+以下记录保留对应候选的实际结论。旧合同下基于夹具改角色的复现及开发指导已由本 Task 的当前停用验收替代。
 
 **Developer 交付记录（READY FOR B REVIEW）**
 
