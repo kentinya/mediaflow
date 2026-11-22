@@ -4,13 +4,13 @@
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: ORIGINAL TASK57.1 CORRECTION SCOPE
-Next Action: B REVIEWS TASK57.1 CORRECTION
+Next Action: DEVELOPER CORRECTS THE FIRST-SETUP STATUS CHECK
 ```
 
 ## A 终审退回
@@ -87,59 +87,43 @@ Task 57.1 原计划、范围和测试安排见
 - 每轮记录总耗时与测试耗时，测试耗时小于该轮总耗时的 50%。Developer 交受影响测试，B 负责
   完整回归、制品验证和更新后的 Closure Packet。
 
-## B 当前判定
+## B 复核 — FIX REQUIRED
 
 ```text
-Task Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..ba2f01e97d8f4f73ded20ebfcbeae3622a58a1b9
-Slice Implementation Reviewed: ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab..2b1042470765f5d9bf546780921de3fa499a0461
+Task Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..f54cf44e9bd1b4f92db0143fc8050fe4b5a9855f
+Slice Implementation Reviewed: ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab..03f054ea02f818b5cde73e77fccf06c3ad14ad1c
 Decision: FIX REQUIRED
-Task Blocker: A57-01 / P1
+Task Blocker: A57-01 / P1 — first-setup recovery ends before the original submission is resolved
 Next: SAME TASK FIX LOOP
 ```
 
-规划起点为干净的 `main`，HEAD `ba2f01e9`，治理检查通过。实施提交之后只有治理文档变化。
-B 构建生产 Web 产物，用生成器、正式 Waitress 入口和隔离空库独立复现。建号实际返回 `201`，
-主机状态确认唯一管理员已创建。改密实际返回 `200`，旧会话返回 `401`，新密码可登录。
-页面两次都要求重提，实际各提交一次。日志和窄屏截图位于本机
-`.git/validation-evidence/ba2f01e97d8f4f73ded20ebfcbeae3622a58a1b9/b-review/`。
+**A57-01 / P1 仍阻塞 RO-1 的 AC-01、AC-02。** 部署者从主机领取设置码，在首页点一次
+「Create administrator」。代理先返回 `504`，首次状态读取显示实例仍待设置。页面断言原提交
+没有建号，要求领取新码，并关闭「Check current status」。原请求随后返回 `201`，主机状态确认
+已创建唯一管理员。回到主机按页面指引领取新码时，命令提示管理员已存在，网页仍停在建号
+表单。刷新后可用原密码登录，建号 POST 共一次。
+[首页恢复分支](web/src/features/entry/EntryPage.tsx)
 
-RO-1 仍由 A57-01 阻塞。RO-2 令牌签发、轮换、权限和审计，以及 RO-3 空库部署、重启、旧库
-拒绝和计划停用，已按原验收包与原始日志核对。当前轮止于已复现的阻塞；修正候选提交后，
-B 复核全部结果，执行适用门禁，通过后将更新的 Closure Packet 交 A。
+**本轮证据。** 起点为干净的 `main`，治理及完整差异检查通过。交接提交只更新 `TASK.md`，
+候选范围和 Developer 测试记录见 `f54cf44e:TASK.md`。B 构建生产 Web 产物，真实账号浏览器
+用例 **11 项通过**。用生成器、正式 Waitress 入口和隔离库复验了原两条丢回包旅程。提交已完成
+时，部署者在同一标签页登录进入系统设置，管理员从可见会话失效提示进入登录并用新密码登录，
+原提交各一次。另以同一正式入口复现上面的 `504` 顺序。构建、测试和复现累计约 13 秒，
+低于本轮复核用时的一半。原始日志及窄屏截图位于本机
+`.git/validation-evidence/03f054ea02f818b5cde73e77fccf06c3ad14ad1c/b-review/`。
 
-## Developer 返工交接 — TASK 57.1 A57-01
+**Slice 重评。** RO-1 仍有上述恢复缺口。RO-2 的令牌签发、轮换、权限与审计，以及 RO-3
+的空库部署、重启、旧库拒绝和计划停用，已根据完整差异与原验收包及原始日志复核。
+候选的 T4 全量、wheel 和 Compose 待本条修复后执行。
 
-```text
-Candidate: 03f054ea02f818b5cde73e77fccf06c3ad14ad1c
-Fix range: 50f85df74e77ac122d43abb2224c5cd3b4b2bfee..03f054ea
-Task range: 4566a74055c698aec704215dd431eb8521bcfedb..03f054ea
-```
+### 给 Developer 的本轮开发指导
 
-- **提交结果分类。** `auth-api.ts` 区分用户提交与服务端状态读取：提交遇到连接中断、`5xx`
-  或成功响应体不可读，返回 `AuthUnknownOutcomeError`；明确的 `4xx` 拒绝继续保持原有服务端
-  code、durable state 和 next action。状态读取失败仍是独立的可用性错误。
-- **首页恢复。** 建号、登录、重置丢回包后自动用 `GET /api/auth/status` 读取真实状态，并在页面
-  保留「Check current status」手动重试入口。建号完成且无 Cookie 时退出设置表单、保留登录名，
-  登录后进入系统设置；Cookie 已到达时直接进入系统设置。设置仍待完成时保留主机领取新设置码的
-  路径。登录未建立会话时保留登录名和原站内目标；重置后显示新密码登录和重新领取重置码两条路径。
-  建号恢复后的登录不再显示与「进入系统设置」冲突的深链回填提示。
-- **改密与退出恢复。** 改密丢回包后读取会话：会话已失效则清理本地身份/缓存、通知其他标签页，
-  带一次性非秘密提示回到登录，提示只用新密码登录；会话仍有效则保留改密页和状态核对；读取失败
-  时保留未知提示和重试。账号菜单退出采用同一核对方式，会话仍有效时明确显示仍已登录并提供核对。
-- **真实浏览器证据。** `web-account-auth.python.spec.ts` 使用真实 Python/SQLite 和生产 Web
-  产物，用页面原按钮提交，等正式 API 完成后中断回包；核实建号、改密、重置、退出、代理 `504`
-  和状态读取中断。建号/改密/重置/退出均核对原 POST 一次；改密核对旧 Cookie `401`、旧密码失败、
-  新密码成功，另一标签页在下一次受保护请求回到登录。新增第二个隔离实例核对「Cookie 已到达时
-  直接进入系统设置」，并保留正常建号成功、深链回填、刷新、新标签和同版本重启旅程。
-- **实际执行（候选工作树）。**
-  - `web/`：`npm run test -- run src/features/entry src/shared/auth src/shared/api/auth-store.test.ts src/shared/ui/AppShell.test.tsx` → **86 passed**。
-  - `npm run test -- run src/shared/api/auth-api.test.ts` → **5 passed**。
-  - 新增/受影响用例重复执行 3 次 → **22 passed**（每次）。
-  - `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/web-account-auth.python.spec.ts` → **11 passed**。
-  - `npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 通过。
-  - `python3 scripts/check_governance.py` 与 `git diff --check` 通过。
-- 用时约 20 分钟；Web 单测、E2E、构建和静态检查的实际执行合计约 2 分钟，低于本轮 30%。
-- **剩余风险与 B 验收。** 本轮未改 Python、会话/账号事务、权限或持久 schema。B 仍需用正式
-  Waitress/生成器入口独立复验 A57-01 两条原始旅程，执行完整 T4、wheel/源码外安装和真实
-  Compose 同版本重启，并复核 RO-1、RO-2、RO-3 与更新后的 Closure Packet。真实 Python 浏览器
-  证据使用现有账号 harness，不是正式 Waitress 进程。
+1. 修正 `EntryPage.tsx` 的建号恢复分支。状态读取显示实例仍待设置时，呈现当前设置状态，
+   保留原提交的「结果待核对」及「Check current status」。设置状态读取只报告当前是否已有
+   管理员。错码、过期码等明确拒绝继续走原有表单指引。
+2. 原请求完成后，从同一页面点击「Check current status」。读取已有管理员时沿用当前成功
+   路径。有会话进入系统设置，无会话则显示登录，登录后进入待初始化的系统设置。核对只发
+   GET，原建号 POST 仍为一次。
+3. 在现有账号浏览器用例加入「`504` → 首次读取仍待设置 → 原 POST 完成 → 再次核对 →
+   登录并进入系统设置」的真实后端回归，核对可见提示、一次建号和唯一管理员。运行原测试
+   安排里的 Web 入口受影响单测、生产构建及真实账号浏览器用例，保留建号和改密原通过分支。
