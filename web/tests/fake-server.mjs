@@ -7953,6 +7953,17 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
+  // Scoped API token administration. The browser settings page always reads
+  // this list; the fake has no issued tokens, so it answers the same
+  // non-secret empty projection the real API returns for a fresh account.
+  if (url.pathname === "/api/auth/tokens" && req.method === "GET") {
+    if (authAccount(token) === null) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    sendJson(res, 200, { items: [] });
+    return;
+  }
   // V2 Storage management journey (Slice 39): served on the dedicated
   // operations route BEFORE the generic alias rewrite so the exact path
   // contract of /api/operations/storage-management/* is what the browser

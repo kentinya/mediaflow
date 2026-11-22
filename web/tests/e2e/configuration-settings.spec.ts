@@ -57,8 +57,15 @@ test.describe("Settings direct publication", () => {
     await expect(page.getByLabel("配置状态摘要")).toBeVisible();
     await expect(page.getByText("配置已生效")).toBeVisible();
     await expect(page.getByText("序号 4", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "刷新" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "重新读取" })).toHaveCount(0);
+    // The retired configuration refresh entry is gone; the scoped-token card's
+    // own "刷新列表" action is a different, exact name.
+    await expect(
+      page.getByRole("button", { name: "刷新", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "重新读取", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByText("尚未签发 API 令牌。")).toBeVisible();
     await expect(page.getByLabel("配置 JSON", { exact: true })).toHaveCount(0);
 
     await expect(page.getByLabel("系统语言")).toHaveValue("zh-CN");
@@ -101,7 +108,9 @@ test.describe("Settings direct publication", () => {
     expect(retired).toEqual([]);
     await expect(page.getByText("序号 5", { exact: true })).toBeVisible();
     await expect(page.getByText("配置已生效")).toBeVisible();
-    await expect(page.getByRole("button", { name: "刷新" })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "刷新", exact: true }),
+    ).toHaveCount(0);
   });
 
   test("a lost apply answer is verified automatically without a second publish", async ({

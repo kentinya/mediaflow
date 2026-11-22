@@ -1239,6 +1239,144 @@ describe("V2 configuration direct publication", () => {
     expect(issueWrites).toBe(1);
   });
 
+  it("treats a proxy timeout on a committed issuance as pending and reconciles from the list", async () => {
+    let tokenItem: Record<string, unknown> | null = null;
+    let issueWrites = 0;
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.endsWith("/auth/tokens") && init?.method === "POST") {
+        issueWrites += 1;
+        tokenItem = {
+          tokenId: "token-timeout",
+          name: "timeout-monitor",
+          scope: "read_only",
+          permissions: ["read"],
+          createdAt: "2026-01-01T00:00:00+00:00",
+          expiresAt: "2026-04-01T00:00:00+00:00",
+          lastUsedAt: null,
+          revokedAt: null,
+          status: "active",
+        };
+        // The backend committed the token; the reverse proxy gave up first.
+        return new Response("<html>Gateway Timeout</html>", {
+          status: 504,
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      if (input.endsWith("/auth/tokens/token-timeout/revoke")) {
+        tokenItem = {
+          ...(tokenItem ?? {}),
+          status: "revoked",
+          revokedAt: "2026-01-02T00:00:00+00:00",
+        };
+        return response(tokenItem);
+      }
+      if (input.endsWith("/auth/tokens")) {
+        return response({ items: tokenItem === null ? [] : [tokenItem] });
+      }
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings")) return response(activeSettings());
+      return response(activeStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+
+    const panel = await screen.findByRole("region", { name: "API 令牌" });
+    await userEvent.type(
+      within(panel).getByLabelText("令牌名称"),
+      "timeout-monitor",
+    );
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "签发令牌" }),
+    );
+
+    expect(await screen.findByText("签发结果待核实")).toBeVisible();
+    expect(
+      await screen.findByText(/列表已按最新持久状态重新读取/),
+    ).toBeVisible();
+    expect(await screen.findByText("timeout-monitor")).toBeVisible();
+    expect(within(panel).getByLabelText("令牌状态 有效")).toBeVisible();
+    expect(within(panel).queryByLabelText("新令牌明文")).toBeNull();
+    expect(issueWrites).toBe(1);
+
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "吊销令牌 timeout-monitor" }),
+    );
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "确认吊销 timeout-monitor" }),
+    );
+    expect(await screen.findByText("已吊销 timeout-monitor")).toBeVisible();
+    expect(within(panel).getByLabelText("令牌状态 已吊销")).toBeVisible();
+    expect(issueWrites).toBe(1);
+  });
+
+  it("treats a proxy timeout on a committed revocation as pending and rereads the list", async () => {
+    let tokenItem: Record<string, unknown> = {
+      tokenId: "token-revoke-timeout",
+      name: "revoke-timeout-monitor",
+      scope: "read_only",
+      permissions: ["read"],
+      createdAt: "2026-01-01T00:00:00+00:00",
+      expiresAt: "2026-04-01T00:00:00+00:00",
+      lastUsedAt: null,
+      revokedAt: null,
+      status: "active",
+    };
+    let revokeWrites = 0;
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.endsWith("/auth/tokens/token-revoke-timeout/revoke")) {
+        revokeWrites += 1;
+        tokenItem = {
+          ...tokenItem,
+          status: "revoked",
+          revokedAt: "2026-01-02T00:00:00+00:00",
+        };
+        // The backend committed the revocation; the reverse proxy timed out.
+        return new Response("<html>Gateway Timeout</html>", {
+          status: 504,
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      if (input.endsWith("/auth/tokens")) {
+        return response({ items: [tokenItem] });
+      }
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings")) return response(activeSettings());
+      return response(activeStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+
+    const panel = await screen.findByRole("region", { name: "API 令牌" });
+    expect(await screen.findByText("revoke-timeout-monitor")).toBeVisible();
+    await userEvent.click(
+      within(panel).getByRole("button", {
+        name: "吊销令牌 revoke-timeout-monitor",
+      }),
+    );
+    await userEvent.click(
+      within(panel).getByRole("button", {
+        name: "确认吊销 revoke-timeout-monitor",
+      }),
+    );
+
+    expect(await screen.findByText("吊销结果待核实")).toBeVisible();
+    expect(
+      await screen.findByText(/列表已按最新持久状态重新读取/),
+    ).toBeVisible();
+    expect(within(panel).getByLabelText("令牌状态 已吊销")).toBeVisible();
+    expect(revokeWrites).toBe(1);
+  });
+
   it("enters the shared session recovery when the token list is rejected", async () => {
     let listRejected = false;
     const fetchMock = vi.fn(async (input: string) => {

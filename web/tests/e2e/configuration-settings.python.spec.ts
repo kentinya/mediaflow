@@ -509,6 +509,76 @@ test("a lost issuance with a failed list reread stays pending until the operator
   await page.unroute("**/api/auth/tokens");
 });
 
+test("a proxy timeout on a committed issuance stays pending and the operator revokes it from the list", async ({
+  page,
+  request,
+}) => {
+  await connectOn(page, "/configuration");
+  const panel = page.getByRole("region", { name: "API 令牌" });
+  await expect(panel).toBeVisible();
+
+  const issueRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (request.method() === "POST" && url.pathname === "/api/auth/tokens") {
+      issueRequests.push(request.postData() ?? "");
+    }
+  });
+  let committedToken: string | null = null;
+  let proxyTimeouts = 0;
+  await page.route("**/api/auth/tokens", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    // The real backend commits the token, then the HTTPS reverse proxy gives
+    // up and answers 504. The browser never sees the 201 or its plaintext.
+    const answer = await route.fetch();
+    expect(answer.status()).toBe(201);
+    const body = (await answer.json()) as { token?: string };
+    committedToken = body.token ?? null;
+    proxyTimeouts += 1;
+    await route.fulfill({
+      status: 504,
+      contentType: "text/html",
+      body: "<html><body>Gateway Timeout</body></html>",
+    });
+  });
+
+  await panel.getByLabel("令牌名称").fill("browser-proxy-timeout");
+  await panel.getByRole("button", { name: "签发令牌" }).click();
+  await expect(
+    panel.getByText("签发结果待核实", { exact: true }),
+  ).toBeVisible();
+  await expect(panel.getByText(/列表已按最新持久状态重新读取/)).toBeVisible();
+  const row = panel.getByRole("row", { name: /browser-proxy-timeout/ });
+  await expect(row).toBeVisible();
+  await expect(row.getByLabel("令牌状态 有效")).toBeVisible();
+  await expect(panel.getByLabel("新令牌明文")).toHaveCount(0);
+  expect(issueRequests).toHaveLength(1);
+  expect(proxyTimeouts).toBe(1);
+  expect(committedToken).not.toBeNull();
+  await page.unroute("**/api/auth/tokens");
+
+  // The plaintext was never delivered to the browser, so the operator revokes
+  // the recorded token from the durable list and the credential stops working.
+  await panel
+    .getByRole("button", { name: "吊销令牌 browser-proxy-timeout" })
+    .click();
+  await panel
+    .getByRole("button", { name: "确认吊销 browser-proxy-timeout" })
+    .click();
+  await expect(
+    panel.getByText("已吊销 browser-proxy-timeout", { exact: true }),
+  ).toBeVisible();
+  await expect(row.getByLabel("令牌状态 已吊销")).toBeVisible();
+  const revoked = await request.get("/api/tasks", {
+    headers: { Authorization: `Bearer ${committedToken as unknown as string}` },
+  });
+  expect(revoked.status()).toBe(401);
+  expect(issueRequests).toHaveLength(1);
+});
+
 test("a rejected token list after a real password change signs the old page out and returns to Settings", async ({
   browser,
   page,

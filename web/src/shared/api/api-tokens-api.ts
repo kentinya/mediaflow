@@ -121,6 +121,7 @@ function summaryOf(value: unknown): ApiTokenSummary {
 async function errorEnvelope(response: Response): Promise<{
   readonly code: string | null;
   readonly details: Record<string, unknown> | null;
+  readonly parsed: boolean;
 }> {
   try {
     const body = (await response.clone().json()) as {
@@ -129,9 +130,10 @@ async function errorEnvelope(response: Response): Promise<{
     return {
       code: typeof body?.error?.code === "string" ? body.error.code : null,
       details: record(body?.error?.details),
+      parsed: true,
     };
   } catch {
-    return { code: null, details: null };
+    return { code: null, details: null, parsed: false };
   }
 }
 
@@ -165,9 +167,19 @@ async function request<T>(
       throw new ApiTokensApiError("malformed");
     }
   }
-  const { code, details } = await errorEnvelope(response);
+  const { code, details, parsed } = await errorEnvelope(response);
   if (response.status === 401) throw new ApiTokensApiError("unauthorized", 401);
   if (response.status === 403) throw new ApiTokensApiError("forbidden", 403);
+  if (mutation && response.status >= 500) {
+    // A gateway timeout or server error does not prove the write failed: the
+    // token may already be issued or revoked. Only an explicit durable-state
+    // statement lets the answer count as a definite refusal; everything else
+    // is reconciled from the durable list instead of being replayed.
+    const durable = typeof details?.durableState === "string";
+    if (!parsed || !durable || code === "internal_error") {
+      throw new ApiTokensUnknownOutcomeError();
+    }
+  }
   throw new ApiTokensApiError(
     response.status >= 500 ? "unavailable" : "rejected",
     response.status,
