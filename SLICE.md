@@ -4,14 +4,14 @@
 Slice ID: 57
 Name: Single Web Administrator and Scoped API Tokens
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab
-Implementation Head: NOT SET
+Implementation Head: 2b1042470765f5d9bf546780921de3fa499a0461
 Working Branch: main
 Development Authorization: TASK57.2 IMPLEMENTATION AUTHORIZED
 Risk: High
 Target Test Level: T4
-Next Action: SEE TASK.md
+Next Action: A FINAL REVIEW OF ENTIRE SLICE BASE..IMPLEMENTATION HEAD
 ```
 
 ## 授权与基线
@@ -39,8 +39,8 @@ Task 57.1 已由 B 验收通过。用户已授权实施 [Task 57.2](TASK.md)。
 新开标签页和打开书签可沿用有效会话，过期后登录回到原位置。需要接入脚本时，管理员从
 「系统设置 → API 令牌」按用途签发。只使用网页的实例可以直接完成部署和业务配置。
 
-当前候选已接通数据库管理员会话、主机设置及重置码和后台账号校验。API 令牌签发仍待交付。
-自动化编辑卡已有停用入口，可用它验证排队前和执行前的停止结果。
+候选已接通数据库管理员会话、主机设置及重置码、系统设置的分权限 API 令牌和后台账号校验。
+管理员从自动化编辑卡停用计划，在执行记录核对停止原因和原有结果。
 [部署生成器](scripts/make_deployment_config.py) · [Web 登录入口](web/src/features/entry/EntryPage.tsx) · [执行权限检查](mediaflow/interfaces/service_api.py)
 
 验收后以 `V2-AUTH-004/005/007–009` 取代 V2 的 `V2-AUTH-001/002` 身份和认证要求，更新
@@ -135,4 +135,5 @@ Worker/Scheduler 执行边界，保留各项实际结果及限制。A 在独立�
 完整 Base..Implementation Head 与 Closure Packet 后决定关闭。
 [测试级别及验收分工](docs/development-workflow.md#6-test-levels)
 
-Closure Packet 和 A Final Review 待交付。
+B 已验收 Task 57.1 和 Task 57.2，并核对全部合同结果。[Closure Packet](TASK.md#b-复核与-slice-57-交接)
+待 A 独立终审。
