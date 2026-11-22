@@ -1,12 +1,12 @@
 # Task 57.2 — 在系统设置签发、使用和吊销 API 令牌
 
-Next Action: B REVIEWS TASK57.2
+Next Action: DEVELOPER FIXES TASK57.2
 
 ```text
 Task ID: 57.2
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c12cae6fe0226e7efe6850ac68e6581785fb87e3
 Difficulty: High
 Test Level: T4
@@ -160,6 +160,30 @@ Fix range: 8cc082a14212aa4691a0e908f5f87740970e2732..1c1e366f
   - `python3 scripts/check_governance.py`、`git diff --check` 通过。
 - 用时约 14 分钟；测试与定向检查实际约 2 分钟，低于本轮 30%。
 - 剩余风险与 B 验收：完整 T4、真实 Compose 四服务重启、真实 Scheduler/Worker 在令牌轮换后的受理与文件结果、候选镜像和 wheel/源码外安装仍待 B 独立执行。本轮 E2E 在隔离 Python/SQLite 环境验证了页面旅程，未替代 B 的真实部署与整理分析权限验收。
+
+## Task 57.2 — B 返工复核
+
+```text
+Reviewed: c12cae6fe0226e7efe6850ac68e6581785fb87e3..981870752f8490e2520b5a383e5c7ebaa7e00506
+Implementation: 1c1e366fdeb5ebf59bcd559b42bc82c3a680f3c9
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- 上轮两个场景通过。签发回包和随后列表读取中断时，页面显示核对未完成，连接恢复后可读回、吊销并单独签发替代令牌。在另一台设备改密后，旧页面刷新收到 `401`，可用新密码回到原令牌列表。
+- **P1 — 代理超时掩盖已签发的令牌（RO-2 / AC-03）。** 管理员经 HTTPS 反向代理签发监控令牌。复核用真实后端完成签发并返回 `201`，在浏览器侧模拟代理回 `504`。页面显示「后端拒绝了本次请求」，也没读取列表。管理员手动刷新才看到新增令牌仍有效，并从同一张卡吊销。令牌客户端将这个写入结果归类为普通失败，跳过了已有的结果核对流程。这个分类从 `2f3bff35` 引入，在本次修正中仍存在。[令牌 API](web/src/shared/api/api-tokens-api.ts#L168) · [部署入口](docs/deployment.md#build-and-start)
+- 默认浏览器门禁有两条设置页回归失败。原检查要确认配置区没有旧的「刷新」操作，其整页模糊匹配命中了新令牌卡的「刷新列表」。默认 Node 测试服务也未提供 `/api/auth/tokens` 列表读回，同屏出现令牌读取失败。真实系统设置的 8 项浏览器用例通过。[设置页回归](web/tests/e2e/configuration-settings.spec.ts#L53)
+
+### Developer 返工指导
+
+1. 把令牌签发与吊销在收到代理超时、服务端状态未确认时的响应接入同一个「结果待核实」流程。沿用现有的只读列表核对及提示。明确拒绝的响应沿用原处理。参考系统设置配置写入的已有处理方式。[令牌 API](web/src/shared/api/api-tokens-api.ts#L168) · [配置写入](web/src/shared/api/configuration-api.ts#L152)
+2. 在真实系统设置用例中，从原签发按钮发起写请求，保留后端成功创建的结果，在浏览器一侧让代理回包为 `504`。验证页面显示待核实，只发一次签发请求，能读回有效记录并从列表吊销。
+3. 让默认测试服务返回该场景的令牌空列表。把原有「刷新／重新读取」断言限定在配置区域或使用精确名称，继续核对旧配置刷新入口是否出现。
+
+Developer 从 `web/` 运行 `npm run test:e2e -- tests/e2e/configuration-settings.spec.ts` 和 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/configuration-settings.python.spec.ts`，先执行 `npm run build`，并检查类型和改动文件。
+
+B 通过了治理、全范围 `git diff --check`、Web 类型检查、Lint、格式检查、Web 构建和候选镜像构建。系统设置真实 Chromium 8 项通过，代理回包用例复现失败。默认 Chromium 中止时为 117 通过、2 失败、1 中断、159 未运行。Python 和 Web 单元全量在确认阻塞后停止。真实整理分析、Compose 四服务重启和轮换后定时执行、wheel 与其余 T4 门禁待下一候选。日志位于 `.git/validation-evidence/981870752f8490e2520b5a383e5c7ebaa7e00506/b-review/`。
 
 ## Task 57.1 — B 复核结论
 
