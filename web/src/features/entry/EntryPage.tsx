@@ -194,7 +194,7 @@ export function EntryPage() {
       setCode("");
       setPassword("");
       setConfirmPassword("");
-      authStore.setSession(result.account);
+      authStore.markFirstAdministratorCreated(result.account);
       announceSessionChange();
       continueAfterSignIn({ path: "/configuration", search: "" });
     } catch (error) {

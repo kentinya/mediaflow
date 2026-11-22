@@ -30,16 +30,14 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from docker_health_smoke_test import (
-    activate_runtime,
-    json_request,
-    wait_for_services_healthy,
-)
+from docker_health_smoke_test import wait_for_services_healthy
 from docker_smoke_test import (
     PROJECT_PREFIX,
+    bootstrap_account_session,
     compose_environment,
     free_port,
     prepare_files,
@@ -77,6 +75,9 @@ def request_bytes(
         headers["Cookie"] = cookie
     if body is not None:
         headers["Content-Type"] = "application/json"
+    if cookie is not None and method not in {"GET", "HEAD"}:
+        parsed = urllib.parse.urlsplit(url)
+        headers["Origin"] = f"{parsed.scheme}://{parsed.netloc}"
     request = urllib.request.Request(
         url,
         data=body,
@@ -88,6 +89,44 @@ def request_bytes(
             return response.status, response.read()
     except urllib.error.HTTPError as error:
         return error.code, error.read()
+
+
+def json_request(
+    base: str,
+    path: str,
+    cookie: str,
+    *,
+    method: str = "GET",
+    body: object | None = None,
+) -> tuple[int, dict]:
+    payload = None if body is None else json.dumps(body).encode("utf-8")
+    status, raw = request_bytes(f"{base}{path}", method=method, cookie=cookie, body=payload)
+    return status, json.loads(raw)
+
+
+def activate_runtime(base: str, cookie: str, config_file: Path) -> dict:
+    """Publish one portable configuration through the current direct API."""
+
+    document = json.loads(config_file.read_text(encoding="utf-8"))
+    status, active = json_request(
+        base,
+        "/api/configuration/publish",
+        cookie,
+        method="POST",
+        body={"document": document},
+    )
+    if status != 200 or active.get("published") is not True or active.get("status") != "active":
+        raise RuntimeError(f"managed configuration publication failed: {active}")
+    status, configuration = json_request(base, "/api/configuration", cookie)
+    current = configuration.get("active") if isinstance(configuration, dict) else None
+    if (
+        status != 200
+        or not isinstance(current, dict)
+        or current.get("revisionId") != active.get("revisionId")
+        or current.get("digest") != active.get("digest")
+    ):
+        raise RuntimeError(f"published Active was not readable back: {configuration}")
+    return active
 
 
 def assert_no_canaries(payload: bytes | str, canaries, surface: str) -> None:
@@ -270,48 +309,7 @@ def prepare_deployment_files(
     config_file, environment_file, source_root, target_root, activation_file = prepare_files(
         root, admin_token
     )
-    bootstrap = json.loads(config_file.read_text(encoding="utf-8"))
     document = json.loads(activation_file.read_text(encoding="utf-8"))
-    document["api"] = {
-        "principals": [
-            {
-                "id": "admin",
-                "tokenEnv": "MEDIAFLOW_API_TOKEN",
-                "roles": ["admin"],
-                "enabled": True,
-            },
-            {
-                "id": "viewer",
-                "tokenEnv": "MEDIAFLOW_VIEWER_TOKEN",
-                "roles": ["viewer"],
-                "enabled": True,
-            },
-            {
-                "id": "auditor",
-                "tokenEnv": "MEDIAFLOW_AUDITOR_TOKEN",
-                "roles": ["auditor"],
-                "enabled": True,
-            },
-            {
-                "id": "operator",
-                "tokenEnv": "MEDIAFLOW_OPERATOR_TOKEN",
-                "roles": ["operator"],
-                "enabled": True,
-            },
-            {
-                "id": "executor",
-                "tokenEnv": "MEDIAFLOW_EXECUTOR_TOKEN",
-                "roles": ["executor"],
-                "enabled": True,
-            },
-        ],
-    }
-    bootstrap["api"] = document["api"]
-    config_file.write_text(
-        json.dumps(bootstrap, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    config_file.chmod(0o644)
     # The source bind is intentionally read-only in this security harness.
     # Use an explicit non-destructive policy for the temporary manual flow.
     for policy in document.get("organizePolicies", []):
@@ -724,69 +722,52 @@ print(json.dumps({
 def assert_rbac_and_no_side_effects(
     base: str,
     canaries,
-    token_values,
+    admin_cookie: str,
 ) -> None:
-    """Verify denial/least privilege and zero Task/notification creation."""
+    """Verify current account-session denial and zero Task/notification creation."""
 
-    def get(path: str, token: str | None, *, expected: int) -> bytes:
-        status, body = request_bytes(f"{base}{path}", token=token)
+    def get(
+        path: str,
+        *,
+        cookie: str | None = None,
+        token: str | None = None,
+        expected: int,
+    ) -> bytes:
+        status, body = request_bytes(f"{base}{path}", cookie=cookie, token=token)
         assert_no_canaries(body, canaries, f"HTTP response {path}")
         if status != expected:
             raise RuntimeError(f"{path} returned HTTP {status}, expected {expected}")
         return body
 
-    admin = token_values["admin"]
-    viewer = token_values["viewer"]
-    auditor = token_values["auditor"]
-    operator = token_values["operator"]
-    executor = token_values["executor"]
+    get("/health", expected=200)
+    get("/api/tasks?limit=100", expected=401)
+    get("/api/tasks?limit=100", token="invalid-canary-token", expected=401)
+    for retired_env in (
+        "MEDIAFLOW_API_TOKEN",
+        "MEDIAFLOW_VIEWER_TOKEN",
+        "MEDIAFLOW_AUDITOR_TOKEN",
+        "MEDIAFLOW_OPERATOR_TOKEN",
+        "MEDIAFLOW_EXECUTOR_TOKEN",
+    ):
+        get(
+            "/api/tasks?limit=100",
+            token=canary_by_env(canaries, retired_env),
+            expected=401,
+        )
 
-    get("/health", None, expected=200)
-    body = get("/api/tasks?limit=100", None, expected=401)
-    body = get("/api/tasks?limit=100", "invalid-canary-token", expected=401)
-    assert_no_canaries(body, canaries, "invalid-token error response")
-
-    body = get("/api/tasks?limit=100", viewer, expected=200)
-    assert json.loads(body)["items"] == []
-    get("/api/tasks?limit=100", auditor, expected=200)
-    get("/api/tasks?limit=100", operator, expected=200)
-    get("/api/tasks?limit=100", executor, expected=200)
-    get("/api/tasks?limit=100", admin, expected=200)
+    body = get("/api/tasks?limit=100", cookie=admin_cookie, expected=200)
+    if json.loads(body)["items"]:
+        raise RuntimeError("the release preflight unexpectedly found durable Tasks")
+    get("/api/tasks?limit=100", cookie=admin_cookie, expected=200)
+    get("/api/security-audit", cookie=admin_cookie, expected=200)
 
     status, body = request_bytes(
         f"{base}/api/tasks",
         method="POST",
-        token=viewer,
+        cookie=admin_cookie,
         body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
     )
-    assert_no_canaries(body, canaries, "viewer denied POST response")
-    if status != 404:
-        raise RuntimeError(f"retired remote Task submission returned HTTP {status}, expected 404")
-
-    status, body = request_bytes(f"{base}/api/security-audit", token=viewer)
-    assert_no_canaries(body, canaries, "viewer denied audit response")
-    if status != 403:
-        raise RuntimeError(f"viewer security-audit returned HTTP {status}, expected 403")
-
-    body = get("/api/security-audit", auditor, expected=200)
-    assert_no_canaries(body, canaries, "auditor audit projection")
-    status, body = request_bytes(
-        f"{base}/api/tasks",
-        method="POST",
-        token=auditor,
-        body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
-    )
-    assert_no_canaries(body, canaries, "auditor denied POST response")
-    if status != 404:
-        raise RuntimeError(f"retired remote Task submission returned HTTP {status}, expected 404")
-
-    status, body = request_bytes(
-        f"{base}/api/tasks",
-        method="POST",
-        token=executor,
-        body=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode("utf-8"),
-    )
-    assert_no_canaries(body, canaries, "executor no-authority POST response")
+    assert_no_canaries(body, canaries, "retired Task submission response")
     if status != 404:
         raise RuntimeError(f"retired remote Task submission returned HTTP {status}, expected 404")
 
@@ -794,10 +775,10 @@ def assert_rbac_and_no_side_effects(
         "/api/configuration/status",
         "/api/system/status",
     ):
-        get(path, admin, expected=200)
+        get(path, cookie=admin_cookie, expected=200)
 
     for path in ("/api/tasks?limit=100", "/api/notifications?limit=100"):
-        body = get(path, admin, expected=200)
+        body = get(path, cookie=admin_cookie, expected=200)
         document = json.loads(body)
         items = (
             document.get("items") or document.get("tasks") or document.get("notifications") or []
@@ -808,15 +789,14 @@ def assert_rbac_and_no_side_effects(
     # The retired Job collection is an ordinary bounded not-found: no list,
     # submission, stale projection or requeue alias may still accept work.
     for path in ("/api/jobs", "/api/jobs/stale", "/api/operations/jobs"):
-        body = get(path, admin, expected=404)
+        body = get(path, cookie=admin_cookie, expected=404)
         if b"token" in body.lower():
             raise RuntimeError(f"retired Job route {path} echoed credential-like content")
 
 
 def assert_projection_exports(
     base: str,
-    admin: str,
-    auditor: str,
+    admin_cookie: str,
     canaries,
 ) -> None:
     paths = (
@@ -829,13 +809,12 @@ def assert_projection_exports(
         "/api/system/status",
     )
     for path in paths:
-        token = auditor if path == "/api/security-audit" else admin
-        status, body = request_bytes(f"{base}{path}", token=token)
+        status, body = request_bytes(f"{base}{path}", cookie=admin_cookie)
         assert_no_canaries(body, canaries, f"API/Web projection {path}")
         if status != 200:
             raise RuntimeError(f"{path} returned HTTP {status}")
 
-    status, body = request_bytes(f"{base}/api/security-audit", token=auditor)
+    status, body = request_bytes(f"{base}/api/security-audit", cookie=admin_cookie)
     assert_no_canaries(body, canaries, "security audit projection")
     if status != 200:
         raise RuntimeError(f"security audit returned HTTP {status}")
@@ -843,8 +822,7 @@ def assert_projection_exports(
     cookie_value = canary_by_env(canaries, "MEDIAFLOW_COOKIE_CANARY")
     status, body = request_bytes(
         f"{base}/api/tasks?limit=100",
-        token=admin,
-        cookie=cookie_value,
+        cookie=f"{admin_cookie}; mediaflow_untrusted={cookie_value}",
     )
     assert_no_canaries(body, canaries, "cookie-bearing Tasks response")
     if status != 200:
@@ -1399,16 +1377,6 @@ print(" ".join(str(index) for index in found))
 
 
 def release_security_smoke(project: str, image: str, keep: bool, canaries) -> None:
-    token_values = {
-        role: canary_by_env(canaries, env_name)
-        for role, env_name in (
-            ("admin", "MEDIAFLOW_API_TOKEN"),
-            ("viewer", "MEDIAFLOW_VIEWER_TOKEN"),
-            ("auditor", "MEDIAFLOW_AUDITOR_TOKEN"),
-            ("operator", "MEDIAFLOW_OPERATOR_TOKEN"),
-            ("executor", "MEDIAFLOW_EXECUTOR_TOKEN"),
-        )
-    }
     api_port = free_port()
     with tempfile.TemporaryDirectory(prefix=f"{RELEASE_PREFIX}-") as directory:
         root = Path(directory)
@@ -1461,7 +1429,12 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
                     expected=EXPECTED_SERVICES,
                 )
                 base = f"http://127.0.0.1:{api_port}"
-                wait_for_api(base, token_values["admin"])
+                wait_for_api(base)
+                print("Creating the first administrator from a host-issued setup code...")
+                admin_cookie, _admin_username, _admin_password = bootstrap_account_session(
+                    command, environment, base
+                )
+                wait_for_api(base, admin_cookie)
 
                 print("Verifying non-root execution, mounts and process commands...")
                 assert_runtime_boundaries(command, environment)
@@ -1470,11 +1443,11 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
                 assert_v2_static_serving(base, canaries)
 
                 print("Activating the managed runtime snapshot...")
-                activate_runtime(base, token_values["admin"], activation_file)
+                activate_runtime(base, admin_cookie, activation_file)
 
                 def management_ready() -> bool:
                     status, management = json_request(
-                        base, "/api/management/readiness", token_values["admin"]
+                        base, "/api/management/readiness", admin_cookie
                     )
                     return (
                         status == 200
@@ -1484,8 +1457,8 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
 
                 wait_until(management_ready, timeout=90.0, description="managed runtime ready")
 
-                print("Probing authentication, RBAC and zero-side-effect denial...")
-                assert_rbac_and_no_side_effects(base, canaries, token_values)
+                print("Probing account-session authentication and zero-side-effect denial...")
+                assert_rbac_and_no_side_effects(base, canaries, admin_cookie)
 
                 print("Restarting Worker against the exact Active snapshot...")
                 run([*command, "restart", "worker"], environment=environment)
@@ -1494,12 +1467,12 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
                     environment,
                     expected=EXPECTED_SERVICES,
                 )
-                wait_for_api(base, token_values["admin"])
+                wait_for_api(base, admin_cookie)
 
                 print("Admitting V2 manual Organize and observing resident Worker completion...")
                 assert_v2_manual_organize(
                     base,
-                    token_values["admin"],
+                    admin_cookie,
                     source_root,
                     target_root,
                     command,
@@ -1508,12 +1481,7 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
 
                 print("Seeding durable Task/Result and scanning projections/exports...")
                 seed_release_state(command, environment, canaries)
-                assert_projection_exports(
-                    base,
-                    token_values["admin"],
-                    token_values["auditor"],
-                    canaries,
-                )
+                assert_projection_exports(base, admin_cookie, canaries)
 
                 print("Scanning service logs and durable SQLite evidence...")
                 assert_logs_and_database_clean(command, environment, canaries)
@@ -1588,6 +1556,70 @@ def unsupported_host_access_failure(image: str, canaries) -> None:
             raise RuntimeError("unsupported host root did not fail closed with a bounded message")
 
 
+def retired_identity_input_failure(image: str, canaries) -> None:
+    """Prove retired startup identity fields fail closed before any store opens."""
+
+    admin_token = canary_by_env(canaries, "MEDIAFLOW_API_TOKEN")
+    with tempfile.TemporaryDirectory(prefix=f"{RELEASE_PREFIX}-retired-") as directory:
+        root = Path(directory)
+        os.chmod(root, 0o755)
+        data = root / "data"
+        data.mkdir()
+        config = root / "retired.json"
+        document = json.loads(
+            subprocess.check_output(
+                [sys.executable, str(ROOT / "scripts" / "make_deployment_config.py")],
+                cwd=ROOT,
+                text=True,
+            )
+        )
+        document["api"] = {
+            "principals": [{"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"]}],
+            "tokenEnv": "MEDIAFLOW_API_TOKEN",
+        }
+        config.write_text(json.dumps(document), encoding="utf-8")
+        environment = root / "deployment.env"
+        environment.write_text(f"MEDIAFLOW_API_TOKEN={admin_token}\n", encoding="utf-8")
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{data}:/data",
+                "-v",
+                f"{config}:/config/mediaflow.json:ro",
+                "-v",
+                f"{environment}:/run/mediaflow/deployment.env:ro",
+                "-e",
+                "MEDIAFLOW_CONFIG=/config/mediaflow.json",
+                "-e",
+                "MEDIAFLOW_DATA_DIR=/data",
+                "-e",
+                "MEDIAFLOW_ENV_FILE=/run/mediaflow/deployment.env",
+                image,
+                "api",
+                "serve-production",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8080",
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        detail = result.stderr + result.stdout
+        assert_no_canaries(detail, canaries, "retired-identity failure output")
+        if result.returncode == 0:
+            raise RuntimeError("retired startup identity fields did not fail closed")
+        if "api.principals is retired" not in detail or "api.tokenEnv is retired" not in detail:
+            raise RuntimeError("retired startup identity fields did not name the keys to remove")
+        if (data / "mediaflow.sqlite3").exists():
+            raise RuntimeError("retired startup identity fields created a database")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", default=IMAGE_TAG)
@@ -1605,6 +1637,7 @@ def main() -> int:
         canaries=canaries,
     )
     unsupported_host_access_failure(arguments.image, canaries)
+    retired_identity_input_failure(arguments.image, canaries)
     return 0
 
 

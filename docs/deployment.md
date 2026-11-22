@@ -530,11 +530,11 @@ before any release claim:
   media target and read-only config/environment/source mounts. A container
   whose Local Storage root is host `/` fails closed before starting with a
   bounded message and no fallback.
-- The production API/Web is exercised with database accounts and server-side
-  Web sessions. Missing/invalid credentials are denied, least-privilege RBAC
-  separation holds, and denied/read-only requests create no Task, notification,
-  execution authority or Storage mutation. The retired environment token cannot
-  authenticate.
+- The running stack creates its first administrator from a host-issued one-time
+  setup code, then exercises the production API/Web with that database account
+  and its server-side Web session. Missing/invalid credentials and every retired
+  environment token are denied, and denied/read-only requests create no Task,
+  notification, execution authority or Storage mutation.
 - The running API service is probed live for V2 static serving: the entry
   document, the `/explore` and `/resourcelib/files` routes, every referenced
   hashed JS/CSS asset with its safe headers, the retired `/ui`, `/ui-v2` and
@@ -737,8 +737,11 @@ The old-schema upgrade harness is historical and is not an accepted/current Slic
 Fresh startup, new-work durability and same-version restart/fault proofs above define current support.
 
 The release-security harness verifies image/build-context,
-Compose-topology, non-root/mount, account-session RBAC and canary redaction
-acceptance on the exact candidate image:
+Compose-topology, non-root/mount, first-administrator/session and canary
+redaction acceptance on the exact candidate image. It creates the administrator
+through the container's own setup-code command and the ordinary bootstrap
+endpoint, and it rejects both retired startup identity fields before any store
+opens:
 
 ```bash
 python3 scripts/docker_release_security_smoke_test.py

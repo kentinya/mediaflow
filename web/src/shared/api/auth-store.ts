@@ -30,6 +30,12 @@ export interface MemoryAuthStore {
   getConfigurationRequired(): boolean;
   getRestoreError(): "unavailable" | null;
   setSession(account: AuthAccount): void;
+  /**
+   * Adopt the first administrator's new session and leave the setup-required
+   * entry state.  The successful bootstrap is the server confirmation that
+   * this instance no longer needs first-administrator setup.
+   */
+  markFirstAdministratorCreated(account: AuthAccount): void;
   completeSessionRestore(input: ServerSessionSnapshot): void;
   /**
    * Adopt a session confirmed by `/api/auth/status` after another tab or a
@@ -133,6 +139,17 @@ export function createMemoryAuthStore(): MemoryAuthStore {
     restoreError = null;
     return changed;
   };
+  const applySignedIn = (next: AuthAccount) => {
+    if (account !== null && account.principalId !== next.principalId) {
+      clearPrincipalSessionData();
+    }
+    token = next.principalId;
+    account = next;
+    status = "authenticated";
+    rejected = false;
+    restoreError = null;
+    generation += 1;
+  };
   return {
     getToken: () => token,
     getGeneration: () => generation,
@@ -143,15 +160,12 @@ export function createMemoryAuthStore(): MemoryAuthStore {
     getConfigurationRequired: () => configurationRequired,
     getRestoreError: () => restoreError,
     setSession: (next) => {
-      if (account !== null && account.principalId !== next.principalId) {
-        clearPrincipalSessionData();
-      }
-      token = next.principalId;
-      account = next;
-      status = "authenticated";
-      rejected = false;
-      restoreError = null;
-      generation += 1;
+      applySignedIn(next);
+      emit();
+    },
+    markFirstAdministratorCreated: (next) => {
+      firstAdministratorRequired = false;
+      applySignedIn(next);
       emit();
     },
     completeSessionRestore: (input) => {

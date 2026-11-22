@@ -30,13 +30,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from docker_health_smoke_test import (
-    activate_runtime,
-    json_request,
     service_records,
     wait_for_services_healthy,
 )
 from docker_smoke_test import (
     PROJECT_PREFIX,
+    bootstrap_account_session,
     compose_environment,
     free_port,
     http_request,
@@ -45,6 +44,45 @@ from docker_smoke_test import (
     wait_for_api,
     wait_until,
 )
+
+
+def json_request(
+    base: str,
+    path: str,
+    cookie: str,
+    *,
+    method: str = "GET",
+    body: object | None = None,
+) -> tuple[int, dict]:
+    payload = None if body is None else json.dumps(body).encode("utf-8")
+    status, raw = http_request(f"{base}{path}", method=method, cookie=cookie, body=payload)
+    return status, json.loads(raw)
+
+
+def activate_runtime(base: str, cookie: str, config_file: Path) -> dict:
+    """Publish one portable configuration through the current direct API."""
+
+    document = json.loads(config_file.read_text(encoding="utf-8"))
+    status, active = json_request(
+        base,
+        "/api/configuration/publish",
+        cookie,
+        method="POST",
+        body={"document": document},
+    )
+    if status != 200 or active.get("published") is not True or active.get("status") != "active":
+        raise RuntimeError(f"managed configuration publication failed: {active}")
+    status, configuration = json_request(base, "/api/configuration", cookie)
+    current = configuration.get("active") if isinstance(configuration, dict) else None
+    if (
+        status != 200
+        or not isinstance(current, dict)
+        or current.get("revisionId") != active.get("revisionId")
+        or current.get("digest") != active.get("digest")
+    ):
+        raise RuntimeError(f"published Active was not readable back: {configuration}")
+    return active
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RESTART_PROJECT_PREFIX = f"{PROJECT_PREFIX}-restart"
@@ -781,6 +819,8 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             run([*command, "up", "-d", "--no-build"], environment=environment)
             wait_for_services_healthy(command, environment, expected=expected)
             base = f"http://127.0.0.1:{api_port}"
+            wait_for_api(base)
+            token, _, _ = bootstrap_account_session(command, environment, base)
             wait_for_api(base, token)
 
             print("Stopping Worker and Scheduler before managed activation...")

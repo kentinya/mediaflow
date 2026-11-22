@@ -23,7 +23,7 @@ python scripts/docker_restart_fault_smoke_test.py
 python scripts/docker_release_security_smoke_test.py
 ```
 
-wheel 检查在源码外安装并使用隔离数据库。Compose 验证使用临时媒体和数据卷。Docker 不可用时记为跳过，所需门禁须在具备条件的环境中补齐。发布前核对版本、适用支持范围和 CI 结果，检查制品内的文件清单。
+wheel 检查在源码外安装并使用隔离数据库。Compose 验证使用临时媒体和数据卷，并从容器内的主机命令签发一次性设置码创建首位管理员后再核对会话。Docker 不可用时记为跳过，所需门禁须在具备条件的环境中补齐。发布前核对版本、适用支持范围和 CI 结果，检查制品内的文件清单。
 
 部署验证使用目标版本配置并核对运行库 schema 和就绪状态。日期、包版本和 schema 各自独立，schema 以实际安装制品为准。[任务库 schema](../mediaflow/infrastructure/sqlite_runtime.py) · [配置库 schema](../mediaflow/infrastructure/sqlite_configuration_management.py) · [配置文档校验](../mediaflow/application/configuration_snapshot.py)
 

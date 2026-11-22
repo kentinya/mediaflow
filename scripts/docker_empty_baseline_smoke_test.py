@@ -37,7 +37,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
-from docker_smoke_test import free_port, http_request, run, wait_until
+from docker_smoke_test import (
+    bootstrap_account_session,
+    free_port,
+    http_request,
+    run,
+    wait_until,
+)
 from make_deployment_config import make_deployment_configuration, make_management_bootstrap
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -382,6 +388,9 @@ class Stack:
         self.data.mkdir()
         self.api_port = free_port()
         self.token = secrets.token_urlsafe(24)
+        self.username = "admin"
+        self.password = secrets.token_urlsafe(24)
+        self.session_cookie: str | None = None
         self.database = "/data/mediaflow.sqlite3"
         self.config_file = self.root / "mediaflow.json"
         self.environment_file = self.root / "deployment.env"
@@ -421,11 +430,11 @@ class Stack:
         self.compose += ["--project-name", self.name]
 
     def write_bootstrap(self) -> None:
-        """Render the management-only deployment bootstrap and its secrets.
+        """Render the management-only bootstrap and a retired-token canary.
 
         Nothing here invents a business object: the document contains only the
-        durable database locator and one environment reference for the API
-        credential.
+        durable database locator.  The environment value is a harmless canary
+        proving the retired Bearer token never authenticates or leaks.
         """
 
         self.config_file.write_text(
@@ -476,7 +485,14 @@ class Stack:
         return f"http://127.0.0.1:{self.api_port}"
 
     def api(self, path: str, *, method: str = "GET", body: bytes | None = None):
-        return http_request(f"{self.base}{path}", method=method, token=self.token, body=body)
+        if self.session_cookie is None:
+            raise RuntimeError("the acceptance stack has no administrator session")
+        return http_request(
+            f"{self.base}{path}",
+            method=method,
+            cookie=self.session_cookie,
+            body=body,
+        )
 
     def json_api(self, path: str, *, method: str = "GET", body: object | None = None):
         payload = None if body is None else json.dumps(body).encode("utf-8")
@@ -595,6 +611,17 @@ class Stack:
             description="API liveness",
         )
 
+    def bootstrap_admin(self) -> None:
+        """Create the first administrator through the real host command."""
+
+        self.session_cookie, self.username, self.password = bootstrap_account_session(
+            self.compose,
+            self.environment,
+            self.base,
+            username=self.username,
+            password=self.password,
+        )
+
     def activate(self, document: dict) -> dict:
         """Publish one complete document through the real direct API."""
 
@@ -610,7 +637,7 @@ class Stack:
         status = self.json_api("/api/configuration")
         active_id = status["active"]["revisionId"]
         detail = self.json_api(f"/api/configuration/revisions/{active_id}")
-        document = _bind_deployment_authority(detail["document"], self.database, self.token_env)
+        document = detail["document"]
         mutate(document)
         return self.json_api(
             "/api/configuration/publish",
@@ -622,18 +649,6 @@ class Stack:
                 "expectedActiveDigest": status["active"]["digest"],
             },
         )
-
-    token_env = "MEDIAFLOW_API_TOKEN"
-
-
-def _bind_deployment_authority(document: dict, database: str, token_env: str) -> dict:
-    """Re-bind the deployment authority a portable projection deliberately omits."""
-
-    document["persistence"] = {"databasePath": database}
-    document.setdefault("api", {})["principals"] = [
-        {"id": "admin", "tokenEnv": token_env, "roles": ["admin"], "enabled": True}
-    ]
-    return document
 
 
 def read_resident_state(stack: Stack) -> dict:
@@ -731,27 +746,35 @@ def assert_real_web_status(stack: Stack) -> None:
         const browser = await chromium.launch({headless:true});
         try {
             const page = await browser.newPage({viewport:{width:390,height:844}});
+            await page.goto(process.env.MF_TEST_BASE + '/');
+            await page.getByLabel('Login name').fill(process.env.MF_TEST_USERNAME);
+            await page.getByLabel('Password').fill(process.env.MF_TEST_PASSWORD);
+            await page.getByRole('button', {name:'Sign in', exact:true}).click();
+            await expect(page.getByRole('region', {name:'探索'})).toBeVisible();
             await page.goto(process.env.MF_TEST_BASE + '/operations');
-            await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
-            await page.getByRole('button', {name:'Connect', exact:true}).click();
-            await expect(page.getByRole('button', {name:'全部任务'})).toBeVisible();
+            await expect(page.getByRole('heading', {name:'任务中心'})).toBeVisible();
             await expect(page.getByText('常驻服务状态')).toHaveCount(0);
             await expect(page.getByRole('link', {name:'前往系统设置'})).toHaveCount(0);
             const stores = await page.evaluate(
                 () => JSON.stringify([localStorage, sessionStorage]));
-            if(stores.includes(process.env.MF_TEST_TOKEN)) throw new Error('token persisted');
+            if(stores.includes(process.env.MF_TEST_PASSWORD)) throw new Error('password persisted');
         } finally { await browser.close(); }
     """
     result = subprocess.run(
         ["node", "--input-type=module", "-e", code],
         cwd=ROOT / "web",
-        env={**os.environ, "MF_TEST_BASE": stack.base, "MF_TEST_TOKEN": stack.token},
+        env={
+            **os.environ,
+            "MF_TEST_BASE": stack.base,
+            "MF_TEST_USERNAME": stack.username,
+            "MF_TEST_PASSWORD": stack.password,
+        },
         capture_output=True,
         text=True,
     )
     if result.returncode:
         raise RuntimeError("real Python-served browser status failed: " + result.stderr)
-    print("   real Python-served Web renders the operations shell without persisted credentials")
+    print("   real Python-served Web signs in and renders the operations shell")
 
 
 def activate_empty_baseline_through_web(stack: Stack) -> dict:
@@ -778,9 +801,12 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
                 if (response.ok() && path.endsWith('/configuration/initialize'))
                     active = await response.json();
             });
+            await page.goto(process.env.MF_TEST_BASE + '/');
+            await page.getByLabel('Login name').fill(process.env.MF_TEST_USERNAME);
+            await page.getByLabel('Password').fill(process.env.MF_TEST_PASSWORD);
+            await page.getByRole('button', {name:'Sign in', exact:true}).click();
+            await expect(page.getByRole('region', {name:'探索'})).toBeVisible();
             await page.goto(process.env.MF_TEST_BASE + '/configuration');
-            await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
-            await page.getByRole('button', {name:'Connect', exact:true}).click();
             await expect(page.getByText('需要初始化', {exact:true})).toBeVisible();
             await expect(
                 page.getByRole('button', {name:'初始化为空配置'})
@@ -797,8 +823,6 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
                 throw new Error('initialization did not identify the Active revision');
 
             await page.reload();
-            await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
-            await page.getByRole('button', {name:'Connect', exact:true}).click();
             await expect(page.getByText('空配置已生效', {exact:true})).toBeVisible();
             if (writes.length !== 1)
                 throw new Error('reload created another revision or submitted work');
@@ -818,23 +842,28 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
                     : -1,
             }));
             const serialized = JSON.stringify(browserState);
-            if (page.url().includes(process.env.MF_TEST_TOKEN) ||
-                serialized.includes(process.env.MF_TEST_TOKEN))
-                throw new Error('token leaked into URL or browser persistence');
+            if (page.url().includes(process.env.MF_TEST_PASSWORD) ||
+                serialized.includes(process.env.MF_TEST_PASSWORD))
+                throw new Error('password leaked into URL or browser persistence');
             if (browserState.localStorage !== 0 || browserState.sessionStorage !== 0 ||
                 browserState.cookie !== '' || browserState.indexedDb !== 0)
                 throw new Error('unexpected persistent browser state');
             console.log(JSON.stringify({
                 writes,
                 activeRevision: active.revisionId,
-                tokenStored: false,
+                credentialStored: false,
             }));
         } finally { await browser.close(); }
     """
     result = subprocess.run(
         ["node", "--input-type=module", "-e", code],
         cwd=ROOT / "web",
-        env={**os.environ, "MF_TEST_BASE": stack.base, "MF_TEST_TOKEN": stack.token},
+        env={
+            **os.environ,
+            "MF_TEST_BASE": stack.base,
+            "MF_TEST_USERNAME": stack.username,
+            "MF_TEST_PASSWORD": stack.password,
+        },
         capture_output=True,
         text=True,
     )
@@ -876,6 +905,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         stack.up()
         stack.wait_healthy()
         stack.wait_api()
+        stack.bootstrap_admin()
         print("   all four services healthy without a media mount")
 
         readiness = stack.json_api("/api/management/readiness")
@@ -974,11 +1004,11 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         print("   resident process identities unchanged across publication")
 
         # The official container entrypoint loads the mounted deployment
-        # environment file before running any MediaFlow CLI command.  Without
-        # that environment the API credential is unset, so this is a real
-        # deployment-environment proof rather than a command that happens to
-        # work from the bootstrap alone.
-        credential_check = run(
+        # environment file before running the host-local account command.  The
+        # durable account exists and the retired environment token is only an
+        # ignored canary, so this proves the current entrypoint without
+        # reviving retired authentication.
+        account_check = run(
             [
                 *stack.compose,
                 "exec",
@@ -987,14 +1017,15 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
                 "python",
                 "-m",
                 "mediaflow.container_entrypoint",
-                "api",
-                "credentials",
-                "check",
+                "accounts",
+                "status",
             ],
             environment=stack.environment,
         )
-        if stack.token in credential_check.stdout or stack.token in credential_check.stderr:
-            raise RuntimeError("container CLI credential preflight exposed the API token")
+        if '"firstAdministratorRequired": false' not in account_check.stdout:
+            raise RuntimeError("container CLI did not report the initialized account state")
+        if stack.token in account_check.stdout or stack.token in account_check.stderr:
+            raise RuntimeError("container CLI account check exposed the retired API token")
         print("   container CLI loaded deployment environment via its official entrypoint")
 
         signed = receiver.received[0]
@@ -1149,6 +1180,7 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
         stack.up()
         stack.wait_healthy()
         stack.wait_api()
+        stack.bootstrap_admin()
         identities = stack.process_ids()
         stack.activate(empty_baseline_document(stack))
         status = stack.json_api("/api/configuration")
@@ -1165,7 +1197,6 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
 
         def configure_library(document: dict) -> None:
             full = make_deployment_configuration()
-            full["api"] = document["api"]
             full["recognitionRules"] = [
                 {
                     "id": "acceptance",

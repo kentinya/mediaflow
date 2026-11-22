@@ -75,6 +75,26 @@ async function signOut(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
 }
 
+async function changePasswordFromAccountMenu(
+  page: Page,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Change password" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Change password" }),
+  ).toBeVisible();
+  await page.getByLabel("Current password").fill(currentPassword);
+  await page.getByLabel("New password", { exact: true }).fill(newPassword);
+  await page.getByLabel("Confirm new password").fill(newPassword);
+  await page.getByRole("button", { name: "Change password" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Create first administrator" }),
+  ).toHaveCount(0);
+}
+
 async function sessionCookie(page: Page): Promise<string> {
   const cookies = await page.context().cookies(BASE);
   const value = cookies.find((cookie) => cookie.name === "mediaflow_session");
@@ -164,6 +184,23 @@ test("an empty instance shows first-administrator setup and completes it from a 
     await request.get(`${BASE}/__harness__/account-state`)
   ).json();
   expect(state).toEqual({ accountCount: 1, firstAdministratorRequired: false });
+
+  const setupCookie = await sessionCookie(page);
+  await changePasswordFromAccountMenu(page, INITIAL_PASSWORD, CHANGED_PASSWORD);
+  expect(await sessionStatusWithCookie(request, setupCookie)).toBe(401);
+
+  await submitSignIn(page, "admin", INITIAL_PASSWORD);
+  await expect(
+    page.getByText("The login name or password is incorrect."),
+  ).toBeVisible();
+  await page.getByLabel("Password").fill(CHANGED_PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+
+  // Restore the shared initial password for the following serial scenarios.
+  await changePasswordFromAccountMenu(page, CHANGED_PASSWORD, INITIAL_PASSWORD);
+  await submitSignIn(page, "admin", INITIAL_PASSWORD);
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 });
 
 test("a deep link, refresh and same-version restart restore the session without replay", async ({

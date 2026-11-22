@@ -197,6 +197,44 @@ describe("EntryPage", () => {
     expect(document.body.textContent).not.toContain("setup-code");
   });
 
+  it("returns to sign in after the first administrator setup session ends", async () => {
+    const user = userEvent.setup();
+    stubFetch(async (input) => {
+      if (String(input) === "/api/auth/bootstrap") {
+        return jsonResponse({ account: ACCOUNT });
+      }
+      return jsonResponse({}, 503);
+    });
+    anonymous(true);
+    const { router } = renderApp("/");
+    await user.type(
+      await screen.findByLabelText("One-time setup code"),
+      "setup-code",
+    );
+    await user.type(screen.getByLabelText("Login name"), "admin");
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.type(screen.getByLabelText("Confirm password"), "correct-horse");
+    await user.click(
+      screen.getByRole("button", { name: "Create administrator" }),
+    );
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/configuration"),
+    );
+    expect(authStore.getFirstAdministratorRequired()).toBe(false);
+
+    // A successful password change ends the setup session and returns to the
+    // root.  The instance is initialized, so the same tab must offer sign-in,
+    // not first-administrator setup.
+    authStore.clearToken();
+    await router.navigate({ to: "/" });
+    expect(
+      await screen.findByRole("heading", { name: "Sign in" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Create first administrator" }),
+    ).toBeNull();
+  });
+
   it("resets a password with a host reset code and returns to sign in", async () => {
     const user = userEvent.setup();
     stubFetch(async (input) => {

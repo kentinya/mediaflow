@@ -176,6 +176,29 @@ describe("authStore", () => {
     }
   });
 
+  it("leaves first-administrator setup when the setup session is adopted", () => {
+    const account = {
+      principalId: "account-admin",
+      accountId: "account-admin",
+      username: "admin",
+      roles: ["admin"],
+      permissions: ["read"],
+    } as const;
+    authStore.completeSessionRestore({
+      firstAdministratorRequired: true,
+      configurationRequired: true,
+      account: null,
+    });
+    authStore.markFirstAdministratorCreated(account);
+    expect(authStore.getFirstAdministratorRequired()).toBe(false);
+    expect(authStore.getToken()).toBe("account-admin");
+    expect(authStore.getSessionStatus()).toBe("authenticated");
+
+    authStore.clearToken();
+    expect(authStore.getFirstAdministratorRequired()).toBe(false);
+    expect(authStore.getSessionStatus()).toBe("anonymous");
+  });
+
   it("notifies subscribers until they unsubscribe", () => {
     const listener = vi.fn();
     const unsubscribe = authStore.subscribe(listener);

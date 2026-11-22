@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -103,13 +104,19 @@ def http_request(
     *,
     method: str = "GET",
     token: str | None = None,
+    cookie: str | None = None,
     body: bytes | None = None,
 ):
     headers = {}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
+    if cookie is not None:
+        headers["Cookie"] = cookie
     if body is not None:
         headers["Content-Type"] = "application/json"
+    if cookie is not None and method not in {"GET", "HEAD"}:
+        parsed = urllib.parse.urlsplit(url)
+        headers["Origin"] = f"{parsed.scheme}://{parsed.netloc}"
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
@@ -118,18 +125,78 @@ def http_request(
         return error.code, error.read()
 
 
-def wait_for_api(base: str, token: str) -> None:
+def wait_for_api(base: str, credential: str | None = None) -> None:
     def ready() -> bool:
         status, _ = http_request(f"{base}/health")
         return status == 200
 
     wait_until(ready, description="production API health endpoint")
+    if credential is None:
+        return
+    use_cookie = credential.startswith("mediaflow_session=")
 
     def authenticated() -> bool:
-        status, _ = http_request(f"{base}/api/tasks?limit=100", token=token)
+        status, _ = http_request(
+            f"{base}/api/tasks?limit=100",
+            cookie=credential if use_cookie else None,
+            token=None if use_cookie else credential,
+        )
         return status == 200
 
     wait_until(authenticated, description="authenticated API Tasks endpoint")
+
+
+def bootstrap_account_session(
+    command: list[str],
+    environment: dict[str, str],
+    base: str,
+    *,
+    username: str = "admin",
+    password: str | None = None,
+) -> tuple[str, str, str]:
+    """Create the instance's first administrator and return its session cookie.
+
+    The setup code comes from the real host-local account command inside the
+    running API container; the browser/API session is then established through
+    the ordinary bootstrap endpoint.
+    """
+
+    password = password or secrets.token_urlsafe(24)
+    issued = run(
+        [
+            *command,
+            "exec",
+            "-T",
+            "api",
+            "mediaflow",
+            "accounts",
+            "issue-setup-code",
+            "--json",
+        ],
+        environment=environment,
+    )
+    code = json.loads(issued.stdout.strip().splitlines()[-1])["code"]
+    payload = json.dumps(
+        {
+            "code": code,
+            "username": username,
+            "password": password,
+            "remember": True,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base}/api/auth/bootstrap",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        set_cookie = response.headers.get("Set-Cookie", "")
+        response.read()
+    cookie = set_cookie.split(";", 1)[0]
+    if not cookie.startswith("mediaflow_session="):
+        raise RuntimeError("first-administrator bootstrap returned no Web session cookie")
+    return cookie, username, password
 
 
 def prepare_files(root: Path, token: str) -> tuple[Path, Path, Path, Path, Path]:
