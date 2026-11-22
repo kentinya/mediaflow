@@ -53,7 +53,7 @@ flowchart LR
    docker compose exec -T api mediaflow accounts issue-setup-code
    ```
 
-   创建成功后进入「系统设置」初始化为空配置，再按需添加存储、资源库、媒体库和整理规则。日常使用账号密码登录；忘记密码时在主机执行 `mediaflow accounts issue-reset-code --username <登录名>`。
+   创建成功后进入「系统设置」初始化为空配置，再按需添加存储、资源库、媒体库和整理规则。日常使用账号密码登录。忘记密码时，在主机执行 `docker compose exec -T api mediaflow accounts issue-reset-code --username '<登录名>'`。
 
 默认以管理模式启动。本地媒体目录通过 Compose 覆盖文件显式挂载。挂载、日志、备份和网络设置见[部署指南](docs/deployment.md)。
 

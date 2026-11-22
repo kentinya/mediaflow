@@ -78,11 +78,16 @@ python3 scripts/make_deployment_config.py --output config/mediaflow.json
 This renders the **management-only** bootstrap: only the durable database
 locator, with no Web/API identity, Storage, library, policy, schedule or Webhook.
 It is deliberately the default, because it is the shape a fresh installation
-needs and it starts every service without any media mount. Generate the one-time
-setup code on the host with `mediaflow accounts issue-setup-code`, create the
-first administrator on the root page, then open `/configuration` and initialize a
-valid empty baseline; Storage and libraries are configured afterwards through
-the business pages.
+needs and it starts every service without any media mount. After starting Compose,
+run the setup command on the deployment host.
+
+```bash
+docker compose exec -T api mediaflow accounts issue-setup-code
+```
+
+Enter the code at `/` to create the sole administrator, then initialize an empty
+baseline in System Settings (`/configuration`). Configure Storage and libraries
+through the business pages afterwards.
 
 In `系统设置` (`/configuration`), the compact `配置状态摘要` shows whether setup is required.
 Use `初始化为空配置` to publish a valid empty baseline. The `高级配置` groups read the exact
@@ -292,10 +297,10 @@ The production artifact flow is one image, two stages, one Python runtime:
   exposing paths, credentials or raw exceptions. Static requests never access
   repositories, Providers, Tasks or Storage and never create work.
 - The retired `/ui`, `/ui/` and `/ui-v2/*` navigation addresses render the
-  same entry document. The browser shows its ordinary not-found view or connection screen.
+  same entry document. The browser shows its ordinary not-found view or sign-in entry.
   Their old assets return 404. Retired API paths under `/api/v1` and `/api/v2` return JSON 404
-  before authentication. The current `/api/*` routes enforce the signed-in
-  account session and its current database roles.
+  before authentication. The current `/api/*` routes enforce the permissions of the
+  signed-in account session or scoped script token.
 - Update bookmarks by removing the `/ui-v2` segment and keeping the page path and query. In API
   scripts, use `/api/tasks` in place of `/api/v1/tasks` for the existing task list. Verify with
   a read of `GET /health` and an authenticated `GET /api/tasks?limit=1`. Reopen the original
@@ -308,7 +313,7 @@ The production artifact flow is one image, two stages, one Python runtime:
 
 ## CURRENT — Resident services across empty setup and publication (Slice 40)
 
-Worker/Scheduler/Notification Worker start from deployment DB/principal authority, register durable
+Worker/Scheduler/Notification Worker start from the deployment database locator, register durable
 heartbeats and wait without Active/media mounts. Empty Active is healthy infrastructure with
 unconfigured work. Eligible publication is adopted without restart; recoverable DB/config faults
 retain the process/work and bounded waiting reason. Configuration publication creates no work.
@@ -383,12 +388,13 @@ implies the other signals.
 
    A `200` with `"processAlive": true` and `"status": "ok"` means the API
    process is serving. `docker compose ps` shows each service's own container
-   liveness through its bounded healthcheck.
+   liveness through its bounded healthcheck. The `firstAdministratorRequired` and
+   `configurationRequired` fields identify the remaining setup steps.
 
 2. **Management/API readiness** — authenticated, read-only:
 
    ```bash
-   curl -b /tmp/mediaflow.cookies \
+   curl -H "Authorization: Bearer $TOKEN" \
      http://127.0.0.1:8080/api/management/readiness
    ```
 
@@ -402,7 +408,7 @@ implies the other signals.
 3. **Business/processing-Worker readiness** — authenticated, read-only:
 
    ```bash
-   curl -b /tmp/mediaflow.cookies \
+   curl -H "Authorization: Bearer $TOKEN" \
      http://127.0.0.1:8080/api/workers/readiness
    ```
 
@@ -415,6 +421,7 @@ implies the other signals.
    `schema_mismatch` and `unsupported_command` are bounded, actionable
    conditions. A valid older task pin does not need to match current Active.
 
+For the two authenticated reads, use a read-only token from [System Settings](#script-api-tokens).
 The Operator Web's **System** view shows all three signals and their bounded
 diagnostics; **Workers** and **Configuration** show the same Worker and
 management readiness projections. Viewing readiness performs no Storage scan,
@@ -560,15 +567,10 @@ configuration, media, credentials, Storage or Providers.
 
 ```bash
 curl -i http://127.0.0.1:8080/health
-curl -c /tmp/mediaflow.cookies -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"<your password>"}' \
-  http://127.0.0.1:8080/api/auth/login
-curl -b /tmp/mediaflow.cookies \
-  "http://127.0.0.1:8080/api/tasks?limit=100"
 ```
 
 Open `http://127.0.0.1:8080/` in a browser and sign in with the account created
-from the host-issued setup code.
+from the host-issued setup code. Open Task Center to verify authenticated Task reads.
 The retired `/ui` addresses render the ordinary not-found route.
 
 ## Script API tokens
@@ -655,11 +657,12 @@ pinned context; those are distinct signals, not hidden failures.
   Task list are unchanged. Fix UID/GID ownership or mount authority, then rerun
   the same read check. MediaFlow never falls back to root, another path, or the
   Docker socket.
-- **First administrator or sign-in required:** `/health` reports
-  `firstAdministratorRequired` and the root page asks for a setup code. On the
-  host run `mediaflow accounts issue-setup-code` and enter the one-time code
-  within 15 minutes. An expired or used code is replaced by issuing a new one;
-  password or host reset operations never echo a credential.
+- **First administrator or sign-in required.** When `/health` reports
+  `firstAdministratorRequired: true`, enter the host-issued setup code within
+  15 minutes. If the response is lost, use **Check current status** and follow
+  the displayed setup or sign-in action. If the administrator has forgotten
+  their password, run `docker compose exec -T api mediaflow accounts issue-reset-code --username '<login name>'`
+  and enter the code in the password reset form on the sign-in page.
 - **Healthcheck becomes unhealthy after startup:** correct the named `/data`
   mount, configuration-file or environment-file reference, then `docker compose
   restart <service>`. Healthcheck output is bounded and never contains secret
@@ -696,16 +699,7 @@ mounted environment file are never part of Compose rendering.
 
 ## Isolated smoke acceptance
 
-The smoke harness builds the exact image and runs an isolated project with
-temporary media and a throwaway named volume:
-
-```bash
-python3 scripts/docker_smoke_test.py
-```
-
-It verifies four services, authenticated API/Web reachability, a durable job
-after an API restart, non-root execution, secret-free output, and a missing
-media-mount failure. If no Docker engine is present it prints `SKIP`.
+The supported harnesses below use temporary fixtures and isolated Compose projects.
 
 The current empty-baseline harness proves the resident-service journey with no
 media mount at all:
@@ -735,20 +729,8 @@ adoption.
 If a Docker daemon cannot bind-mount the platform temporary directory, point the
 harness at a directory the daemon can see with `MEDIAFLOW_SMOKE_TEMP_DIR`.
 
-The health harness verifies the complete signal journey:
-
-```bash
-python3 scripts/docker_health_smoke_test.py
-```
-
-It starts an isolated healthy stack, publishes the canonical media
-configuration through the authenticated API, observes healthy/ready signals,
-stops and restarts the Worker, verifies no-Worker/stale and ready transitions,
-removes the API secret reference and restores it, and removes read access to the
-mounted source media to confirm the current Storage read check reports
-`permission_denied` while `/health` stays alive and the published Active and
-Task list are unchanged. Restoring the permission makes the same check pass
-again. Output stays secret-free.
+For a running deployment, use [Health and readiness signals](#health-and-readiness-signals)
+to check process liveness, management setup and Worker readiness separately.
 
 The restart harness verifies durable restart and fault behavior:
 

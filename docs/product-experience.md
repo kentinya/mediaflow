@@ -11,27 +11,30 @@ points to the current implementation state and immutable review packet.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
-## TARGET — Single Web administrator and scoped API tokens (Slice57 ACTIVE)
+## CURRENT — Single Web administrator and scoped API tokens (Slice57 PASS / CLOSED)
 
 - **首次访问。** 从空库启动并打开根地址，页面指引部署者从主机领取一次性设置码。创建实例
   唯一的管理员后进入系统设置初始化业务配置。设置码失效时，页面指引部署者在主机重新领取。
+  设置回包丢失时先查当前状态。仍待设置时可再次核对，已建号时可登录并继续初始化。
 - **日常访问。** 账号密码通过校验后，进入书签所指页面或默认的探索页。可信设备可保持
   登录。输错留在登录页，服务不可用提供原地重试。会话过期后登录回到原位置，原请求
-  的结果可按权限核对。右上角显示真实账号，菜单提供改密码和退出。
+  的结果可按权限核对。右上角显示真实账号，菜单提供改密码和退出。改密未获确认时先核对会话，
+  会话结束后用刚设置的密码尝试登录。
 - **脚本接入。** 管理员从「系统设置 → API 令牌」为每个脚本填写名称、权限和有效期。
   默认只读、90 天，整理分析脚本可另选分析权限。生成后复制一次明文，之后可查看状态和
-  单独吊销。轮换时先验证新令牌，再吊销旧令牌。
+  单独吊销。回包丢失后按名称和签发时间核对列表，先吊销无法取得明文的令牌，再签发替代令牌。
+  常规轮换时先验证新令牌，再吊销旧令牌。
 - **后台定时整理。** 管理员从自动化编辑卡启用或停用计划。停用后列表显示已停用，入队任务
   在执行检查处停止后续文件操作，并在执行记录中说明原因。脚本令牌轮换期间，已经启用的
   定时计划照常运行。
 - **重启后继续工作。** 同版本重启后，管理员可打开已创建的任务、结果和审计，忘记密码时
   从主机领取一次性重置码。
 
-[Slice 57](../SLICE.md)
+[Slice 57 验收账本](progress.md#latest-accepted-closure--slice57)
 
 ## CURRENT — Canonical entry journey (Slice56 PASS / CLOSED)
 
-用户从 `/` 连接后进入探索，也可以用 `/resourcelib/files` 或 `/medialib/files` 的带参链接直达目录。
+管理员从 `/` 登录后默认进入探索，也可以用 `/resourcelib/files` 或 `/medialib/files` 的带参链接直达目录。
 刷新、重连或从设置返回时，恢复当前权限允许的原位置。切换后从任务中心打开原任务，查看
 进度和逐项结果。整理最终确认丢响应时，系统自动按原摘要、原选择和原效果选项查询受理结果。
 同一浏览器以原账号重连后可接着查。需要继续时，依照当前任务和条目状态显式操作。失效或旧地址
@@ -618,8 +621,8 @@ Open Entry or a V2 page/dialog → distinguish text, availability and focus → 
 action → read success or bounded failure/recovery. Shared primary/secondary/danger/link/icon actions
 and directly related Entry fields stay legible in normal, hover, focus, selected, busy and disabled
 states. Enabled text meets AA contrast; keyboard names/focus and duplicate-submit guards remain.
-Authentication continuation and memory-only credentials are unchanged; reconnect never replays a
-command. This is the shared light theme, without a new identity or theme-customization product.
+The shared light theme covers the Entry controls. Current sign-in and continuation follow Slice57.
+Reconnecting does not replay a command.
 
 ## Product Experience Priority
 
@@ -669,8 +672,8 @@ silently publish unrelated unsaved changes.
 
 ## First-time setup
 
-- **Goal/entry:** authenticate a management-only installation and open `系统设置`
-  (`/configuration`) or a setup-required page. Viewers get read state and admin guidance.
+- **Goal/entry:** use the host-issued setup code at `/` to create the sole administrator.
+  Continue in `系统设置` (`/configuration`) to initialize business configuration.
 - **State/action:** distinguish uninitialized, empty Active and broken prior Active. Explicitly
   initialize an empty managed configuration, or apply a checked full document, then inspect/export
   JSON. No mandatory media forms, generated Storage/type/policy defaults or resumable draft.
@@ -690,7 +693,6 @@ Fresh Compose needs no media mount. Local roots must be explicit paths visible t
 container/UID/GID; host `/`, Docker socket and arbitrary unmapped paths are unsupported. Correct a
 missing/denied root by fixing the mount/ownership or configured path, then retry the bounded
 read/check.
-V1's complete-configuration setup remains a compatibility path, not the native empty-first requirement.
 
 ## Storage management and root recovery
 
@@ -1537,7 +1539,7 @@ Rules、配置检查和整理执行前的内部校验复用共享分析/精确�
 
 The V2 workspace uses the shared Python API. The historical V1 release is recorded in [Release](release.md).
 Current workspace deferrals include cross-Task bulk mutation, arbitrary historical Reprocess, universal rollback,
-automatic uncertain replay, Provider switching/new production Providers, built-in users/session/OIDC,
+automatic uncertain replay, Provider switching/new production Providers, Web multi-user management and OIDC,
 general Secret Store or specialized email/chat/media-server channels. Selected45 cross-Task problem
 lists supersede earlier deferral of those lists only. Active/frozen scope and earlier accepted
 exceptions are authoritative in Slice/Progress; documentation consolidation does not extend them.

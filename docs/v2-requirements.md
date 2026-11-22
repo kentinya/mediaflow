@@ -8,19 +8,20 @@ in [`requirements.md`](requirements.md). Slice-specific architecture and proof d
 remain in [`SLICE.md`](../SLICE.md) and the architecture document; this file records only durable
 product and authority boundaries.
 
-## TARGET — Single Web administrator and scoped API tokens (Slice57 ACTIVE)
+## CURRENT — Single Web administrator and scoped API tokens (Slice57 PASS / CLOSED)
 
-验收后以 `V2-AUTH-004/005/007–009` 取代 V2 的 `V2-AUTH-001/002`，并更新 `V2-ROUTE-001/002/004`
-的认证和恢复语义。V1 历史基线、`V2-AUTH-003` 与现行后端安全要求继续适用。
-[Slice 57](../SLICE.md)
+2026-11-22 验收的 `V2-AUTH-004/005/007–009` 取代 V2 的 `V2-AUTH-001/002`，并更新
+`V2-ROUTE-001/002/004` 的认证和恢复语义、`V2-RETIRE-004/005/010` 的启动身份和部署数据范围。
+新实例使用最小 bootstrap，同版本重启保留合法数据、审计和固定快照。V1 历史基线、
+`V2-AUTH-003` 与现行后端安全要求继续适用。[验收账本](progress.md#latest-accepted-closure--slice57)
 
 | ID | 目标 | 完成条件 |
 |---|---|---|
 | V2-AUTH-004 | 通过主机授权初始化唯一管理员和找回访问。 | 空库可启动。短期一次性码用于初始化或重置，原子消耗。并发初始化只创建一个管理员。 |
-| V2-AUTH-005 | 管理员用账号密码登录、保持登录、回跳和退出。 | 刷新和新标签延续有效会话。过期后恢复允许的页面，恢复写操作先核对原请求。 |
+| V2-AUTH-005 | 管理员用账号密码登录、保持登录、回跳和退出。 | 刷新和新标签延续有效会话。过期后恢复允许的页面。认证提交未获确认时读回当前设置和会话，业务写入先核对原请求。 |
 | V2-AUTH-006 | Web 管理多个本地账号及其角色。 | 延期。 |
 | V2-AUTH-007 | 对外脚本按需使用分权限、有期限、可单独吊销的令牌。 | 管理员从系统设置签发。明文只显示一次。脚本在令牌权限内调用现有业务 API，审计标识具体令牌。 |
-| V2-AUTH-008 | 从空库部署，退役配置中的身份和部署环境中的 API 令牌。 | 首次设置以主机生成的一次性码创建管理员。启动配置和新配置输入拒绝 `api.principals`。旧令牌环境变量不提供认证。 |
+| V2-AUTH-008 | 从空库部署，退役配置中的身份和部署环境中的 API 令牌。 | 首次设置以主机生成的一次性码创建管理员。启动配置和新配置输入拒绝 `api.principals`、`api.tokenEnv`。旧令牌环境变量不提供认证。启动前拒绝不支持的数据库并保留原文件。 |
 | V2-AUTH-009 | 同版本重启后继续访问和处理本版本的工作。 | 业务配置、任务、结果与审计保持可读。定时执行使用管理员发布的授权、当前计划和原业务快照。停用计划后，Scheduler 停止受理，Worker 在执行检查处停止后续效果，页面说明原因。 |
 
 ## CURRENT — Canonical Web and API routes (Slice56 PASS / CLOSED)
@@ -30,10 +31,10 @@ the cutover on 2026-11-19. See [A Final Review](https://github.com/kentinya/medi
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
-| V2-ROUTE-001 | Web uses the root namespace. | `/` opens the connection entry. Current pages including `/resourcelib/files` support navigation, parameterized deep links, refresh, authentication and contextual return. |
-| V2-ROUTE-002 | Current HTTP API uses `/api/*`. | Current methods, data contracts, distinct projections, authorization, audit and recovery apply at canonical paths. Machine API errors remain JSON, and `/health` retains its independent liveness contract. |
+| V2-ROUTE-001 | Web uses the root namespace. | `/` resolves first setup, sign-in or the signed-in default Explore page. Supported pages retain parameterized deep links, refresh and contextual return through the Web session. |
+| V2-ROUTE-002 | Current HTTP API uses `/api/*`. | Canonical paths share the business authorization and audit boundary for Web sessions and scoped script credentials. Machine API errors remain JSON, and `/health` retains its liveness contract. |
 | V2-ROUTE-003 | Public paths switch together. | The old Web and API prefixes retire with ordinary unknown-route behavior. Runtime links, bundled assets, tests, deployment checks and operator guidance use the canonical paths. |
-| V2-ROUTE-004 | Valid work survives the path change. | Current configuration, Task and request identities, results, pins and history remain readable. Active links are generated from their original object identities. Users can reconcile unknown outcomes and safely continue work under current rules. |
+| V2-ROUTE-004 | Valid work survives the path change. | Slice56 verified configuration, Task and request identities, results, pins and history across the path change. Within the Slice57 deployment boundary, users can return after sign-in and reconcile the original submission before continuing. |
 
 ## CURRENT — Direct configuration publication
 
@@ -406,8 +407,8 @@ a second execution engine, broad file authority, destructive defaults or histori
 | V2-RUNTIME-001 | MediaFlow Worker starts and registers without Active and consumes later eligible work without restart. | Keep FileTransfer consumption resident; no valid authorized published context means no processing/mutation. Preserve supported command readiness, exact admitted pins, claims/leases/fences and per-item uncertainty recovery. Current Active governs new admission and does not replace older valid pins. |
 | V2-RUNTIME-002 | Scheduler and Notification Worker remain resident through absent/empty/unavailable configuration and adopt current valid configuration without restart. | No eligible schedule means no Task admission; unavailable Active never uses cached schedules. No usable Webhook means no send or targetless claim; preserve target identity and delivery recovery without silent retargeting. Configuration read failures explain waiting while preserving process and durable state. |
 | V2-STO-001 | Every provider-valid Storage root round-trips through typed Save, inventory, detail and Edit. | OpenList's empty root and `/` both represent its service root; render a clear provider-root label without dropping the row or rejecting the whole inventory. Existing saved empty-root entries remain readable. Other provider and Local confinement rules stay intact; failed list rendering never implies Save rollback or triggers automatic resubmission. |
-| V2-AUTH-001 | During the current V2 program, the existing API-principal Bearer-token model and RBAC remain the identity/authentication and role/permission authorization boundary. | A scoped execution grant, execution unlock, step-up authorization or equivalent mutation-admission authority may be layered on top when required by an approved V2 journey, but it does not replace principal identity, authentication or RBAC. V2 does not silently introduce a new username/password identity system, OIDC integration, session or cookie authority. |
-| V2-AUTH-002 | The API principal token remains memory-only in the browser during the current identity architecture. | The token is not persisted in `localStorage`, `sessionStorage`, IndexedDB, URLs/query strings or frontend-managed authentication cookies. |
+| V2-AUTH-001 | Historical V2 baseline for configuration-owned Bearer principals. | Superseded by `V2-AUTH-004/005/007–009`. The backend remains responsible for business permissions. |
+| V2-AUTH-002 | Historical V2 baseline for browser credentials held in memory. | Superseded by `V2-AUTH-005/007`. The server sets the HttpOnly session cookie. Script token plaintext is shown only at issuance and stays out of browser persistent storage. |
 | V2-AUTH-003 | Python remains the authoritative backend for domain behavior, execution authority and storage mutation. | Frontend code does not duplicate or move domain decisions, execution permission or Storage mutation out of the Python application; `OrganizerExecutor` remains the sole Storage mutator. |
 | V2-MIG-001 | Shared Python behavior remains authoritative for V2. | `V2-ROUTE-002/003` set the public namespace to `/api/*` and retire `/api/v1/*`. `V2-RETIRE-001/002/006` retain shared validation, permissions, state transitions and safety gates. |
 | V2-MIG-002 | Historical coexistence requirement, superseded by V2-RETIRE-001. | Slice55 accepted `/ui-v2/` as the sole Web root at that checkpoint. `V2-ROUTE-001/003` supersede that public spelling with `/`. Former routes use ordinary unknown-route or authentication behavior. |

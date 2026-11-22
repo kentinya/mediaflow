@@ -11,18 +11,21 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
-## TARGET — Single Web administrator and scoped API tokens (Slice57 ACTIVE)
+## CURRENT — Single Web administrator and scoped API tokens (Slice57 PASS / CLOSED)
 
 SQLite 保存唯一管理员、会话和 API 令牌状态。HTTP 将会话解析为管理员身份，将 Bearer
-令牌解析为可审计的独立令牌身份，两类身份进入同一套业务权限检查。令牌只授予签发时
-选定的业务权限。
+令牌解析为可审计的独立令牌身份，两类身份进入同一套业务权限检查。显式 Authorization 决定
+业务 API 的凭证验证结果。令牌权限固定为 `READ` 或 `READ` 加 `SUBMIT_DRY_RUN`。
+令牌管理保留给管理员 Web 会话。服务端设置 HttpOnly、SameSite Cookie，经 HTTPS 时带 Secure，
+对 Cookie 写入执行同源检查。认证提交未获确认时，Web 通过只读状态接口核对当前设置和会话。
 
 最小部署 bootstrap 提供数据库路径等启动信息，管理员由空库初始化，认证状态独立于
 业务配置。启动配置和新配置输入拒绝已退役的认证字段。Scheduler 和 Worker 核对管理员
 发布的授权及当前生效计划。已受理任务保留原快照和已有结果。停用生效后后续执行检查停止
-相应工作，脚本令牌的生命周期由 HTTP 入口独立校验。
+相应工作，脚本令牌的生命周期由 HTTP 入口独立校验。启动预检只读核对数据库版本和创建标记，
+仅接受空库及本版本创建的库。
 
-[Slice 57](../SLICE.md)
+[Slice 57 验收账本](progress.md#latest-accepted-closure--slice57)
 
 ## CURRENT — Root Web and unversioned API (Slice56 PASS / CLOSED)
 
@@ -329,8 +332,8 @@ the exact current Active projection and requires explicit intent before any furt
 
 Under Slice52, all nine sidebar pages also coordinate their actual read feedback and content
 handoff; their business functions remain unchanged. Python API/application/runtime/persistence
-retain authority; tokens remain memory-only, 401/403 and
-query isolation retain their existing boundaries. Reads/animation are zero media mutation, and
+retain authority. Current Web sessions and script tokens follow Slice57. The 401/403 and
+account-scoped query boundaries continue to apply. Reads/animation are zero media mutation, and
 the existing safety/pin/fence/non-replay contracts remain. The accepted CURRENT architecture below
 and earlier Base/Head/closure facts remain valid; these CURRENT presentation contracts supersede
 only the selected old side-detail/drawer/tree geometry.

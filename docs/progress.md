@@ -8,10 +8,17 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice57](../SLICE.md) is **FIX REQUIRED** after A Final Review. B plans the A57-01 correction
-in [Task 57.1](../TASK.md). The latest accepted Slice is Slice56.
+Slice57 is **PASS / CLOSED**. A selects the next large Slice.
 
-## Latest accepted closure — Slice56
+## Latest accepted closure — Slice57
+
+Fresh deployments set up one Web administrator with a host-issued code. The administrator signs in
+with a password and issues scoped integration tokens from System Settings. A57-01 was corrected and
+independently verified through the first setup and password change journeys.
+[A Final Review](../SLICE.md#a-final-review--pass--closed) · B Closure Packet
+`c20bfd1ef9d9752ffa02f76bf37cf735b819444d:TASK.md`.
+
+## Prior accepted closure — Slice56
 
 The Web root and `/api/*` are the canonical V2 entrances. The previous prefixes are retired.
 Supported Base Tasks, exact submissions, pins, results and audit remain available. The full range,
@@ -79,6 +86,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 57 — Single Web Administrator and Scoped API Tokens | PASS / CLOSED | `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab` | `5d2f215fb7afaceeae677877fdb4990fc6815077` | Independent A Final Review on 2026-11-22 | Empty-store setup, Web login and recovery, scoped integration tokens, same-version restart and scheduled stop with existing effects retained | Web multi-user management, external identity, Passkey/MFA, cross-version upgrade and production rollout. Validation limits are recorded in the A and B reports. |
 | 56 — Canonical Web and API Routes | PASS / CLOSED | `33c70735e0a8f45426dde614587ea3d43af94e9b` | `472759665a42a73d24910464e903382adeb37e56` | Independent A Final Review on 2026-11-19 | Web at root and API at `/api/*`, old prefixes retired, deep-link continuation, Base Tasks and audit preserved, exact read-only submission reconciliation and existing per-item recovery | Production deployment, external caller inventory and changeover, general historic version migration and V1. Seven optional tests remain skipped. |
 | 55 — Complete V1 and Migration Residue Retirement | PASS / CLOSED | `2b2e7c1824fa5681864455714d0f97b26555c7dc` | `80334ccaa30d54019934b50855f7dee00525abcc` | Independent A Final Review PASS / CLOSED — 2026-11-19 | Native V2 only, legacy transports and runtime removed, supported V2 data and pins preserved, current Task and configuration journeys verified | V1/obsolete import or takeover, generic upgrade/rollback, new providers/permissions/engine, production release and deployment. Original validation limits apply. |
 | 54 — Organizing Rules Dialogs and Readability | PASS / CLOSED | `e43a40674eb14aa12615a440a348fe675cd50c4e` | `aef044e51dc91655372bf5fe39c6116da976c3b4` | Independent A Final Review PASS / CLOSED — 2026-11-11 | Seven families’ Add/Copy/Edit cards and exact list return; readable settings/local tests; Overview-only complete-flow check; coherent draft/read/verification context and unknown-save non-replay | New rule domains/algorithms, Providers/Storage/schema/permissions/publication protocol, execution/recovery engine, bulk/import/export/diff/rollback, V1, complete-test backend/API retirement, broad inventory/Overview/other-page redesign, production validation/release/deployment; original evidence limits retained |

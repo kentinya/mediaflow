@@ -4,14 +4,14 @@
 Slice ID: 57
 Name: Single Web Administrator and Scoped API Tokens
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab
 Implementation Head: 5d2f215fb7afaceeae677877fdb4990fc6815077
 Working Branch: main
-Development Authorization: TASK57.1 CORRECTION ACCEPTED BY B
+Development Authorization: NO ACTIVE IMPLEMENTATION TASK
 Risk: High
 Target Test Level: T4
-Next Action: A RE-REVIEWS ENTIRE SLICE BASE..IMPLEMENTATION HEAD
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## 授权与基线
@@ -27,10 +27,10 @@ B 独立验收，A 独立终审。A 代 B 的角色例外限于首个 Task 的�
 Task 57.1 的登录、恢复和部署证据仍按对应提交核对。后台停止改以自动化停用入口验收。
 Web 多用户管理延期，令牌管理继续作为本 Slice 的交付结果。
 
-Task 57.1 已由 B 验收通过。用户已授权实施 [Task 57.2](TASK.md)。
+Task 57.1 和 Task 57.2 已实施，并经 B 独立验收。
 
 规划基线为上面的 Base，规划前治理检查 PASS，工作区与暂存区干净。Slice 56 的关闭事实、
-原验收范围和验证证据见固定终审。配置草稿退役的 B PASS 见当前 Task 指针。
+原验收范围和验证证据见固定终审。配置草稿退役的 B PASS 保存在规划前基线。
 [Slice 56 A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed) · [TASK.md](TASK.md)
 
 ## 用户目标与范围
@@ -39,13 +39,13 @@ Task 57.1 已由 B 验收通过。用户已授权实施 [Task 57.2](TASK.md)。
 新开标签页和打开书签可沿用有效会话，过期后登录回到原位置。需要接入脚本时，管理员从
 「系统设置 → API 令牌」按用途签发。只使用网页的实例可以直接完成部署和业务配置。
 
-候选已接通数据库管理员会话、主机设置及重置码、系统设置的分权限 API 令牌和后台账号校验。
+已交付数据库管理员会话、主机设置及重置码、系统设置的分权限 API 令牌和后台账号校验。
 管理员从自动化编辑卡停用计划，在执行记录核对停止原因和原有结果。
 [部署生成器](scripts/make_deployment_config.py) · [Web 登录入口](web/src/features/entry/EntryPage.tsx) · [执行权限检查](mediaflow/interfaces/service_api.py)
 
-验收后以 `V2-AUTH-004/005/007–009` 取代 V2 的 `V2-AUTH-001/002` 身份和认证要求，更新
+现行 `V2-AUTH-004/005/007–009` 取代 V2 的 `V2-AUTH-001/002` 身份和认证要求，并更新
 `V2-ROUTE-001/002/004` 的认证和恢复表述。后端业务裁决与 Storage 安全义务继续适用。
-[目标要求](docs/v2-requirements.md#target--single-web-administrator-and-scoped-api-tokens-slice57-active) · [目标旅程](docs/product-experience.md#target--single-web-administrator-and-scoped-api-tokens-slice57-active) · [目标架构](docs/architecture.md#target--single-web-administrator-and-scoped-api-tokens-slice57-active)
+[现行要求](docs/v2-requirements.md#current--single-web-administrator-and-scoped-api-tokens-slice57-pass--closed) · [现行旅程](docs/product-experience.md#current--single-web-administrator-and-scoped-api-tokens-slice57-pass--closed) · [现行架构](docs/architecture.md#current--single-web-administrator-and-scoped-api-tokens-slice57-pass--closed)
 
 ## Required Outcomes and Surfaces
 
@@ -112,17 +112,17 @@ Task 57.1 已由 B 验收通过。用户已授权实施 [Task 57.2](TASK.md)。
 
 ## Acceptance Criteria
 
-- [ ] AC-01 / RO-1 从空库、无媒体挂载及无旧 API 令牌的真实 Compose 安装开始，
+- [x] AC-01 / RO-1 从空库、无媒体挂载及无旧 API 令牌的真实 Compose 安装开始，
   验证建首位管理员、系统设置初始化、Web 改密、主机侧管理员重置、重启后的状态。
   验证过期、错用及并发使用设置／重置码，以及一次有效提交最多改变一次账号状态。
-- [ ] AC-02 / RO-1 用生产 Web 产物在桌面和窄屏验证正常登录、表单错误与不可用状态、
+- [x] AC-02 / RO-1 用生产 Web 产物在桌面和窄屏验证正常登录、表单错误与不可用状态、
   同站深链回跳、刷新、新标签、超时和退出。验证退出或改密后的多标签会话同步、跨站写入
   防护和原请求核对。写请求受理次数和效果计数符合原契约。
-- [ ] AC-03 / RO-2 管理员在系统设置分别为监控和整理分析脚本签发令牌。验证默认只读及
+- [x] AC-03 / RO-2 管理员在系统设置分别为监控和整理分析脚本签发令牌。验证默认只读及
   90 天、一次性展示、签发丢回包后的核对和轮换。用两枚令牌调用正式业务 API，核对各自权限、
   独立吊销、到期、`401/403`、重启后状态和按令牌标识区分的审计。确认列表、日志、配置包
   和浏览器持久存储的凭证保护。轮换或吊销监控令牌时，原定时计划照常执行。
-- [ ] AC-04 / RO-3 用随仓配置生成器和空库部署，验证退役字段拒绝，设置旧令牌环境变量也
+- [x] AC-04 / RO-3 用随仓配置生成器和空库部署，验证退役字段拒绝，设置旧令牌环境变量也
   不能取得业务权限。用管理员发布业务配置、受理任务、启用自动化，验证同版本重启前后的任务、
   结果与审计。分别在到期前和任务入队后停用，验证 Scheduler 零新增、Worker 零新增文件效果、
   用户可见原因及旧记录回读。使用不受支持的测试库验证预检停止且原文件保持完整。
@@ -135,41 +135,37 @@ Worker/Scheduler 执行边界，保留各项实际结果及限制。A 在独立�
 完整 Base..Implementation Head 与 Closure Packet 后决定关闭。
 [测试级别及验收分工](docs/development-workflow.md#6-test-levels)
 
-B 已验收 Task 57.1 的 A57-01 修正，重新核对 RO-1 至 RO-3，并提交
-[最新 Closure Packet](TASK.md#b-复核与-slice-57-交接)。原包保存在
-`2961baeb5eae2028a3e6db23fc6076e3c62caf2a:TASK.md`。
-
-## A Final Review — FIX REQUIRED
+## A Final Review — PASS / CLOSED
 
 ```text
 Review Date: 2026-11-22
 Reviewed Base: ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab
-Reviewed Implementation Head: 2b1042470765f5d9bf546780921de3fa499a0461
-B Closure Packet: 2961baeb5eae2028a3e6db23fc6076e3c62caf2a:TASK.md
-Decision: FIX REQUIRED
-Blocker: A57-01 / P1 — committed account changes presented as unapplied after response loss
+Accepted Implementation Head: 5d2f215fb7afaceeae677877fdb4990fc6815077
+B Closure Packet: c20bfd1ef9d9752ffa02f76bf37cf735b819444d:TASK.md
+Decision: PASS / CLOSED
 ```
 
-A 核对完整 Base..Implementation Head 的 157 文件清单及生产改动，涵盖部署配置切换与预检、
-SQLite 账号、会话及令牌事务、HTTP 认证与业务权限、Web 入口及恢复、后台计划授权和停用、
-打包测试与操作文档。Implementation Head 到 B 交接提交的差异仅含 `SLICE.md` 与 `TASK.md`。
+A 核对完整 Base..Implementation Head 的 160 文件范围，包括部署预检、持久认证和业务权限、
+Web 恢复、令牌生命周期、计划停用、制品及测试。原审查 `ba2f01e9:SLICE.md` 和原 B 验收
+`2961baeb:TASK.md` 保留。自上一实施候选起的生产差异限于 Web 认证恢复。当前实施提交
+至 B 交接只改 `SLICE.md` 与 `TASK.md`。
 
-**A57-01（P1）阻塞 RO-1 / AC-01、AC-02。** 在隔离空库用生成器、正式 Waitress 入口和生产
-Web 产物启动。通过主机命令领取设置码，从首页创建管理员，再从账号菜单进入改密。两次都让真实
-提交完成，在回复到达浏览器前断开。设置返回 `201`，主机状态确认唯一管理员已创建，刷新后可登录。
-改密返回 `200`，旧会话随即返回 `401`，新密码可登录。两条旅程各实际提交一次，页面却都断言
-账号或会话未变更，并要求再次提交表单。该错误提示会让部署者重用已消耗的设置码，也会让管理员
-用已失效的会话重提改密。共享认证客户端将 fetch 失败当作未写入，由 `8c0e2c850de370e4c2f832deb3c1454b95f61ee1`
-（2026-11-21）引入。[认证请求处理](web/src/shared/api/auth-api.ts)
+- **RO-1 / AC-01、AC-02。** A 独立运行生产构建和 12 项真实 Chromium 账号用例，均通过。
+  A 用正式 Waitress、生成器、主机命令和 390px 页面重跑建号、改密完成后丢回包。浏览器
+  分别读回已建号和已结束会话，登录进入系统设置或用新密码重新登录。两条旅程各一次 POST。
+  代理先返回 504 时，读回仍待设置，原提交随后返回 201。管理员从同一页面再次核对、登录并初始化
+  配置，全程一次建号提交。A57-01 修正通过。
+- **RO-2 / AC-03。** 核对 B 的桌面和窄屏签发、轮换、到期及吊销、权限、零效果分析和逐令牌
+  审计。Compose 验证轮换后原计划仍产生一次可核对的复制，数据库、日志与浏览器证据无令牌明文。
+- **RO-3 / AC-04。** 核对 B 的空库、无媒体 Compose、四服务重启、实际计划停用和旧库预检。
+  预检拒绝前代库且文件摘要不变。核对候选镜像 ID、源码外 wheel 冒烟和 wheel 摘要。
 
-通过条件是认证表单区分已确认拒绝与结果未知，并通过正式入口读取可证实的当前设置及会话状态，
-给出能够继续的操作。结果仍不可判定时维持未知，由用户决策。用真实后端验证建号和改密的丢回包、
-可见恢复与单次提交，同时核对共享处理涉及的其他认证表单。B 在[原 Task 57.1](TASK.md)下规划修正，
-独立验收并重交 Closure Packet。
+B 测试详情与限制见固定验收包。Python 全量 2,359 项首跑有 7 项可选 Storage／耐久跳过，
+1 项治理文档测试失败。B 修正约定标题后原活跃状态的发布政策组 8 项通过。Web 单测
+1,630 项、默认 Chromium 286 项及独立账号、系统设置和自动化合同组通过。额外合跑的
+13 项失败保留，涉及旧无写入断言计入登录和共享测试实例残留。合同自动化组独立运行
+32 项通过。Compose 首次临时目录挂载及本地 Webhook 可达性问题均保留在原日志，使用
+Docker 可见的隔离目录后通过正式门禁。
 
-A 实际运行生产构建、17 项真实 Python Chromium 用例和 39 项 Python 认证／容器部署测试，均通过。
-额外浏览器复现确认 A57-01。复现日志、脚本、截图、范围清单及测试日志位于本机
-`.git/validation-evidence/2b1042470765f5d9bf546780921de3fa499a0461/a-review/`。
-A 核对 B 的全量测试、同版本 Compose、轮换、停用和旧库拒绝日志及 wheel 摘要。B 的 7 项可选
-Storage／耐久测试跳过继续披露。当前 Docker 缓存中已找不到原候选 image ID，Compose 结论取自
-B 原始日志。
+本机验证证据位于 `.git/validation-evidence/5d2f215fb7afaceeae677877fdb4990fc6815077/`
+下的 `a-review/` 与 `b-review/`。部署指南使用已验证的发布门禁和现行就绪读取入口。
