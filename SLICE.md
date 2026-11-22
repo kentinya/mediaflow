@@ -11,7 +11,7 @@ Working Branch: main
 Development Authorization: SLICE ACTIVE / FIRST TASK PLANNING
 Risk: High
 Target Test Level: T4
-Next Action: B PLANS THE FIRST TASK
+Next Action: SEE TASK.md
 ```
 
 ## 授权与基线
@@ -20,7 +20,8 @@ Next Action: B PLANS THE FIRST TASK
 首次管理员设置、忘记密码、停机数据库备份恢复。备份范围限 MediaFlow 的 SQLite 数据库。
 用户确认当前库内没有已受理的 CLI 任务，CLI 专属任务续作随入口退出。
 用户授权激活 Slice 58，并确认当前没有待升级的数据库。配置 schema 11 及其切换机制按本合同退役。
-首个 Task 由 B 按工作流规划。[Development Workflow](docs/development-workflow.md)
+用户授权 A 代 B 规划首个 Task，角色例外限于本次规划。B 独立验收，A 按工作流终审。
+[Development Workflow](docs/development-workflow.md)
 
 规划前 `main` 位于上述 Base，治理检查通过，工作区和暂存区干净，仓库文档和 Git 可写。
 Slice 57 已关闭，固定终审保留原范围、证据及限制。
