@@ -258,3 +258,45 @@ B 核对了完整 Base..Head。生产 Web 构建成功，后端 78 项、受影�
 8 项通过。上轮的自动分析无多余按钮、390px 首份摘要等待和读取恢复、后台在线时的零主文件结果均通过。
 另在真实 Files 旅程完成扫描，等已有心跳自然过期，再刷新同一准备，复现上述阻塞。完整 T3 验收留待修正候选。
 日志和截图保存在 `.git/validation-evidence/f7c0fb04c49edbc3c5a3bffe5bbf1390f8547689/b-review/`。
+
+## Developer 交接（修正轮 2） — 已完成准备结果不被后台过期覆盖
+
+```text
+Candidate: 6615a2b7
+Task Base: c714e0806620bb54701639a8776517ba5e1e9685
+Reviewed Implementation: f7c0fb04c49edbc3c5a3bffe5bbf1390f8547689
+Reviewed handoff head: c8a32c130ee212fcc8bbee1a2ce7552c32d0b2ec
+Fix range: c8a32c130ee212fcc8bbee1a2ce7552c32d0b2ec..6615a2b7
+```
+
+- 主提示改由同一准备的实际阶段优先决定。`preparationStoppedTitle` 已读到的终态（零主文件、
+  准备未完成、失败、取消、摘要读取失败、等待人工分析）继续作为标题；只有标题为空且尚无已关联方案时，
+  `worker.ready !== true` 才显示「后台暂不可用 / 请求已保存，请联系管理员。」。已关联方案但仍在读取
+  摘要时保留「正在准备」和加载动画，因为此时只依赖摘要读取，不依赖 Worker 继续生成方案。
+- 单元夹具新增已完成零主文件且 `worker.ready: false` 的读取，新增用例验证标题仍为
+  「未找到可整理的主文件」、排除原因和返回文件页下一步不变，且无后台提示、无分析按钮、无新受理。
+  既有排队 Worker 不可用用例继续验证真正等待后台时显示原位提示，并在轮询到同一准备后进入复核。
+- 真实 Chromium 的既有零主文件 Files 用例在完成检查后，通过新增的 harness-only
+  `POST /__harness__/stop-manual-worker` 走生产 `ProcessingWorkerService.stop_worker` 停掉同一
+  Worker；先直接读取准备 API，断言 `status=completed`、`previewId=null`、`primarySourceCount=0`、
+  `worker.ready=false`，再刷新同一 `organizeDiscovery` 地址。刷新后仍显示「未找到可整理的主文件」、
+  同一排除原因和同一返回文件页下一步，不出现「后台暂不可用」，受理 POST 仍为一次，分析/执行 POST 为 0。
+  该 harness 路由只触发现有 Worker 生命周期，不写产品状态；用停止而非等待 30 秒自然过期是为了让
+  定向用例保持短时，直接用准备读确认了同一不可用条件，单元用例覆盖心跳过期投影。
+- 实际执行（仓库根目录 / `web/`，候选 `6615a2b7`）：
+  - `.venv/bin/python -m unittest tests.test_processing_worker_readiness tests.test_manual_task_engine`
+    → 66 passed。
+  - `npm run typecheck` → PASS。
+  - `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx` → 36 passed。
+  - `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx src/features/library/StorageFilesPage.test.tsx src/features/operations/OperationsInventory.test.tsx`
+    → 164 passed（既有 jsdom `scrollTo` 提示）。
+  - `npm run build` → PASS；310 modules，产物 `index-W4hJqgls.js` 1,581.71 kB（既有大包提示）。
+  - `npm run test:e2e -- --config playwright.python.config.ts manual-organize-dialog.python.spec.ts -g 'first-plan preparation|linked plan'`
+    → 3 passed，其中零主文件用例包含停止 Worker 后刷新同一准备。
+  - `npm run lint`、`npm run format:check`、`.venv/bin/ruff format --check mediaflow scripts/operations_inventory_harness.py`、
+    `.venv/bin/ruff check mediaflow scripts/operations_inventory_harness.py`、`git diff --check` → PASS。
+- 剩余风险：Developer 未运行全量 Python/Web/E2E 和打包矩阵，按 Task 由 B 执行；本轮未保存截图。
+  来源资源库仍显示准备记录中的库标识（既有模型未发布名称）。零主文件准备沿用现有 Task 结算结果，
+  任务中心仍保留一条空的、人工资格未结束的整理任务，本 Task 未改变既有任务结算规则。新增 harness
+  停止路由只用于浏览器验证真实 Worker 生命周期，生产行为仍以 Worker 就绪投影为准；未用真实 30 秒
+  心跳过期重复浏览器旅程。
