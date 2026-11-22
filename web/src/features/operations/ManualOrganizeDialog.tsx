@@ -971,6 +971,19 @@ export function ManualOrganizeDialog({
       !excluded.has(item.itemId) &&
       executableIds.includes(item.itemId),
   );
+  /**
+   * Items of the displayed summary that the backend no longer treats as
+   * plan-affecting inputs.  A first analysis can publish blocked items beside
+   * ready siblings; that makes the aggregate non-current without any newer
+   * plan existing.
+   */
+  const stalePlanItemCount =
+    preview?.items.filter((item) => !item.current).length ?? 0;
+  /** Only a different latest durable plan proves this summary was superseded. */
+  const previewSupersededByNewerPlan =
+    preview !== undefined &&
+    intent?.latestPlan != null &&
+    intent.latestPlan.previewId !== preview.previewId;
   const executeDisabled =
     preview === undefined ||
     preview.executeAction.available !== true ||
@@ -993,9 +1006,21 @@ export function ManualOrganizeDialog({
       };
     }
     if (!preview.current) {
+      if (previewSupersededByNewerPlan) {
+        return {
+          reason: "此计划摘要已被更新取代，当前摘要不能确认。",
+          nextAction: "返回逐项复核，保存修正后重新分析生成当前方案。",
+        };
+      }
       return {
-        reason: "此计划摘要已被更新取代，当前摘要不能确认。",
-        nextAction: "返回逐项复核，保存修正后重新分析生成当前方案。",
+        reason:
+          stalePlanItemCount > 0
+            ? `本次方案有 ${stalePlanItemCount} 个文件未就绪或已失效。`
+            : "本次方案当前不可确认。",
+        nextAction:
+          stalePlanItemCount > 0
+            ? "先返回逐项复核处理这些文件，再重新分析。"
+            : "返回逐项复核核对后重新分析。",
       };
     }
     if (preview.truncated) {
@@ -1657,7 +1682,7 @@ export function ManualOrganizeDialog({
           {preparation.selection.scopes.length > 0 ? (
             <details className="mf-organize-scope-details">
               <summary>
-                查看完整所选范围（{preparation.selection.scopes.length} 项）
+                查看已受理范围（{preparation.selection.scopes.length} 项）
               </summary>
               <ul>
                 {preparation.selection.scopes.map((scope) => (
@@ -2483,6 +2508,13 @@ export function ManualOrganizeDialog({
               <dt>未纳入</dt>
               <dd>{skippedItems.length} 项</dd>
             </div>
+            {preparation !== undefined &&
+            preparation.selection.refused.length > 0 ? (
+              <div>
+                <dt>未受理</dt>
+                <dd>{preparation.selection.refused.length} 项</dd>
+              </div>
+            ) : null}
             <div>
               <dt>操作</dt>
               <dd>{operations === "" ? "—" : operations}</dd>
@@ -2584,11 +2616,13 @@ export function ManualOrganizeDialog({
                   —{" "}
                   {admittedItemIds.has(item.itemId)
                     ? "已受理执行,保持独立进度"
-                    : excluded.has(item.itemId)
-                      ? "你选择了暂不纳入(不是持久忽略)"
-                      : item.failure !== null
-                        ? item.failure.message
-                        : "未就绪"}
+                    : item.current === false
+                      ? "本方案中该文件已失效；返回逐项复核查看原因"
+                      : excluded.has(item.itemId)
+                        ? "你选择了暂不纳入(不是持久忽略)"
+                        : item.failure !== null
+                          ? item.failure.message
+                          : "未就绪"}
                 </li>
               ))}
             </ul>
@@ -2613,11 +2647,26 @@ export function ManualOrganizeDialog({
         ) : null}
 
         {!preview.current ? (
-          <StatusBanner variant="warning" title="摘要已不是当前方案">
-            <p>
-              此计划摘要已被更新的分析取代;失效摘要不能确认。请回到逐项复核,
-              保存修正后重新分析生成当前方案。
-            </p>
+          <StatusBanner
+            variant="warning"
+            title={
+              previewSupersededByNewerPlan
+                ? "摘要已不是当前方案"
+                : "本次方案暂不能整体确认"
+            }
+          >
+            {previewSupersededByNewerPlan ? (
+              <p>
+                此计划摘要已被更新的分析取代;失效摘要不能确认。请回到逐项复核,
+                保存修正后重新分析生成当前方案。
+              </p>
+            ) : (
+              <p>
+                本次分析有 {stalePlanItemCount}{" "}
+                个文件未就绪或已失效，方案整体暂不能确认。请在下方
+                「未纳入本次确认的文件」查看原因，返回逐项复核处理后再重新分析生成当前方案。
+              </p>
+            )}
           </StatusBanner>
         ) : null}
         {preview.truncated ? (

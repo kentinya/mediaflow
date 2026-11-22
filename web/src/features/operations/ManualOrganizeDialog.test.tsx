@@ -109,9 +109,28 @@ function makeBackend() {
     // The exact paths the Files admission carried: the summary then plans
     // exactly those files, so a two-file journey is a two-item plan.
     selectedPaths: [] as string[],
+    // A refused sibling is not planned; the preview carries only the admitted
+    // paths even though the Files admission carried both.
+    previewItemPaths: [] as string[],
     // The exact admitted scopes the preparation read publishes, so a mixed
     // selection is summarized by kind and remains expandable.
     scopeSelections: [] as { kind: "file" | "directory"; path: string }[],
+    refusedSelections: [] as {
+      readonly kind: "file" | "directory";
+      readonly path: string;
+      readonly code: string;
+      readonly reason: string;
+      readonly message: string;
+      readonly nextAction: string;
+      readonly existingWorkId: string | null;
+      readonly existingWorkKind: string | null;
+    }[],
+    // A first plan with blocked items is not current even though no newer
+    // analysis exists; the card must not call it superseded without evidence.
+    previewCurrent: true as boolean,
+    previewStaleTail: 0 as number,
+    // A different durable latest plan is the only proof of supersession.
+    latestPlanPreviewId: null as string | null,
     // The A53-01 journey: an overwrite the operator must authorize on every
     // exact summary, and bounded admission-read failures.
     requireOverwrite: false as boolean,
@@ -147,7 +166,11 @@ function makeBackend() {
    */
   const previewItemIndices = (): number[] => {
     const indices: number[] = [];
-    for (const path of state.selectedPaths) {
+    const paths =
+      state.previewItemPaths.length > 0
+        ? state.previewItemPaths
+        : state.selectedPaths;
+    for (const path of paths) {
       const match = /^Movies\/Movie\.(\d{2})\.mkv$/.exec(path);
       if (match !== null) indices.push(Number(match[1]) - 1);
     }
@@ -176,7 +199,11 @@ function makeBackend() {
         scopeCount: discoveryScopes.length,
         scopes: discoveryScopes,
         existing: [],
-        refused: [],
+        refused: state.refusedSelections.map((refused) => ({
+          ...refused,
+          organizing: false,
+          prunedAncestor: null,
+        })),
       },
       budgets: {},
       progress: {
@@ -266,7 +293,7 @@ function makeBackend() {
       if (state.discoveryReads <= state.walkOnlyReads + state.frozenOnlyReads) {
         value["latestPlan"] = null;
       } else {
-        latestPlan["previewId"] = state.previewId;
+        latestPlan["previewId"] = state.latestPlanPreviewId ?? state.previewId;
       }
     }
     value["actions"] = {
@@ -402,6 +429,45 @@ function makeBackend() {
       selectedItemIds: order.map((index) => `item-${index + 1}`),
       unselectedItemIds: [],
     };
+    if (!state.previewCurrent) {
+      value["current"] = false;
+      value["status"] = "stale";
+      value["executionState"] = "not_available_in_this_task";
+      const items = value["items"] as Json[];
+      const staleItems = items.slice(
+        -Math.max(1, Math.min(state.previewStaleTail, items.length)),
+      );
+      const staleIds = new Set(staleItems.map((item) => item["itemId"]));
+      for (const item of staleItems) {
+        item["current"] = false;
+        item["status"] = "stale";
+        item["executionState"] = "not_available_in_this_task";
+        item["nextAction"] = "request a fresh Preview for this item";
+        item["failure"] = {
+          category: "workflow_failure",
+          message:
+            "scheduled organization failed at a bounded workflow boundary",
+          durableState:
+            "this is a zero-mutation preparation finding; no execution TaskItem or Result was created",
+          nextAction: "request a fresh Preview for this item",
+          retrySafe: false,
+          sideEffects: "none",
+        };
+      }
+      value["executionCandidateItemIds"] = items
+        .filter((item) => !staleIds.has(item["itemId"]))
+        .map((item) => item["itemId"]);
+      value["selection"] = {
+        selectedItemIds: value["executionCandidateItemIds"],
+        unselectedItemIds: [...staleIds],
+      };
+      const execute = (value["actions"] as Json)["execute"] as Json;
+      execute["available"] = false;
+      execute["reason"] =
+        "this fixed plan is historical evidence and can no longer be executed";
+      execute["nextAction"] =
+        "request a fresh Preview after repairing the blocked items";
+    }
     if (
       (state.metadataProblem && !state.metadataProblemResolved) ||
       (state.metadataCandidateProblem && !state.metadataCandidateResolved)
@@ -2006,7 +2072,7 @@ describe("ManualOrganizeDialog", () => {
     expect(screen.queryByText(/不会声称已完整遍历/)).toBeNull();
     expect(screen.queryByText("已完整遍历所选范围。")).toBeNull();
     expect(card()).toHaveTextContent("已受理范围：1 个文件夹、1 个文件");
-    const scopeSummary = within(card()).getByText(/查看完整所选范围/);
+    const scopeSummary = within(card()).getByText(/查看已受理范围/);
     const scopeDetails = scopeSummary.closest("details");
     expect(scopeDetails?.open).toBe(false);
     await user.click(scopeSummary);
@@ -2080,6 +2146,147 @@ describe("ManualOrganizeDialog", () => {
     );
     expect(screen.getByRole("button", { name: "确认整理 1 项" })).toBeEnabled();
     expect(backend.calls.executePosts).toHaveLength(0);
+  }, 20_000);
+
+  it("counts a refused selected sibling beside the admitted preparation and batch scope", async () => {
+    const user = userEvent.setup();
+    const refusedName = filename(0);
+    const admittedName = filename(1);
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.queuedReads = 1;
+        value.state.previewItemPaths = [`Movies/${admittedName}`];
+        value.state.scopeSelections = [
+          { kind: "file", path: `Movies/${admittedName}` },
+        ];
+        value.state.refusedSelections = [
+          {
+            kind: "file",
+            path: `Movies/${refusedName}`,
+            code: "source_already_owned",
+            reason: "already_owned",
+            message:
+              "the source is already owned by an unfinished organizing work",
+            nextAction: "open the existing work to continue or cancel it",
+            existingWorkId: "organize-task-1",
+            existingWorkKind: "task",
+          },
+        ];
+      },
+      [refusedName, admittedName],
+    );
+
+    await screen.findByText(
+      "所选范围已保存，正在等待后台 Worker 开始检查；开始前不会显示检查进度，无需重新提交。",
+    );
+    expect(card()).toHaveTextContent("已受理范围：0 个文件夹、1 个文件");
+    expect(card()).toHaveTextContent("未受理 1 项");
+
+    const scopeDetails = within(card())
+      .getByText(/查看已受理范围/)
+      .closest("details") as HTMLElement;
+    expect(within(scopeDetails).getByText(/查看已受理范围/)).toHaveTextContent(
+      "查看已受理范围（1 项）",
+    );
+    expect(scopeDetails).toHaveTextContent(admittedName);
+    expect(scopeDetails).not.toHaveTextContent(refusedName);
+
+    const preparationRefused = within(card())
+      .getByText(/未受理的所选条目/)
+      .closest("details") as HTMLElement;
+    await user.click(within(preparationRefused).getByText(/未受理的所选条目/));
+    expect(preparationRefused).toHaveTextContent(refusedName);
+
+    await screen.findByRole(
+      "heading",
+      { name: /第 1 \/ 1 个/ },
+      { timeout: 5_000 },
+    );
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    const region = await screen.findByRole("region", { name: "整批复核" });
+    const summary = region.querySelector(
+      ".mf-organize-batch-summary",
+    ) as HTMLElement;
+    const fact = (term: string): HTMLElement =>
+      within(summary)
+        .getByText(term, { selector: "dt" })
+        .closest("div") as HTMLElement;
+    expect(fact("将整理")).toHaveTextContent("1 项");
+    expect(fact("未纳入")).toHaveTextContent("0 项");
+    expect(fact("未受理")).toHaveTextContent("1 项");
+    expect(within(card()).getByText("未受理的所选条目(1 项)")).toBeVisible();
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+  }, 20_000);
+
+  it("explains a first plan blocked by stale items without claiming it was superseded", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.previewCurrent = false;
+        value.state.previewStaleTail = 1;
+      },
+      [filename(0), filename(1)],
+    );
+
+    await screen.findByRole("heading", { name: /第 1 \/ 2 个/ });
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    await screen.findByRole("region", { name: "整批复核" });
+    expect(within(card()).getByText("本次方案暂不能整体确认")).toBeVisible();
+    expect(
+      within(card()).getByText(/本次分析有 1 个文件未就绪或已失效/),
+    ).toBeVisible();
+    const blocker = within(card())
+      .getByText(/^暂不能确认：/)
+      .closest(".mf-organize-confirm-blocker") as HTMLElement;
+    expect(blocker).toHaveTextContent("本次方案有 1 个文件未就绪或已失效");
+    expect(blocker).toHaveTextContent("先返回逐项复核处理这些文件");
+    expect(blocker).not.toHaveTextContent("已被更新取代");
+    expect(
+      screen.getByRole("button", { name: "确认整理 1 项" }),
+    ).toBeDisabled();
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+
+    const skippedSummary =
+      within(card()).getByText("未纳入本次确认的文件(1 项)");
+    await user.click(skippedSummary);
+    expect(
+      within(card()).getByText(/本方案中该文件已失效；返回逐项复核查看原因/),
+    ).toBeVisible();
+    await user.click(
+      within(card()).getByRole("button", { name: `查看 ${filename(1)}` }),
+    );
+    await screen.findByRole("heading", { name: /第 2 \/ 2 个/ });
+    expect(within(card()).getAllByText(filename(1)).length).toBeGreaterThan(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+  }, 20_000);
+
+  it("names a newer plan only when the latest durable plan differs", async () => {
+    const user = userEvent.setup();
+    await openDialog(
+      user,
+      (value) => {
+        value.state.previewCurrent = false;
+        value.state.previewStaleTail = 1;
+        value.state.latestPlanPreviewId = "preview-newer";
+      },
+      [filename(0), filename(1)],
+    );
+
+    await screen.findByRole("heading", { name: /第 1 \/ 2 个/ });
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    await screen.findByRole("region", { name: "整批复核" });
+    expect(within(card()).getByText("摘要已不是当前方案")).toBeVisible();
+    expect(
+      within(card()).getByText(/此计划摘要已被更新的分析取代/),
+    ).toBeVisible();
+    expect(within(card()).getByText(/^暂不能确认：/)).toHaveTextContent(
+      "此计划摘要已被更新取代",
+    );
   }, 20_000);
 
   it("keeps polling an unchanged waiting preparation until the exact plan links", async () => {

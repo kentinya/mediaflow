@@ -712,6 +712,16 @@ def build_managed_fixture(
     (dialog_root / "DialogSubsetSecond.2031.mkv").write_bytes(
         b"slice56 second confirmation second synthetic media"
     )
+    # PATCH-20261122-1 B-01 regression: reselect one file whose first
+    # preparation is still awaiting confirmation beside one new sibling.  The
+    # owned file stays an independently refused selected item, and the new
+    # sibling is the only admitted/planned source.
+    (dialog_root / "DialogPendingOwned.2033.mkv").write_bytes(
+        b"patch pending owned source synthetic media"
+    )
+    (dialog_root / "DialogPendingSibling.2034.mkv").write_bytes(
+        b"patch pending sibling source synthetic media"
+    )
     conflict_time = time.time() - 86400
     os.utime(dialog_root / "DialogConflict.2022.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSibling.2023.mkv", (conflict_time, conflict_time))
@@ -724,6 +734,8 @@ def build_managed_fixture(
     os.utime(dialog_root / "DialogReopen.2029.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSubsetFirst.2030.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSubsetSecond.2031.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogPendingOwned.2033.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogPendingSibling.2034.mkv", (conflict_time, conflict_time))
     # PATCH-20261120-2 browser fixture: one dedicated directory with exactly
     # 101 eligible primaries.  Its walk stops at the durable primary bound; one
     # of them is the unambiguous source re-selected for the new small batch.
@@ -1023,7 +1035,7 @@ def build_managed_fixture(
                         "field": "filename",
                         "operator": "regex",
                         "value": (
-                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025|Reconcile\.2027|Unselected\.2028|Reopen\.2029|SubsetFirst\.2030|SubsetSecond\.2031)\.mkv$"
+                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025|Reconcile\.2027|Unselected\.2028|Reopen\.2029|SubsetFirst\.2030|SubsetSecond\.2031|PendingOwned\.2033|PendingSibling\.2034)\.mkv$"
                         ),
                     },
                 ],
@@ -1621,6 +1633,26 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogSubsetSecond",
                         year=2031,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    # PATCH-20261122-1 B-01: two unambiguous identities for the
+                    # still-owned source and its new sibling.
+                    MediaCandidate(
+                        "tmdb",
+                        "715",
+                        MediaType.MOVIE,
+                        "DialogPendingOwned",
+                        year=2033,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "716",
+                        MediaType.MOVIE,
+                        "DialogPendingSibling",
+                        year=2034,
                         genres=("Animation",),
                         countries=("JP",),
                     ),

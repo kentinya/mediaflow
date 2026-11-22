@@ -323,6 +323,19 @@ async function expectReadableBatch(
   }
 }
 
+async function expectBatchSelected(
+  card: Locator,
+  selected: number,
+): Promise<void> {
+  const summary = card
+    .getByRole("region", { name: "整批复核" })
+    .locator(".mf-organize-batch-summary");
+  await expect(summary).toBeVisible();
+  const row = summary.locator("> div").filter({ hasText: "将整理" });
+  await expect(row.locator("dt")).toHaveText("将整理");
+  await expect(row.locator("dd")).toHaveText(`${selected} 项`);
+}
+
 test("ten per-file candidate decisions lead to one exact ten-item Task handoff", async ({
   page,
   request,
@@ -490,7 +503,7 @@ test("ten per-file candidate decisions lead to one exact ten-item Task handoff",
   expect(executePosts()).toHaveLength(0);
 
   await card.getByRole("button", { name: /整批复核/ }).click();
-  await expect(page.getByText(/将整理 10 项/)).toBeVisible();
+  await expectBatchSelected(card, 10);
   await page.getByRole("button", { name: "确认整理 10 项" }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
@@ -775,7 +788,7 @@ test("a second confirmation on the same Task is reconciled from its own durable 
   ).toBeVisible();
   await card.getByRole("checkbox", { name: `纳入 ${secondFile}` }).uncheck();
   await card.getByRole("button", { name: /整批复核/ }).click();
-  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  await expectBatchSelected(card, 1);
   const executePosts = () =>
     commands.filter(
       (command) =>
@@ -859,7 +872,7 @@ test("a second confirmation on the same Task is reconciled from its own durable 
     },
   );
   await reopened.getByRole("button", { name: /整批复核/ }).click();
-  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/, {
     timeout: 30_000,
@@ -967,6 +980,102 @@ test("a second confirmation on the same Task is reconciled from its own durable 
   ).toEqual([]);
 });
 
+test("manual organize readability: a pending owned file beside a new sibling is counted on both review screens", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  const ownedFile = "DialogPendingOwned.2033.mkv";
+  const siblingFile = "DialogPendingSibling.2034.mkv";
+  const executeOrAnalyzePosts = (commands: readonly RecordedCommand[]) =>
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        (/\/operations\/organize\/previews\/[^/]+\/execute$/.test(
+          command.path,
+        ) ||
+          /\/operations\/organize\/discoveries\/[^/]+\/analyze$/.test(
+            command.path,
+          )),
+    );
+
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+
+  // First prepare A alone and leave the card after the plan links: A stays an
+  // admitted, still-unconfirmed source.  No file is executed.
+  await openDialogDirectory(page, ownedFile);
+  await selectFiles(page, [ownedFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const firstCard = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(firstCard).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const firstDiscoveryId = new URL(page.url()).searchParams.get(
+    "organizeDiscovery",
+  );
+  expect(firstDiscoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, firstDiscoveryId as string);
+  await expect(
+    firstCard.getByRole("heading", { name: /第 1 \/ 1 个/ }),
+  ).toBeVisible({ timeout: 30_000 });
+  await firstCard.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(firstCard).toHaveCount(0);
+  expect(executeOrAnalyzePosts(commands)).toHaveLength(0);
+
+  // The same two-file selection again: A is refused by the work that already
+  // owns it, while B is a fresh admitted source.
+  await selectFiles(page, [ownedFile, siblingFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  expect(discoveryId).not.toBe(firstDiscoveryId);
+
+  // The still-queued preparation names only the admitted range it expands, and
+  // keeps the refused selection in its own independently readable detail.
+  const scopeDetails = card.locator(".mf-organize-scope-details");
+  await expect(
+    scopeDetails.getByText("查看已受理范围（1 项）", { exact: true }),
+  ).toBeVisible();
+  await expect(scopeDetails).toContainText(siblingFile);
+  await expect(scopeDetails).not.toContainText(ownedFile);
+  const preparationRefused = card
+    .locator("details")
+    .filter({ hasText: "未受理的所选条目（1 项）" });
+  await preparationRefused.locator("summary").click();
+  await expect(preparationRefused).toContainText(ownedFile);
+  await expect(card).toContainText("未受理 1 项");
+
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+
+  // The batch's first screen accounts for both selected outcomes: one planned
+  // item and the refused sibling, without a silent drop.
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  const region = card.getByRole("region", { name: "整批复核" });
+  await expect(region).toBeVisible();
+  await expectBatchSelected(card, 1);
+  const summary = card.locator(".mf-organize-batch-summary");
+  await expect(
+    summary.locator("> div").filter({ hasText: "未纳入" }).locator("dd"),
+  ).toHaveText("0 项");
+  await expect(
+    summary.locator("> div").filter({ hasText: "未受理" }).locator("dd"),
+  ).toHaveText("1 项");
+  const batch = card.getByRole("region", { name: "本次确认的文件" });
+  await expect(batch).toContainText(siblingFile);
+  await expect(batch).not.toContainText(ownedFile);
+  const batchRefused = card.getByText("未受理的所选条目(1 项)");
+  await batchRefused.click();
+  await expect(card.getByText(ownedFile)).toBeVisible();
+  expect(executeOrAnalyzePosts(commands)).toHaveLength(0);
+});
+
 test("a real destination conflict is decided, re-analyzed and confirmed on the current file", async ({
   page,
   request,
@@ -1017,7 +1126,7 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   });
 
   await card.getByRole("button", { name: /整批复核/ }).click();
-  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
@@ -1117,7 +1226,7 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   expect(continuePosts).toHaveLength(1);
 
   await card.getByRole("button", { name: /整批复核/ }).click();
-  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
@@ -1447,7 +1556,7 @@ test("a missing metadata candidate is corrected on the current file and confirme
   expect(executePosts()).toHaveLength(0);
 
   await card.getByRole("button", { name: /整批复核/ }).click();
-  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
@@ -1621,7 +1730,7 @@ test("an unknown original submission is reconciled under a newer sibling summary
   await expect(siblingInclusion).toBeVisible();
   if (await siblingInclusion.isChecked()) await siblingInclusion.uncheck();
   await card.getByRole("button", { name: /整批复核/ }).click();
-  await expect(card.getByText(/将整理 1 项/)).toBeVisible();
+  await expectBatchSelected(card, 1);
   const executePosts = () =>
     commands.filter(
       (command) =>
@@ -1915,6 +2024,7 @@ test("manual organize readability: a 100-file batch shows 90 selected, 10 unsele
   mkdirSync(READABILITY_OUTPUT, { recursive: true });
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await connect(page);
+  const commands = recordCommands(page);
   const { card } = await openReadabilityBatch(page, request, "directory");
   await expect(
     card.getByRole("heading", { name: /第 1 \/ 100 个/ }),
@@ -1929,11 +2039,25 @@ test("manual organize readability: a 100-file batch shows 90 selected, 10 unsele
   const blockedConfirm = card.getByRole("button", {
     name: `确认整理 ${READABILITY_READY} 项`,
   });
-  if (await blockedConfirm.isDisabled()) {
-    await expect(card.locator(".mf-organize-confirm-blocker")).toContainText(
-      "暂不能确认：",
-    );
-  }
+  await expect(blockedConfirm).toBeDisabled();
+  const blocker = card.locator(".mf-organize-confirm-blocker");
+  await expect(blocker).toContainText(
+    `暂不能确认：本次方案有 ${READABILITY_UNMATCHED} 个文件未就绪或已失效`,
+  );
+  await expect(blocker).toContainText("先返回逐项复核处理这些文件");
+  await expect(blocker).not.toContainText("已被更新取代");
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        (/\/operations\/organize\/previews\/[^/]+\/execute$/.test(
+          command.path,
+        ) ||
+          /\/operations\/organize\/discoveries\/[^/]+\/analyze$/.test(
+            command.path,
+          )),
+    ),
+  ).toHaveLength(0);
 
   const batch = card.getByRole("region", { name: "本次确认的文件" });
   await expect(batch.locator(".mf-organize-batch-list > li")).toHaveCount(
@@ -1950,6 +2074,9 @@ test("manual organize readability: a 100-file batch shows 90 selected, 10 unsele
     `未纳入本次确认的文件(${READABILITY_UNMATCHED} 项)`,
   );
   await skipped.click();
+  await expect(card.locator(".mf-organize-skipped")).toContainText(
+    "本方案中该文件已失效；返回逐项复核查看原因",
+  );
   for (let index = 1; index <= READABILITY_UNMATCHED; index += 1) {
     await expect(
       card.getByRole("button", {
@@ -1989,6 +2116,31 @@ test("manual organize readability: a 100-file batch shows 90 selected, 10 unsele
     path: `${READABILITY_OUTPUT}/100-short.png`,
     fullPage: false,
   });
+
+  // The unselected row locates the exact stale file back in item review and
+  // starts no execution or re-analysis.
+  const reviewMark = commands.length;
+  await card
+    .getByRole("button", { name: "查看 Unmatched001.2011.mkv" })
+    .click();
+  await expect(
+    card.getByRole("heading", { name: /第 89 \/ 100 个/ }),
+  ).toBeVisible();
+  await expect(card.getByText("Unmatched001.2011.mkv").first()).toBeVisible();
+  expect(
+    commands
+      .slice(reviewMark)
+      .filter(
+        (command) =>
+          command.method === "POST" &&
+          (/\/operations\/organize\/previews\/[^/]+\/execute$/.test(
+            command.path,
+          ) ||
+            /\/operations\/organize\/discoveries\/[^/]+\/analyze$/.test(
+              command.path,
+            )),
+      ),
+  ).toHaveLength(0);
 });
 
 test("a 101-file directory settles as a failed preparation and the same source re-enters a small batch", async ({
@@ -2185,7 +2337,7 @@ test("a 101-file directory settles as a failed preparation and the same source r
   ).toBeVisible({ timeout: 30_000 });
   await expect(freshCard.getByText("纳入本次整理").first()).toBeVisible();
   await freshCard.getByRole("button", { name: /整批复核/ }).click();
-  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  await expectBatchSelected(card, 1);
   expect(await stateFor(PRIMARY_LIMIT_FILE)).toEqual({
     sourceExists: true,
     destinationTargets: [],
