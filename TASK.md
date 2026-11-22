@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: B REVIEW TASK57.1
+Next Action: DEVELOPER FIXES TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: B REVIEW TASK57.1
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -372,6 +372,50 @@ Slice 57 的 RO-1 已通过本轮设置、会话恢复、改密和账号切换�
 - 剩余风险：完整 T4 Python、真实 Compose、候选镜像、wheel、真实 Scheduler／Worker
   账号权限执行验收仍由 B 执行；本轮未重跑其余真实 Python 浏览器 spec。真实 harness 仍保留
   仅供直接 API 夹具断言使用的 focused principal，浏览器旅程已全部使用数据库账号会话。
+
+#### B 复核结果
+
+```text
+Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..a0ec018c16946cf60de0b1d36bb377cc10e78a4a
+Implementation: 4eaeace9b1fba53691f232d26c7e0a85875a4981
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1｜新镜像启动时改写了上一版本的数据库。** 用 Task Base 的仓库生成器和真实 API
+  启动并停止上一版本，保留它创建的 SQLite 文件。用本候选生成最小启动配置，在 Compose 中
+  挂载这份数据目录的隔离副本。新 API 正常监听，`/health` 返回 200 并显示等待首位管理员。
+  SQLite 的 runtime 版本由 `58` 变为 `59`，文件的 SHA-256 随之改变。Slice 57 的部署
+  边界要求在启动前拒绝这份库、保留原文件，并指引部署者使用新空目录。
+
+#### Developer 修正指导
+
+1. 在现有部署预检的数据库适用性判断中落实 Slice 57 的范围。启动只接收空库和本版本创建的
+   数据库。使用上一版本生成器和 API 创建的库时，在初始化仓库或启动服务前退出，说明当前
+   数据目录不适用，指引使用新空目录。当前预检沿用最低 runtime 版本 `58` 的通用判断，
+   仓库打开后补建认证表并将版本写成 `59`。
+2. 在 `test_container_deployment.py` 或现有预检用例中覆盖真实上一版数据库的拒绝，核对
+   退出结果、提示和文件哈希。覆盖空库启动以及本版本创建的库带着账号和 Active 重启后仍可用。
+   同步 `docs/deployment.md` 的部署边界与失败后的操作指引。
+3. Developer 执行 `.venv/bin/python -m unittest discover -s tests -p test_container_deployment.py`
+   和 `.venv/bin/python -m unittest discover -s tests -p test_container_probe.py`，在候选
+   镜像上复测上述启动旅程。B 负责修正候选的完整验收。
+
+上轮两项回归已恢复。Python 全量执行 2,344 项，7 项跳过，其余通过。Web 单测 1,601 项、
+Node 浏览器 279 项、真实 Python/SQLite 浏览器 61 项通过。本轮核对了任务中心登录后只读刷新、
+重登恢复查询及原任务、整理请求丢回包后的结果核对，以及数据库账号撤权的 Python 回归。
+生产 Web 构建、Python/Web 静态检查、示例配置校验、wheel 构建和源码目录外安装冒烟通过。
+候选镜像 `sha256:4510c185ebb29e36c99d00d52683e2119c0f4390fe37845b026ff0bdd793d46c`
+通过了 Compose 空库四服务启动、首位管理员创建、空配置发布、API 重启后恢复书签会话、
+网页改密、主机重置和旧会话撤销。旧环境令牌访问任务接口返回 `401`。此前浏览器尝试的等待
+超时和设置码解析失败保留日志，后续使用主机 CLI 的 JSON 输出从新空库重跑成功。
+
+Slice 57 的 RO-1 首位设置、会话恢复、改密和重置已通过上述旅程。RO-2 用户管理与 API
+令牌仍待后续 Task。RO-3 的旧库启动拒绝尚未通过。实作 Scheduler／Worker 撤权执行和
+剩余发布安全验收待修正候选。原始证据位于本地
+`.git/validation-evidence/a0ec018c16946cf60de0b1d36bb377cc10e78a4a/b-review/`，
+其中 `compose-prior-release-startup.log` 记录旧库启动及文件哈希。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
