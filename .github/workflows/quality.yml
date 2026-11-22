@@ -38,10 +38,8 @@ jobs:
         run: python -m compileall -q mediaflow tests scripts
       - name: Dependency consistency
         run: python -m pip check
-      - name: Configuration examples
-        run: |
-          mediaflow --config config/strategy.example.json config validate
-          mediaflow --config config/mediaflow.phase13.2.example.json config validate
+      - name: Configuration example
+        run: mediaflow --config config/strategy.example.json config validate
       - name: Forbidden runtime dependency audit
         run: test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"
 

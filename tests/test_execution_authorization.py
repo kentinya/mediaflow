@@ -97,9 +97,7 @@ class RetiredRemoteExecutionTests(unittest.TestCase):
                 repository.close()
 
     def test_historical_remote_execution_setting_stays_readable_without_authority(self):
-        document = json.loads(
-            Path("config/mediaflow.phase13.2.example.json").read_text(encoding="utf-8")
-        )
+        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as directory:
             document["persistence"] = {"databasePath": str(Path(directory, "runtime.sqlite3"))}
             document["api"]["remoteExecution"] = {

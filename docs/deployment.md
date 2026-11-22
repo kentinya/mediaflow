@@ -58,7 +58,7 @@ installation, health, restart, backup, restore and failure-recovery procedures.
   `web/package-lock.json`; no host Node installation is needed. The build
   requires registry access to pull the base images and install the locked
   frontend dependencies.
-- A deployment configuration produced from the canonical example:
+- A generated configuration that tells each service which SQLite database to open.
 
 ```bash
 python3 scripts/make_deployment_config.py --output config/mediaflow.json
@@ -85,8 +85,8 @@ or select a group in `常规设置` and choose `应用更改`. Each action valid
 runs the applicable checks and publishes atomically. A failed check or stale baseline preserves the
 published configuration and your input. If a response is lost, the page verifies the original request.
 
-If you already have a Local Storage layout, also render the canonical example as a
-managed configuration *input*:
+If you already have a Local Storage layout, generate a managed configuration input from the
+repository's example. [Example configuration](../config/strategy.example.json)
 
 ```bash
 python3 scripts/make_deployment_config.py \
@@ -94,13 +94,11 @@ python3 scripts/make_deployment_config.py \
   --configuration-output config/mediaflow.activation.json
 ```
 
-The second document rewrites the example's Local Storage roots to
-`/media/incoming` and `/media/organized`, so it is only usable together with the
-optional media mount overlay below. It never carries deployment startup authority:
-the database locator stays in `mediaflow.json`, and the imported document binds
-deployment authority from the receiving bootstrap. `mediaflow.json` keeps `/data/mediaflow.sqlite3` and the
-configuration input adds `/data/history.jsonl`. `config/mediaflow.json` and the
-activation input are Git-ignored.
+The second document sets the Local Storage roots to `/media/incoming` and `/media/organized`.
+Use the media mount overlay below to make those directories available. The input uses
+`/data/history.jsonl` for history and gets its database locator from the receiving bootstrap.
+Both generated files are Git-ignored. To use a remote Storage template from the example, follow
+the [Storage configuration guide](configuration.md#storage-configuration-model).
 
 After `docker compose up -d` has started the project (with the media overlay when
 the deployment uses Local Storage), publish the generated input directly through

@@ -123,22 +123,20 @@ def smoke(wheel: Path, project: Path) -> None:
             cwd=root,
             environment=environment,
         )
-        configurations = []
-        for name in ("strategy.example.json", "mediaflow.phase13.2.example.json"):
-            target = root / name
-            configured_copy(project / "config" / name, target, database)
-            configurations.append(target)
-            run(
-                [str(mediaflow), "--config", str(target), "config", "validate"],
-                cwd=root,
-                environment=environment,
-            )
+        example = project / "config" / "strategy.example.json"
+        configuration = root / example.name
+        configured_copy(example, configuration, database)
+        run(
+            [str(mediaflow), "--config", str(configuration), "config", "validate"],
+            cwd=root,
+            environment=environment,
+        )
         backup = root / "backup.sqlite3"
         run(
             [
                 str(mediaflow),
                 "--config",
-                str(configurations[0]),
+                str(configuration),
                 "database",
                 "backup",
                 "--output",
@@ -149,9 +147,7 @@ def smoke(wheel: Path, project: Path) -> None:
         )
         restored = root / "restored-runtime.sqlite3"
         restore_configuration = root / "restore.json"
-        configured_copy(
-            project / "config" / "strategy.example.json", restore_configuration, restored
-        )
+        configured_copy(example, restore_configuration, restored)
         lease_script = (
             "import sys; from mediaflow.infrastructure.runtime_lease import "
             "RuntimeDatabaseLease,RuntimeLeaseMode; "
@@ -221,7 +217,7 @@ def smoke(wheel: Path, project: Path) -> None:
             [
                 str(mediaflow),
                 "--config",
-                str(configurations[0]),
+                str(configuration),
                 "database",
                 "verify",
                 str(backup),

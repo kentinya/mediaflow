@@ -925,6 +925,7 @@ class ContainerArtifactTests(unittest.TestCase):
         # input is the same portable document the managed export produces, so
         # importing it binds the receiving deployment's own locator/identity.
         self.assertNotIn("persistence", document)
+        self.assertNotIn("_examples", document)
         self.assertNotIn("principals", document.get("api", {}))
         self.assertEqual(document["historyPath"], "/data/history.jsonl")
         self.assertEqual(document["storages"][0]["rootPath"], "/media/incoming")
@@ -997,14 +998,13 @@ class ContainerArtifactTests(unittest.TestCase):
             self.assertEqual(published["status"], "active")
 
     def test_openlist_example_imports_through_documented_first_setup(self) -> None:
-        """The shipped OpenList example imports exactly as the guide describes.
+        """The shipped OpenList object can be imported with the generated input.
 
-        An administrator appends the published ``storage`` object to the
-        generated ``mediaflow.activation.json`` and publishes it with
-        ``config publish --file``.  The retired top-level connection spelling —
-        the shape this example used to ship — must fail closed before anything
-        is persisted, naming the retired field and the current
-        ``Storage.options`` location.  The same instance then accepts the
+        An administrator copies ``_examples.storages.openlist`` into
+        the generated ``mediaflow.activation.json`` and publishes it with
+        ``config publish --file``. The retired top-level connection spelling
+        is rejected before publication with a message pointing to
+        ``Storage.options``. The same instance then accepts the
         corrected input, keeps the two standard Storages and the example's
         original rootPath/readOnly/token reference, and publishes exactly one
         Active revision.  The OpenList Storage is not referenced by a library,
@@ -1032,8 +1032,8 @@ class ContainerArtifactTests(unittest.TestCase):
             bootstrap["persistence"] = {"databasePath": database}
             bootstrap_path.write_text(json.dumps(bootstrap, ensure_ascii=False), encoding="utf-8")
             example = json.loads(
-                (ROOT / "config" / "alist.example.json").read_text(encoding="utf-8")
-            )
+                (ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8")
+            )["_examples"]["storages"]["openlist"]
             deployment = json.loads(configuration_path.read_text(encoding="utf-8"))
             deployment["storages"][0]["rootPath"] = str(root / "incoming")
             deployment["storages"][1]["rootPath"] = str(root / "organized")
@@ -1066,7 +1066,7 @@ class ContainerArtifactTests(unittest.TestCase):
                 return json.loads(stdout)
 
             # The retired spelling must fail closed with the exact correction.
-            retired = dict(example["storage"])
+            retired = dict(example)
             retired.update(retired.pop("options"))
             code, _, error = run(["config", "publish", "--file", str(candidate_with(retired))])
             self.assertEqual(code, 2)
@@ -1078,9 +1078,7 @@ class ContainerArtifactTests(unittest.TestCase):
             self.assertEqual(failed["revisions"], [])
 
             # The corrected shipped shape continues on the same instance.
-            code, stdout, error = run(
-                ["config", "publish", "--file", str(candidate_with(example["storage"]))]
-            )
+            code, stdout, error = run(["config", "publish", "--file", str(candidate_with(example))])
             self.assertEqual(code, 0, error)
             imported = json.loads(stdout)
             self.assertEqual(imported["status"], "active")
@@ -1108,7 +1106,7 @@ class ContainerArtifactTests(unittest.TestCase):
             storages = payloads[0]["storages"]
             self.assertEqual(
                 storages,
-                [*deployment["storages"], example["storage"]],
+                [*deployment["storages"], example],
             )
             self.assertEqual(storages[0]["rootPath"], str(root / "incoming"))
             self.assertIs(storages[0]["readOnly"], True)

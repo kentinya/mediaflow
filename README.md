@@ -80,6 +80,7 @@ export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
 | 配置 | 用途 |
 | --- | --- |
 | `config/mediaflow.json` | 指定 SQLite 路径等启动信息，不保存账号或登录令牌。 |
+| [`config/strategy.example.json`](config/strategy.example.json) | 随仓提供的业务配置示例，包含本地整理策略和可按需选用的远程存储模板。可用部署脚本生成待发布的配置。 |
 | `.env.mediaflow` | Compose 使用的环境文件，仅存放可选的服务凭据。 |
 | `TMDB_ACCESS_TOKEN` | 使用 TMDB 探索或元数据匹配时设置。 |
 | Web「系统设置」 | 初始化、检查和直接应用配置。运行服务读取已发布快照。 |

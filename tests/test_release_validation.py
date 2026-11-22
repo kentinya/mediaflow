@@ -21,7 +21,6 @@ class ReleaseValidationTests(unittest.TestCase):
             "python -m compileall -q mediaflow tests scripts",
             "python -m pip check",
             "config/strategy.example.json config validate",
-            "config/mediaflow.phase13.2.example.json config validate",
             "scripts/wheel_smoke_test.py",
         ):
             self.assertIn(command, workflow)

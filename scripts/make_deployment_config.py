@@ -60,6 +60,7 @@ def make_deployment_configuration() -> dict:
     source = project / "config" / "strategy.example.json"
     document = json.loads(source.read_text(encoding="utf-8"))
     document = copy.deepcopy(document)
+    document.pop("_examples")
     document.pop("persistence", None)
     api = document.get("api")
     if isinstance(api, dict):

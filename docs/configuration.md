@@ -35,28 +35,32 @@ before any business object exists. Generate the same shape with
 `python3 scripts/make_deployment_config.py --output config/mediaflow.json`; add
 `--database-path PATH` only when the durable locator differs from `/data/mediaflow.sqlite3`.
 
-`config/strategy.example.json` is the complete canonical business example. It is **not** a startup
-bootstrap: its example paths and deployment identity are not portable. Render its portable managed
-input, edit its Local Storage roots and library paths for the target deployment, and import that
-as a checked publication:
+The repository's example contains a complete Local Storage strategy and optional remote Storage and
+organize policy templates under `_examples`. Generate a minimal bootstrap and a separate
+configuration input. [Example configuration](../config/strategy.example.json)
 
 ```bash
 python3 scripts/make_deployment_config.py \
   --output config/mediaflow.json \
   --database-path "$PWD/.mediaflow/mediaflow.sqlite3" \
   --configuration-output config/mediaflow.activation.json
+```
+
+Set the input's Local Storage roots and library paths to existing directories before publishing.
+
+To use a template, copy its object from `_examples` into the matching top-level array in the
+generated input and update its settings. Set the library's `storageId` to the new Storage ID.
+To use a new organize policy, set `organizePolicy` on the corresponding `recognitionTypePolicies`
+entry to the policy ID.
+
+```bash
 mediaflow --config config/mediaflow.json config publish \
   --file config/mediaflow.activation.json
 ```
 
-The bootstrap named by `--config` (or by an exported `MEDIAFLOW_CONFIG`) supplies the deployment
-locator and authority for publication; without one the command refuses to run. The block uses the
-host-local durable locator so this command and the service opened later share one database; in the
-container layout omit `--database-path` and keep the default `/data/mediaflow.sqlite3`.
-
-The generated input omits the database locator and any retired API identity, so import binds the
-receiving deployment's own authority. Unrelated empty families are legal and create no
-capability/defaults; populated references that point at missing objects fail validation.
+The bootstrap named by `--config` or `MEDIAFLOW_CONFIG` selects the database for publication. Use
+the same bootstrap when you start the services. For the container layout, omit
+`--database-path` to use the default `/data/mediaflow.sqlite3`.
 
 The command validates the candidate, binds deployment authority and publishes atomically. It runs
 the same applicable read-only checks as the Web form: read-only checks for every referenced enabled
@@ -376,6 +380,12 @@ The runtime loader supports these Storage types:
 | Cloudflare R2 | Runtime adapter and JSON loading | Guided form, secret references and read-only setup check |
 | Generic S3-compatible | Runtime adapter and JSON loading | Guided form, secret references and read-only setup check |
 
+The Local examples are in the top-level `storages` array. Templates for the other providers are
+under `_examples.storages`. Replace the example hosts, endpoint or bucket as applicable and set the
+named environment variables on the service. The AWS S3 template includes `options.sessionTokenEnv`
+for temporary AWS credentials. Remove that field if you use a long-lived key pair.
+[Example configuration](../config/strategy.example.json)
+
 Adapters implement the Storage port and report capabilities. Unsupported Move, Copy, Delete,
 HardLink or SoftLink operations fail explicitly; there is no implicit fallback. The managed object
 editor does not probe or mutate a Storage while applying its checked candidate. The Files-page
@@ -411,15 +421,14 @@ new submission. For genuine setup-required state, the Storage page offers the cu
 Settings (`/configuration`) empty-configuration handoff and returns to refreshed Storage truth. No
 direct database edit, configuration reset or physical-file migration is required.
 
-[config/alist.example.json](../config/alist.example.json) is the secret-free OpenList Storage
-template. Append its `storage` object to the generated `mediaflow.activation.json`'s `storages`,
-replace `options.baseUrl` with the real service address, and provide `OPENLIST_TOKEN` only in the
-deployment environment where the Storage is actually checked or used. Connection fields belong
-under `Storage.options`; the retired top-level spelling fails import with the correction. Import
-reuses the `config publish --file` command above and validates and publishes the complete document
-directly. An unreferenced OpenList template is not contacted; once a ResourceLibrary references the
-Storage, the same read-only Storage check runs as part of publication and needs that deployment's
-address and credential.
+To configure OpenList from JSON, copy the object at `_examples.storages.openlist` into the generated
+`mediaflow.activation.json`'s top-level `storages` array. Set `rootPath` and `options.baseUrl`
+for your service, and provide `OPENLIST_TOKEN` in the deployment environment. Connection fields
+belong under `Storage.options`. Set the ResourceLibrary's `storageId` to the new OpenList Storage ID
+and set `storagePath` relative to its root. Run the same `config publish --file` command above.
+Publication checks the connection for a referenced OpenList Storage. If the check fails, correct
+the endpoint or credential and publish the same input again.
+[Example configuration](../config/strategy.example.json)
 
 ### OpenList metadata and content reads
 
