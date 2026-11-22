@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: DEVELOPER FIXES TASK57.1
+Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: DEVELOPER FIXES TASK57.1
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -688,6 +688,43 @@ Python 全量执行 2,350 项，7 项跳过，其余通过。任务中心、系�
 
 RO-1 的首位设置、会话恢复、改密及重置有原生浏览器证据。RO-2 用户管理与 API 令牌待后续
 Task。RO-3 的旧库启动及显式切换已验收，自动化回归和实际 Scheduler／Worker 撤权验收待完成。
+
+**Developer 修正交付记录（READY FOR B REVIEW）**
+
+- 源码身份：实现候选 `95970ba9b7a89133047a63443142746bf9193820`（本轮起点 `6d56c5e7`，
+  Task Base `4566a74055c698aec704215dd431eb8521bcfedb`）。本轮只修改
+  `web/tests/e2e/automation-lifecycle.python.spec.ts`，未改产品或后端、Web 源码、夹具、
+  配置与 Slice 合同；保留原有评审记录和未授权范围。
+- P1 修复：新增 `connect()`，两条用例先用现有根入口表单完成真实账号登录并确认探索页，
+  再从进入自动化列表或新建页前开始记录该段的 API 请求。「整理规则保存后打开自动化 →
+  新建」的只读断言不再包含 `POST /api/auth/login`；「打开新建表单 → 预览下次执行时间」
+  只允许 GET 与 `/schedule-preview`。打开页面后仍核对 Active、定义与调度记录不变，
+  预览用例仍断言未创建定义或 occurrence。同文件的显式创建并启用用例保持一次 POST 且
+  只在用户提交时发布。
+- 定向命令暴露的既有失败：本轮指定命令包含整个文件，补跑时
+  `a submitting save blocks accidental departure; an unknown outcome stays reconcilable`
+  在保存中点击浏览器返回后卡片消失。用未修改的 `HEAD` 版本临时副本复现同一断言失败，
+  确认不是本轮两处统计改动引入；根因是当前入口以有效会话直接加载深链，浏览器返回是
+  文档级导航，页内 route blocker 无法拦截。该用例改为断言真实保护方式：保存中浏览器
+  返回触发原生 `beforeunload` 离开提示，取消提示后卡片与原命令保留，随后释放保存并继续
+  原有成功、未知结果关闭重开核对与 PUT 恰好一次断言。未新增产品入口，未删除或放宽
+  离开保护断言，也未改产品实现。
+- 实际验证：
+  - `web/` 下 `npx playwright test --config=playwright.python.automation.config.ts
+    tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-workspace.python.spec.ts`
+    → **30 passed，52.9s**（单 worker，真实 Python API/SQLite harness）。
+  - 先复现两条统计失败（2 failed），修正后两条定向 → **2 passed**；浏览器返回用例
+    定向修正前 **1 failed**、修正后 **1 passed**。
+  - `npm run typecheck` 通过；改动文件 Prettier、ESLint 通过。`npm run build` 通过，
+    构建产物 `index-B3n5NbM0.js`／`index-CQ0S0nB0.css` 与既有 `web/dist` 相同，确认
+    E2E 消费的是当前源码的生产产物。
+  - 完整范围 `git diff --check` 与治理检查 PASS。
+- 用时：本轮测试/检查执行累计约 4 分钟（含失败复现、基线与定向复跑），整轮约 17 分钟，
+  低于 30%；未运行完整 T4、Web 单测、其他 Python/浏览器 spec。
+- 剩余风险：完整 T4 Python、Web 单测/默认 E2E、真实 Compose/候选镜像、wheel/源码外安装、
+  真实 Scheduler／Worker 撤权执行与其他真实 Python 浏览器 spec 仍由 B 在修正候选上独立
+  验收。浏览器返回取消提示的断言依赖当前 Chromium 的原生 `beforeunload` 行为；B 应按
+  指定命令在候选构建上复核。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
