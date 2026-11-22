@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: DEVELOPER FIXES TASK57.1
+Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: DEVELOPER FIXES TASK57.1
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -416,6 +416,41 @@ Slice 57 的 RO-1 首位设置、会话恢复、改密和重置已通过上述�
 剩余发布安全验收待修正候选。原始证据位于本地
 `.git/validation-evidence/a0ec018c16946cf60de0b1d36bb377cc10e78a4a/b-review/`，
 其中 `compose-prior-release-startup.log` 记录旧库启动及文件哈希。
+
+**Developer 修正交付记录（READY FOR B REVIEW）**
+
+- 实现候选：`5d7fcfb0f708c0dab3aa771c352310f0d96fdd51`（Task Base
+  `4566a74055c698aec704215dd431eb8521bcfedb`）。保留原 Slice 合同、原评审记录和
+  未授权范围；本记录只覆盖 B 本轮指出的上一版本数据库启动阻塞。
+- 根因与修复：适用性判断只检查最低 runtime 版本 `58`，因此上一版本的 `58` 库被接受，
+  仓库随后补建认证表并把版本写成 `59`。现在启动边界只接受空库或当前 runtime schema
+  创建的库；低于当前版本的运行时库在初始化仓库、容器预检或本机 API 启动前拒绝，错误
+  给出 found/expected schema，并指引使用新的空数据目录。拒绝发生在任何建表或标记写入
+  之前，原文件字节保持不变。容器预检、健康探针、本机 API 与配置/任务仓库共用同一判断。
+  配置 schema 11 的显式 data switch 仍限 runtime schema 缺失或已当前的库；旧 runtime
+  库不再进入该切换。部署、配置、架构与发布边界文档已同步。
+- 定向 Python：`test_container_deployment` 17、`test_container_probe` 12、
+  `test_task_persistence` 22、`test_configuration_status` 15、`test_api_credentials` 8、
+  `test_web_account_auth` 15、`test_management_setup` 17、`test_sqlite_restore` 5、
+  `test_api_security` 13，共 124 项通过。新增用例覆盖上一版本 runtime 库的预检、仓库、
+  本机 API 拒绝与文件哈希不变，以及空库和带账号/Active 的当前库同版本重开。
+- 真实上一版本库：从 Task Base `4566a740` 的旧代码创建 runtime `58` 库（无认证表），
+  候选预检、仓库与本机 `api serve` 均在写入前拒绝；错误含 found/expected 与新空目录
+  指引，库 SHA-256 保持
+  `22c825ef4a764bfbbd84476202c436feec99547643846c2eddfe4f024c6cbe35`。
+- 候选镜像 `mediaflow:task571-prior-db-fix`
+  （`sha256:09cb1fe4b9a516ac931ba6c54429896e29e1b340764c945c9116d782d9d657fb`）：
+  直接以生产入口启动上一版本库时退出 `1`，预检给出同一拒绝和新空目录指引，文件哈希不变；
+  空库启动后 `/health` 返回等待首位管理员与业务配置，库标记为 configuration 12 /
+  runtime 59；当前库带管理员和 Active 启动、登录、停止并以同一数据目录重启后，`/health`
+  与实际登录会话仍归属该管理员，Active 仍为 1 条。
+- 静态检查：改动 Python 文件 `ruff format --check`、`ruff check`、`compileall`、
+  完整范围 `git diff --check` 与治理检查 PASS。未改 Web 产物或前端源码，本轮未运行 Web
+  单测、Lint 或浏览器用例。
+- 剩余风险：完整 T4、四服务真实 Compose、wheel/源码外安装、真实 Scheduler／Worker
+  权限执行、生产 Web 浏览器旅程及其他真实 Python spec 仍由 B 在修正候选上独立验收。
+  Developer 本轮只做了单容器生产入口复测，未运行完整 Compose 矩阵。证据位于本地
+  `.git/validation-evidence/task57.1-prior-db-recheck/`。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
