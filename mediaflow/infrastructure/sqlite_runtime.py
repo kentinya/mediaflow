@@ -884,6 +884,21 @@ def _safe_json_object(raw: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def _legacy_discovery_error(raw: object) -> object:
+    """Read the retired positional ``False`` admission error as "no error".
+
+    Older Files admissions passed ``False`` into the discovery ``error`` field.
+    SQLite's TEXT affinity stored that boolean as the text ``0``, which a read
+    then presented as a genuine failure message.  Only that exact legacy
+    sentinel (and the SQLite boolean/integer forms it can take) maps to no
+    error; every real recorded failure string is returned unchanged.
+    """
+
+    if raw is None or raw is False or raw == 0 or raw == "0":
+        return None
+    return raw
+
+
 def _summarize_handling(entries, coverage=None) -> dict:
     """Summarize exactly-linked follow-up handling for one original run.
 
@@ -14841,7 +14856,7 @@ class SQLiteTaskRepository:
                     "claimExpiresAt": row["claim_expires_at"],
                     "attempts": row["attempts"],
                     "cancelRequested": bool(row["cancel_requested"]),
-                    "error": row["error"],
+                    "error": _legacy_discovery_error(row["error"]),
                     "createdAt": row["created_at"],
                     "updatedAt": row["updated_at"],
                     "nextObservationAt": row["next_observation_at"],

@@ -5,6 +5,7 @@ import {
   type Locator,
   type Page,
 } from "@playwright/test";
+import { mkdirSync } from "node:fs";
 import { accountForToken, submitSignIn } from "./auth";
 
 /**
@@ -29,6 +30,17 @@ const DIALOG_FILE = (index: number) =>
 const UNKNOWN_FILE = "DialogUnknown.2021.mkv";
 const PRIMARY_LIMIT_DIRECTORY = "PrimaryLimit";
 const PRIMARY_LIMIT_FILE = "DialogLimit.2032.mkv";
+const READABILITY_DIRECTORY = "Readability";
+const READABILITY_ONE_DIRECTORY = "ReadabilityOne";
+const READABILITY_TEN_DIRECTORY = "ReadabilityTen";
+const READABILITY_ONE_FILE = "ReadableOne.2011.mkv";
+const READABILITY_LONG_CHINESE =
+  "这是一个非常长的中文电影文件名 用于验证窄屏排版是否正确显示完整标题.2011.mkv";
+const READABILITY_LONG_ENGLISH =
+  "An Extremely Long English Movie Filename For Readability Verification.2011.mkv";
+const READABILITY_READY = 90;
+const READABILITY_UNMATCHED = 10;
+const READABILITY_OUTPUT = "test-results/manual-organize-readability";
 const PRIMARY_LIMIT_MESSAGE =
   "本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。";
 const PRIMARY_LIMIT_WAITING =
@@ -168,6 +180,146 @@ async function selectFiles(
 ): Promise<void> {
   for (const file of files) {
     await page.getByRole("checkbox", { name: `选择 ${file}` }).check();
+  }
+}
+
+async function openReadabilityDirectory(
+  page: Page,
+  directory: string,
+  expectedFile: string,
+): Promise<void> {
+  await page.getByRole("link", { name: "Files", exact: true }).click();
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
+  await page
+    .getByRole("button", { name: /source/ })
+    .first()
+    .click();
+  await expect(page.getByRole("table")).toBeVisible();
+  await page.getByRole("button", { name: directory, exact: true }).click();
+  await expect(
+    page.getByRole("checkbox", { name: `选择 ${expectedFile}` }),
+  ).toBeVisible();
+}
+
+async function openReadabilityBatch(
+  page: Page,
+  request: APIRequestContext,
+  options:
+    | {
+        readonly directory: string;
+        readonly files: readonly string[];
+      }
+    | "directory",
+): Promise<{ readonly card: Locator; readonly discoveryId: string }> {
+  if (options === "directory") {
+    await page.getByRole("link", { name: "Files", exact: true }).click();
+    await expect(page).toHaveURL(/\/resourcelib\/files/);
+    await page
+      .getByRole("button", { name: /source/ })
+      .first()
+      .click();
+    await expect(page.getByRole("table")).toBeVisible();
+    await page
+      .getByRole("checkbox", {
+        name: `选择 ${READABILITY_DIRECTORY}`,
+        exact: true,
+      })
+      .check();
+  } else {
+    await openReadabilityDirectory(page, options.directory, options.files[0]!);
+    await selectFiles(page, options.files);
+  }
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  return { card, discoveryId: discoveryId as string };
+}
+
+async function expectReadableBatch(
+  page: Page,
+  card: Locator,
+  expected: { readonly selected: number; readonly skipped: number },
+): Promise<void> {
+  const summary = card.locator(".mf-organize-batch-summary");
+  await expect(summary).toBeVisible();
+  const facts = await summary
+    .locator("> div")
+    .evaluateAll((rows) =>
+      Object.fromEntries(
+        rows.map((row) => [
+          row.querySelector("dt")?.textContent ?? "",
+          row.querySelector("dd")?.textContent ?? "",
+        ]),
+      ),
+    );
+  expect(facts).toMatchObject({
+    将整理: `${expected.selected} 项`,
+    未纳入: `${expected.skipped} 项`,
+  });
+  const impact = card.locator(".mf-organize-impact");
+  await expect(impact).toBeVisible();
+  await expect(impact).toContainText("移动");
+  await expect(impact).toContainText("来源位置不再保留");
+  await card.locator(".mf-organize-dialog-body").evaluate((element) => {
+    element.scrollTop = 0;
+  });
+
+  const metrics = await page.evaluate(() => {
+    const documentRoot = document.documentElement;
+    const cardElement = document.querySelector<HTMLElement>(
+      ".mf-organize-dialog",
+    );
+    const body = document.querySelector<HTMLElement>(
+      ".mf-organize-dialog-body",
+    );
+    const list = document.querySelector<HTMLElement>(".mf-organize-batch-list");
+    const bodyRect = body?.getBoundingClientRect();
+    const summaryRect = document
+      .querySelector<HTMLElement>(".mf-organize-batch-summary")
+      ?.getBoundingClientRect();
+    const impactRect = document
+      .querySelector<HTMLElement>(".mf-organize-impact")
+      ?.getBoundingClientRect();
+    return {
+      documentOverflow: documentRoot.scrollWidth - window.innerWidth,
+      cardOverflow: cardElement
+        ? cardElement.scrollWidth - cardElement.clientWidth
+        : 0,
+      bodyOverflowY: body ? getComputedStyle(body).overflowY : "",
+      listOverflowY: list ? getComputedStyle(list).overflowY : "",
+      listScrolls: list ? list.scrollHeight > list.clientHeight + 1 : false,
+      bodyScrolls: body ? body.scrollHeight > body.clientHeight + 1 : false,
+      summaryInBody:
+        bodyRect !== undefined &&
+        summaryRect !== undefined &&
+        impactRect !== undefined &&
+        summaryRect.top >= bodyRect.top - 1 &&
+        summaryRect.bottom <= bodyRect.bottom + 1 &&
+        impactRect.top >= bodyRect.top - 1 &&
+        impactRect.bottom <= bodyRect.bottom + 1,
+      rects: {
+        bodyTop: bodyRect?.top,
+        bodyBottom: bodyRect?.bottom,
+        summaryTop: summaryRect?.top,
+        summaryBottom: summaryRect?.bottom,
+        impactTop: impactRect?.top,
+        impactBottom: impactRect?.bottom,
+        scrollTop: body?.scrollTop,
+      },
+    };
+  });
+  expect(metrics.documentOverflow).toBeLessThanOrEqual(1);
+  expect(metrics.cardOverflow).toBeLessThanOrEqual(1);
+  expect(["auto", "scroll"]).toContain(metrics.bodyOverflowY);
+  expect(metrics.listScrolls).toBe(false);
+  expect(["visible", "clip"]).toContain(metrics.listOverflowY);
+  expect(metrics.summaryInBody, JSON.stringify(metrics)).toBe(true);
+  if (expected.selected >= 100 || expected.skipped >= 10) {
+    expect(metrics.bodyScrolls).toBe(true);
   }
 }
 
@@ -1669,6 +1821,173 @@ test("an unknown original submission is reconciled under a newer sibling summary
   expect(await stateFor(siblingFile)).toEqual({
     sourceExists: true,
     destinationTargets: [],
+  });
+});
+
+test("manual organize readability: one file separates source and target", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const { card } = await openReadabilityBatch(page, request, {
+    directory: READABILITY_ONE_DIRECTORY,
+    files: [READABILITY_ONE_FILE],
+  });
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+
+  const source = card.locator(".mf-organize-source-fact");
+  const target = card.locator(".mf-organize-target-fact");
+  await expect(source.locator("dt")).toHaveText("来源");
+  await expect(target.locator("dt")).toHaveText("目标");
+  await expect(source.locator("dd")).toContainText(
+    `source-storage:${READABILITY_ONE_DIRECTORY}/${READABILITY_ONE_FILE}`,
+  );
+  await expect(source.locator("dd")).not.toContainText("target:");
+  await expect(target.locator("dd")).toContainText("target:");
+
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByRole("region", { name: "整批复核" })).toBeVisible();
+  await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
+  await page.setViewportSize({ width: 390, height: 520 });
+  await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
+});
+
+test("manual organize readability: ten files keep an aligned batch summary", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(150_000);
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const files = Array.from(
+    { length: 10 },
+    (_, index) => `ReadableTen${String(index + 1).padStart(2, "0")}.2011.mkv`,
+  );
+  const { card } = await openReadabilityBatch(page, request, {
+    directory: READABILITY_TEN_DIRECTORY,
+    files,
+  });
+  await expect(
+    card.getByRole("heading", { name: /第 1 \/ 10 个/ }),
+  ).toBeVisible({ timeout: 30_000 });
+
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expectReadableBatch(page, card, { selected: 10, skipped: 0 });
+  const batch = card.getByRole("region", { name: "本次确认的文件" });
+  await expect(batch.locator(".mf-organize-batch-list > li")).toHaveCount(10);
+  const rows = await batch
+    .locator(".mf-organize-batch-list > li")
+    .evaluateAll((items) =>
+      items.map((item) => {
+        const file = item.querySelector(".mf-organize-batch-file");
+        const operation = item.querySelector(".mf-organize-batch-operation");
+        const target = item.querySelector(".mf-organize-batch-target");
+        return {
+          file: file?.textContent ?? "",
+          operation: operation?.textContent ?? "",
+          target: target?.textContent ?? "",
+        };
+      }),
+    );
+  expect(
+    rows.every((row) => row.file && row.operation === "移动 · 来源不保留"),
+  ).toBe(true);
+  expect(rows.every((row) => row.target.includes("media-target:"))).toBe(true);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectReadableBatch(page, card, { selected: 10, skipped: 0 });
+  await page.setViewportSize({ width: 390, height: 520 });
+  await expectReadableBatch(page, card, { selected: 10, skipped: 0 });
+});
+
+test("manual organize readability: a 100-file batch shows 90 selected, 10 unselected and long paths", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  mkdirSync(READABILITY_OUTPUT, { recursive: true });
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const { card } = await openReadabilityBatch(page, request, "directory");
+  await expect(
+    card.getByRole("heading", { name: /第 1 \/ 100 个/ }),
+  ).toBeVisible({ timeout: 60_000 });
+
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(page.getByRole("region", { name: "整批复核" })).toBeVisible();
+  await expectReadableBatch(page, card, {
+    selected: READABILITY_READY,
+    skipped: READABILITY_UNMATCHED,
+  });
+  const blockedConfirm = card.getByRole("button", {
+    name: `确认整理 ${READABILITY_READY} 项`,
+  });
+  if (await blockedConfirm.isDisabled()) {
+    await expect(card.locator(".mf-organize-confirm-blocker")).toContainText(
+      "暂不能确认：",
+    );
+  }
+
+  const batch = card.getByRole("region", { name: "本次确认的文件" });
+  await expect(batch.locator(".mf-organize-batch-list > li")).toHaveCount(
+    READABILITY_READY,
+  );
+  await expect(
+    batch.getByRole("button", { name: `查看 ${READABILITY_LONG_CHINESE}` }),
+  ).toBeVisible();
+  await expect(
+    batch.getByRole("button", { name: `查看 ${READABILITY_LONG_ENGLISH}` }),
+  ).toBeVisible();
+
+  const skipped = card.getByText(
+    `未纳入本次确认的文件(${READABILITY_UNMATCHED} 项)`,
+  );
+  await skipped.click();
+  for (let index = 1; index <= READABILITY_UNMATCHED; index += 1) {
+    await expect(
+      card.getByRole("button", {
+        name: `查看 Unmatched${String(index).padStart(3, "0")}.2011.mkv`,
+      }),
+    ).toBeVisible();
+  }
+
+  await card.locator(".mf-organize-dialog-body").evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page.screenshot({
+    path: `${READABILITY_OUTPUT}/100-desktop.png`,
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectReadableBatch(page, card, {
+    selected: READABILITY_READY,
+    skipped: READABILITY_UNMATCHED,
+  });
+  await card.locator(".mf-organize-dialog-body").evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page.screenshot({
+    path: `${READABILITY_OUTPUT}/100-narrow.png`,
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 390, height: 520 });
+  await expectReadableBatch(page, card, {
+    selected: READABILITY_READY,
+    skipped: READABILITY_UNMATCHED,
+  });
+  await card.locator(".mf-organize-dialog-body").evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page.screenshot({
+    path: `${READABILITY_OUTPUT}/100-short.png`,
+    fullPage: false,
   });
 });
 

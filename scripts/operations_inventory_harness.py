@@ -737,6 +737,43 @@ def build_managed_fixture(
     limit_file = primary_limit_root / "DialogLimit.2032.mkv"
     limit_file.write_bytes(b"primary limit named synthetic media")
     os.utime(limit_file, (conflict_time, conflict_time))
+    # PATCH-20261122-1 browser fixture: one directory with exactly 100 primary
+    # files.  Ninety resolve to one unambiguous identity; ten deliberately have
+    # no candidate, so one real batch summary carries both a large selected
+    # subset and independently explained unselected items.  Two ready names are
+    # long/deep on purpose to prove wrapping at 390px without horizontal scroll.
+    readability_one_root = source_root / "ReadabilityOne"
+    readability_one_root.mkdir(parents=True, exist_ok=True)
+    readability_one = readability_one_root / "ReadableOne.2011.mkv"
+    readability_one.write_bytes(b"single readability synthetic media")
+    os.utime(readability_one, (conflict_time, conflict_time))
+    readability_ten_root = source_root / "ReadabilityTen"
+    readability_ten_root.mkdir(parents=True, exist_ok=True)
+    for index in range(1, 11):
+        readable_ten = readability_ten_root / f"ReadableTen{index:02d}.2011.mkv"
+        readable_ten.write_bytes(b"ten readability synthetic media")
+        os.utime(readable_ten, (conflict_time, conflict_time))
+    readability_root = source_root / "Readability"
+    readability_root.mkdir(parents=True, exist_ok=True)
+    for index in range(1, 89):
+        readable = readability_root / f"Readable{index:03d}.2011.mkv"
+        readable.write_bytes(b"manual organize readability synthetic media")
+        os.utime(readable, (conflict_time, conflict_time))
+    deep_readability_root = readability_root / "这是一个非常深的目录名称 用于验证长路径换行与可读性"
+    deep_readability_root.mkdir(parents=True, exist_ok=True)
+    for long_name in (
+        "这是一个非常长的中文电影文件名 用于验证窄屏排版是否正确显示完整标题.2011.mkv",
+        "An Extremely Long English Movie Filename For Readability Verification.2011.mkv",
+    ):
+        long_file = deep_readability_root / long_name
+        long_file.write_bytes(b"long readability synthetic media")
+        os.utime(long_file, (conflict_time, conflict_time))
+    unmatched_root = readability_root / "Unmatched"
+    unmatched_root.mkdir(parents=True, exist_ok=True)
+    for index in range(1, 11):
+        unmatched = unmatched_root / f"Unmatched{index:03d}.2011.mkv"
+        unmatched.write_bytes(b"unmatched readability synthetic media")
+        os.utime(unmatched, (conflict_time, conflict_time))
     # The managed definition's own reviewed scope.  It stays empty: the
     # Scheduler only *admits* the occurrence, so the fixture needs a real
     # ResourceLibrary-relative directory and no media of its own.  Adding a file
@@ -1013,6 +1050,32 @@ def build_managed_fixture(
                         "field": "path",
                         "operator": "contains",
                         "value": "/PrimaryLimit/",
+                    },
+                    {"field": "extension", "operator": "in", "value": ["mkv"]},
+                ],
+            },
+            "outputRecognitionType": "A",
+        }
+    )
+    document["recognitionRules"].append(
+        {
+            "id": "readability-video",
+            "name": "PATCH-20261122-1 readability fixtures",
+            "priority": 124,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {
+                        "field": "resource_library_id",
+                        "operator": "equals",
+                        "value": "source",
+                    },
+                    {
+                        "field": "path",
+                        "operator": "contains",
+                        "value": "/Readability",
                     },
                     {"field": "extension", "operator": "in", "value": ["mkv"]},
                 ],
@@ -1571,6 +1634,61 @@ def build_managed_fixture(
                         year=2032,
                         genres=("Animation",),
                         countries=("JP",),
+                    ),
+                    # PATCH-20261122-1: ninety readable primaries plus two long
+                    # names resolve to one identity each.  The ten Unmatched
+                    # files intentionally have no candidate, so the same real
+                    # plan exposes a 90/10 selected-vs-unselected batch summary.
+                    *(
+                        MediaCandidate(
+                            "tmdb",
+                            f"82{index:03d}",
+                            MediaType.MOVIE,
+                            f"Readable{index:03d}",
+                            year=2011,
+                            genres=("Animation",),
+                            countries=("JP",),
+                        )
+                        for index in range(1, 89)
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "82101",
+                        MediaType.MOVIE,
+                        "这是一个非常长的中文电影文件名 用于验证窄屏排版是否正确显示完整标题",
+                        year=2011,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "82102",
+                        MediaType.MOVIE,
+                        "An Extremely Long English Movie Filename For Readability Verification",
+                        year=2011,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "82103",
+                        MediaType.MOVIE,
+                        "ReadableOne",
+                        year=2011,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    *(
+                        MediaCandidate(
+                            "tmdb",
+                            f"8211{index}",
+                            MediaType.MOVIE,
+                            f"ReadableTen{index:02d}",
+                            year=2011,
+                            genres=("Animation",),
+                            countries=("JP",),
+                        )
+                        for index in range(1, 11)
                     ),
                 )
             ),

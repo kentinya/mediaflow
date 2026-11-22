@@ -983,6 +983,77 @@ export function ManualOrganizeDialog({
     activeSelection.length === 0 ||
     (requiresOverwrite && !effectiveAllowOverwrite) ||
     (requiresCleanup && !effectiveAllowSourceCleanup);
+  /** The dominant current reason a confirmation cannot be sent, with its legal next step. */
+  const confirmationBlocker = (() => {
+    if (preview === undefined || executeMutation.isPending) return null;
+    if (organizeFlowEnded) {
+      return {
+        reason: "本次整理工作已结束，只读历史不再提供确认。",
+        nextAction: "关闭后从资源库文件页重新选择发起。",
+      };
+    }
+    if (!preview.current) {
+      return {
+        reason: "此计划摘要已被更新取代，当前摘要不能确认。",
+        nextAction: "返回逐项复核，保存修正后重新分析生成当前方案。",
+      };
+    }
+    if (preview.truncated) {
+      return {
+        reason: "本次计划摘要不完整，不能作为执行依据。",
+        nextAction: "请缩小范围后重新准备。",
+      };
+    }
+    if (preview.executeAction.available !== true) {
+      return {
+        reason: preview.executeAction.reason ?? "后端未提供执行操作。",
+        nextAction: preview.executeAction.nextAction ?? "",
+      };
+    }
+    if (preparationStatusRunning) {
+      return {
+        reason: "后台 Worker 仍在准备或分析同一方案。",
+        nextAction: "等待当前阶段完成并自动更新后确认。",
+      };
+    }
+    if (executionHistoryQuery.isFetching) {
+      return {
+        reason: "正在读取本方案的受理历史。",
+        nextAction: "读取完成后即可确认。",
+      };
+    }
+    if (retained.length > 0) {
+      return {
+        reason: "原整理提交仍在校对，当前不会重发。",
+        nextAction: "等待核对结果，或恢复连接后继续。",
+      };
+    }
+    if (confirmationBlockedByHistory) {
+      return {
+        reason: "当前摘要或受理历史尚未读取完成。",
+        nextAction: "重新读取摘要后再确认。",
+      };
+    }
+    if (activeSelection.length === 0) {
+      return {
+        reason: "当前没有选中任何就绪文件。",
+        nextAction: "返回逐项复核并至少纳入一个文件。",
+      };
+    }
+    if (requiresOverwrite && !effectiveAllowOverwrite) {
+      return {
+        reason: "替换已有目标文件需要明确授权。",
+        nextAction: "勾选上方覆盖授权后确认。",
+      };
+    }
+    if (requiresCleanup && !effectiveAllowSourceCleanup) {
+      return {
+        reason: "删除整理后为空的来源目录需要明确授权。",
+        nextAction: "勾选上方清理授权后确认。",
+      };
+    }
+    return null;
+  })();
 
   // ---- close protection ----------------------------------------------
   const closeLocked =
@@ -1299,12 +1370,12 @@ export function ManualOrganizeDialog({
     switch (preparation.status) {
       case "queued":
         return visited === 0
-          ? "所选范围已受理，等待后台 Worker 开始检查；已保存受理记录，无需重新提交。"
-          : "所选范围已受理，后台 Worker 即将继续检查；无需重新提交。";
+          ? "所选范围已保存，正在等待后台 Worker 开始检查；开始前不会显示检查进度，无需重新提交。"
+          : "所选范围已受理，后台 Worker 会在下一轮继续检查；无需重新提交。";
       case "running":
         return visited === 0
-          ? "后台 Worker 已开始检查所选范围；当前还没有完成检查的条目。"
-          : "正在检查所选范围；下面的计数是当前已完成的真实进度。";
+          ? "后台 Worker 已开始检查所选范围，尚未完成第一个条目；此处会按真实进度更新。"
+          : "正在检查所选范围；下方计数是同一准备已完成的真实进度。";
       case "waiting_stability":
         return "所选范围已遍历；部分来源仍在等待稳定，达到条件后同一准备会自动继续，无需重新提交。";
       case "analyzing":
@@ -1337,6 +1408,16 @@ export function ManualOrganizeDialog({
     preparationRunning ||
     saveMutation.isPending ||
     preparationQuery.isFetching;
+  const preparationScopeFolders =
+    preparation?.selection.scopes.filter((scope) => scope.kind === "directory")
+      .length ?? 0;
+  const preparationScopeFiles =
+    preparation?.selection.scopes.filter((scope) => scope.kind === "file")
+      .length ?? 0;
+  const preparationScopeSummary =
+    preparationScopeFolders + preparationScopeFiles === 0
+      ? "—"
+      : `${preparationScopeFolders} 个文件夹、${preparationScopeFiles} 个文件`;
   const preparationTraversalNote = (() => {
     if (preparation === undefined) return null;
     if (preparation.progress.incomplete) {
@@ -1347,7 +1428,7 @@ export function ManualOrganizeDialog({
     if (preparation.status === "waiting_stability")
       return "所选范围已遍历，正在等待未稳定来源达到稳定条件。";
     if (preparation.status === "queued" || preparation.status === "running")
-      return "正在检查所选范围；下面的计数是当前已完成的真实进度。";
+      return null;
     if (
       preparation.status === "completed" ||
       preparation.status === "partial_success"
@@ -1566,17 +1647,28 @@ export function ManualOrganizeDialog({
             <p className="mf-dashboard-meta">失败说明：{preparation.failure}</p>
           ) : null}
           <p className="mf-dashboard-meta">
-            来源资源库：{preparation.resourceLibraryId} · 所选范围：
-            {preparation.selection.scopes.length === 0
-              ? "—"
-              : preparation.selection.scopes
-                  .map(
-                    (scope) =>
-                      `${scope.kind === "directory" ? "文件夹" : "文件"} ${scope.path}`,
-                  )
-                  .join("、")}{" "}
+            来源资源库：{preparation.resourceLibraryId} · 已受理范围：
+            {preparationScopeSummary}
+            {preparation.selection.refused.length > 0
+              ? ` · 未受理 ${preparation.selection.refused.length} 项`
+              : ""}{" "}
             · 零变更准备，不授予执行权限。
           </p>
+          {preparation.selection.scopes.length > 0 ? (
+            <details className="mf-organize-scope-details">
+              <summary>
+                查看完整所选范围（{preparation.selection.scopes.length} 项）
+              </summary>
+              <ul>
+                {preparation.selection.scopes.map((scope) => (
+                  <li key={`${scope.kind}:${scope.path}`}>
+                    {scope.kind === "directory" ? "文件夹" : "文件"}{" "}
+                    <span className="mf-exact-identity">{scope.path}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
         </StatusBanner>
         <section aria-label="准备进度">
           <div className="mf-organize-section-head">
@@ -1584,9 +1676,11 @@ export function ManualOrganizeDialog({
           </div>
           {preparationCounts.length === 0 ? (
             <p className="mf-dashboard-meta">
-              {preparationRunning
-                ? "尚未完成任何检查条目；真实进度会在此原位更新。"
-                : "本次准备没有可显示的正向计数。"}
+              {preparation.status === "queued"
+                ? "Worker 尚未开始检查；已受理范围与真实计数会在此原位更新。"
+                : preparationRunning
+                  ? "已开始检查，尚未完成任何条目；真实计数会在此原位更新。"
+                  : "本次准备没有可显示的正向计数。"}
             </p>
           ) : (
             <dl className="mf-organize-counts">
@@ -1950,11 +2044,16 @@ export function ManualOrganizeDialog({
             </div>
             {hasGeneratedScheme ? (
               <>
+                <div className="mf-organize-source-fact">
+                  <dt>来源</dt>
+                  <dd className="mf-exact-identity">
+                    {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
+                  </dd>
+                </div>
                 {hasGeneratedTarget ? (
-                  <div>
-                    <dt>来源 → 目标</dt>
+                  <div className="mf-organize-target-fact">
+                    <dt>目标</dt>
                     <dd className="mf-exact-identity">
-                      {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"} →{" "}
                       {item.targetStorageId ?? "—"}:{targetRelativePath}
                     </dd>
                   </div>
@@ -2326,64 +2425,145 @@ export function ManualOrganizeDialog({
         ),
       ),
     ];
+    const moveCount = selectedItems.filter(
+      (item) => item.operation === "MOVE",
+    ).length;
+    const retainedCount = selectedItems.filter(
+      (item) => item.operation === "COPY" || item.operation === "LINK",
+    ).length;
+    const noFileOperationCount = selectedItems.filter(
+      (item) => item.operation === "NOOP" || item.operation === "SKIP",
+    ).length;
+    const missingOperationCount = selectedItems.filter(
+      (item) => item.operation === null,
+    ).length;
+    const overwriteCount = selectedItems.filter(
+      (item) => item.destructiveImplications?.overwriteRequired === true,
+    ).length;
+    const cleanupCount = selectedItems.filter(
+      (item) => item.destructiveImplications?.sourceCleanupRequired === true,
+    ).length;
+    const sourceEffects = [
+      moveCount > 0 ? `移动 ${moveCount} 项：整理成功后来源位置不再保留` : null,
+      retainedCount > 0 ? `复制或链接 ${retainedCount} 项：来源保留` : null,
+      noFileOperationCount > 0
+        ? `不执行文件操作 ${noFileOperationCount} 项：来源保留`
+        : null,
+      missingOperationCount > 0
+        ? `操作尚未生成 ${missingOperationCount} 项`
+        : null,
+    ].filter((value): value is string => value !== null);
+    const impactText =
+      selectedItems.length === 0
+        ? "当前没有所选就绪项，确认不会提交。"
+        : `${sourceEffects.length === 0 ? "来源效果按上方操作核对" : sourceEffects.join("；")}；${
+            overwriteCount > 0
+              ? `包含覆盖已有目标 ${overwriteCount} 个（需单独授权）`
+              : "无覆盖"
+          }；${
+            cleanupCount > 0
+              ? `包含清理来源目录 ${cleanupCount} 个（需单独授权）`
+              : "无来源清理"
+          }。`;
     return (
       <>
-        <section aria-label="整批复核">
-          <h3>整批复核</h3>
-          <p className="mf-dashboard-meta">
-            <strong>将整理 {activeSelection.length} 项</strong>
-            {preview.intentVersion !== null
-              ? ` · 方案 ${preview.previewId}(版本 ${preview.intentVersion})`
-              : ` · 方案 ${preview.previewId}`}
-            · 零变更摘要,确认受理前不修改任何文件
+        <section aria-label="整批复核" className="mf-organize-batch-review">
+          <div className="mf-organize-section-head">
+            <h3>整批复核</h3>
+            <span className="mf-organize-section-note">
+              确认受理前不修改任何文件
+            </span>
+          </div>
+          <dl className="mf-organize-batch-summary">
+            <div>
+              <dt>将整理</dt>
+              <dd>{activeSelection.length} 项</dd>
+            </div>
+            <div>
+              <dt>未纳入</dt>
+              <dd>{skippedItems.length} 项</dd>
+            </div>
+            <div>
+              <dt>操作</dt>
+              <dd>{operations === "" ? "—" : operations}</dd>
+            </div>
+            <div>
+              <dt>目标</dt>
+              <dd>{targets.length} 个位置</dd>
+            </div>
+          </dl>
+          <p className="mf-organize-impact" role="status">
+            <strong>实际影响：</strong>
+            {impactText}
           </p>
-          <p className="mf-dashboard-meta">
-            操作:{operations === "" ? "—" : operations} · 目标:
-            {targets.length === 0
-              ? "—"
-              : targets.slice(0, 3).join("、") +
-                (targets.length > 3 ? ` 等 ${targets.length} 个目标` : "")}
+          <p className="mf-organize-section-note">
+            仅所选就绪项进入执行;未选、已受理、未就绪及历史不确定的兄弟项保持独立，不会被重放。
           </p>
-          <ul className="mf-organize-review-list">
-            {selectedItems.map((item) => (
-              <li key={`selected-${item.itemId}`}>
-                <button
-                  type="button"
-                  className="mf-link-button"
-                  aria-label={`查看 ${item.sourceFilename ?? item.itemId}`}
-                  onClick={() => {
-                    goTo(items.findIndex((row) => row.itemId === item.itemId));
-                    setStep("review");
-                  }}
-                >
-                  {item.sourceFilename ?? item.itemId}
-                </button>{" "}
-                · {operationLabel(item.operation)} →{" "}
-                <span className="mf-exact-identity">
-                  {item.targetStorageId ?? "—"}:
-                  {item.targetPath ??
-                    item.destination?.storageRelativePath ??
-                    "—"}
-                </span>
-              </li>
-            ))}
+          <details className="mf-organize-diagnostics mf-organize-plan-diagnostics">
+            <summary>方案标识与诊断</summary>
+            <p className="mf-dashboard-meta">
+              方案 {preview.previewId}
+              {preview.intentVersion !== null
+                ? ` · 版本 ${preview.intentVersion}`
+                : ""}
+            </p>
+            <dl>
+              <dt>入选条目</dt>
+              <dd>{selectedItems.length}</dd>
+              <dt>未纳入条目</dt>
+              <dd>{skippedItems.length}</dd>
+              <dt>目标位置</dt>
+              <dd>{targets.length}</dd>
+            </dl>
+          </details>
+        </section>
+
+        <section
+          className="mf-organize-section mf-organize-batch-list-section"
+          aria-label="本次确认的文件"
+        >
+          <div className="mf-organize-section-head">
+            <h4>本次确认的文件</h4>
+            <span className="mf-organize-section-note">
+              共 {selectedItems.length} 项
+            </span>
+          </div>
+          <ul className="mf-organize-review-list mf-organize-batch-list">
+            {selectedItems.map((item) => {
+              const retention = operationRetentionLabel(item.operation);
+              return (
+                <li key={`selected-${item.itemId}`}>
+                  <button
+                    type="button"
+                    className="mf-link-button mf-organize-batch-file"
+                    aria-label={`查看 ${item.sourceFilename ?? item.itemId}`}
+                    onClick={() => {
+                      goTo(
+                        items.findIndex((row) => row.itemId === item.itemId),
+                      );
+                      setStep("review");
+                    }}
+                  >
+                    {item.sourceFilename ?? item.itemId}
+                  </button>
+                  <span className="mf-organize-batch-operation">
+                    {operationLabel(item.operation)}
+                    {retention !== null ? ` · ${retention}` : ""}
+                  </span>
+                  <span className="mf-organize-batch-target mf-exact-identity">
+                    {item.targetStorageId ?? "—"}:
+                    {item.targetPath ??
+                      item.destination?.storageRelativePath ??
+                      "—"}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
-          <p className="mf-dashboard-meta">
-            危险影响:
-            {requiresOverwrite || requiresCleanup
-              ? [
-                  requiresOverwrite ? "包含覆盖已有目标" : null,
-                  requiresCleanup ? "包含清理来源目录" : null,
-                ]
-                  .filter((value) => value !== null)
-                  .join("、")
-              : "无覆盖、无来源清理"}
-            。仅所选就绪项进入执行;未选、已受理、未就绪及历史不确定的兄弟项不会被重放。
-          </p>
         </section>
 
         {skippedItems.length > 0 ? (
-          <details>
+          <details className="mf-organize-skipped">
             <summary>未纳入本次确认的文件({skippedItems.length} 项)</summary>
             <ul>
               {skippedItems.map((item) => (
@@ -2662,53 +2842,63 @@ export function ManualOrganizeDialog({
         >
           关闭
         </Button>
-        <Button
-          type="button"
-          disabled={executeDisabled}
-          aria-busy={executeMutation.isPending}
-          onClick={() => {
-            if (preview === undefined) return;
-            if (preview.intentVersion === null) {
-              setResult(
-                "当前方案缺少可核对的版本，本次确认没有提交；没有修改任何文件。请重新读取摘要后再确认。",
+        <div className="mf-organize-confirm-submit">
+          {confirmationBlocker !== null ? (
+            <span className="mf-organize-confirm-blocker" role="status">
+              暂不能确认：{confirmationBlocker.reason}
+              {confirmationBlocker.nextAction === ""
+                ? ""
+                : ` ${confirmationBlocker.nextAction}`}
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            disabled={executeDisabled}
+            aria-busy={executeMutation.isPending}
+            onClick={() => {
+              if (preview === undefined) return;
+              if (preview.intentVersion === null) {
+                setResult(
+                  "当前方案缺少可核对的版本，本次确认没有提交；没有修改任何文件。请重新读取摘要后再确认。",
+                );
+                return;
+              }
+              if (principalId === null) {
+                setResult(
+                  "当前账号身份尚未读取完成，本次确认没有提交；也没有修改任何文件。身份读取完成后再确认，响应丢失时才能核对原请求。",
+                );
+                return;
+              }
+              // One identity captured here serves both the request and any later
+              // reconciliation of this exact confirmation.
+              const submission: OrganizeSubmissionIdentity = {
+                previewId: preview.previewId,
+                itemIds: [...activeSelection],
+                expectedIntentVersion: preview.intentVersion,
+                allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
+                allowSourceCleanup:
+                  requiresCleanup && effectiveAllowSourceCleanup,
+              };
+              const retention = beginOrganizeConfirmationRetention(
+                principalId,
+                confirmationWork,
+                submission,
               );
-              return;
-            }
-            if (principalId === null) {
-              setResult(
-                "当前账号身份尚未读取完成，本次确认没有提交；也没有修改任何文件。身份读取完成后再确认，响应丢失时才能核对原请求。",
-              );
-              return;
-            }
-            // One identity captured here serves both the request and any later
-            // reconciliation of this exact confirmation.
-            const submission: OrganizeSubmissionIdentity = {
-              previewId: preview.previewId,
-              itemIds: [...activeSelection],
-              expectedIntentVersion: preview.intentVersion,
-              allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
-              allowSourceCleanup:
-                requiresCleanup && effectiveAllowSourceCleanup,
-            };
-            const retention = beginOrganizeConfirmationRetention(
-              principalId,
-              confirmationWork,
-              submission,
-            );
-            if (!retention.ok) {
-              setResult(
-                "本次确认无法保存可核对的请求身份，已取消提交；没有发出整理请求，也没有修改任何文件。请重新打开本次整理后再试。",
-              );
-              return;
-            }
-            refreshRetained();
-            executeMutation.mutate(submission);
-          }}
-        >
-          {executeMutation.isPending
-            ? "正在提交..."
-            : `确认整理 ${activeSelection.length} 项`}
-        </Button>
+              if (!retention.ok) {
+                setResult(
+                  "本次确认无法保存可核对的请求身份，已取消提交；没有发出整理请求，也没有修改任何文件。请重新打开本次整理后再试。",
+                );
+                return;
+              }
+              refreshRetained();
+              executeMutation.mutate(submission);
+            }}
+          >
+            {executeMutation.isPending
+              ? "正在提交..."
+              : `确认整理 ${activeSelection.length} 项`}
+          </Button>
+        </div>
       </>
     );
 

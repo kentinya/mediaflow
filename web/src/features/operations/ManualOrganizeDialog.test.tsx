@@ -109,6 +109,9 @@ function makeBackend() {
     // The exact paths the Files admission carried: the summary then plans
     // exactly those files, so a two-file journey is a two-item plan.
     selectedPaths: [] as string[],
+    // The exact admitted scopes the preparation read publishes, so a mixed
+    // selection is summarized by kind and remains expandable.
+    scopeSelections: [] as { kind: "file" | "directory"; path: string }[],
     // The A53-01 journey: an overwrite the operator must authorize on every
     // exact summary, and bounded admission-read failures.
     requireOverwrite: false as boolean,
@@ -154,83 +157,89 @@ function makeBackend() {
       : Array.from({ length: FILE_COUNT }, (_, index) => index);
   };
 
-  const discoveryDocument = (): Json => ({
-    journey: "discovery",
-    discoveryId: DISCOVERY_ID,
-    resourceLibraryId: "library",
-    storageId: "source",
-    configurationSnapshotId: "active-1",
-    status: state.primaryLimit ? "partial_success" : "completed",
-    version: 5,
-    createdAt: "2026-01-01T00:00:00+00:00",
-    updatedAt: "2026-01-01T00:00:00+00:00",
-    selection: {
-      scopeCount: 1,
-      scopes: [{ kind: "directory", path: "Movies" }],
-      existing: [],
-      refused: [],
-    },
-    budgets: {},
-    progress: {
-      phase: "prepared",
-      visitedEntries: previewItemIndices().length + 1,
-      visitedDirectories: 1,
-      pageFetches: 1,
-      primarySources: previewItemIndices().length,
-      excludedEntries: 0,
-      unstableEntries: 0,
-      errorEntries: 0,
-      activeSeconds: 0.1,
-      incomplete: state.primaryLimit,
-      incompleteReason: state.primaryLimit ? "primary_limit" : null,
-      refusalReasons: state.primaryLimit ? ["primary_limit"] : [],
-      materialRefusal: state.primaryLimit ? "primary_limit" : null,
-      findings: [],
-      reasons: [],
-      message: "the exact zero-mutation plan summary is ready",
-    },
-    primarySourceCount: previewItemIndices().length,
-    organizeTaskId: state.endedFlow ? null : "organize-task-1",
-    organizeFlow: {
-      taskId: "organize-task-1",
-      status: state.endedFlow
-        ? state.primaryLimit
-          ? "failed"
-          : "completed"
-        : "running",
-      continuable: !state.endedFlow,
-    },
-    admissionRequestId: null,
-    autoPrepare: !state.primaryLimit,
-    prepared: !state.primaryLimit,
-    previewId:
-      state.primaryLimit || (state.endedFlow && !state.endedFlowKeepsPreview)
-        ? null
-        : state.previewId,
-    intentId: state.primaryLimit ? null : INTENT_ID,
-    frozen: !state.primaryLimit,
-    freezeRequestedAt: null,
-    pauseRequested: false,
-    cancelRequested: false,
-    nextObservationAt: null,
-    worker: {
-      ready: true,
-      condition: "ready",
-      durableState: "ready",
-      nextAction: "claim",
-    },
-    actions: {
-      cancel: discoveryAction(),
-      finalize: discoveryAction(),
-      prepare: discoveryAction(),
-    },
-    sources: [],
-    nextAction: "open the linked exact plan summary",
-    failure: null,
-    sideEffects: "none",
-    zeroMutation: true,
-    execution: "not_available_from_discovery",
-  });
+  const discoveryDocument = (): Json => {
+    const discoveryScopes =
+      state.scopeSelections.length > 0
+        ? state.scopeSelections
+        : [{ kind: "directory" as const, path: "Movies" }];
+    return {
+      journey: "discovery",
+      discoveryId: DISCOVERY_ID,
+      resourceLibraryId: "library",
+      storageId: "source",
+      configurationSnapshotId: "active-1",
+      status: state.primaryLimit ? "partial_success" : "completed",
+      version: 5,
+      createdAt: "2026-01-01T00:00:00+00:00",
+      updatedAt: "2026-01-01T00:00:00+00:00",
+      selection: {
+        scopeCount: discoveryScopes.length,
+        scopes: discoveryScopes,
+        existing: [],
+        refused: [],
+      },
+      budgets: {},
+      progress: {
+        phase: "prepared",
+        visitedEntries: previewItemIndices().length + 1,
+        visitedDirectories: 1,
+        pageFetches: 1,
+        primarySources: previewItemIndices().length,
+        excludedEntries: 0,
+        unstableEntries: 0,
+        errorEntries: 0,
+        activeSeconds: 0.1,
+        incomplete: state.primaryLimit,
+        incompleteReason: state.primaryLimit ? "primary_limit" : null,
+        refusalReasons: state.primaryLimit ? ["primary_limit"] : [],
+        materialRefusal: state.primaryLimit ? "primary_limit" : null,
+        findings: [],
+        reasons: [],
+        message: "the exact zero-mutation plan summary is ready",
+      },
+      primarySourceCount: previewItemIndices().length,
+      organizeTaskId: state.endedFlow ? null : "organize-task-1",
+      organizeFlow: {
+        taskId: "organize-task-1",
+        status: state.endedFlow
+          ? state.primaryLimit
+            ? "failed"
+            : "completed"
+          : "running",
+        continuable: !state.endedFlow,
+      },
+      admissionRequestId: null,
+      autoPrepare: !state.primaryLimit,
+      prepared: !state.primaryLimit,
+      previewId:
+        state.primaryLimit || (state.endedFlow && !state.endedFlowKeepsPreview)
+          ? null
+          : state.previewId,
+      intentId: state.primaryLimit ? null : INTENT_ID,
+      frozen: !state.primaryLimit,
+      freezeRequestedAt: null,
+      pauseRequested: false,
+      cancelRequested: false,
+      nextObservationAt: null,
+      worker: {
+        ready: true,
+        condition: "ready",
+        durableState: "ready",
+        nextAction: "claim",
+      },
+      actions: {
+        cancel: discoveryAction(),
+        finalize: discoveryAction(),
+        prepare: discoveryAction(),
+      },
+      sources: [],
+      nextAction: "open the linked exact plan summary",
+      failure: null,
+      sideEffects: "none",
+      zeroMutation: true,
+      execution: "not_available_from_discovery",
+    };
+  };
 
   function discoveryAction() {
     return {
@@ -1266,7 +1275,9 @@ describe("ManualOrganizeDialog", () => {
 
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
-    expect(screen.getByText(/将整理 10 项/)).toBeVisible();
+    expect(screen.getByRole("region", { name: "整批复核" })).toHaveTextContent(
+      /将整理\s*10\s*项/,
+    );
 
     const confirm = screen.getByRole("button", { name: "确认整理 10 项" });
     expect(confirm).toBeEnabled();
@@ -1916,7 +1927,7 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.executePosts).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const region = await screen.findByRole("region", { name: "整批复核" });
-    expect(within(region).getByText(/将整理 10 项/)).toBeVisible();
+    expect(region).toHaveTextContent(/将整理\s*10\s*项/);
 
     // Browse-only steps are still zero-execute even on the confirm step.
     await user.click(screen.getByRole("button", { name: "返回逐项复核" }));
@@ -1968,6 +1979,10 @@ describe("ManualOrganizeDialog", () => {
     const user = userEvent.setup();
     await openDialog(user, (value) => {
       value.state.queuedReads = 10;
+      value.state.scopeSelections = [
+        { kind: "directory", path: "Movies" },
+        { kind: "file", path: "Movies/Movie.01.mkv" },
+      ];
     });
     const stage = await screen.findByText(
       (_text, element) =>
@@ -1975,17 +1990,96 @@ describe("ManualOrganizeDialog", () => {
       {},
       { timeout: 5_000 },
     );
-    expect(stage).toHaveTextContent("所选范围已受理，等待后台 Worker 开始检查");
+    expect(stage).toHaveTextContent(
+      "所选范围已保存，正在等待后台 Worker 开始检查",
+    );
     expect(
-      screen.getByText("正在检查所选范围；下面的计数是当前已完成的真实进度。"),
+      screen.getByText(
+        "Worker 尚未开始检查；已受理范围与真实计数会在此原位更新。",
+      ),
     ).toBeVisible();
+    expect(
+      screen.queryByText(
+        "正在检查所选范围；下方计数是同一准备已完成的真实进度。",
+      ),
+    ).toBeNull();
     expect(screen.queryByText(/不会声称已完整遍历/)).toBeNull();
     expect(screen.queryByText("已完整遍历所选范围。")).toBeNull();
+    expect(card()).toHaveTextContent("已受理范围：1 个文件夹、1 个文件");
+    const scopeSummary = within(card()).getByText(/查看完整所选范围/);
+    const scopeDetails = scopeSummary.closest("details");
+    expect(scopeDetails?.open).toBe(false);
+    await user.click(scopeSummary);
+    expect(
+      within(scopeDetails as HTMLElement).getByText("Movies/Movie.01.mkv"),
+    ).toBeVisible();
     expect(screen.queryByRole("region", { name: "排除与等待原因" })).toBeNull();
     expect(screen.queryByText(/第 0 \/ 0 个/)).toBeNull();
     expect(screen.queryByRole("button", { name: /整批复核/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "下一项" })).toBeNull();
     expect(screen.getByRole("button", { name: "关闭" })).toBeVisible();
+  }, 20_000);
+
+  it("presents a mixed scope, split source/target and a scan-friendly batch summary", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.requireOverwrite = true;
+      },
+      [filename(0)],
+    );
+
+    await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    const sourceTerm = within(card()).getByText("来源", {
+      selector: ".mf-organize-source-fact dt",
+    });
+    const targetTerm = within(card()).getByText("目标", {
+      selector: ".mf-organize-target-fact dt",
+    });
+    const sourceRow = sourceTerm.closest("div");
+    const targetRow = targetTerm.closest("div");
+    expect(sourceRow).not.toBe(targetRow);
+    expect(sourceRow).toHaveTextContent("source:Movies/Movie.01.mkv");
+    expect(targetRow).toHaveTextContent("target:Movies/Movie.01.mkv");
+
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    const region = await screen.findByRole("region", { name: "整批复核" });
+    expect(region).toHaveTextContent(/将整理\s*1\s*项/);
+    expect(region).toHaveTextContent(/未纳入\s*0\s*项/);
+    expect(region).toHaveTextContent("移动 1 项：整理成功后来源位置不再保留");
+    expect(region).toHaveTextContent("包含覆盖已有目标 1 个（需单独授权）");
+    const planDiagnostics = within(region)
+      .getByText(/方案 preview-1/)
+      .closest("details");
+    expect(planDiagnostics).toHaveClass("mf-organize-plan-diagnostics");
+
+    const batchList = await screen.findByRole("region", {
+      name: "本次确认的文件",
+    });
+    expect(
+      within(batchList).getByRole("button", { name: "查看 Movie.01.mkv" }),
+    ).toBeVisible();
+    expect(
+      within(card()).getByText(/暂不能确认：替换已有目标文件需要明确授权/),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "确认整理 1 项" }),
+    ).toBeDisabled();
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "我确认允许按已审阅方案替换现有目标文件",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/暂不能确认：替换已有目标文件需要明确授权/),
+      ).toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: "确认整理 1 项" })).toBeEnabled();
+    expect(backend.calls.executePosts).toHaveLength(0);
   }, 20_000);
 
   it("keeps polling an unchanged waiting preparation until the exact plan links", async () => {
@@ -2269,7 +2363,9 @@ describe("ManualOrganizeDialog", () => {
     );
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
-    expect(screen.getByText(/将整理 1 项/)).toBeVisible();
+    expect(screen.getByRole("region", { name: "整批复核" })).toHaveTextContent(
+      /将整理\s*1\s*项/,
+    );
     expect(screen.getByText(/包含覆盖已有目标/)).toBeVisible();
 
     const overwrite = screen.getByRole("checkbox", {

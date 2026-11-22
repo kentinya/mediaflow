@@ -706,6 +706,36 @@ class RetainedTaskKernelFilesJourneyTests(_DiscoveryFixture):
         self.assertEqual(200, status, document)
         return document
 
+    def test_admission_has_no_failure_and_legacy_zero_sentinel_reads_as_no_failure(self) -> None:
+        """PATCH-20261122-1: an empty admission never presents the old ``0`` failure."""
+
+        self.media("Movies/Quiet.2001.mkv")
+        with self.journey(task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/Quiet.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            self.assertIsNone(admitted["failure"], admitted)
+            discovery_id = admitted["discoveryId"]
+
+            # The retired positional ``False`` was persisted with TEXT affinity
+            # as this exact legacy sentinel. It is not a failure message.
+            for legacy in (0, "0"):
+                with value.repository._connection:
+                    value.repository._connection.execute(
+                        "UPDATE media_discoveries SET error=? WHERE discovery_id=?",
+                        (legacy, discovery_id),
+                    )
+                legacy_read = self._projection(value, discovery_id)
+                self.assertIsNone(legacy_read["failure"], legacy_read)
+
+            # A genuinely recorded failure remains visible unchanged.
+            with value.repository._connection:
+                value.repository._connection.execute(
+                    "UPDATE media_discoveries SET error=? WHERE discovery_id=?",
+                    ("synthetic discovery read failure", discovery_id),
+                )
+            failed = self._projection(value, discovery_id)
+            self.assertEqual("synthetic discovery read failure", failed["failure"])
+
     def test_real_stability_requires_an_elapsed_unchanged_observation(self) -> None:
         """A file is admitted only after its real stable interval elapsed."""
 

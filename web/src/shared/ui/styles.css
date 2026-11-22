@@ -9950,8 +9950,6 @@ tr[aria-selected="true"] {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 300px;
-  overflow: auto;
 }
 
 .mf-organize-review-list li {
@@ -9965,6 +9963,139 @@ tr[aria-selected="true"] {
 .mf-organize-review-list .mf-exact-identity {
   flex: 1 1 240px;
   min-width: 0;
+}
+
+/* Batch review leads with four actual facts, then one aligned item list.  The
+   card body is the only scroller; this list never opens a second scroll area. */
+.mf-organize-batch-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid #dbe4f3;
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+.mf-organize-batch-summary > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mf-organize-batch-summary dt {
+  margin: 0;
+  color: #5f6b7d;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.mf-organize-batch-summary dd {
+  margin: 0;
+  color: #14223c;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 21px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-impact {
+  margin: 6px 0 0;
+  color: #263b61;
+  font-size: 13.5px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-batch-list {
+  margin-top: 2px;
+  border-top: 1px solid #e8edf4;
+}
+
+.mf-organize-batch-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(118px, 0.55fr) minmax(
+      0,
+      1.5fr
+    );
+  gap: 4px 14px;
+  align-items: start;
+  padding: 8px 0;
+  border-bottom: 1px solid #eef2f7;
+  font-size: 13.5px;
+  line-height: 20px;
+}
+
+.mf-organize-batch-list li:last-child {
+  border-bottom: 0;
+}
+
+.mf-organize-batch-file {
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-batch-operation {
+  min-width: 0;
+  color: #52627a;
+  font-size: 12.5px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-batch-target {
+  min-width: 0;
+  flex: none;
+}
+
+.mf-organize-skipped > summary,
+.mf-organize-scope-details > summary {
+  cursor: pointer;
+  color: #52627a;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-skipped > ul,
+.mf-organize-scope-details > ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-skipped > ul > li,
+.mf-organize-scope-details > ul > li {
+  margin: 0 0 6px;
+}
+
+.mf-organize-confirm-submit {
+  display: flex;
+  flex: 0 1 360px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  min-width: 0;
+  max-width: min(360px, 100%);
+}
+
+.mf-organize-confirm-submit > .mf-button {
+  flex: 0 0 auto;
+}
+
+.mf-organize-confirm-blocker {
+  max-width: 100%;
+  color: #7a4b00;
+  font-size: 12.5px;
+  line-height: 18px;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .mf-organize-diagnostics {
@@ -10114,6 +10245,30 @@ tr[aria-selected="true"] {
   .mf-organize-facts > div {
     grid-template-columns: minmax(0, 1fr);
     gap: 1px;
+  }
+
+  .mf-organize-batch-list li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    padding: 9px 0;
+  }
+
+  .mf-organize-batch-operation {
+    color: #5f6b7d;
+  }
+
+  .mf-organize-batch-target {
+    color: #263b61;
+  }
+
+  .mf-organize-confirm-submit {
+    flex-basis: 100%;
+    align-items: stretch;
+    max-width: 100%;
+  }
+
+  .mf-organize-confirm-blocker {
+    text-align: left;
   }
 
   .mf-organize-decision {
