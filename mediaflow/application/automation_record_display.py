@@ -22,6 +22,10 @@ _REASONS = {
         "本次运行对应的自动化已停用",
         "在自动化编辑中重新启用计划；重新启用只受理新的执行，这个原任务不会重跑",
     ),
+    "schedule_disabled": (
+        "本次运行因计划停用而停止",
+        "计划已重新启用；等待下一次定时执行，新一轮会单独受理，这个原任务保留在执行记录中",
+    ),
     "resource_library_missing": ("本次运行的来源资源库不可用", "检查来源资源库设置"),
     "resource_library_disabled": ("来源资源库已停用", "检查来源资源库启用状态"),
     "snapshot_missing": ("本次运行使用的配置无法读取", "检查配置是否可用"),
@@ -223,11 +227,11 @@ def automation_record_display(
             reasons.append("部分文件结果不可核对")
         effects = f"；已确认整理 {success} 个文件，已完成的操作保留" if success else ""
         statement = "本次失败，未全部完成" + effects
-        if "definition_disabled" in categories:
-            # A disabled schedule stops the admitted occurrence at its next
-            # execution boundary.  Say what really happened to the files, not
-            # only that the flow failed: the operator must know whether any
-            # effect exists before deciding to re-enable.
+        if "definition_disabled" in categories or "schedule_disabled" in categories:
+            # A disabled plan stops the admitted occurrence at its next execution
+            # boundary, whether it is still disabled or a successor re-enabled
+            # it.  Say what really happened to the files, not only that the flow
+            # failed: the operator must know whether any effect exists.
             if success:
                 statement = (
                     f"本次因自动化已停用而停止。已确认整理 {success} 个文件，已完成的操作保留。"

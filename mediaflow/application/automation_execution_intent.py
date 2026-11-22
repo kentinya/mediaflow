@@ -21,6 +21,15 @@ class ExecutionPrincipal:
     trusted_local: bool = False
 
 
+class ScheduleContinuityStopped(RuntimeError):
+    """A published revision between the admitted pin and Active disabled the plan."""
+
+    def __init__(self, *, revision_id: str, definition_id: str) -> None:
+        super().__init__("the admitted schedule was disabled by a published revision")
+        self.revision_id = revision_id
+        self.definition_id = definition_id
+
+
 def definitions(document):
     return {
         v["id"]: AutomationTaskDefinition.from_document(v)
@@ -275,8 +284,18 @@ def assert_schedule_continuity(managed, job, definition):
         seen.add(current.revision_id)
         managed.verify_integrity(current)
         live = definitions(current.document).get(definition.definition_id)
-        if live is None or not live.enabled:
+        if live is None:
+            # Absence is not the published-disabled evidence this path can
+            # confirm; keep the existing unproved-continuity outcome.
             raise RuntimeError("the admitted schedule was disabled or removed")
+        if not live.enabled:
+            # This exact published revision confirmed the disable.  The caller
+            # can therefore explain the stop instead of falling back to an
+            # unreadable continuity reason.
+            raise ScheduleContinuityStopped(
+                revision_id=current.revision_id,
+                definition_id=definition.definition_id,
+            )
         if current.revision_id == job.configuration_snapshot_id:
             return
         prior_id = activation_evidence(managed.repository, current).before.get("revisionId")

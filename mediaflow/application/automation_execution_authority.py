@@ -14,7 +14,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from mediaflow.application.automation_execution_intent import ExecutionPrincipal
+from mediaflow.application.automation_execution_intent import (
+    ExecutionPrincipal,
+    ScheduleContinuityStopped,
+)
 from mediaflow.domain.automation import AutomationTaskDefinition
 from mediaflow.domain.manual_safety import redact_evidence_text
 from mediaflow.domain.security import ApiPermission
@@ -247,6 +250,21 @@ class AutomationExecutionAuthority:
             return
         try:
             self._live_intent_checker(task, definition)
+        except ScheduleContinuityStopped as error:
+            # The published revision chain proves that the plan was disabled
+            # after this occurrence was admitted.  Keep that confirmed reason
+            # distinct from an unreadable chain so the execution record can
+            # explain the stop and the already-admitted Task can stay stopped.
+            raise AutomationExecutionIntentError(
+                "the admitted schedule was disabled by a published revision; "
+                "this occurrence is stopped",
+                code="schedule_disabled",
+                durable_state="completed effects are retained; no further effect was started",
+                next_action=(
+                    "wait for the next normal scheduled run; it is admitted as a new Task "
+                    "and this stopped Task remains in the execution records"
+                ),
+            ) from error
         except Exception as error:
             raise AutomationExecutionIntentError(
                 "the admitted schedule was stopped or its publication continuity is unavailable",

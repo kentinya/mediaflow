@@ -607,6 +607,163 @@ test("disabling a plan stops new and queued work with a readable reason", async 
   ).toBeVisible();
 });
 
+test("re-enabling before the queued worker keeps the stop reason on the original task", async ({
+  page,
+}) => {
+  // The operator disables the plan after a real occurrence was admitted, then
+  // re-enables it before the Worker claims that original Task. The published
+  // disabled revision is still the reason the original Task stops; the current
+  // Enabled plan only admits a separate new occurrence.
+  await publishNewDefinition(page);
+  await openLifecycle(page, DEFINITION_ID);
+  await saveEnabledChoice(page, true);
+  const firstTick = await page.request.post(
+    `/__harness__/run-automation-scheduler-tick?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
+  );
+  const firstBody = (await firstTick.json()) as {
+    emitted?: string[];
+    occurrenceTotal?: number;
+  };
+  expect(firstBody.emitted).toContain(DEFINITION_ID);
+  expect(firstBody.occurrenceTotal).toBe(1);
+
+  await openLifecycle(page, DEFINITION_ID);
+  await saveEnabledChoice(page, false);
+  const disabledTick = await page.request.post(
+    `/__harness__/run-automation-scheduler-tick?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
+  );
+  const disabledBody = (await disabledTick.json()) as {
+    emitted?: string[];
+    occurrenceTotal?: number;
+  };
+  expect(disabledBody.emitted).toEqual([]);
+  expect(disabledBody.occurrenceTotal).toBe(1);
+
+  // Re-enable through the same edit card. No Scheduler tick runs before the
+  // Worker claims, so this occurrence is the one admitted before the disable.
+  await openLifecycle(page, DEFINITION_ID);
+  await saveEnabledChoice(page, true);
+
+  const worked = await page.request.post(
+    `/__harness__/run-automation-definition-worker?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
+  );
+  const workedBody = (await worked.json()) as {
+    ran?: boolean;
+    taskStatus?: string;
+    taskId?: string;
+  };
+  expect(workedBody.ran, JSON.stringify(workedBody)).toBe(true);
+  expect(workedBody.taskStatus).toBe("failed");
+  const originalTaskId = workedBody.taskId;
+  if (!originalTaskId) throw new Error("stopped Task has no durable identity");
+
+  // The real records read proves the confirmed published-disable reason, the
+  // zero file effect and the next scheduled run direction.
+  await connectOn(page, "/operations/automation?tab=records");
+  const recordsResponse = await page.request.get(
+    `/api/operations/automation/records?definition=${encodeURIComponent(DEFINITION_ID)}`,
+  );
+  expect(recordsResponse.ok()).toBe(true);
+  const records = (await recordsResponse.json()) as {
+    total: number;
+    items: Array<{
+      handoff?: {
+        taskCenter?: { runId?: string | null } | null;
+      } | null;
+      result?: { status?: string; successItems?: number } | null;
+      recordOutcome?: {
+        failureReason?: string | null;
+        nextStep?: string | null;
+        statement?: string | null;
+      } | null;
+      failureStage?: { category?: string | null } | null;
+    }>;
+  };
+  expect(records.total).toBe(1);
+  const originalRecord = records.items.find(
+    (item) => item.handoff?.taskCenter?.runId === originalTaskId,
+  );
+  expect(originalRecord?.result?.status).toBe("failed");
+  expect(originalRecord?.result?.successItems).toBe(0);
+  expect(originalRecord?.failureStage?.category).toBe("schedule_disabled");
+  expect(originalRecord?.recordOutcome?.failureReason).toBe(
+    "本次运行因计划停用而停止",
+  );
+  expect(originalRecord?.recordOutcome?.nextStep).toBe(
+    "计划已重新启用；等待下一次定时执行，新一轮会单独受理，这个原任务保留在执行记录中",
+  );
+  expect(originalRecord?.recordOutcome?.statement).toBe(
+    "本次因自动化已停用，在开始处理文件前停止；没有产生文件效果。",
+  );
+
+  // The execution detail renders that same reason and next action.
+  const region = page.getByRole("region", { name: "自动化执行记录" });
+  await page.getByLabel("定义").fill(DEFINITION_ID);
+  await page.getByLabel("定义").press("Enter");
+  const recordRow = region
+    .getByRole("row")
+    .filter({ hasText: /Harness automation/ });
+  const detailToggle = recordRow.getByRole("button", { name: "查看详情" });
+  const detailId = await detailToggle.getAttribute("aria-controls");
+  await detailToggle.click();
+  const detail = page.locator(`[id="${detailId}"]`);
+  await expect(
+    detail.getByText("本次运行因计划停用而停止", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    detail.getByText(
+      "本次因自动化已停用，在开始处理文件前停止；没有产生文件效果。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    detail.getByText(
+      "计划已重新启用；等待下一次定时执行，新一轮会单独受理，这个原任务保留在执行记录中",
+      { exact: true },
+    ),
+  ).toBeVisible();
+
+  // The next Scheduler tick admits a fresh occurrence with its own Task. The
+  // stopped original keeps its failed record and is never replayed.
+  const nextTick = await page.request.post(
+    `/__harness__/run-automation-scheduler-tick?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
+  );
+  const nextBody = (await nextTick.json()) as {
+    emitted?: string[];
+    occurrenceTotal?: number;
+  };
+  expect(nextBody.emitted).toContain(DEFINITION_ID);
+  expect(nextBody.occurrenceTotal).toBe(2);
+
+  const afterTickResponse = await page.request.get(
+    `/api/operations/automation/records?definition=${encodeURIComponent(DEFINITION_ID)}`,
+  );
+  expect(afterTickResponse.ok()).toBe(true);
+  const afterTick = (await afterTickResponse.json()) as {
+    total: number;
+    items: Array<{
+      handoff?: {
+        taskCenter?: { runId?: string | null } | null;
+      } | null;
+      recordOutcome?: { status?: string } | null;
+    }>;
+  };
+  expect(afterTick.total).toBe(2);
+  const taskIds = afterTick.items.map(
+    (item) => item.handoff?.taskCenter?.runId ?? null,
+  );
+  expect(taskIds).toContain(originalTaskId);
+  const freshIds = taskIds.filter(
+    (taskId) => taskId !== null && taskId !== originalTaskId,
+  );
+  expect(freshIds).toHaveLength(1);
+  expect(
+    afterTick.items.find(
+      (item) => item.handoff?.taskCenter?.runId === originalTaskId,
+    )?.recordOutcome?.status,
+  ).toBe("failed");
+});
+
 test("retained occurrence history stays readable after removal", async ({
   page,
 }) => {

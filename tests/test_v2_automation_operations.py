@@ -666,3 +666,53 @@ class AutomationDisabledScheduleJourneyTests(unittest.TestCase):
                 2,
                 len(value.runtime.list_automation_definition_occurrences(_DEFINITION["id"])),
             )
+
+    def test_reenable_before_worker_keeps_the_published_disable_reason(self) -> None:
+        with self._journey() as value:
+            now = datetime.now(UTC)
+            (queued,) = self._scheduler(value).tick(now)
+            self._disable(value)
+            self.assertEqual((), self._scheduler(value).tick(now + timedelta(minutes=1)))
+            # Re-enable before the Worker claims the queued original: the plan is
+            # currently Enabled, but the published disabled revision between the
+            # admitted pin and Active is still the reason that occurrence stops.
+            self._enable(value)
+
+            completed = self._run_worker(value)
+            self.assertIsNotNone(completed)
+            assert completed is not None
+            self.assertEqual(queued.task_id, completed.task_id)
+            self.assertEqual("failed", completed.status.value)
+            task = value.runtime.get_task(queued.task_id)
+            self.assertIsNotNone(task)
+            assert task is not None
+            self.assertIn("schedule_disabled", task.error or "")
+            self.assertEqual((), value.runtime.list_items(queued.task_id))
+            self.assertEqual([], list(value.target_root.rglob("*.*")))
+            self.assertTrue((value.source_root / "Media" / "One.2001.mkv").exists())
+
+            status, records = _request(
+                value.api,
+                "/api/operations/automation/records",
+                query=f"definition={_DEFINITION['id']}",
+            )
+            self.assertEqual(200, status, records)
+            self.assertEqual(1, records["total"], records)
+            record = records["items"][0]
+            self.assertEqual("failed", record["recordOutcome"]["status"])
+            self.assertIn("计划停用", record["recordOutcome"]["failureReason"])
+            self.assertIn("等待下一次定时执行", record["recordOutcome"]["nextStep"])
+            self.assertIn("新一轮会单独受理", record["recordOutcome"]["nextStep"])
+            self.assertIn("没有产生文件效果", record["recordOutcome"]["statement"])
+            self.assertEqual("schedule_disabled", record["failureStage"]["category"])
+            self.assertEqual(0, record["recordOutcome"]["successItems"])
+
+            # The re-enabled plan admits a fresh occurrence with its own Task;
+            # the stopped original stays failed and is never replayed.
+            (fresh,) = self._scheduler(value).tick(now + timedelta(hours=2))
+            self.assertNotEqual(queued.task_id, fresh.task_id)
+            self.assertEqual("failed", value.runtime.get_task(queued.task_id).status.value)
+            self.assertEqual(
+                2,
+                len(value.runtime.list_automation_definition_occurrences(_DEFINITION["id"])),
+            )

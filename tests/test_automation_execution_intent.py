@@ -5,10 +5,19 @@ from __future__ import annotations
 import copy
 import unittest
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 from mediaflow.application.automation import IntervalScheduler
-from mediaflow.application.automation_execution_authority import AutomationIntentBoundaryError
-from mediaflow.application.automation_execution_intent import activation_evidence, resolve_principal
+from mediaflow.application.automation_execution_authority import (
+    AutomationExecutionIntentError,
+    AutomationIntentBoundaryError,
+)
+from mediaflow.application.automation_execution_intent import (
+    ScheduleContinuityStopped,
+    activation_evidence,
+    assert_schedule_continuity,
+    resolve_principal,
+)
 from mediaflow.domain.automation import AutomationTaskDefinition, SchedulerConfigurationSnapshot
 from mediaflow.domain.configuration_management import AutomationDefinitionSaveError
 from mediaflow.domain.security import ApiRole
@@ -442,11 +451,34 @@ class ExecutionIntentTests(unittest.TestCase):
         successor, enabled = self.enable()
         with self.assertRaises(AutomationIntentBoundaryError) as failure:
             f.api._automation_execution_authority.assert_live(old_job, definition)
-        self.assertEqual("scheduled_intent_stopped", failure.exception.category)
+        # The published disabled revision confirms why this admitted occurrence
+        # stopped; the operator-facing record can name it instead of falling back
+        # to an unreadable continuity reason.
+        self.assertEqual("schedule_disabled", failure.exception.category)
+        self.assertIn("disabled by a published revision", str(failure.exception))
         # The normal next due owns a fresh intent; it is not an old-job retry.
         (new_job,) = self.scheduler(successor, enabled).tick(datetime.now(UTC) + timedelta(hours=2))
         f.api._automation_execution_authority.assert_live(new_job, enabled)
         self.assertNotEqual(old_job.task_id, new_job.task_id)
+
+    def test_unprovable_publication_chain_keeps_the_generic_unreadable_stop(self):
+        active, definition = self.enable()
+        f = self.fixture
+        (job,) = self.scheduler(active, definition).tick(datetime.now(UTC))
+        document = copy.deepcopy(active.document)
+        document["automationTaskDefinitions"][0]["name"] = "Enabled successor"
+        self.publish(document)
+
+        # The chain exists but its activation evidence cannot be read: this is
+        # not a confirmed disable and must keep the existing unproved reason.
+        with patch.object(f.managed.repository, "list_audits", return_value=[]):
+            with self.assertRaises(RuntimeError) as direct:
+                assert_schedule_continuity(f.managed, job, definition)
+            self.assertNotIsInstance(direct.exception, ScheduleContinuityStopped)
+            self.assertIn("activation evidence is unavailable", str(direct.exception))
+            with self.assertRaises(AutomationExecutionIntentError) as routed:
+                f.api._automation_execution_authority._assert_intent_continuity(job, definition)
+        self.assertEqual("scheduled_intent_stopped", routed.exception.code)
 
     def test_enabled_successor_keeps_legitimate_admitted_pin(self):
         active, definition = self.enable()
