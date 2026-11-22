@@ -78,14 +78,12 @@ Enter the code at `/` to create the sole administrator, then initialize an empty
 baseline in System Settings (`/configuration`). Configure Storage and libraries
 through the business pages afterwards.
 
-In `系统设置` (`/configuration`), the compact `配置状态摘要` shows whether setup is required.
-Use `初始化为空配置` to publish a valid empty baseline. The `高级配置` groups read the exact
-Active values; `应用更改` validates the current form, runs applicable in-place checks and
-atomically publishes a new Active snapshot. An unknown response is verified automatically by the
-same request identity, and the previous Active stays authoritative until that publication commits.
-The page then shows `空配置已生效`, the actual Active identity under `诊断`, and no Task, delivery
-or media mutation. A failed check or stale baseline preserves the previous Active and the input;
-there is no resumable Draft.
+When `系统设置` (`/configuration`) shows `需要初始化`, choose `初始化为空配置` to publish a valid
+empty baseline. The page shows `空配置已生效` and lists the exact Active under `配置工具` → `诊断`.
+Initialization changes only the managed configuration. For later edits, use `运行设置` → `保存设置`
+or select a group in `常规设置` and choose `应用更改`. Each action validates the current form,
+runs the applicable checks and publishes atomically. A failed check or stale baseline preserves the
+published configuration and your input. If a response is lost, the page verifies the original request.
 
 If you already have a Local Storage layout, also render the canonical example as a
 managed configuration *input*:
@@ -131,11 +129,10 @@ docker compose -f compose.yaml -f compose.media-mounts.yaml run --rm --no-deps -
   config publish --file /dev/stdin --replace-active < config/mediaflow.activation.json
 ```
 
-The same input can be reviewed and published from `系统设置` → `高级配置` →
-`配置 JSON` (read-only) and `导入配置` (complete JSON or redacted package,
-followed by `核对并应用`). A missing or corrupt Active uses the recovery banner
-with `应用完整替换`. The [configuration guide](configuration.md) uses the same
-page names and describes failed-check recovery.
+In the Web UI, open `系统设置` → `配置工具` → `导入配置`, paste the complete JSON or an eligible
+redacted package, then choose `核对并应用`. To inspect the published JSON, use `配置工具` →
+`配置内容` → `配置 JSON`. If Settings shows `生效配置需要恢复`, paste a complete configuration in
+that banner and choose `应用完整替换`. See the [System Settings guide](configuration.md#system-settings-web).
 
 - A deployment-owned environment file. Copy
   [deploy/mediaflow.env.example](../deploy/mediaflow.env.example) to

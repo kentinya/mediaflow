@@ -1431,12 +1431,17 @@ configuration changes. Read the resulting immutable Active rather than treating 
 effective configuration.
 
 Unsaved edits invalidate prior signature-test feedback and apply readiness. Closing, Escape, backdrop
-and browser navigation share the continue-editing/discard choice; continuing retains both inputs and
+and browser navigation share the continue-editing/discard choice. Continuing retains both inputs and
 the exact route. Commands in flight prevent conflicting exits and duplicate submission. New-definition
-creation and apply lock fields until their result because success leaves the form. An ordinary apply
-permits further editing: its success applies the submitted values, while newer input remains visibly
-unsaved. A concurrent change retains local edits and offers an explicit choice to adopt server values
-or keep inputs before applying against the read version.
+creation locks fields until its result because success opens the created definition. An ordinary edit
+applies the submitted values while keeping newer input visibly unsaved. If an existing definition
+changes during editing, choose whether to adopt its published values or keep your local input before
+applying against the version you read.
+
+If a configuration change causes a new Webhook command to be refused, the card names the step and
+keeps your input. A refusal at `发送签名测试` stops before contacting the receiver. A refusal at `保存`
+leaves the definition uncreated. Choose `读取最新配置` in the card, run the signature test again, and
+then choose `保存`. If the read fails, use the same action when the service is available.
 
 Open 投递记录, choose a status such as 死信, and view one delivery's result, attempts, readable times,
 failure reason, known receiver effects and permitted next action. Confirm recovery of that exact

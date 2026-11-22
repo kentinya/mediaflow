@@ -2,7 +2,7 @@
 
 从 `/` 登录 Web，在「任务中心」查看本版本的任务和结果。脚本使用从「系统设置」签发的分权限令牌访问 `/api/*`。[登录与恢复](product-experience.md#current--single-web-administrator-and-scoped-api-tokens-slice57-pass--closed) · [脚本令牌](deployment.md#script-api-tokens)
 
-共享顶栏只提供账户入口。通过侧栏「通知」管理 Webhook 和查看投递记录，通过「存储管理」的类型卡片和分页查找存储。[使用说明](product-experience.md#v2-operator-web) · [存储管理](product-experience.md#storage-management-and-root-recovery)
+共享顶栏只提供账户入口。通过侧栏「通知」新建 Webhook 或打开投递记录，通过「存储管理」的类型卡片和分页查找存储。[通知与投递恢复](product-experience.md#notification-definitions-and-deliveries) · [存储管理](product-experience.md#storage-management-and-root-recovery)
 
 在「系统设置」初始化空配置或直接应用修改。部署支持纯净初始化和同版本重启。启动遇到不支持的数据库时，保留原库并使用新的空数据目录。只有通过数据库适用性检查且报告 `DATA_SWITCH_REQUIRED` 的 schema 11 配置库才走显式切换。[系统设置](configuration.md#system-settings-web) · [部署边界](deployment.md#boundary) · [配置数据切换](configuration.md#previous-store-data-switch)
 
