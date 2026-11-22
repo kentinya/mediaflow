@@ -11016,6 +11016,99 @@ tr[aria-selected="true"] {
   color: #2b4d7d;
 }
 
+.mf-settings-badge-expired {
+  background: #fff4dd;
+  color: #7a4e00;
+}
+
+.mf-settings-badge-revoked {
+  background: #f2eef0;
+  color: #6b3541;
+}
+
+.mf-settings-token-form {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 0.8fr);
+  gap: 14px 18px;
+  align-items: start;
+  margin-top: 16px;
+}
+
+.mf-settings-token-form .mf-actions {
+  grid-column: 1 / -1;
+}
+
+.mf-settings-token-secret {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid #c8d8c9;
+  border-radius: 10px;
+  background: #f4faf5;
+}
+
+.mf-settings-token-secret h3 {
+  margin: 0;
+}
+
+.mf-settings-token-secret code {
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  border: 1px solid #b7ccb9;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.mf-settings-token-list {
+  margin-top: 22px;
+}
+
+.mf-settings-token-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.mf-settings-token-list-head h3 {
+  margin: 0;
+}
+
+.mf-settings-token-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.mf-settings-token-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+}
+
+.mf-settings-token-table th,
+.mf-settings-token-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.mf-settings-token-table th {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .mf-settings-token-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .mf-settings-boundary {
   color: var(--muted);
   font-size: 12.5px;

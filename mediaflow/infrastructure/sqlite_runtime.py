@@ -21,6 +21,11 @@ from mediaflow.domain.accounts import (
     AuthenticatedAccount,
     OneTimeCodeRecord,
 )
+from mediaflow.domain.api_tokens import (
+    ApiTokenRecord,
+    ApiTokenScope,
+    AuthenticatedApiToken,
+)
 from mediaflow.domain.automation import (
     AutomationDefinitionDueState,
     AutomationDefinitionOccurrence,
@@ -177,7 +182,7 @@ from mediaflow.domain.resident_services import (
     validate_resident_service_name,
     validate_resident_waiting_reason,
 )
-from mediaflow.domain.security import ApiRole, SecurityAuditRecord
+from mediaflow.domain.security import ApiPermission, ApiRole, SecurityAuditRecord
 from mediaflow.domain.source_evidence import (
     SourceVersionEvidence,
     source_version_is_known_different,
@@ -351,6 +356,12 @@ from mediaflow.infrastructure.sqlite_initialization import execute_script
 # originally admitted the Task.  The original ``admission_principal`` and every
 # other scheduling fact stay untouched; a legacy row simply has no recorded
 # continuation actor and is never backfilled or re-labelled.
+# Schema 60 adds the additive ``api_tokens`` table: one durable record per
+# issued script/integration token, carrying its stable token ID, issuing
+# administrator, name, scope, permission set, issue/expiry/revocation times and
+# a SHA-256 digest of the bearer secret.  The plaintext token is never stored.
+# Existing validated accounts stay unchanged, and a database that never issued
+# a token simply has no rows.
 # Schema 57 adds the additive ``task_initial_executions`` table: the bounded,
 # write-once evidence of one kernel-admitted automatic Task's FIRST execution
 # stage, recorded inside the same claim-fenced transaction that publishes that
@@ -364,11 +375,12 @@ from mediaflow.infrastructure.sqlite_initialization import execute_script
 # stage never reached such a boundary has no row, and the migration backfills
 # nothing: no existing Task, TaskItem, Result, pin, authorization or Job row is
 # rewritten, re-labelled or made executable by the upgrade.
-SCHEMA_VERSION = 59
+SCHEMA_VERSION = 60
 
-# Web accounts, server-side sessions and host-issued one-time codes are part of
-# the same runtime store as Tasks.  Only password hashes and SHA-256 digests of
-# session/code secrets are persisted; a raw credential never enters a row.
+# Web accounts, server-side sessions, host-issued one-time codes and scoped API
+# tokens are part of the same runtime store as Tasks.  Only password hashes and
+# SHA-256 digests of session/code/token secrets are persisted; a raw credential
+# never enters a row.
 _ACCOUNT_TABLES_CREATE = """
     CREATE TABLE IF NOT EXISTS accounts (
         account_id TEXT PRIMARY KEY,
@@ -418,6 +430,21 @@ _ACCOUNT_TABLES_CREATE = """
     );
     CREATE INDEX IF NOT EXISTS account_auth_audit_occurred
         ON account_auth_audit(occurred_at, audit_id);
+    CREATE TABLE IF NOT EXISTS api_tokens (
+        token_id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        permissions_json TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        last_used_at TEXT,
+        FOREIGN KEY(account_id) REFERENCES accounts(account_id)
+    );
+    CREATE INDEX IF NOT EXISTS api_tokens_account_created
+        ON api_tokens(account_id, created_at, token_id);
 """
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
@@ -8702,6 +8729,163 @@ class SQLiteTaskRepository:
                 "SELECT * FROM accounts ORDER BY username_key, account_id"
             ).fetchall()
         return tuple(self._account(row) for row in rows)
+
+    # -- scoped API tokens --------------------------------------------------
+
+    def create_api_token(
+        self,
+        value: ApiTokenRecord,
+        audit: AccountAuditRecord | None = None,
+    ) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO api_tokens (
+                    token_id, account_id, name, scope, permissions_json,
+                    token_hash, created_at, expires_at, revoked_at, last_used_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    value.token_id,
+                    value.account_id,
+                    value.name,
+                    value.scope.value,
+                    json.dumps(sorted(permission.value for permission in value.permissions)),
+                    value.token_hash,
+                    value.created_at.isoformat(),
+                    value.expires_at.isoformat(),
+                    value.revoked_at.isoformat() if value.revoked_at else None,
+                    value.last_used_at.isoformat() if value.last_used_at else None,
+                ),
+            )
+            if audit is not None:
+                self._insert_account_audit_locked(audit)
+
+    def list_api_tokens(self, account_id: str) -> tuple[ApiTokenRecord, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM api_tokens WHERE account_id = ?
+                ORDER BY created_at DESC, token_id DESC
+                """,
+                (account_id,),
+            ).fetchall()
+        return tuple(self._api_token(row) for row in rows)
+
+    def get_api_token(self, token_id: str) -> ApiTokenRecord | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM api_tokens WHERE token_id = ?", (token_id,)
+            ).fetchone()
+        return self._api_token(row) if row is not None else None
+
+    def revoke_api_token(
+        self,
+        token_id: str,
+        *,
+        revoked_at: datetime,
+        audit: AccountAuditRecord,
+    ) -> ApiTokenRecord | None:
+        """Revoke one token once; a repeated command keeps the original instant."""
+
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    "SELECT * FROM api_tokens WHERE token_id = ?", (token_id,)
+                ).fetchone()
+                if row is None:
+                    self._connection.commit()
+                    return None
+                record = self._api_token(row)
+                if record.revoked_at is not None:
+                    self._connection.commit()
+                    return record
+                self._connection.execute(
+                    """
+                    UPDATE api_tokens SET revoked_at = ?
+                    WHERE token_id = ? AND revoked_at IS NULL
+                    """,
+                    (revoked_at.isoformat(), token_id),
+                )
+                self._insert_account_audit_locked(audit)
+                self._connection.commit()
+                return replace(record, revoked_at=revoked_at)
+            except BaseException:
+                self._connection.rollback()
+                raise
+
+    def authenticate_api_token(
+        self,
+        token_hash: str,
+        *,
+        now: datetime,
+    ) -> AuthenticatedApiToken | None:
+        """Resolve one live token and its enabled issuing account.
+
+        Expired and revoked rows stay readable in the token list; they simply
+        cannot authenticate.  Successful use records the last-used instant on
+        the token's own row, never on any Task, Result or configuration row.
+        """
+
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    """
+                    SELECT token.*, account.enabled AS account_enabled
+                    FROM api_tokens token
+                    JOIN accounts account ON account.account_id = token.account_id
+                    WHERE token.token_hash = ?
+                    """,
+                    (token_hash,),
+                ).fetchone()
+                if row is None:
+                    self._connection.commit()
+                    return None
+                record = self._api_token(row)
+                if (
+                    record.revoked_at is not None
+                    or now >= record.expires_at
+                    or not bool(row["account_enabled"])
+                ):
+                    self._connection.commit()
+                    return None
+                self._connection.execute(
+                    "UPDATE api_tokens SET last_used_at = ? WHERE token_id = ?",
+                    (now.isoformat(), record.token_id),
+                )
+                self._connection.commit()
+                return AuthenticatedApiToken(
+                    record.token_id,
+                    record.account_id,
+                    record.name,
+                    record.scope,
+                    record.permissions,
+                    record.expires_at,
+                )
+            except BaseException:
+                self._connection.rollback()
+                raise
+
+    @staticmethod
+    def _api_token(row: sqlite3.Row) -> ApiTokenRecord:
+        scope = ApiTokenScope(row["scope"])
+        permissions = frozenset(
+            ApiPermission(value) for value in json.loads(row["permissions_json"])
+        )
+        return ApiTokenRecord(
+            row["token_id"],
+            row["account_id"],
+            row["name"],
+            scope,
+            permissions,
+            row["token_hash"],
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["expires_at"]),
+            datetime.fromisoformat(row["revoked_at"]) if row["revoked_at"] else None,
+            datetime.fromisoformat(row["last_used_at"]) if row["last_used_at"] else None,
+        )
 
     def create_one_time_code(
         self,

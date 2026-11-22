@@ -316,3 +316,101 @@ test("a lost apply answer is verified automatically after reconnect without repl
   );
   await expect(page.getByLabel("日志保留天数")).toHaveValue(String(next));
 });
+
+test("desktop Settings issues scoped tokens, reconciles a lost answer and revokes them", async ({
+  page,
+  request,
+}) => {
+  await connectOn(page, "/configuration");
+  const panel = page.getByRole("region", { name: "API 令牌" });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByLabel("权限")).toHaveValue("read_only");
+  await expect(panel.getByLabel("有效期（天）")).toHaveValue("90");
+
+  await panel.getByLabel("令牌名称").fill("browser-monitor");
+  await panel.getByRole("button", { name: "签发令牌" }).click();
+  await expect(panel.getByText("令牌已签发", { exact: true })).toBeVisible();
+  const monitorPlaintext = (
+    await panel.getByLabel("新令牌明文").innerText()
+  ).trim();
+  expect(monitorPlaintext).toContain("mf_");
+  const monitorTasks = await request.get("/api/tasks", {
+    headers: { Authorization: `Bearer ${monitorPlaintext}` },
+  });
+  expect(monitorTasks.status()).toBe(200);
+  const monitorAnalysis = await request.post(
+    "/api/operations/organize/intents/missing/previews",
+    {
+      headers: { Authorization: `Bearer ${monitorPlaintext}` },
+      data: { expectedVersion: 1 },
+    },
+  );
+  expect(monitorAnalysis.status()).toBe(403);
+  await panel.getByRole("button", { name: "我已保存" }).click();
+  await expect(panel.getByLabel("新令牌明文")).toHaveCount(0);
+
+  // The real analysis-token issuance commits, then the browser loses the
+  // response.  The page must refresh the durable list instead of replaying the
+  // command, and the operator identifies the record by name before revoking it.
+  let lostToken: string | null = null;
+  let lostIssues = 0;
+  await page.route("**/api/auth/tokens", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    const answer = await route.fetch();
+    expect(answer.status()).toBe(201);
+    const body = (await answer.json()) as { token?: string };
+    lostToken = body.token ?? null;
+    lostIssues += 1;
+    await route.abort();
+  });
+  await panel.getByLabel("令牌名称").fill("browser-analysis");
+  await panel.getByLabel("权限").selectOption("read_and_analysis");
+  await panel.getByRole("button", { name: "签发令牌" }).click();
+  await expect(
+    panel.getByText("签发结果待核实", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.getByText("browser-analysis", { exact: true }),
+  ).toBeVisible();
+  expect(lostIssues).toBe(1);
+  expect(lostToken).not.toBeNull();
+  const analysisPlaintext = lostToken as unknown as string;
+  await page.unroute("**/api/auth/tokens");
+
+  const analysisTasks = await request.get("/api/tasks", {
+    headers: { Authorization: `Bearer ${analysisPlaintext}` },
+  });
+  expect(analysisTasks.status()).toBe(200);
+  const list = await page.request.get("/api/auth/tokens");
+  expect(list.status()).toBe(200);
+  const listDocument = await list.text();
+  expect(listDocument).not.toContain(monitorPlaintext);
+  expect(listDocument).not.toContain(analysisPlaintext);
+  const storage = await page.evaluate(() =>
+    JSON.stringify({
+      local: { ...window.localStorage },
+      session: { ...window.sessionStorage },
+    }),
+  );
+  expect(storage).not.toContain(monitorPlaintext);
+  expect(storage).not.toContain(analysisPlaintext);
+
+  await panel
+    .getByRole("button", { name: "吊销令牌 browser-analysis" })
+    .click();
+  await panel
+    .getByRole("button", { name: "确认吊销 browser-analysis" })
+    .click();
+  await expect(
+    panel.getByText("已吊销 browser-analysis", { exact: true }),
+  ).toBeVisible();
+  await expect(panel.getByLabel("令牌状态 已吊销").first()).toBeVisible();
+  const revoked = await request.get("/api/tasks", {
+    headers: { Authorization: `Bearer ${analysisPlaintext}` },
+  });
+  expect(revoked.status()).toBe(401);
+  await expect(page.getByLabel("配置状态摘要")).toContainText("配置已生效");
+});

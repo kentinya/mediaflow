@@ -155,6 +155,7 @@ const baseFetch = () =>
     if (input.includes("/operations/automation/settings"))
       return automationUnavailable();
     if (input.endsWith("/auth/principal")) return principal();
+    if (input.endsWith("/auth/tokens")) return response({ items: [] });
     if (input.includes("/objects")) return objectsProjection();
     if (input.includes("/revisions/active-1")) return revisionDetail();
     if (input.includes("/system/settings")) return response(activeSettings());
@@ -625,6 +626,7 @@ describe("V2 configuration direct publication", () => {
       if (input.includes("/operations/automation/settings"))
         return automationUnavailable();
       if (input.endsWith("/auth/principal")) return principal();
+      if (input.endsWith("/auth/tokens")) return response({ items: [] });
       if (input.includes("packages/export"))
         return response({
           packageKind: "mediaflow.configuration.v1",
@@ -1056,5 +1058,98 @@ describe("V2 configuration direct publication", () => {
       document: { locale: "ja-JP" },
       submissionId: expect.any(String),
     });
+  });
+
+  it("issues one scoped token with one-time plaintext and revocation", async () => {
+    let issuedBody: Record<string, unknown> | null = null;
+    let tokenItem: Record<string, unknown> | null = null;
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes("/operations/automation/settings"))
+        return automationUnavailable();
+      if (input.endsWith("/auth/principal")) return principal();
+      if (input.endsWith("/auth/tokens") && init?.method === "POST") {
+        issuedBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        tokenItem = {
+          tokenId: "token-1",
+          name: "monitor",
+          scope: "read_and_analysis",
+          permissions: ["read", "submit_dry_run"],
+          createdAt: "2026-01-01T00:00:00+00:00",
+          expiresAt: "2026-01-31T00:00:00+00:00",
+          lastUsedAt: null,
+          revokedAt: null,
+          status: "active",
+        };
+        return response(
+          {
+            ...tokenItem,
+            token: "mf_test_only_secret_value",
+            plaintextShownOnce: true,
+          },
+          201,
+        );
+      }
+      if (input.endsWith("/auth/tokens/token-1/revoke")) {
+        tokenItem = {
+          ...(tokenItem ?? {}),
+          status: "revoked",
+          revokedAt: "2026-01-02T00:00:00+00:00",
+        };
+        return response(tokenItem);
+      }
+      if (input.endsWith("/auth/tokens")) {
+        return response({ items: tokenItem === null ? [] : [tokenItem] });
+      }
+      if (input.includes("/objects")) return objectsProjection();
+      if (input.includes("/revisions/active-1")) return revisionDetail();
+      if (input.includes("/system/settings")) return response(activeSettings());
+      return response(activeStatus());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/configuration");
+
+    const panel = await screen.findByRole("region", { name: "API 令牌" });
+    await userEvent.type(within(panel).getByLabelText("令牌名称"), "monitor");
+    await userEvent.selectOptions(
+      within(panel).getByLabelText("权限"),
+      "read_and_analysis",
+    );
+    const days = within(panel).getByLabelText("有效期（天）");
+    await userEvent.clear(days);
+    await userEvent.type(days, "30");
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "签发令牌" }),
+    );
+
+    expect(await screen.findByText("令牌已签发")).toBeVisible();
+    expect(within(panel).getByLabelText("新令牌明文")).toHaveTextContent(
+      "mf_test_only_secret_value",
+    );
+    expect(issuedBody).toEqual({
+      name: "monitor",
+      scope: "read_and_analysis",
+      expiresInDays: 30,
+    });
+    expect(
+      `${JSON.stringify(window.localStorage)}${JSON.stringify(window.sessionStorage)}`,
+    ).not.toContain("mf_test_only_secret_value");
+
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "我已保存" }),
+    );
+    expect(within(panel).queryByLabelText("新令牌明文")).toBeNull();
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "吊销令牌 monitor" }),
+    );
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "确认吊销 monitor" }),
+    );
+
+    expect(await screen.findByText("已吊销 monitor")).toBeVisible();
+    expect(within(panel).getByLabelText("令牌状态 已吊销")).toBeVisible();
+    expect(
+      `${JSON.stringify(window.localStorage)}${JSON.stringify(window.sessionStorage)}`,
+    ).not.toContain("mf_test_only_secret_value");
   });
 });

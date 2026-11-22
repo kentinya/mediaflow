@@ -571,6 +571,33 @@ Open `http://127.0.0.1:8080/` in a browser and sign in with the account created
 from the host-issued setup code.
 The retired `/ui` addresses render the ordinary not-found route.
 
+## Script API tokens
+
+Browser pages use the account session cookie. Scripts use a token issued from
+**系统设置 → API 令牌**, with only the permissions their task needs. The normal
+choices are `只读` (`READ`) and `只读与整理分析` (`READ` plus
+`SUBMIT_DRY_RUN`), and the default validity is 90 days. The plaintext is shown
+once; later reads show only the stable token ID, name, permissions, expiry and
+active/expired/revoked state. Token management, schedule publication/enabling
+and confirmed file execution remain browser-session actions.
+
+Call an existing business API exactly as the Web client does, replacing the
+cookie with the issued bearer credential:
+
+```bash
+TOKEN='<the token copied from System Settings>'
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8080/api/tasks?limit=100"
+```
+
+Missing, expired and revoked credentials return `401`; a live token without the
+required business permission returns `403`. An explicit `Authorization` header
+takes precedence over any browser cookie. Look the token up in the Settings list
+by name and issue time when a creation response is lost. Rotate by issuing and
+verifying the new token first, then revoking the old one separately. Revoking a
+script token does not stop an already enabled scheduled plan or invalidate the
+administrator's Web session.
+
 Restart one service without replacing state:
 
 ```bash

@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useSearch } from "@tanstack/react-router";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import { AutomationSettingsPanel } from "../operations/AutomationSettingsPanel";
+import { ApiTokensPanel } from "./ApiTokensPanel";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { Button } from "../../shared/ui/Button";
 import { ModalCardShell, useModalLayer } from "../../shared/ui/modal-card";
@@ -2306,6 +2307,7 @@ export function ConfigurationPage() {
               </StatusBanner>
             )}
             <AutomationSettingsPanel />
+            <ApiTokensPanel />
             <section
               className="mf-settings-advanced"
               aria-labelledby="settings-advanced-title"

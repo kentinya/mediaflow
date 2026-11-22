@@ -16,6 +16,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from mediaflow.application.accounts import AccountService
+from mediaflow.application.api_tokens import ApiTokenService
 from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.application.automation_definition_occurrence import (
     AutomationDefinitionOccurrenceService,
@@ -118,6 +119,7 @@ from mediaflow.application.task_item_recovery import TaskItemRecoveryError, Task
 from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.application.webhook_test import WebhookTestService, webhook_events_supported
 from mediaflow.domain.accounts import AccountAuthenticationError, AuthenticatedAccount
+from mediaflow.domain.api_tokens import ApiTokenRecord
 from mediaflow.domain.automation import (
     AutomationQueueFull,
     AutomationTaskDefinition,
@@ -429,6 +431,11 @@ class MediaFlowApi:
         self._repository = repository
         self._principals = principals
         self._accounts = account_service
+        self._api_tokens = (
+            ApiTokenService(repository)
+            if callable(getattr(repository, "authenticate_api_token", None))
+            else None
+        )
         self._runtime_snapshot_validator = recovery_snapshot_validator
         self._storage_adapters = dict(storage_adapters or {})
         self._configuration_service = configuration_service
@@ -6102,6 +6109,76 @@ class MediaFlowApi:
                 200,
                 {"items": [self._value(item) for item in self._repository.list_security_audit()]},
             )
+        if parts == ["api", "auth", "tokens"] or (
+            len(parts) == 5 and parts[:3] == ["api", "auth", "tokens"] and parts[4] == "revoke"
+        ):
+            # Token administration is reserved to an administrator's Web
+            # session.  A bearer token can use its issued business permissions,
+            # but it can never mint, list or revoke credentials.
+            if not isinstance(principal, AuthenticatedAccount):
+                raise ApiPermissionDenied(
+                    "API token management requires a signed-in administrator session"
+                )
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if parts == ["api", "auth", "tokens"] and method == "GET":
+                self._require_empty_query(environ, "API token list")
+                now = datetime.now(UTC)
+                return self._response(
+                    start_response,
+                    200,
+                    {
+                        "items": [
+                            self._api_token_document(record, now)
+                            for record in self._api_tokens.list(account_id=principal.account_id)
+                        ]
+                    },
+                )
+            if parts == ["api", "auth", "tokens"] and method == "POST":
+                if not self._origin_acceptable(environ):
+                    return self._cross_site_error(start_response)
+                self._require_empty_query(environ, "API token issue")
+                document = self._document(environ)
+                if set(document).difference({"name", "scope", "expiresInDays"}):
+                    raise ValueError("API token issue accepts name, scope and expiresInDays only")
+                grant = self._api_tokens.issue(
+                    account_id=principal.account_id,
+                    name=document.get("name"),
+                    scope=document.get("scope"),
+                    expires_in_days=document.get("expiresInDays"),
+                )
+                return self._response(
+                    start_response,
+                    201,
+                    {
+                        **self._api_token_document(grant.record, datetime.now(UTC)),
+                        "token": grant.token,
+                        "plaintextShownOnce": True,
+                    },
+                )
+            if len(parts) == 5 and parts[4] == "revoke" and method == "POST":
+                if not self._origin_acceptable(environ):
+                    return self._cross_site_error(start_response)
+                self._require_empty_query(environ, "API token revocation")
+                record = self._api_tokens.revoke(parts[3], account_id=principal.account_id)
+                if record is None:
+                    return self._error(
+                        start_response,
+                        404,
+                        "not_found",
+                        "API token was not found",
+                        details={
+                            "durableState": "no API token was changed",
+                            "sideEffects": "none",
+                            "retrySafe": False,
+                            "nextAction": "refresh the API token list and choose an existing token",
+                        },
+                    )
+                return self._response(
+                    start_response,
+                    200,
+                    self._api_token_document(record, datetime.now(UTC)),
+                )
+            return self._error(start_response, 405, "method_not_allowed", "GET or POST required")
         if parts == ["api", "auth", "principal"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "authenticated principal")
@@ -6645,9 +6722,10 @@ class MediaFlowApi:
     def _authenticate(self, environ: dict) -> tuple[object | None, bool]:
         """Return the current identity and whether a stale session cookie was sent.
 
-        An explicit Authorization header is always authoritative: until API
-        token issuance is implemented, a presented bearer credential is
-        rejected instead of silently falling back to a browser cookie.
+        An explicit Authorization header is always authoritative.  A presented
+        bearer credential resolves to exactly one issued token identity (or the
+        focused legacy test authority) and never silently falls back to a
+        browser cookie when it is missing, expired or revoked.
         """
 
         header = str(environ.get("HTTP_AUTHORIZATION", ""))
@@ -6661,6 +6739,10 @@ class MediaFlowApi:
                 and not any(character.isspace() for character in candidate)
             )
             presented = candidate if valid else ""
+            if presented and self._api_tokens is not None:
+                issued = self._api_tokens.authenticate(presented)
+                if issued is not None:
+                    return issued, False
             matched = None
             for principal in self._principals:
                 if hmac.compare_digest(presented, principal.token):
@@ -6954,6 +7036,22 @@ class MediaFlowApi:
             "username": account.username,
             "roles": [role.value for role in account.roles],
             "permissions": sorted(permission.value for permission in account.permissions),
+        }
+
+    @staticmethod
+    def _api_token_document(record: ApiTokenRecord, now: datetime) -> dict:
+        """Non-secret token metadata; the plaintext only rides the issue response."""
+
+        return {
+            "tokenId": record.token_id,
+            "name": record.name,
+            "scope": record.scope.value,
+            "permissions": sorted(permission.value for permission in record.permissions),
+            "createdAt": record.created_at.isoformat(),
+            "expiresAt": record.expires_at.isoformat(),
+            "lastUsedAt": record.last_used_at.isoformat() if record.last_used_at else None,
+            "revokedAt": record.revoked_at.isoformat() if record.revoked_at else None,
+            "status": record.status(now).value,
         }
 
     def _health_document(self) -> dict:

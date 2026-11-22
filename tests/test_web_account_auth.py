@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mediaflow.application.accounts import AccountService
+from mediaflow.application.api_tokens import ApiTokenService
 from mediaflow.domain.accounts import Account, AccountAuthenticationError
 from mediaflow.domain.security import ApiRole
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
@@ -556,6 +557,305 @@ class WebAccountAuthTests(unittest.TestCase):
         self.assertEqual(401, status)
         self.assertEqual("unauthorized", document["error"]["code"])
 
+    def test_api_tokens_issue_defaults_list_and_one_time_plaintext(self) -> None:
+        grant = self._admin()
+        cookie = cookie_for(grant)
+        status, issued, _ = request(
+            self.api,
+            "POST",
+            "/api/auth/tokens",
+            document={"name": "monitor"},
+            cookie=cookie,
+            origin=ORIGIN,
+        )
+        self.assertEqual(201, status, issued)
+        self.assertEqual("monitor", issued["name"])
+        self.assertEqual("read_only", issued["scope"])
+        self.assertEqual(["read"], issued["permissions"])
+        self.assertEqual("active", issued["status"])
+        self.assertTrue(issued["plaintextShownOnce"])
+        self.assertTrue(issued["token"].startswith("mf_"))
+        self.assertGreaterEqual(len(issued["token"]), 40)
+        created = datetime.fromisoformat(issued["createdAt"])
+        expires = datetime.fromisoformat(issued["expiresAt"])
+        self.assertEqual(timedelta(days=90), expires - created)
+        self.assertNotIn("tokenHash", issued)
+        self.assertNotIn("token_hash", issued)
+
+        status, listing, _ = request(self.api, "GET", "/api/auth/tokens", cookie=cookie)
+        self.assertEqual(200, status, listing)
+        self.assertEqual(1, len(listing["items"]))
+        item = listing["items"][0]
+        self.assertEqual(issued["tokenId"], item["tokenId"])
+        self.assertEqual("active", item["status"])
+        self.assertNotIn("token", item)
+        self.assertNotIn(issued["token"], json.dumps(listing))
+
+        # The issued token can use its READ business permission but can never
+        # administer credentials itself.
+        self.assertEqual(
+            request(self.api, "GET", "/api/tasks", authorization=f"Bearer {issued['token']}")[0],
+            200,
+        )
+        status, denied, _ = request(
+            self.api,
+            "GET",
+            "/api/auth/tokens",
+            authorization=f"Bearer {issued['token']}",
+        )
+        self.assertEqual(403, status, denied)
+
+        # Token administration reuses the same-origin write boundary.
+        status, rejected, _ = request(
+            self.api,
+            "POST",
+            "/api/auth/tokens",
+            document={"name": "cross-site"},
+            cookie=cookie,
+            origin="http://attacker.invalid",
+        )
+        self.assertEqual(403, status, rejected)
+        self.assertEqual("cross_site_write_rejected", rejected["error"]["code"])
+
+        status, no_cookie, _ = request(self.api, "GET", "/api/auth/tokens")
+        self.assertEqual(401, status, no_cookie)
+
+        rows = self.repository.list_account_auth_audit(limit=100)
+        issued_rows = [row for row in rows if row.action == "api_token_issued"]
+        self.assertEqual(1, len(issued_rows))
+        self.assertEqual(grant.account.account_id, issued_rows[0].account_id)
+        self.assertIn(issued["tokenId"], issued_rows[0].detail or "")
+        self.assertNotIn(issued["token"], json.dumps([row.detail for row in rows]))
+        token_rows = self.repository._connection.execute(
+            "SELECT token_hash FROM api_tokens"
+        ).fetchall()
+        self.assertEqual(1, len(token_rows))
+        self.assertNotEqual(issued["token"], token_rows[0]["token_hash"])
+        self.assertNotIn(issued["token"], self.database.read_bytes().decode("latin-1"))
+
+    def test_api_tokens_permissions_expiry_revocation_and_authorization_precedence(self) -> None:
+        grant = self._admin()
+        cookie = cookie_for(grant)
+        read_token = request(
+            self.api,
+            "POST",
+            "/api/auth/tokens",
+            document={"name": "monitor", "scope": "read_only", "expiresInDays": 30},
+            cookie=cookie,
+            origin=ORIGIN,
+        )[1]
+        analysis_token = request(
+            self.api,
+            "POST",
+            "/api/auth/tokens",
+            document={
+                "name": "organize",
+                "scope": "read_and_analysis",
+                "expiresInDays": 30,
+            },
+            cookie=cookie,
+            origin=ORIGIN,
+        )[1]
+        self.assertEqual(["read", "submit_dry_run"], analysis_token["permissions"])
+
+        for token in (read_token, analysis_token):
+            self.assertEqual(
+                request(
+                    self.api,
+                    "GET",
+                    "/api/tasks",
+                    authorization=f"Bearer {token['token']}",
+                )[0],
+                200,
+            )
+
+        # The analysis route is the existing manual intent preview entry.  A
+        # read-only token is refused before any service lookup; the analysis
+        # token passes that business permission and reaches the service state.
+        analysis_path = "/api/operations/organize/intents/missing/previews"
+        self.assertEqual(
+            request(
+                self.api,
+                "POST",
+                analysis_path,
+                document={"expectedVersion": 1},
+                authorization=f"Bearer {read_token['token']}",
+            )[0],
+            403,
+        )
+        self.assertNotEqual(
+            request(
+                self.api,
+                "POST",
+                analysis_path,
+                document={"expectedVersion": 1},
+                authorization=f"Bearer {analysis_token['token']}",
+            )[0],
+            403,
+        )
+
+        # Token administration, schedule publication and confirmed execution
+        # stay reserved to the administrator Web session.
+        for path, document in (
+            ("/api/automation/task-definitions", {}),
+            (
+                "/api/operations/organize/previews/missing/execute",
+                {"confirmation": True, "itemIds": ["missing"], "expectedIntentVersion": 1},
+            ),
+        ):
+            for token in (read_token, analysis_token):
+                self.assertEqual(
+                    request(
+                        self.api,
+                        "POST",
+                        path,
+                        document=document,
+                        authorization=f"Bearer {token['token']}",
+                    )[0],
+                    403,
+                )
+
+        expired = ApiTokenService(
+            self.repository,
+            clock=lambda: datetime.now(UTC) - timedelta(days=2),
+        ).issue(
+            account_id=grant.account.account_id,
+            name="expired-monitor",
+            scope="read_only",
+            expires_in_days=1,
+        )
+        self.assertEqual(
+            request(
+                self.api,
+                "GET",
+                "/api/tasks",
+                authorization=f"Bearer {expired.token}",
+            )[0],
+            401,
+        )
+
+        status, revoked, _ = request(
+            self.api,
+            "POST",
+            f"/api/auth/tokens/{read_token['tokenId']}/revoke",
+            document={},
+            cookie=cookie,
+            origin=ORIGIN,
+        )
+        self.assertEqual(200, status, revoked)
+        self.assertEqual("revoked", revoked["status"])
+        self.assertIsNotNone(revoked["revokedAt"])
+        self.assertEqual(
+            request(
+                self.api,
+                "GET",
+                "/api/tasks",
+                authorization=f"Bearer {read_token['token']}",
+            )[0],
+            401,
+        )
+        self.assertEqual(
+            request(
+                self.api,
+                "GET",
+                "/api/tasks",
+                authorization=f"Bearer {analysis_token['token']}",
+            )[0],
+            200,
+        )
+        status, listing, _ = request(self.api, "GET", "/api/auth/tokens", cookie=cookie)
+        statuses = {item["name"]: item["status"] for item in listing["items"]}
+        self.assertEqual("revoked", statuses["monitor"])
+        self.assertEqual("active", statuses["organize"])
+        self.assertEqual("expired", statuses["expired-monitor"])
+
+        # An explicit invalid Authorization header is authoritative even when a
+        # valid browser cookie is also present.
+        status, denied, _ = request(
+            self.api,
+            "GET",
+            "/api/tasks",
+            cookie=cookie,
+            authorization=f"Bearer {read_token['token']}",
+        )
+        self.assertEqual(401, status, denied)
+        self.assertEqual(
+            request(self.api, "GET", "/api/tasks", cookie=cookie)[0],
+            200,
+        )
+
+        # Audit distinguishes the administrator and each stable token identity.
+        audit = self.repository.list_security_audit(limit=500)
+        token_principals = {item.principal_id for item in audit}
+        self.assertIn(grant.account.account_id, token_principals)
+        self.assertIn(read_token["tokenId"], token_principals)
+        self.assertIn(analysis_token["tokenId"], token_principals)
+        encoded = json.dumps(
+            [
+                {
+                    "principal": item.principal_id,
+                    "route": item.route,
+                    "action": item.action,
+                    "outcome": item.outcome,
+                }
+                for item in audit
+            ]
+        )
+        self.assertNotIn(read_token["token"], encoded)
+        self.assertNotIn(analysis_token["token"], encoded)
+
+    def test_api_tokens_survive_same_version_reopen_and_revocation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "runtime.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                accounts = AccountService(repository)
+                code, _ = accounts.issue_first_admin_code()
+                grant = accounts.bootstrap(
+                    code=code,
+                    username="admin",
+                    password="correct-horse",
+                    remember=False,
+                )
+                tokens = ApiTokenService(repository)
+                token = tokens.issue(
+                    account_id=grant.account.account_id,
+                    name="monitor",
+                    scope="read_only",
+                )
+                token_id = token.record.token_id
+            with SQLiteTaskRepository(database) as reopened:
+                self.assertEqual(SCHEMA_VERSION, reopened.schema_version)
+                service = AccountService(reopened)
+                api = MediaFlowApi(reopened, account_service=service)
+                self.assertEqual(
+                    request(
+                        api,
+                        "GET",
+                        "/api/tasks",
+                        authorization=f"Bearer {token.token}",
+                    )[0],
+                    200,
+                )
+                self.assertEqual(
+                    [item.token_id for item in reopened.list_api_tokens(grant.account.account_id)],
+                    [token_id],
+                )
+                ApiTokenService(reopened).revoke(token_id, account_id=grant.account.account_id)
+            with SQLiteTaskRepository(database) as reopened:
+                api = MediaFlowApi(reopened, account_service=AccountService(reopened))
+                self.assertEqual(
+                    request(
+                        api,
+                        "GET",
+                        "/api/tasks",
+                        authorization=f"Bearer {token.token}",
+                    )[0],
+                    401,
+                )
+                record = reopened.get_api_token(token_id)
+                self.assertIsNotNone(record)
+                self.assertIsNotNone(record.revoked_at)
+
     def test_schema_is_current_and_account_tables_are_separate_from_business_rows(self) -> None:
         self.assertEqual(SCHEMA_VERSION, self.repository.schema_version)
         tables = {
@@ -565,7 +865,13 @@ class WebAccountAuthTests(unittest.TestCase):
             )
         }
         self.assertTrue(
-            {"accounts", "account_sessions", "account_one_time_codes", "account_auth_audit"}
+            {
+                "accounts",
+                "account_sessions",
+                "account_one_time_codes",
+                "account_auth_audit",
+                "api_tokens",
+            }
             <= tables
         )
         self.assertEqual((), self.repository.list_tasks())

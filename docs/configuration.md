@@ -510,6 +510,13 @@ publication create no media work. Notification retry/requeue changes only that d
 FileIndex is removed. CLI/Files/MediaLibrary share live Storage browsing; exact source and plan
 evidence remains scoped to explicit work. No independent Scan or Preview product remains.
 
+Scripts that need the same API outside a browser session use a scoped token from
+**系统设置 → API 令牌**. The default is read-only for 90 days; the analysis option adds
+`SUBMIT_DRY_RUN` for the existing organize preparation/analysis entries. The plaintext is shown
+once, and each token has an independent expiry and revocation status. Token issuance,
+expiration and revocation reject missing, stale or insufficient credentials with `401`/`403` as
+appropriate; see the runnable `curl` example in [Deployment](deployment.md#script-api-tokens).
+
 ## Secret boundary
 
 Normal configuration stores secret references such as `tokenEnv`, `passwordEnv` or `secretEnv`, not
@@ -517,10 +524,13 @@ secret values. Resolved values are read from the process environment only at the
 authentication boundary. Redaction applies to configuration projections, audits, evidence, results,
 logs, errors and Web responses. Authorization headers, cookies, tokens, passwords, API keys and
 private endpoint credentials must not appear in SQLite evidence, Git, fixtures or test output.
+Issued API tokens persist only their stable identity, scope, times, revocation state and a SHA-256
+digest of the secret; browser storage holds neither the plaintext nor the digest.
 
 The current system does not provide a general Secret Store, automatic secret rotation, Docker
-Secrets-specific ingestion, built-in username/password login or OIDC. Those are V1.x/V2 or explicit
-deployment responsibilities.
+Secrets-specific ingestion, Web multi-user/role administration or OIDC. Those are V1.x/V2 or
+explicit deployment responsibilities. The single administrator login and scoped script tokens
+above are the current identity boundary.
 
 ## Runtime behavior and operational commands
 
