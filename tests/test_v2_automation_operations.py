@@ -20,16 +20,22 @@ import io
 import json
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+from mediaflow.application.automation import IntervalScheduler
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+from mediaflow.application.task_scheduling import TaskSchedulingService
+from mediaflow.domain.automation import AutomationTaskDefinition, SchedulerConfigurationSnapshot
 from mediaflow.domain.security import ApiRole
+from mediaflow.final_cli import _automatic_task_runner
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.account_fixtures import AccountSessions
 from tests.task_engine_test_helpers import claim_and_run
@@ -427,3 +433,236 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AutomationDisabledScheduleJourneyTests(unittest.TestCase):
+    """A disabled plan stops Scheduler admission and the already-queued Work.
+
+    The managed configuration store and the runtime work share one SQLite file
+    exactly like a deployment, so the real resident Scheduler and the production
+    ``_automatic_task_runner`` resolve the same pinned snapshot.  The browser
+    journey in ``automation-lifecycle.python.spec.ts`` drives the same durable
+    states through the real Web entry.
+    """
+
+    @contextlib.contextmanager
+    def _journey(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_root = root / "source"
+            target_root = root / "target"
+            (source_root / "Media").mkdir(parents=True)
+            (source_root / "Media" / "One.2001.mkv").write_bytes(b"x" * 32)
+            (target_root / "Movies").mkdir(parents=True)
+            document = _document(root)
+            database = root / "runtime.sqlite3"
+            config = root / "bootstrap.json"
+            config.write_text(json.dumps(document), encoding="utf-8")
+            with (
+                SQLiteConfigurationRepository(database) as configuration_repository,
+                SQLiteTaskRepository(database) as runtime,
+            ):
+                accounts = AccountSessions(runtime)
+                accounts.add("admin", (ApiRole.ADMIN,))
+                managed = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=str(database),
+                )
+                api = MediaFlowApi(
+                    runtime,
+                    account_service=accounts.service,
+                    configuration_service=managed,
+                    bootstrap_document=document,
+                )
+                api._fixture_session_cookies = {ADMIN_TOKEN: accounts.cookie("admin")}
+                status, active = _request(
+                    api,
+                    "/api/configuration/publish",
+                    method="POST",
+                    body={"document": document},
+                )
+                self.assertEqual(200, status, active)
+                value = SimpleNamespace(
+                    api=api,
+                    managed=managed,
+                    runtime=runtime,
+                    source_root=source_root,
+                    target_root=target_root,
+                    root=root,
+                    config=config,
+                )
+                self._create_enabled(value)
+                yield value
+
+    @staticmethod
+    def _authority(value) -> dict:
+        active = value.managed.active()
+        assert active is not None
+        return {
+            "expectedRevisionId": active.revision_id,
+            "expectedVersion": active.revision_sequence or active.version,
+            "expectedDigest": active.digest,
+        }
+
+    def _create_enabled(self, value) -> None:
+        status, created = _request(
+            value.api,
+            "/api/operations/automation/definitions",
+            method="POST",
+            body={
+                **self._authority(value),
+                "object": dict(_DEFINITION),
+                "enabled": True,
+            },
+        )
+        self.assertEqual(200, status, created)
+        self.assertIs(created["definition"]["enabled"], True)
+
+    def _scheduler(self, value) -> IntervalScheduler:
+        active = value.managed.active()
+        assert active is not None
+        definition = AutomationTaskDefinition.from_document(
+            active.document["automationTaskDefinitions"][0]
+        )
+        return IntervalScheduler(
+            value.runtime,
+            configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
+                active.revision_id,
+                active.digest,
+                100,
+                (definition,),
+                active.version,
+                ("source",),
+                ("source",),
+            ),
+            execution_authority=value.api._automation_execution_authority,
+        )
+
+    def _disable(self, value) -> None:
+        status, disabled = _request(
+            value.api,
+            f"/api/operations/automation/definitions/{_DEFINITION['id']}/disable",
+            method="POST",
+            body=self._authority(value),
+        )
+        self.assertEqual(200, status, disabled)
+        self.assertIs(disabled["definition"]["enabled"], False)
+
+    def _enable(self, value) -> None:
+        status, enabled = _request(
+            value.api,
+            f"/api/operations/automation/definitions/{_DEFINITION['id']}/enable",
+            method="POST",
+            body=self._authority(value),
+        )
+        self.assertEqual(200, status, enabled)
+        self.assertIs(enabled["definition"]["enabled"], True)
+
+    def _run_worker(self, value):
+        now = datetime.now(UTC)
+        scheduling = TaskSchedulingService(value.runtime, capacity=100)
+        runner = _automatic_task_runner(value.runtime, str(value.config), scheduling)
+        worker_id = "automation-disabled-worker"
+        value.runtime.register_worker(
+            worker_id,
+            worker_id,
+            5.0,
+            ("organize",),
+            None,
+            None,
+            SCHEMA_VERSION,
+            now,
+        )
+        worker = ManualTaskEngineWorker(
+            value.runtime,
+            scheduling,
+            None,
+            None,
+            worker_id=worker_id,
+            automatic_runner=runner,
+            notice=lambda line: None,
+        )
+        try:
+            return worker.run_next()
+        finally:
+            value.runtime.stop_worker(worker_id, datetime.now(UTC))
+
+    def test_disabled_before_due_emits_nothing_and_the_list_says_so(self) -> None:
+        with self._journey() as value:
+            self._disable(value)
+            now = datetime.now(UTC)
+            self.assertEqual((), self._scheduler(value).tick(now))
+            state = value.runtime.get_automation_definition_due_state(_DEFINITION["id"])
+            self.assertIsNotNone(state)
+            assert state is not None
+            self.assertEqual("disabled", state.last_outcome)
+            self.assertIn("disabled", state.last_reason or "")
+            self.assertTrue(state.last_next_action)
+            self.assertEqual((), value.runtime.list_tasks())
+
+            status, page = _request(value.api, OPERATIONS_ROUTE)
+            self.assertEqual(200, status, page)
+            item = page["items"][0]
+            self.assertIs(item["enabled"], False)
+            self.assertEqual("disabled", item["executionReadiness"]["state"])
+            # A disabled due-state row keeps its saved next run so re-enabling
+            # does not lose cadence; the operator Web must not present it as a
+            # live next execution.
+            self.assertIsNotNone(item["nextRunAt"])
+
+            self._enable(value)
+            emitted = self._scheduler(value).tick(now + timedelta(hours=2))
+            self.assertEqual(1, len(emitted))
+            self.assertEqual(1, len(value.runtime.list_tasks()))
+
+    def test_disable_after_enqueue_stops_the_real_worker_and_the_record_explains_effects(
+        self,
+    ) -> None:
+        with self._journey() as value:
+            now = datetime.now(UTC)
+            (queued,) = self._scheduler(value).tick(now)
+            self._disable(value)
+            self.assertEqual((), self._scheduler(value).tick(now + timedelta(minutes=1)))
+            self.assertEqual(
+                1,
+                len(value.runtime.list_automation_definition_occurrences(_DEFINITION["id"])),
+            )
+
+            completed = self._run_worker(value)
+            self.assertIsNotNone(completed)
+            assert completed is not None
+            self.assertEqual(queued.task_id, completed.task_id)
+            self.assertEqual("failed", completed.status.value)
+            task = value.runtime.get_task(queued.task_id)
+            self.assertIsNotNone(task)
+            assert task is not None
+            self.assertIn("definition_disabled", task.error or "")
+            self.assertEqual((), value.runtime.list_items(queued.task_id))
+            self.assertEqual([], list(value.target_root.rglob("*.*")))
+            self.assertTrue((value.source_root / "Media" / "One.2001.mkv").exists())
+
+            status, records = _request(
+                value.api,
+                "/api/operations/automation/records",
+                query=f"definition={_DEFINITION['id']}",
+            )
+            self.assertEqual(200, status, records)
+            self.assertEqual(1, records["total"], records)
+            record = records["items"][0]
+            self.assertEqual("failed", record["recordOutcome"]["status"])
+            self.assertIn("自动化已停用", record["recordOutcome"]["failureReason"])
+            self.assertIn("重新启用", record["recordOutcome"]["nextStep"])
+            self.assertIn("没有产生文件效果", record["recordOutcome"]["statement"])
+            self.assertEqual("definition_disabled", record["failureStage"]["category"])
+            self.assertEqual(0, record["recordOutcome"]["successItems"])
+
+            # Re-enabling admits a fresh occurrence only; the stopped original
+            # Task keeps its failed flow and is never replayed.
+            self._enable(value)
+            (fresh,) = self._scheduler(value).tick(now + timedelta(hours=2))
+            self.assertNotEqual(queued.task_id, fresh.task_id)
+            self.assertEqual("failed", value.runtime.get_task(queued.task_id).status.value)
+            self.assertEqual(
+                2,
+                len(value.runtime.list_automation_definition_occurrences(_DEFINITION["id"])),
+            )

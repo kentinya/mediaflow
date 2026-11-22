@@ -18,7 +18,10 @@ _REASONS = {
     "scope_outside_resource_library": ("来源范围超出资源库", "检查自动化来源范围设置"),
     "definition_missing": ("本次运行的自动化配置不可用", "检查自动化定义"),
     "definition_invalid": ("本次运行的自动化配置无效", "检查自动化定义设置"),
-    "definition_disabled": ("本次运行对应的自动化已停用", "检查自动化启用状态"),
+    "definition_disabled": (
+        "本次运行对应的自动化已停用",
+        "在自动化编辑中重新启用计划；重新启用只受理新的执行，这个原任务不会重跑",
+    ),
     "resource_library_missing": ("本次运行的来源资源库不可用", "检查来源资源库设置"),
     "resource_library_disabled": ("来源资源库已停用", "检查来源资源库启用状态"),
     "snapshot_missing": ("本次运行使用的配置无法读取", "检查配置是否可用"),
@@ -219,8 +222,24 @@ def automation_record_display(
         if unreadable:
             reasons.append("部分文件结果不可核对")
         effects = f"；已确认整理 {success} 个文件，已完成的操作保留" if success else ""
+        statement = "本次失败，未全部完成" + effects
+        if "definition_disabled" in categories:
+            # A disabled schedule stops the admitted occurrence at its next
+            # execution boundary.  Say what really happened to the files, not
+            # only that the flow failed: the operator must know whether any
+            # effect exists before deciding to re-enable.
+            if success:
+                statement = (
+                    f"本次因自动化已停用而停止。已确认整理 {success} 个文件，已完成的操作保留。"
+                )
+            elif uncertain or partial:
+                statement = "本次因自动化已停用而停止；已完成的操作保留，仍有操作的效果需要核对。"
+            elif evidence.get("failed_status_count"):
+                statement = "本次因自动化已停用而停止；没有文件整理成功，已完成的操作保留。"
+            else:
+                statement = "本次因自动化已停用，在开始处理文件前停止；没有产生文件效果。"
         result.update(
-            statement="本次失败，未全部完成" + effects,
+            statement=statement,
             failureReason="；".join(dict.fromkeys(reasons)),
             nextStep="；".join(dict.fromkeys(steps)) or "检查对应文件及具体失败原因",
         )

@@ -306,13 +306,22 @@ export function AutomationDefinitionRow({
         <span className="mf-status-badge">
           {definition.document.enabled ? "启用" : "停用"}
         </span>
+        {!definition.document.enabled && (
+          <p className="mf-dashboard-meta">
+            计划已停用，不会产生新的定时执行；重新启用后只受理新的执行
+          </p>
+        )}
       </td>
       <td>自动整理</td>
       <td>{definition.document.resourceLibraryId}</td>
       <td>{scheduleText(definition)}</td>
       <td>{definition.document.itemLimit}</td>
       <td className="mf-automation-time">
-        <AutomationTime value={definition.nextRunAt} />
+        {definition.document.enabled ? (
+          <AutomationTime value={definition.nextRunAt} />
+        ) : (
+          <span title="计划已停用，当前没有下一次定时执行">—</span>
+        )}
       </td>
       <td>
         <span className={resultBadgeClass(latest.status)}>{latest.text}</span>

@@ -503,6 +503,110 @@ test("removal stops the enabled definition, revokes historical authority and ret
   expect(tickBody.occurrenceTotal).toBe(occurrencesBefore);
 });
 
+test("disabling a plan stops new and queued work with a readable reason", async ({
+  page,
+}) => {
+  // The operator's actual disable entry is the shared edit card.  A published
+  // enabled plan first emits one real Scheduler occurrence; disabling then
+  // stops further admission and lets the production Worker stop that already
+  // queued occurrence at its execution boundary.
+  await publishNewDefinition(page);
+  await openLifecycle(page, DEFINITION_ID);
+  await saveEnabledChoice(page, true);
+  const firstTick = await page.request.post(
+    `/__harness__/run-automation-scheduler-tick?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
+  );
+  const firstBody = (await firstTick.json()) as {
+    emitted?: string[];
+    occurrenceTotal?: number;
+  };
+  expect(firstBody.emitted).toContain(DEFINITION_ID);
+  expect(firstBody.occurrenceTotal).toBe(1);
+
+  await openLifecycle(page, DEFINITION_ID);
+  await saveEnabledChoice(page, false);
+
+  // The list says the plan is disabled and no longer offers a live next-run
+  // time; the actual Scheduler emits nothing further.
+  await connectOn(page, "/operations/automation");
+  const row = page
+    .getByRole("row")
+    .filter({ has: page.getByText("Harness automation", { exact: true }) });
+  await expect(
+    row.getByText("计划已停用，不会产生新的定时执行；重新启用后只受理新的执行"),
+  ).toBeVisible();
+  await expect(row.getByText("—", { exact: true })).toBeVisible();
+  const secondTick = await page.request.post(
+    `/__harness__/run-automation-scheduler-tick?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
+  );
+  const secondBody = (await secondTick.json()) as {
+    emitted?: string[];
+    occurrenceTotal?: number;
+  };
+  expect(secondBody.emitted).toEqual([]);
+  expect(secondBody.occurrenceTotal).toBe(1);
+
+  // The already queued occurrence still runs once; the Worker stops it before
+  // any file work and records the disabled reason on the original Task.
+  const worked = await page.request.post(
+    `/__harness__/run-automation-definition-worker?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
+  );
+  const workedBody = (await worked.json()) as {
+    ran?: boolean;
+    taskStatus?: string;
+    taskId?: string;
+  };
+  expect(workedBody.ran, JSON.stringify(workedBody)).toBe(true);
+  expect(workedBody.taskStatus).toBe("failed");
+
+  // The execution record shows the reason, the real effect and the next action.
+  await connectOn(page, "/operations/automation?tab=records");
+  const region = page.getByRole("region", { name: "自动化执行记录" });
+  await page.getByLabel("定义").fill(DEFINITION_ID);
+  await page.getByLabel("定义").press("Enter");
+  const recordRow = region
+    .getByRole("row")
+    .filter({ hasText: /Harness automation/ });
+  const detailToggle = recordRow.getByRole("button", { name: "查看详情" });
+  const detailId = await detailToggle.getAttribute("aria-controls");
+  await detailToggle.click();
+  const detail = page.locator(`[id="${detailId}"]`);
+  await expect(
+    detail.getByText("本次运行对应的自动化已停用", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    detail.getByText(
+      "本次因自动化已停用，在开始处理文件前停止；没有产生文件效果。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    detail.getByText(/重新启用只受理新的执行，这个原任务不会重跑/),
+  ).toBeVisible();
+
+  // Re-enabling admits a new occurrence only; the stopped original Task stays
+  // failed and its record remains readable.
+  await openLifecycle(page, DEFINITION_ID);
+  await saveEnabledChoice(page, true);
+  const thirdTick = await page.request.post(
+    `/__harness__/run-automation-scheduler-tick?definitionId=${encodeURIComponent(DEFINITION_ID)}`,
+  );
+  const thirdBody = (await thirdTick.json()) as {
+    emitted?: string[];
+    occurrenceTotal?: number;
+  };
+  expect(thirdBody.emitted).toContain(DEFINITION_ID);
+  expect(thirdBody.occurrenceTotal).toBe(2);
+  await connectOn(page, "/operations/automation?tab=records");
+  await page.getByLabel("定义").fill(DEFINITION_ID);
+  await page.getByLabel("定义").press("Enter");
+  await expect(
+    page
+      .getByRole("region", { name: "自动化执行记录" })
+      .getByRole("cell", { name: "失败", exact: true }),
+  ).toBeVisible();
+});
+
 test("retained occurrence history stays readable after removal", async ({
   page,
 }) => {

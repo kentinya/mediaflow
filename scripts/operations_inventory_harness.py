@@ -5249,13 +5249,17 @@ def run_automation_definition_worker_once(
         capacity=state.managed.runtime.automation_maximum_active_jobs,
     )
     worker_id = "harness-automation-definition-worker"
+    # The resident Worker registers for the oldest queued Task's admitted pin
+    # (``final_cli``'s ``pending_snapshot``), not today's Active.  A definition
+    # disabled after admission must still be claimed under its original pin so
+    # the live authority check can stop it and record why.
     state.repository.register_worker(
         worker_id,
         worker_id,
         5.0,
         ("organize",),
-        active.revision_id,
-        active.digest,
+        task.configuration_snapshot_id,
+        task.configuration_snapshot_digest,
         SCHEMA_VERSION,
         datetime.now(UTC),
     )

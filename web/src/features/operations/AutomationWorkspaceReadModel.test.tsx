@@ -569,6 +569,42 @@ describe("V2 Automation workspace read model", () => {
     expect(screen.getByText("27")).toBeVisible();
   });
 
+  it("marks a disabled plan as having no next execution", async () => {
+    const page = listDocument({
+      items: [
+        definitionDocument({
+          enabled: false,
+          occurrenceState: {
+            enabled: false,
+            nextRunAt: "2026-03-16T00:00:00+08:00",
+            lastOccurrenceAt: null,
+            lastJobId: null,
+            lastOutcome: "disabled",
+            lastReason: "Automation Task Definition is disabled",
+            nextAction:
+              "enable the definition in a new validated Active revision",
+            lastTaskId: null,
+            lastFailureCategory: null,
+          },
+        }),
+      ],
+    });
+    recordingFetch((call) =>
+      call.url === LIST_URL ? jsonResponse(page) : undefined,
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/operations/automation");
+
+    await screen.findByRole("heading", { name: "自动化" });
+    const row = (await screen.findByText("Nightly automation")).closest("tr")!;
+    expect(
+      within(row).getByText(
+        "计划已停用，不会产生新的定时执行；重新启用后只受理新的执行",
+      ),
+    ).toBeVisible();
+    expect(within(row).getByText("—")).toBeVisible();
+  });
+
   it("renders three concise sections without later handling or recovery", async () => {
     recordingFetch((call) => {
       if (call.url === LIST_URL) {
