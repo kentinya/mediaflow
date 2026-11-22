@@ -1,6 +1,6 @@
 # Task 57.1 — 单管理员 Web 登录与定时计划停用
 
-Next Action: DEVELOPER FIXES TASK57.1
+Next Action: B REVIEWS TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3 中的部署、管理员和定时计划旅程。按用户授权，A 更新合同，
 B 根据已提交的 `b22af92f4434a1f343da2b3cddfe2747dc6e1b37` 调整同一 Task。当前返工以本节的
@@ -11,7 +11,7 @@ B 根据已提交的 `b22af92f4434a1f343da2b3cddfe2747dc6e1b37` 调整同一 Tas
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -115,6 +115,33 @@ Next: SAME TASK FIX LOOP
 
 Slice 57 的 RO-1 已有单管理员初始化、会话恢复、改密和主机重置证据。RO-3 仍需修正执行详情并完成部署验收。
 RO-2 的 API 令牌管理与定时计划独立性仍待后续 Task。
+
+### Developer 本轮修正交付记录（READY FOR B REVIEW）
+
+- 实现候选：`cb521ab7be1c0250d0edc65df09cb36d75b81693`（本轮起点 `7cf4c0dd`，Task Base
+  `4566a74055c698aec704215dd431eb8521bcfedb`）。只修改执行记录的停用说明及直接受影响的
+  Python/浏览器用例；保留原 Slice 合同、B 的评审记录和未授权范围。
+- 执行记录：`automation_record_display` 的 `schedule_disabled` 与 `definition_disabled`
+  下一步不再断言计划当前已启用或需要重新启用，统一为「在自动化列表确认计划当前状态」；
+  前者说明启用后的下一次定时执行单独受理、原任务保留在执行记录中，后者说明启用后只受理
+  新的执行、原任务不会重跑。停止原因（本次运行因计划停用而停止）与该次任务真实文件效果
+  （无效果时「在开始处理文件前停止；没有产生文件效果」）保持不变。
+- 实际验证：
+  - `.venv/bin/python -m unittest discover -s tests -p test_v2_automation_operations.py`
+    9 项通过（0.7s）；新增「停用→重新启用→新执行→再次停用」核对，列表为停用、Scheduler
+    零新增，旧记录仍为 `failed`/`schedule_disabled`、零成功文件，下一步指向列表当前状态。
+  - `.venv/bin/python -m unittest discover -s tests -p test_v2_automation_lifecycle.py`
+    38 项通过（26.2s）。
+  - `web/` 下 `npm run typecheck`、`npm run build` 通过（产物 `index-CDQg9IlO.js`）；正式产物
+    构建后 `npm run test:e2e -- --config=playwright.python.automation.config.ts
+    tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-workspace.python.spec.ts`
+    32 项通过（1.0m），其中停用用例追加「列表编辑再次停用→列表显示停用→Scheduler 零新增→
+    重开旧执行详情」，核对停止原因、零文件效果、下一步与列表状态一致且旧任务仍可查。
+  - 改动文件 Ruff 格式/检查、Prettier、`compileall`、`git diff --check`、治理检查 PASS。
+- 用时：本轮测试/检查执行累计约 3 分钟，整轮约 30 分钟，低于 30%；未运行完整 T4、
+  真实 Compose/候选镜像、生产 Waitress/CLI、wheel/源码外安装及其他浏览器 spec。
+- 剩余风险：完整 T4、Compose、候选镜像与 wheel 验收仍由 B 在修正候选上独立执行；下一步
+  不读取计划的实时状态，只指引以自动化列表为准，已持久化记录在读取时同样使用新措辞。
 
 ### B 上轮复核 — FIX REQUIRED
 
