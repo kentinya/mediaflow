@@ -1,8 +1,8 @@
 # Task 58.1 — 切换正式部署和主机恢复入口
 
-Next Action: DEVELOPER FIXES TASK 58.1
+Next Action: B INDEPENDENT REVIEW AND ACCEPTANCE OF TASK 58.1 FIXES
 
-用户已授权实施 Task 58.1。Developer 开始返工时将状态改为 `IN PROGRESS`。
+用户已授权实施 Task 58.1。Developer 返工已完成，状态为 `READY FOR B REVIEW`。
 用户授权 A 代 B 规划首个 Task，角色例外限于首个 Task 的规划。B 独立验收，A 按工作流终审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -10,7 +10,7 @@ Next Action: DEVELOPER FIXES TASK 58.1
 Task ID: 58.1
 Task Type: SLICE
 Parent Slice: 58
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
 Difficulty: High
 Test Level: T4
@@ -214,6 +214,64 @@ B 在修正候选上复现本节四条旅程，并运行本 Task 的 T4 门禁�
 证据在 `.git/validation-evidence/9a49bcea2cc52de945f973e065009b4c954699c3/b-review/`。
 Slice 58 的通用业务 CLI、专属任务路径和 schema 11 切换退役仍待交付。切换后的合法任务续作
 与原效果保留仍待按合同复验。
+
+## Developer fix handoff — Task 58.1 B review fixes
+
+```text
+Fix Implementation Head: 03aa59fc
+Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
+Reviewed Candidate: 9a49bcea2cc52de945f973e065009b4c954699c3
+Candidate state: READY FOR B REVIEW
+```
+
+### 返工项与做法
+
+1. **新部署到首次登录与密码找回。** README 源码步骤先 `mkdir -p .mediaflow` 再生成 bootstrap、启动
+   API；发码、重置码和三个后台服务沿用同一 `MEDIAFLOW_CONFIG`/`MEDIAFLOW_DATA_DIR`。首页设置与
+   重置提示指向同实例可执行命令：Compose 在项目目录用
+   `docker compose exec -T api python -m mediaflow.host_operations ...`，源码安装用
+   `.venv/bin/python -m mediaflow.host_operations ...` 并沿用启动 API 的部署变量。
+   `api.principals` 拒绝提示由已退役的 `mediaflow accounts issue-setup-code` 改为
+   `python -m mediaflow.host_operations issue-setup-code`。部署指南与发布指引写出 Compose 的
+   `host verify`、`host restore` 和仅启动 API（`docker compose up -d --no-deps api`）的实际命令。
+2. **Compose 端口与健康一致。** 容器内 API 监听固定为容器端口 8080；Compose 只把宿主端口
+   `${MEDIAFLOW_API_PORT}` 映射到 8080，API 探针请求同一 8080。部署环境文件设置
+   `MEDIAFLOW_API_HOST/PORT/THREADS` 时，容器入口和探针在装配前拒绝并说明：宿主端口在 Compose
+   项目（shell 或项目 `.env`）设置，这组变量只用于源码直启的监听配置。
+3. **校验能否启动再恢复。** `SQLiteBackupService.verify` 在文件完整性、版本适用性之外复用正式
+   服务启动的待切换库判定，结果新增 `startup_blocked_reason`；`verify`/`backup` 输出新增
+   `Cannot start yet:` 及其现行处理途径。`restore` 对原备份与暂存副本做同一判定，待切换备份不会
+   发布到空目标；发布前重算源备份摘要，摘要变化则不发布，恢复输出记录保持不变的源摘要。
+   schema 11 切换判定沿用 `reject_pending_configuration_switch`。待切换库的备份本身保持可用
+   （切换前留存备份是既有指引），仅启动与恢复按启动判定拒绝。
+4. **先取得租约再打开会写入的配置仓储。** `resident_entry.main` 先由 bootstrap 定位数据库并取得
+   共享租约，租约内才拒绝待切换库、解析 API 的 Active 和管理模式仓储。宿占租约时以有界错误退出，
+   说明恢复结束后再启动该服务，空目标不产生数据库文件。
+
+### 实际验证（本轮返工）
+
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_container_deployment test_container_probe test_api_credentials test_runtime_lease test_sqlite_backup test_sqlite_restore`：65 项通过。
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_resident_services test_processing_worker_readiness test_runtime_lease test_configuration_snapshot test_resident_correction test_cron_scheduler test_notifications test_release_validation test_release_security`：131 项通过。
+- `npm --prefix web run test -- run src/features/entry/EntryPage.test.tsx`：17 项通过；新增断言覆盖首页设置与重置两处主机命令及 Compose／源码两种调用。
+- 真实源码入口（临时目录，起步无 `.mediaflow`）：`resident_entry api` 启动后 `/health` 返回 200 且
+  `firstAdministratorRequired: true`；`host_operations issue-setup-code` 发码后
+  `/api/auth/bootstrap` 建号，health 转为 `firstAdministratorRequired: false`。停机执行
+  `host backup` 得到 schema 60 备份（Integrity OK、Usable YES，无 `Cannot start yet`）；独占租约
+  占用期间再次启动 API，进程退出码 2 并打印“Finish it, then start the api service again”，数据目录
+  中没有数据库文件；释放租约后 `host restore --confirm-empty-destination` 成功，输出记录源备份摘要
+  不变，仅启动 API 后读到同一管理员账号。
+- `.venv/bin/ruff format --check .`、`.venv/bin/ruff check .`、`python3 scripts/check_governance.py`、
+  `git diff --check`、Web `prettier --check`、`eslint`、`tsc --noEmit` 通过。
+
+### 剩余风险与待 B 验收
+
+- 本次返工未运行 Docker／真实 Compose、候选镜像发布安全、真实浏览器 E2E、wheel 精确候选与全量
+  回归；按 Task 分工由 B 在修正候选上执行，重点复测默认与显式更换宿主端口的部署、部署环境文件
+  设置端口后的实际结果、空目标独占租约后继续恢复，以及从源码空库与 Compose 项目分别走完建号、
+  重置和同一部署的恢复。
+- `test_configuration_package_exchange` 既有失败仍未修复（父版本可复现），未用跳过或弱断言掩盖。
+- 待切换库的 `verify` 处理途径仍引用保留中的 `mediaflow config status`/`config retire-unpublished`；
+  该切换的源码与制品退役仍属本 Slice 剩余范围。
 
 ## Latest accepted Task — PATCH-20261122-3
 
