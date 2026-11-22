@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
+Next Action: DEVELOPER FIXES TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -648,6 +648,46 @@ RO-1 的既有浏览器证据保留。RO-2 用户管理与 API 令牌待后续 T
   `.git/validation-evidence/task57.1-a639fa95-compose/`。
 - 剩余风险：完整 T4、B 的候选镜像／正式 Waitress／生产 Web 浏览器、wheel／源码外安装、
   真实 Scheduler／Worker 撤权执行仍由 B 验收；本记录只补四服务 Compose 的待切换旧库旅程。
+
+#### B 复核结果
+
+```text
+Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..233b4d3af80841e1c2fb04ed55c1202ba7057b32
+Implementation: a639fa953afa1da781ebff61e2d7e9f08e88b26b
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1｜两条自动化浏览器回归把登录请求算成业务写入。** 测试先开始记录 API，再走账号登录。
+  在「保存整理规则 → 打开自动化 → 点新建」用例里，浏览器记录中的非 GET 请求是
+  `POST /api/auth/login`。在「进入新建表单 → 预览下次执行时间」用例里，记录还包括原本
+  允许的只读预览请求。两条断言都被登录请求触发失败。B 从实际表单登录，再检查「打开自动化 →
+  点新建」，确认该段只有 GET，Active、定义及调度记录数量都没有变化。显式保存并启用的
+  定向用例通过。根因是 `0847a1d9`（2026-11-21）将共享浏览器连接切到账号登录时，沿用了
+  从登录前开始统计的业务请求断言。
+
+#### Developer 修正指导
+
+1. 在 `automation-lifecycle.python.spec.ts` 中让两条用例先用现有表单完成登录，从进入
+   自动化或新建页前开始统计该段的请求。继续核对打开页面只有 GET，填写表单期间只允许
+   GET 与实际时间预览，且 Active、定义和调度记录保持一致。
+2. 复用同文件的显式保存并启用用例，确认只有用户提交才发布定义。在 `web/` 运行
+   `npm run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-workspace.python.spec.ts`，记录受影响的断言与结果。B 验收修正候选的全量及后台撤权旅程。
+
+上轮旧库启动阻塞已通过 B 复测。以带 Active 和草稿的旧库副本启动真实 Compose，四个服务
+均在预检退出 `1`，API 端口未监听，文件哈希一致。`config status` 读取后哈希一致。显式切换
+只移除草稿，原 Active 的 revision ID 与 digest 一致，四个服务随后均达到健康状态。
+镜像 `sha256:9bff2b8627e8b272f4b3ce8c86d1b430e17a6f9aeba2e32ddb49372a5ebaa6fb`。
+
+Python 全量执行 2,350 项，7 项跳过，其余通过。任务中心、系统设置、首位管理员及会话恢复的
+原生浏览器回归 61 项通过。生产 Web 构建、Python 静态检查、示例配置校验与 wheel 构建和
+源码目录外冒烟通过。自动化组合首轮 1 项通过、1 项失败、
+28 项因首个失败未执行。补跑的两条定向用例中，预览断言失败，显式保存并启用通过。
+证据位于本地 `.git/validation-evidence/233b4d3af80841e1c2fb04ed55c1202ba7057b32/b-review/`。
+
+RO-1 的首位设置、会话恢复、改密及重置有原生浏览器证据。RO-2 用户管理与 API 令牌待后续
+Task。RO-3 的旧库启动及显式切换已验收，自动化回归和实际 Scheduler／Worker 撤权验收待完成。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
