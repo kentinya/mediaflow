@@ -1,15 +1,15 @@
 # Task PATCH-20261122-1 — 手动整理弹窗状态与排版修复
 
-Next Action: Developer 按本 Task 开始实施，完成受影响验证后交 B 独立审查。
+Next Action: B 独立审查候选 c1eae8a214caa00829c93928985566912ce40646 的 Base..候选。
 
 用户明确要求激活本独立修复 Task。优先级为第一屏「准备中」→ 第三屏「整批复核」→ 第二屏「逐项复核」。
-`PLANNED` 表示已激活、待 Developer 开始。 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)
+规划时 `PLANNED` 表示已激活、待 Developer 开始。 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)
 
 ```text
 Task ID: PATCH-20261122-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 8ce6c2092c328a15c44493f51ae4690b15680960
 Difficulty: Medium
 Test Level: T3
@@ -104,4 +104,49 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organi
 方案。T3 覆盖准入状态数据到 Web 的链路、现有同弹窗确认与交接；此方案只修初值、既有读取解释和呈现。
 
 Developer 交接记录候选 SHA 与受影响检查结果。B 记录实际验收及 PASS / FIX REQUIRED，PASS 后恢复
-`NO ACTIVE IMPLEMENTATION TASK` 通知。未开始实施。
+`NO ACTIVE IMPLEMENTATION TASK` 通知。本轮交接见下节。
+
+## Developer 交接 — 队列错误初值与整理弹窗排版
+
+```text
+Candidate: c1eae8a214caa00829c93928985566912ce40646
+Task range: 8ce6c2092c328a15c44493f51ae4690b15680960..c1eae8a214caa00829c93928985566912ce40646
+```
+
+- **队列错误初值。** Files 正常准入、来源占用后的兄弟项准入及同构的 Run once 准入不再把
+  `False` 传入 `MediaDiscovery.error`，新记录写入 `None`。SQLite 读侧只把旧记录的
+  `False`／`0`／文本 `"0"` 窄范围解释为无错误，真实错误字符串保持原样；既有记录、失败说明和
+  恢复入口不迁移、不清除。
+- **准备中。** 混合选择先显示文件夹／文件数量，完整范围放在可展开详情；排队与检查使用不同
+  事实文案，排队不再同时声称正在检查；进度为空时按后台阶段说明尚未开始或尚无正向计数。
+  Worker 技术原话、阶段和遍历状态仍在既有诊断中。
+- **逐项复核。** 已生成方案时来源与目标拆成两个带标签字段，长路径在各自字段内换行；操作、
+  附件、纳入选择、逐项修正与保存后重新分析规则未改。
+- **整批复核。** 首屏集中显示将整理、未纳入、操作、目标位置和实际影响，计划 UUID／版本移入
+  诊断，删除首屏三条目标路径拼接。清单按文件／操作／目标对齐，窄屏逐项堆叠；文件、操作和
+  目标长文本可换行。原计划清单内部滚动已移除，仅保留弹窗正文滚动和稳定底栏。未纳入项仍可
+  展开查看原因并返回逐项复核；覆盖、清理授权与提交身份逻辑未改；确认受阻原因和现有下一步
+  显示在确认按钮旁。
+- **测试夹具。** 隔离 harness 增加 `ReadabilityOne`、`ReadabilityTen` 与 `Readability`
+  目录；`Readability` 含 90 个可计划文件和 10 个无 Provider 候选文件，并含长中文、长英文、
+  深路径名称。生成的浏览器证据在忽略目录 `web/test-results/manual-organize-readability/`。
+- **实际执行（候选 c1eae8a2）。**
+  - `python3 scripts/check_governance.py` → PASS。
+  - `.venv/bin/python -m unittest discover -s tests -p 'test_media_discovery.py'` → 6 passed
+    （1.23s；既有 ResourceWarning）。
+  - `.venv/bin/ruff check`／`ruff format --check`（改动 Python 文件）→ PASS。
+  - `git diff --check` → PASS。
+  - `web/`：`npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx
+    src/entities/operations/discovery.test.ts` → 42 passed（2 files，21.7s；既有 jsdom
+    `scrollTo` 警告）。
+  - `web/`：`npm run typecheck`、`npm run lint`、Prettier 改动文件检查 → PASS。
+  - `web/`：`npm run build` → PASS（既有 chunk size warning）。
+  - `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+    tests/e2e/manual-organize-dialog.python.spec.ts -g 'manual organize readability'` →
+    3 passed（13.5s），覆盖 1／10／100 项桌面、390px、短视口，90／10 混合摘要、长路径、
+    单一正文滚动及确认按钮旁受阻原因。
+  - 本轮约 30 分钟；测试、构建和静态检查实际执行约 6 分钟（低于本轮 30%）。
+- **剩余风险。** 100 文件混合样本的后端因 10 个未就绪项使方案失效，本轮按要求验证了首屏
+  摘要、未纳入原因和按钮旁受阻说明，未把该样本当作成功确认样本。来源占用兄弟准入未另建并发
+  竞态浏览器复现，修正点是同一构造位置的统一关键字初值。未运行完整 E2E 组、全量 Python/Web
+  回归、Task Center 继续入口和打包门禁；按分工由 B 在候选上独立执行。本轮未推送、未发布。
