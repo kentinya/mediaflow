@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -8,9 +9,15 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.accounts import AccountService
+from mediaflow.application.configuration_snapshot import (
+    ManagedConfigurationService,
+    build_first_setup_starter_document,
+)
 from mediaflow.container_entrypoint import (
     container_preflight_errors,
     load_environment_file,
@@ -20,6 +27,11 @@ from mediaflow.infrastructure.runtime_configuration import (
     is_minimal_management_bootstrap,
     load_minimal_management_bootstrap,
 )
+from mediaflow.infrastructure.sqlite_applicability import DatabaseApplicabilityError
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
+)
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from scripts.make_deployment_config import (
     make_deployment_configuration,
     make_management_bootstrap,
@@ -302,6 +314,176 @@ class ContainerPreflightTests(unittest.TestCase):
                 any("not usable by this MediaFlow version" in error for error in errors)
             )
             self.assertEqual(original, unsupported.read_bytes())
+
+    def test_previous_runtime_database_is_refused_before_startup_without_modification(self) -> None:
+        """A database created by another MediaFlow version is never opened or upgraded.
+
+        The previous release left a runtime marker, Task/configuration tables
+        and no account tables.  Startup and the repository boundary must stop
+        before creating or rewriting anything, keep the file byte-for-byte
+        unchanged, and name the new-empty-directory recovery path.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, data, _ = self._configuration(root)
+            database = data / "mediaflow.sqlite3"
+            with SQLiteTaskRepository(database) as repository:
+                service = AccountService(repository)
+                code, _ = service.issue_first_admin_code()
+                service.bootstrap(
+                    code=code,
+                    username="admin",
+                    password="previous-release-password",
+                    remember=False,
+                )
+            with closing(sqlite3.connect(database)) as connection:
+                for table in (
+                    "account_auth_audit",
+                    "account_one_time_codes",
+                    "account_sessions",
+                    "accounts",
+                ):
+                    connection.execute(f"DROP TABLE {table}")
+                connection.execute(
+                    "UPDATE schema_version SET version=? WHERE component='runtime'",
+                    (SCHEMA_VERSION - 1,),
+                )
+                connection.commit()
+            before_hash = hashlib.sha256(database.read_bytes()).hexdigest()
+            with closing(sqlite3.connect(database)) as connection:
+                before_tables = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                    ).fetchall()
+                ]
+                before_marker = connection.execute(
+                    "SELECT version FROM schema_version WHERE component='runtime'"
+                ).fetchone()[0]
+            self.assertEqual(SCHEMA_VERSION - 1, before_marker)
+
+            errors = container_preflight_errors(
+                str(config),
+                str(data),
+                environ={},
+                command=("api", "serve-production"),
+            )
+            self.assertTrue(any("previous MediaFlow version" in error for error in errors), errors)
+            self.assertTrue(any("new empty data directory" in error for error in errors), errors)
+            self.assertFalse(any("previous-release-password" in error for error in errors))
+            self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
+
+            with self.assertRaises(DatabaseApplicabilityError) as refused:
+                SQLiteTaskRepository(database)
+            self.assertIn("previous MediaFlow version", str(refused.exception))
+            self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
+            with self.assertRaises(DatabaseApplicabilityError) as refused_configuration:
+                SQLiteConfigurationRepository(database)
+            self.assertIn("previous MediaFlow version", str(refused_configuration.exception))
+            self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
+
+            stderr = io.StringIO()
+            with patch(
+                "wsgiref.simple_server.make_server",
+                side_effect=AssertionError("an unsupported database must not start a listener"),
+            ):
+                status = final_main(
+                    [
+                        "--config",
+                        str(config),
+                        "api",
+                        "serve",
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        "45678",
+                    ],
+                    stdout=io.StringIO(),
+                    stderr=stderr,
+                )
+            self.assertEqual(2, status)
+            self.assertIn("previous MediaFlow version", stderr.getvalue())
+            self.assertIn("new empty data directory", stderr.getvalue())
+            self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
+            with closing(sqlite3.connect(database)) as connection:
+                self.assertEqual(
+                    before_tables,
+                    [
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                        ).fetchall()
+                    ],
+                )
+                self.assertEqual(
+                    before_marker,
+                    connection.execute(
+                        "SELECT version FROM schema_version WHERE component='runtime'"
+                    ).fetchone()[0],
+                )
+
+    def test_empty_and_current_version_stores_pass_startup_and_same_version_restart(self) -> None:
+        """A fresh empty store and a current store with an account and Active survive restart."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, data, _ = self._configuration(root)
+            database = data / "mediaflow.sqlite3"
+            self.assertEqual(
+                container_preflight_errors(
+                    str(config),
+                    str(data),
+                    environ={},
+                    command=("api", "serve-production"),
+                ),
+                [],
+            )
+
+            with SQLiteTaskRepository(database) as repository:
+                service = AccountService(repository)
+                code, _ = service.issue_first_admin_code()
+                service.bootstrap(
+                    code=code,
+                    username="admin",
+                    password="current-release-password",
+                    remember=False,
+                )
+            bootstrap = {
+                "version": 1,
+                "persistence": {"databasePath": str(database)},
+            }
+            with SQLiteConfigurationRepository(database) as repository:
+                service = ManagedConfigurationService(
+                    repository,
+                    bootstrap_database_path=str(database),
+                    bootstrap_document=bootstrap,
+                    management_only=True,
+                )
+                active = service.publish_document(
+                    build_first_setup_starter_document(
+                        load_minimal_management_bootstrap(bootstrap)
+                    ),
+                    actor="tester",
+                )
+
+            self.assertEqual(
+                container_preflight_errors(
+                    str(config),
+                    str(data),
+                    environ={},
+                    command=("api", "serve-production"),
+                ),
+                [],
+            )
+            with SQLiteTaskRepository(database) as reopened:
+                self.assertEqual(SCHEMA_VERSION, reopened.schema_version)
+                self.assertEqual(1, reopened.count_accounts())
+                self.assertEqual((), reopened.list_tasks())
+            with SQLiteConfigurationRepository(database) as reopened:
+                stored = reopened.get_active_revision()
+                self.assertIsNotNone(stored)
+                self.assertEqual(active.revision_id, stored.revision_id)
 
     def test_environment_file_parsing_is_bounded_and_never_echoes_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

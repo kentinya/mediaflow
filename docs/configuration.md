@@ -134,11 +134,14 @@ labels the audit record for `initialize` and `publish`. The retired `draft-impor
 ### Previous-store data switch
 
 A store that still reports configuration schema 11 may contain unpublished revisions and their
-draft-only evidence from the retired draft lifecycle. This build does not retire them while opening
-the database. `config status` reads that file through a read-only connection and reports
-`DATA_SWITCH_REQUIRED` with the exact affected revision IDs, evidence per revision, affected audit
-rows and any admitted Task that pins one of them. Web/API startup and `config initialize`/`config
-publish` refuse to open the store, naming the same affected revision IDs, until the switch is applied.
+draft-only evidence from the retired draft lifecycle. This switch is available only while the
+store's runtime schema is absent or already current; a store that already contains another
+MediaFlow runtime schema is refused at startup and must be replaced with a new empty data
+directory. This build does not retire unpublished rows while opening the database. `config status`
+reads that file through a read-only connection and reports `DATA_SWITCH_REQUIRED` with the exact
+affected revision IDs, evidence per revision, affected audit rows and any admitted Task that pins
+one of them. Web/API startup and `config initialize`/`config publish` refuse to open the store,
+naming the same affected revision IDs, until the switch is applied.
 
 Review the reported scope, then apply it explicitly. Without `--confirm` the command only prints
 the same scope and changes nothing:
@@ -550,8 +553,10 @@ Do not infer a feature or permission to rebuild user data from an old schema num
 Published V2 configurations and the supported Storage, library, rules, system settings, Automation
 and notification data retain their identities, relationships and digests. Existing Tasks keep their
 pins, results and audit history. Completed or uncertain effects retain their recorded outcomes.
-For configuration schema 11, use the [explicit data switch](#previous-store-data-switch) before
-starting the current version. The [deployment boundary](deployment.md#boundary) and
+For configuration schema 11 in a store whose runtime schema is absent or current, use the
+[explicit data switch](#previous-store-data-switch) before starting the current version. A store
+that already contains another MediaFlow runtime schema is refused at startup before any table is
+created or rewritten. The [deployment boundary](deployment.md#boundary) and
 [release validation](release.md#current-v2-validation-boundary) describe supported recovery.
 
 ## Current limitations

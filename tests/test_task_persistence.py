@@ -1193,14 +1193,17 @@ class ManualRecoveryPreparationPersistenceTests(unittest.TestCase):
     """
 
     def _seed_base_shaped_summary_library(self, database: Path) -> dict[str, object]:
-        """Install the exact Task Base (schema 58) summary table shape with real rows.
+        """Install the retired Base-shaped summary table with real rows.
 
         The Base created ``manual_recovery_preparations`` with the two retired
         old-chain columns as ``NOT NULL`` without a default.  Current-flow
         summaries were stored with empty strings there; an executed old chain
         additionally left its continuation/result references in one row.  The
         inert ``recovery_continuations`` table of such a database keeps its
-        row as retired history.
+        row as retired history.  The runtime marker stays current: a previous
+        MediaFlow runtime database is refused at the applicability boundary,
+        while this repair path applies to a current store that still carries
+        the retired table shape.
         """
 
         from mediaflow.domain.manual_recovery import (
@@ -1273,7 +1276,6 @@ class ManualRecoveryPreparationPersistenceTests(unittest.TestCase):
                 + self._RECOVERY_CONTINUATIONS_BASE_COLUMNS
                 + ")"
             )
-            connection.execute("UPDATE schema_version SET version = 58 WHERE component = 'runtime'")
             connection.execute(
                 """INSERT INTO recovery_continuations (
                     continuation_id, request_id, source_task_id, source_item_id,
@@ -1287,14 +1289,15 @@ class ManualRecoveryPreparationPersistenceTests(unittest.TestCase):
             connection.commit()
         return {"task_id": task_id, "item_id": item_id, "now": now}
 
-    def test_legacy_base_library_rebuilds_summary_table_without_retired_columns(self) -> None:
+    def test_legacy_summary_shape_rebuilds_without_retired_columns(self) -> None:
         """The minimal structure adjustment keeps every valid summary byte-for-byte.
 
-        A Base-created library opens with the candidate: the two retired old-chain
-        columns leave the summary table, every summary keeps its identity, pin,
-        checkpoint version, preview relation and status, a new current insert
-        is accepted, and the retired ``recovery_continuations`` history of the
-        same database is not deleted.
+        A current store that still carries the Base-shaped summary table opens
+        with the candidate: the two retired old-chain columns leave the summary
+        table, every summary keeps its identity, pin, checkpoint version,
+        preview relation and status, a new current insert is accepted, and the
+        retired ``recovery_continuations`` history of the same database is not
+        deleted.
         """
 
         from mediaflow.domain.manual_recovery import (
@@ -1427,7 +1430,7 @@ class ManualRecoveryPreparationPersistenceTests(unittest.TestCase):
             self.assertIn("analysis_continuation_id", columns)
             self.assertIn("analysis_result_id", columns)
             self.assertEqual(2, count)
-            self.assertEqual("58", marker)
+            self.assertEqual(str(SCHEMA_VERSION), marker)
             with SQLiteTaskRepository(database) as reopened:
                 self.assertEqual(SCHEMA_VERSION, reopened.schema_version)
                 stored = reopened.get_manual_recovery_preparation("prep-1")
@@ -1438,6 +1441,7 @@ class ManualRecoveryPreparationPersistenceTests(unittest.TestCase):
             self.assertNotIn("analysis_continuation_id", columns)
             self.assertNotIn("analysis_result_id", columns)
             self.assertEqual(2, count)
+            self.assertEqual(str(SCHEMA_VERSION), marker)
 
     def _source_task_and_item(self, repository):
         from mediaflow.application.task_runtime import PersistentTaskCoordinator

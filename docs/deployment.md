@@ -7,9 +7,13 @@ installation, health, restart, backup, restore and failure-recovery procedures.
 
 ## Boundary
 
-- The current `main` deployment supports fresh initialization, accepted stable V2 data and
-  same-version recovery. Slice 56 verified the route cutover against data from its Base.
-  See [Release](release.md#current-v2-validation-boundary).
+- The current `main` deployment supports fresh initialization and same-version
+  reopen/restart. Startup accepts only an empty database or one created by this
+  version's runtime schema; a database created by another MediaFlow version is
+  refused before tables are created or rewritten. Keep the original file and
+  start a fresh deployment with a new empty data directory. Slice 56 verified
+  the route cutover against data from its Base before this Slice's runtime
+  schema change. See [Release](release.md#current-v2-validation-boundary).
 - One image runs the installed `mediaflow` package. The image runs as UID/GID
   `10001:10001` by default and never needs root.
 - `compose.yaml` defines exactly `api`, `worker`, `scheduler`, and
@@ -38,11 +42,14 @@ installation, health, restart, backup, restore and failure-recovery procedures.
   `/run/mediaflow/deployment.env`. Compose source and rendered Compose output
   contain only the file path and variable references, never secret values.
 - Supported V2 published configurations, business objects, Task/request/result/audit rows and
-  original pins retain their IDs, relationships, digests and target semantics. Completed or
-  uncertain effects retain their original outcomes. Configuration schema 11 requires the
-  [explicit unpublished-revision data switch](configuration.md#previous-store-data-switch).
-  V1 and obsolete migration inputs receive ordinary rejection or not-found behavior. Restore
-  uses the same artifact version that produced the supported backup.
+  original pins retain their IDs, relationships, digests and target semantics within one
+  runtime schema. Completed or uncertain effects retain their original outcomes. A database
+  that already contains another runtime schema is refused at startup; only an empty database
+  or one created by this version is supported. Configuration schema 11 requires the
+  [explicit unpublished-revision data switch](configuration.md#previous-store-data-switch)
+  when the runtime schema is absent or current. V1 and obsolete migration inputs receive
+  ordinary rejection or not-found behavior. Restore uses the same artifact version that
+  produced the supported backup.
 - The same image contains the built V2 static artifact at
   `/opt/mediaflow/web/dist`, bound to the running process through
   `MEDIAFLOW_UI_V2_ASSET_ROOT`. Node, npm and the frontend source tree exist
@@ -211,8 +218,11 @@ Local Storage root declared in the deployment configuration file for a mounted
 directory with the intended read-only/read-write access, rejects host-root and
 Docker-socket paths, rejects retired identity keys in every configuration input
 (`api.principals` and `api.tokenEnv`) with the exact removal guidance, and refuses
-an unsupported database file without modification. Preflight never scans media,
-calls a Provider, creates a Task, sends a notification, or mutates Storage.
+an unsupported database file without modification. A database created by a
+previous MediaFlow version is unsupported: startup stops before the repository
+creates or rewrites a table and directs the operator to a new empty data
+directory. Preflight never scans media, calls a Provider, creates a Task, sends
+a notification, or mutates Storage.
 
 Each Compose service also declares a bounded healthcheck. The healthcheck runs
 `python -m mediaflow.container_probe check --service <name>` inside the same
@@ -442,18 +452,21 @@ paths, credentials, Storage or Providers.
 
 ## Backup and same-version recovery
 
-Current support covers fresh initialization, same-version reopen/restart and the verified data
-continuity through the Slice 56 route cutover. This cutover preserves supported Task IDs, pins and
-results from its Base. General cross-version upgrade and rollback, mixed-version writers and old
-Task/Job migrations are deferred. An incompatible schema fails closed. Keep the original database
-for diagnosis and recovery. See [Slice 56 A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed).
+Current support covers fresh initialization and same-version reopen/restart. Startup accepts only
+an empty database or one created by this version's runtime schema. A database from an earlier
+MediaFlow version is refused before the repository creates or rewrites any table; the file remains
+unchanged. Keep it for diagnosis or recovery with the version that created it, then use a new empty
+data directory for this version. General cross-version upgrade and rollback, mixed-version writers
+and old Task/Job migrations are deferred. See [Slice 56 A Final Review](https://github.com/kentinya/mediaflow/blob/ce502d161dde1268fa26a8665db14cbb932f2e57/SLICE.md#a-final-review--pass--closed).
 
-One configuration data switch is explicitly supported from configuration schema 11 to 12. Stop the
-services and keep a verified backup, run `mediaflow config status` and review the listed unpublished
-revisions, evidence and Task pins, then run `mediaflow config retire-unpublished --confirm`. The
-switch is atomic: an admitted Task pinning an unpublished revision or a database failure blocks it
-without changing the file. Start the services after it succeeds; other cross-version transitions
-remain outside current support. Exact scope and recovery behavior are in the
+One configuration data switch is explicitly supported from configuration schema 11 to 12 for a
+store whose runtime schema is absent or already current. Stop the services and keep a verified
+backup, run `mediaflow config status` and review the listed unpublished revisions, evidence and
+Task pins, then run `mediaflow config retire-unpublished --confirm`. The switch is atomic: an
+admitted Task pinning an unpublished revision or a database failure blocks it without changing the
+file. Start the services after it succeeds; other cross-version transitions remain outside current
+support. A database that already contains a runtime schema from another MediaFlow version is refused
+at startup before this switch can run. Exact scope and recovery behavior are in the
 [configuration guide](configuration.md#previous-store-data-switch).
 
 Stop the stack and retain a verified backup under `/data` before maintenance. Backup is read-only
@@ -582,6 +595,11 @@ pinned context; those are distinct signals, not hidden failures.
 - **Inaccessible `/data`:** preflight reports the exact directory and the
   container healthcheck marks the service unhealthy. Fix UID/GID ownership or
   mount authority and retry; MediaFlow never falls back to root or another path.
+- **Database from another MediaFlow version:** startup and healthchecks stop
+  before the repository opens the file, and the message names the previous
+  runtime schema and the new empty data directory to use. The original file is
+  left unchanged; keep it for diagnosis or recovery with the version that
+  created it. Do not edit the schema marker or delete the file.
 - **Inaccessible published media root:** the API container stays healthy and
   `/health` keeps answering. The Storage page's `运行只读检查` (or the
   authenticated storage-management check endpoint) reports `status: failed`
@@ -611,8 +629,10 @@ verify their events with the original recipient rather than silently assigning t
 Delivery detail explains this state without exposing endpoints or secret values.
 
 Container probes open the existing SQLite database read-only. An absent or incompatible schema is
-not ready; probes never create a database or install tables. Use the backup and same-version recovery workflow above; cross-version schema transitions
-are outside current support apart from the explicit configuration schema 11 to 12 data switch
+not ready; probes never create a database or install tables. Use the backup and same-version
+recovery workflow above. A database created by another MediaFlow version is refused by preflight
+and probes; cross-version schema transitions are outside current support apart from the explicit
+configuration schema 11 to 12 data switch for a store whose runtime schema is absent or current,
 documented in the [configuration guide](configuration.md#previous-store-data-switch). Temporary database contention makes readiness
 unavailable while resident processes keep polling safely; it does not requeue uncertain media work.
 The V2 Operations service-status section separates infrastructure health from configuration waiting

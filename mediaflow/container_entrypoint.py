@@ -164,9 +164,7 @@ def container_preflight_errors(
                         current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
                     )
                 except DatabaseApplicabilityError as error:
-                    errors.append(
-                        f"{error}. Start a fresh deployment with a new empty data directory"
-                    )
+                    errors.append(str(error))
                 except (OSError, ValueError) as error:
                     errors.append(f"persistence.databasePath could not be checked: {error}")
     history = document.get("historyPath")

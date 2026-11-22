@@ -946,11 +946,13 @@ check remains available as a Local diagnostic but is no longer the publication a
 previous Active remains available when replacement fails.
 
 A previous supported store that still reports configuration schema 11 may contain unpublished
-revisions from the retired draft lifecycle. The current build reads that scope through a read-only
-connection and refuses Web/API startup until an operator reviews the listed revisions, evidence and
-admitted Task pins and applies `config retire-unpublished --confirm`. That switch retires only
-the unpublished rows and advances the marker in one transaction; published snapshots, audits, Task
-pins and results are untouched. This is the only supported configuration schema transition.
+revisions from the retired draft lifecycle when its runtime schema is absent or already current.
+The current build reads that scope through a read-only connection and refuses Web/API startup until
+an operator reviews the listed revisions, evidence and admitted Task pins and applies `config
+retire-unpublished --confirm`. That switch retires only the unpublished rows and advances the marker
+in one transaction; published snapshots, audits, Task pins and results are untouched. This is the
+only supported configuration schema transition. A database that already contains a runtime schema
+from another MediaFlow version is refused before this switch can run.
 
 After publication, `ManagedConfigurationService` verifies the digest/schema/runtime load and builds an
 immutable runtime binding containing revision ID, version and digest. API requests, Workers, Tasks and

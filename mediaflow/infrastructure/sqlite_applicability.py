@@ -2,9 +2,10 @@
 
 The decision is read-only and runs before a repository creates a table, writes
 a schema marker or registers a publishing authority.  A current empty path, a
-zero-table SQLite file, a current V2 runtime/configuration database and a
-configuration-only first-setup database are supported.  A retired V1 Job
-schema, a newer schema, a foreign file and a partially written store are not.
+zero-table SQLite file, a database created by the current runtime schema and a
+configuration-only first-setup database are supported.  A runtime database
+created by any other MediaFlow version, a retired V1 Job schema, a newer
+schema, a foreign file and a partially written store are not.
 
 Repositories repeat the same decision on their own connection inside the
 ``BEGIN IMMEDIATE`` transaction that creates the current structure, so two
@@ -24,8 +25,9 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-#: The first runtime schema whose Task flow/structure this build can use.  Any
-#: lower marker is the retired V1 Job schema.
+#: The first current-generation runtime schema.  Any lower marker is the
+#: retired V1 Job schema; any older current-generation marker is a previous
+#: MediaFlow version and is refused by the exact-version check below.
 MIN_RUNTIME_SCHEMA_VERSION = 58
 
 #: The immediately previous managed-configuration schema.  It contains the same
@@ -74,8 +76,9 @@ class DatabaseApplicabilityError(ValueError):
         self.reason = reason
         super().__init__(
             f"the configured database is not usable by this MediaFlow version: {reason}. "
-            "The file was not modified; check the configured database path or restore a "
-            "verified supported backup"
+            "The file was not modified; start a fresh deployment with a new empty data "
+            "directory, check the configured database path, or restore a backup created by "
+            "this MediaFlow version"
         )
 
 
@@ -155,6 +158,12 @@ def evaluate_database_applicability(
             )
         if markers.runtime_version < MIN_RUNTIME_SCHEMA_VERSION:
             raise DatabaseApplicabilityError("its runtime schema is the retired V1 Job schema")
+        if markers.runtime_version < current_runtime_version:
+            raise DatabaseApplicabilityError(
+                "its runtime schema was created by a previous MediaFlow version "
+                f"(found {markers.runtime_version}, expected {current_runtime_version}); "
+                "this version only opens an empty database or one it created"
+            )
     elif tables & RETIRED_TABLE_NAMES:
         raise DatabaseApplicabilityError(
             "it contains the retired V1 Job schema without a current runtime marker"
