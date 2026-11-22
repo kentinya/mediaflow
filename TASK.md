@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
+Next Action: DEVELOPER FIXES TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -725,6 +725,52 @@ Task。RO-3 的旧库启动及显式切换已验收，自动化回归和实际 S
   真实 Scheduler／Worker 撤权执行与其他真实 Python 浏览器 spec 仍由 B 在修正候选上独立
   验收。浏览器返回取消提示的断言依赖当前 Chromium 的原生 `beforeunload` 行为；B 应按
   指定命令在候选构建上复核。
+
+#### B 复核后台撤权后的失败说明
+
+```text
+Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..fe2e08fd9a3a2113cf6e6372eb9c7ab56ae8fee5
+Implementation: 95970ba9b7a89133047a63443142746bf9193820
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1｜撤销定时执行权限后，自动化页面没有告诉用户为什么停了。** 在生产 Waitress
+  和隔离 SQLite 上，用账号从「自动化 → 新建 → 创建并启用」发布计划。权限有效时，
+  `scheduler tick` 受理一条任务，`worker run-next` 完成空来源对照任务。再发布两条计划，
+  让其中一条先入队，然后用隔离账号夹具把发布者改为只读。Scheduler 对尚未受理的计划
+  发出零条任务，自动化列表仍显示「启用」「尚无执行」。数据库只记录通用的调度失败和再检查
+  提示。Worker 对已排队的计划按原配置判定权限不足并结束任务，源文件内容和目标目录清单
+  保持一致，复查没有创建新任务或重复处理。另一位管理员重新登录，在「自动化 → 执行记录 →
+  查看详情」只读到「具体原因当前不可读」，页面让他检查文件。打开对应任务也只见失败和
+  零个条目。实际需要处理的是发布账号的定时执行权限。
+- 调度使用 `IntervalScheduler` 中已有的通用异常分支，丢失了授权检查给出的具体原因。
+  Worker 已把 `unattended_permission_invalid` 写入原任务的失败记录，执行记录的显示映射
+  漏掉该分类，回落到通用文案。`8c0e2c85`（2026-11-21）把生产 Scheduler 和 Worker 的
+  权限判断接到数据库账号，当前的账号撤权旅程进入了这两处既有投影缺口。
+
+#### Developer 修正指导
+
+1. 在 `IntervalScheduler` 的授权检查边界保留既有权限拒绝的原因与下一步，通过自动化定义
+   已有的调度状态字段在列表展示。让管理员看到哪条计划被权限阻止、这次未生成任务，以及
+   可恢复发布账号的定时执行权限，或由有权限的账号确认后重新发布。
+2. 把 Worker 已持久化的权限拒绝投影到该次执行记录，复用任务级失败说明。即使失败发生在
+   扫描文件前，用户也应看得到执行为何停止、这次没有文件效果、下一步该检查账号权限。
+3. 在现有自动化和常驻服务用例补两条顺序不同的撤权回归。覆盖「先撤权，再到期」和
+   「先入队，再撤权」。保留权限有效时可执行、撤权后零文件效果和重复检查零新增任务的
+   断言。Developer 跑改动涉及的用例，B 复测现有页面和实际 CLI。
+
+本轮独立运行的自动化原生浏览器组合 30 项全部通过，两条只读回归和保存中取消浏览器后退
+均通过。默认 E2E 279 项、Web 单测 1,601 项、类型检查、Lint、Prettier 和生产构建通过。
+与 `233b4d3a` 比对，只有 `TASK.md` 和自动化生命周期 spec 变更，生产 Web 产物的文件名
+一致。复用该候选的 2,350 项 Python 全量结果（7 项跳过）、61 项原生浏览器、旧库
+四服务 Compose 和 wheel 证据。本轮构建与后端验证沿用仓内现有入口。原始日志、截图和
+调度／任务落库证据位于本地 `.git/validation-evidence/fe2e08fd9a3a2113cf6e6372eb9c7ab56ae8fee5/b-review/`。
+
+RO-1 的首位设置、会话恢复、改密和重置已有原生浏览器证据。RO-2 的用户管理及 API 令牌
+仍待后续 Task。RO-3 的旧库处理和实际后台权限拦截已验证，撤权原因的用户可见验收仍失败。
+完整部署验收待修正候选复核。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
