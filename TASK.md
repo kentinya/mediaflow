@@ -4,7 +4,7 @@
 Task ID: PATCH-20261122-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 9027e0a0384bae8c28971d24e5dd666604e5a6f9
 Difficulty: Medium
 Test Level: T3
@@ -93,3 +93,32 @@ Next: SAME TASK FIX LOOP
 2. 在 `operations-inventory.python.spec.ts` 的双会话旅程中覆盖两种顺序。第二会话在第一次签名测试前保存，以及在签名测试通过后、创建前保存。两条旅程都能在卡片内读取，读取只发 GET，完成后各有一条新定义。保留原请求核对用例。测试名称沿用 `recovers a concurrent Webhook creation conflict`，执行上一轮修复指导中的命令。
 
 B 在新候选上复验两种顺序并重跑指定验收。
+
+## Developer 修正交接 — P1 签名测试阶段版本冲突
+
+```text
+Candidate: 5255e73e7228dbdb0ca0ef0eac2f4072282302d5
+Fix range: 5be5ce847c30a2d2aca767d858763b83f807ef76..5255e73e7228dbdb0ca0ef0eac2f4072282302d5
+Task range: 9027e0a0384bae8c28971d24e5dd666604e5a6f9..5255e73e7228dbdb0ca0ef0eac2f4072282302d5
+```
+
+- 新建卡收到签名测试的 `configuration_version_conflict` 时，说明生效配置已更新、本次测试请求没有发往接收方，
+  并在原错误区提供「读取最新配置」。标识符、地址、密钥引用、事件与高级字段全部保留；旧测试结论清除，
+  重测与保存锁定。读取复用当前 Webhook 列表查询，只做有界 GET；成功后显示最新版本并要求显式重测，
+  测试通过后才重新开放保存。读取失败保留原输入与读取入口，并以后端读取的真实结果判定（不再把上次
+  成功数据当作本次读取成功）。保存阶段冲突的原恢复路径保持不变。
+- 新增 `recovers a concurrent Webhook creation conflict at the signed test`：在 390px 用两个真实浏览器会话，
+  第一会话填写后，第二会话从「系统设置 → 常规设置 → 日志」发布新保留值；第一会话签名测试收到真实 409
+  （`configuration_version_conflict`，`sideEffects: none`）。断言列表无该定义、字段保留、重测与保存不可用；
+  读取只发 GET，重测与保存请求的版本等于读取到的最新版本；重测成功后保存并打开定义，列表与 API
+  都只有一条。原 `recovers a concurrent Webhook creation conflict` 保存阶段顺序保留。
+- 实际执行（`web/`，候选 `5255e73e7228dbdb0ca0ef0eac2f4072282302d5`）：
+  - `npm run typecheck` → PASS。
+  - `npm run build` → PASS；310 modules，产物 `index-CZNtY5CQ.js` 1,583.07 kB（既有大包提示）。
+  - `npm run test:e2e -- --config playwright.python.config.ts operations-inventory.python.spec.ts --grep 'recovers a concurrent Webhook creation conflict|a new Notification publication reconciles'` → 3 passed。
+  - `npm run test:e2e -- notifications.spec.ts` → 11 passed。
+  - `npm run test:e2e -- configuration-settings.spec.ts` → 5 passed（Task 指定的设置回归）。
+  - `npm run test -- run src/features/operations/NotificationRouter.test.tsx` → 10 passed（新增 2 项；仅既有 jsdom `scrollTo` 提示）。
+  - `npx prettier --check` 三个改动文件、`npm run lint -- --quiet`、`git diff --check` → PASS。
+- 剩余风险：Developer 未运行全量 Python/Web/E2E 与打包矩阵，按 Task 由 B 执行；签名测试冲突的 390px
+  真实 Chromium 复验由新增旅程覆盖，未另存截图；未发现本修正范围内的已知未覆盖入口。
