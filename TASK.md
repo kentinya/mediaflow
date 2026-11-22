@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
+Next Action: DEVELOPER FIXES TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -530,6 +530,55 @@ Scheduler／Worker 撤权执行仍待验收。
   生产入口、Web 浏览器与其他真实 Python spec 仍由 B 在修正候选上独立验收。Developer 本轮
   未构建镜像；旧库验证使用本机容器入口与本机 API，不替代 B 的 Compose 验收。
   测试只跑上述定向模块和两条真实旅程，未运行完整套件。
+
+#### B 复核结果
+
+```text
+Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..8ed74bcc4ed6fc1d763f28cb8d8d9d603626474b
+Implementation: da0b246054d7f5faa8279672a4c7a46b682728b4
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1｜启动服务会在确认配置切换前写入旧库。** 部署者按旧版配置指南运行 `config
+  draft-import --file ...` 后，SQLite 保存了一个草稿，记录配置版本 `11`。B 用旧版
+  `be55d699` 的生成器与 CLI 创建这份库，再用候选镜像和最小启动配置运行标准四服务
+  Compose。API 与 Worker 提示等待确认切换后退出，Scheduler 与 Notification Worker
+  继续运行。文件增加了 `runtime 59` 和 `store_origin 59`，SHA-256 也发生变化。部署者
+  还没有执行 `config retire-unpublished --confirm`，库已被改写。
+- 本候选 `da0b2460` 于 2026-11-22 加入库来源标记，配置版本 `11` 走原有待切换入口。
+  Compose 的预检允许启动，后台服务先打开运行时仓库，再读取配置。运行时仓库在建表时
+  写入来源标记，使普通启动提前改变仍在等待确认切换的文件。
+
+#### Developer 修正指导
+
+1. 在现有预检与本机常驻服务启动入口中识别待确认切换的配置库。普通服务启动应在打开
+   运行时仓库前退出，保全原文件并准确指引下一步。将现有 `config status` 的只读范围
+   检查和 `config retire-unpublished --confirm` 的原子切换留在各自的正式入口。
+2. 用 `be55d699` 的生成器和 `config draft-import --file ...` 生成实际旧库。复测四服务
+   Compose 启动，核对四个进程退出、原草稿与文件哈希保持一致。用另一份副本走文档里的
+   显式切换，再验证启动和读取已发布配置。保留本轮已通过的两个旧库拒绝用例及当前版本
+   从 `config initialize` 预置配置后启动的旅程。
+3. Developer 运行 `test_container_deployment.py`、`test_container_probe.py`、
+   `test_configuration_status.py` 和 `test_resident_services.py`，记录受影响的实际部署
+   结果。B 负责修正候选的 T4 验收。
+
+B 使用本轮源码构建候选镜像
+`sha256:047d15904ab62b8075b3b8742f40b1bcdf7040edf9299848c60f3f76e9ff8db0`。
+Task Base 生成的仅配置 `12` 库和 `runtime 58` 库均在 Compose 的四个服务预检中退出 `1`，
+文件哈希一致。本机 `api serve` 也拒绝仅配置 `12` 的旧库。容器部署 19 项、健康探针
+12 项及配置状态 15 项通过，Ruff、编译、依赖、治理和示例配置校验通过。
+用默认容器 UID/GID 和独立卷通过新版 `config initialize` 创建 Active，四服务达到健康状态。
+窄屏浏览器完成首位管理员设置，桌面读取已生效配置。四服务同版本重启后，书签、查询参数和
+原账号会话恢复。首次测试为挂载宿主机目录改用了宿主 UID，镜像内网页文件不可访问，根页
+返回 500。恢复默认 UID 与标准数据卷后通过同一旅程，原记录仍在 `current-compose-browser.log`。
+本地日志目录为 `.git/validation-evidence/8ed74bcc4ed6fc1d763f28cb8d8d9d603626474b/b-review/`。
+待切换旧库的结果见 `v11-compose.log`、`v11-state.json` 和 `v11-sha-before.log`、
+`v11-sha-after.log`。
+
+RO-1 的既有浏览器证据保留。RO-2 用户管理与 API 令牌待后续 Task。RO-3 的四服务旧库
+启动仍有阻塞，本轮完整 T4 与实际 Scheduler／Worker 撤权执行待修正候选。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
