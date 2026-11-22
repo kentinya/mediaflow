@@ -1,6 +1,6 @@
 # Task PATCH-20261122-1 — 手动整理弹窗状态与排版修复
 
-Next Action: Developer 按本 Task 的修正指导处理 B-01 至 B-03，再提交 B 复核。
+Next Action: B 复核修正候选 6b462f5432070bfe1cae7eef48799d94e2e8a1ef 的 Task Base..交接 Head，重点核对 B-01 至 B-03。
 
 用户明确要求激活本独立修复 Task。优先级为第一屏「准备中」→ 第三屏「整批复核」→ 第二屏「逐项复核」。
 规划时 `PLANNED` 表示已激活、待 Developer 开始。 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)
@@ -9,7 +9,7 @@ Next Action: Developer 按本 Task 的修正指导处理 B-01 至 B-03，再提�
 Task ID: PATCH-20261122-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 8ce6c2092c328a15c44493f51ae4690b15680960
 Difficulty: Medium
 Test Level: T3
@@ -199,3 +199,50 @@ B 核对完整 Base..交接 Head。候选已修复排队时报「失败说明：
 - 截图、原生用例 trace 和 101 项失败快照保存在
   `.git/validation-evidence/c1eae8a214caa00829c93928985566912ce40646/b-review/`。
   完整原生组及 Task Center 继续入口验收留待修正候选。本轮结论适用于同一个独立 Task。
+
+## Developer 修正交接 — B-01 至 B-03
+
+```text
+Candidate: 6b462f5432070bfe1cae7eef48799d94e2e8a1ef
+Fix range: b7cf691c40c44532aa4275cf48e34c0ee1c567e8..6b462f5432070bfe1cae7eef48799d94e2e8a1ef
+Task range: 8ce6c2092c328a15c44493f51ae4690b15680960..6b462f5432070bfe1cae7eef48799d94e2e8a1ef
+```
+
+- **B-01 已受理与未受理分开计数。** 准备页只列 `selection.scopes` 的展开入口改为
+  「查看已受理范围（N 项）」，未受理条目仍在其独立明细中列出原因和下一步。整批复核首屏保留
+  「未纳入」的方案内计数，并在存在未受理条目时增加同层「未受理 N 项」，从两项选择进入也能
+  在首屏对上已受理、未纳入和未受理三种去向。新增原生用例走真实 Files 两文件路径：先整理 A、
+  生成方案后关闭弹窗，再从原目录选 A 和 B 整理；A 被既有工作拒绝、B 被受理。准备页展开范围
+  只列 B，未受理明细列 A；整批复核显示将整理 1、未纳入 0、未受理 1，且不发出执行或重新分析。
+- **B-02 首次受阻方案不再误称被取代。** 只有 `intent.latestPlan.previewId` 与本方案不同才显示
+  「已被更新取代」。第一份方案因自身未就绪项失效时，底栏简明显示未就绪数量及
+  「先返回逐项复核处理这些文件，再重新分析」；正文说明整体暂不能确认，并指到下方未纳入清单。
+  未纳入清单对失效项显示「本方案中该文件已失效；返回逐项复核查看原因」，仍可点回准确文件。
+  90／10 原生样本断言确认按钮确实禁用、原因和下一步正确、没有执行或重新分析请求；点
+  `Unmatched001` 回到第 89／100 个文件且不产生写请求。新增组件用例覆盖首次受阻、存在更新方案
+  证据两种归因。
+- **B-03 原生断言改为标签与值。** 原生组新增 `expectBatchSelected`，在整批复核区域读取
+  「将整理」的 `dt` 和 `dd`，替换组内其余按连续文本查找的旧写法，保留各用例原有的文件效果、
+  执行次数和任务交接断言。101 项用例改选单文件后继续核对文件仍存在且无目标。
+- **测试夹具。** `Dialog` 下新增 `DialogPendingOwned.2033` 与 `DialogPendingSibling.2034`
+  两个合成源及各自唯一候选，加入既有 Dialog RecognitionRule 与 Metadata 候选集合。
+- **实际执行（候选 6b462f5432070bfe1cae7eef48799d94e2e8a1ef）。**
+  - `python3 scripts/check_governance.py` → PASS。
+  - `.venv/bin/python -m unittest discover -s tests -p 'test_media_discovery.py'` → 6 passed
+    （1.09s；既有 ResourceWarning）。
+  - `.venv/bin/ruff check`／`ruff format --check`（改动 Python 文件）及
+    `python -m compileall -q scripts/operations_inventory_harness.py` → PASS。
+  - `git diff --check` → PASS。
+  - `web/`：`npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx
+    src/entities/operations/discovery.test.ts` → 45 passed（2 files，约 21s；既有 jsdom
+    `scrollTo` 警告）。
+  - `web/`：`npm run typecheck`、`npm run lint`、Prettier 改动文件检查 → PASS。
+  - `web/`：`npm run build` → PASS（既有 chunk size warning）。
+  - `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+    tests/e2e/manual-organize-dialog.python.spec.ts -g 'manual organize readability|101-file directory'`
+    → 5 passed（27.4s），含 1／10／100 项桌面、390px、短视口、B-01 两文件去向、90／10 受阻
+    说明与 101 项回归。
+  - 本轮约 18 分钟；测试、构建和静态检查实际执行约 4.5 分钟（低于本轮 30%）。
+- **剩余风险。** 后端在首次分析后把受阻项标记为失效的既有行为未改（Task 范围外），本轮只如实
+  呈现第一份方案的受阻原因和下一步。Developer 未运行完整原生组、全量 Python/Web 回归、Task
+  Center 继续入口及打包门禁；按分工由 B 在候选上执行。未推送、未发布。
