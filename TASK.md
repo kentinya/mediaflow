@@ -1,10 +1,9 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 58.1 — 切换正式部署和主机恢复入口
 
-[Slice 58](SLICE.md) is **ACTIVE**. Next Action: USER AUTHORIZES TASK 58.1 IMPLEMENTATION.
+Next Action: DEVELOPER STARTS TASK 58.1 IMPLEMENTATION
 
-## Task 58.1 — 切换正式部署和主机恢复入口（规划草案）
-
-用户授权 A 代 B 规划首个 Task，角色例外限于本次规划。B 独立验收，A 按工作流终审。
+用户已授权激活 Task 58.1。Developer 开始实施时将状态从 `PLANNED` 转为 `IN PROGRESS`。
+用户授权 A 代 B 规划首个 Task，角色例外限于首个 Task 的规划。B 独立验收，A 按工作流终审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
@@ -17,10 +16,10 @@ Difficulty: High
 Test Level: T4
 Planner: A on behalf of B (user-authorized planning only)
 Reviewer: B
-Implementation Authorization: PENDING USER AUTHORIZATION
+Implementation Authorization: AUTHORIZED BY USER FOR TASK 58.1
 ```
 
-### 目标与现有缺口
+## 目标与现有缺口
 
 落实 RO-1、RO-2、RO-3 和 RO-4 中的部署入口退役。部署者用正式 Compose 启动空实例，通过
 `/health` 和 Web 看见等待管理员，凭主机权限领取设置码，在 Web 建号并初始化配置。忘记密码
@@ -34,7 +33,7 @@ API 核对状态。预检、发码或恢复失败时说明实际状态、已有�
 [探针](mediaflow/container_probe.py) · [当前装配与分派](mediaflow/final_cli.py) ·
 [部署指引](docs/deployment.md)
 
-### 实施顺序
+## 实施顺序
 
 1. 从现有装配提取 API、Worker、Scheduler 和 Notification Worker 的启动和停止逻辑。
    入口显式选择四个固定服务，直接调用服务装配，使用同一最小 bootstrap、适用性检查和共享
@@ -57,7 +56,7 @@ API 核对状态。预检、发码或恢复失败时说明实际状态、已有�
    改走系统设置，容器例行验收中的 CLI 整理改为 Web/API 受理并交给常驻 Worker。
    原确定性测试接到相应职责，保留权限、文件效果和失败边界的断言。
 
-### 验收标准
+## 验收标准
 
 - [ ] 正式镜像按原四服务拓扑启动空库且无需媒体挂载。进程、健康、等待管理员、等待 Active
   和工作就绪各自如实显示。修正无效配置、挂载或权限后可启动相应服务。预检和探针读取零媒体
@@ -74,11 +73,11 @@ API 核对状态。预检、发码或恢复失败时说明实际状态、已有�
 - [ ] 用源码外 wheel 安装和正式镜像验证新入口。旧服务、账户与数据库的参数在各相关解析
   层拒绝，新路径直接使用共享装配和服务。候选指引、探针和验收脚手架使用同一套调用。
 
-### 验证计划
+## 验证计划
 
 按 [测试级别及分工](docs/development-workflow.md#6-test-levels) 执行。
 
-#### Developer — affected tests
+### Developer — affected tests
 
 - `PYTHONPATH=tests .venv/bin/python -m unittest test_container_deployment test_container_probe test_resident_services test_processing_worker_readiness test_runtime_lease`
   覆盖四服务注册、挂载预检、就绪状态、原任务处理和租约。
@@ -91,7 +90,7 @@ API 核对状态。预检、发码或恢复失败时说明实际状态、已有�
   主机提示和认证恢复。`.venv/bin/python scripts/check_governance.py`、改动文件检查及
   `git diff --check` 从仓库根目录运行。
 
-#### B — acceptance and full regression
+### B — acceptance and full regression
 
 - 在 [共享全量门禁](docs/development-workflow.md#shared-full-regression-commands) 上验证精确
   候选。用 `.venv/bin/python -m pip wheel . --no-deps -w dist` 构建 wheel，并把精确产物
@@ -108,7 +107,7 @@ API 核对状态。预检、发码或恢复失败时说明实际状态、已有�
   `npm run test:e2e -- --config=playwright.python.config.ts --output=test-results/task58.1-organize tests/e2e/manual-organize-dialog.python.spec.ts`。
   使用独立实例和输出目录验证认证恢复、文件夹准备及同任务续作，采集正式入口的证据。
 
-### 非目标
+## 非目标
 
 完成整个通用 CLI 的源码和制品删除、退役业务命令与 CLI 专属整理分支、结束 schema 11
 切换支持属于本 Slice 的剩余范围。此 Task 内维持现有数据库适用性拒绝和历史保护，
