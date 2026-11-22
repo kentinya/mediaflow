@@ -84,6 +84,36 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.1
 - 按[共享全量门禁](docs/development-workflow.md#shared-full-regression-commands)运行适用的
   T4 全量、生产打包与 wheel 验收。Developer 先交付受影响用例结果，B 用对应候选验收。
 
+### Developer 本轮交付记录（READY FOR B REVIEW）
+
+- 实现候选：`3c7c7a1ff8fb77c1d8a16354c0e782261fab6ae0`（本轮起点 `adecce34`，Task Base
+  `4566a74055c698aec704215dd431eb8521bcfedb`）。保留原 Slice 合同、原评审记录和未授权范围。
+- 列表显示：计划停用时，除真实的「停用」状态外明确说明不会产生新的定时执行、重新启用后
+  只受理新执行；「下次运行」不再展示已停用计划仍保留的到期时间。
+- 执行记录：复用 `definition_disabled` 任务级失败分类，说明本次在开始处理文件前停止且没有
+  文件效果，并指向在自动化编辑中重新启用计划；原任务不会重跑。若停用发生在已有文件效果
+  之后，仍按真实成功/部分/不确定计数显示。
+- 验证夹具：真实 Python 浏览器 harness 的已入队 Worker 按生产 `pending_snapshot` 的
+  「最早待处理任务固定快照」注册，而不是按停用后的当前 Active 注册，因此能实际领取原任务
+  并在执行检查处停止。
+- 实际验证：
+  - `.venv/bin/python -m unittest discover -s tests -p test_v2_automation_lifecycle.py`
+    38 项通过；`... -p test_v2_automation_operations.py` 8 项通过（新增 2 项真实
+    Scheduler/Worker 停用用例）。
+  - `web/` 下 `npm run test -- run
+    src/features/operations/AutomationWorkspaceReadModel.test.tsx` 19 项通过；
+    `npm run typecheck`、`npm run lint -- --quiet`、改动文件 Prettier、`npm run build`
+    通过（产物 `index-CDQg9IlO.js`）。
+  - `npx playwright test --config=playwright.python.automation.config.ts
+    tests/e2e/automation-lifecycle.python.spec.ts
+    tests/e2e/automation-workspace.python.spec.ts` 31 项通过，包含新增的「停用后零新增、
+    原任务停止、执行记录可见原因/效果/下一步、重新启用只产生新执行」真实浏览器场景。
+  - 改动 Python 文件 Ruff 格式与检查、`git diff --check`、治理检查 PASS。
+- 用时：本轮测试/检查执行累计约 4 分钟，整轮约 30 分钟，低于 30%；未运行完整 T4、
+  真实 Compose/候选镜像、wheel 与其他浏览器 spec。
+- 剩余风险：完整 T4 全量、真实 Compose/候选镜像、wheel/源码外安装及其他真实 Python
+  浏览器 spec 仍由 B 在修正候选上独立验收。
+
 ### Slice 后续交付
 
 Task 57.1 通过后，按 RO-2 规划「系统设置 → API 令牌」，一次交付签发、权限、核对、吊销和
