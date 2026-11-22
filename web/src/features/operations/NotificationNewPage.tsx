@@ -100,6 +100,7 @@ export function NotificationNewPage() {
   const [reconciledVersion, setReconciledVersion] = useState<number | null>(
     null,
   );
+  const [createConflict, setCreateConflict] = useState(false);
   const verifiedSubmissionRef = useRef<string | null>(null);
   const verificationInFlightRef = useRef(false);
   const verifyOutcomeRef = useRef<(pending: PendingNotificationApply) => void>(
@@ -143,6 +144,7 @@ export function NotificationNewPage() {
     },
     onSuccess: (result, input) => {
       if (result.ok) {
+        setCreateConflict(false);
         setPendingApply(null);
         setAwaitingVerification(false);
         writePendingNotificationApply(
@@ -194,10 +196,20 @@ export function NotificationNewPage() {
       setPendingApply(null);
       setAwaitingVerification(false);
       setShowIssues(true);
+      if (result.status === 409) {
+        // The baseline version or the tested evidence is no longer current.
+        // Keep every input, drop the stale test conclusion and require an
+        // explicit read plus a fresh signed test before another submission.
+        setTestResult(null);
+        setCreateConflict(true);
+        setError(
+          "定义没有发布：本次没有创建。配置在你编辑期间已经变化，或签名测试证据与当前表单不一致。请先读取最新配置，读取后须对当前表单重新完成签名测试才能保存；服务端保留了胜出的版本。",
+        );
+        return;
+      }
+      setCreateConflict(false);
       setError(
-        result.status === 409
-          ? "定义没有发布：配置在你编辑期间已经变化，或签名测试证据与当前表单不一致。重新读取并对当前表单成功测试后再提交；服务端保留了胜出的版本。"
-          : `定义没有发布（${result.code}）。修正表单后重试；系统没有自动重试。`,
+        `定义没有发布（${result.code}）。修正表单后重试；系统没有自动重试。`,
       );
     },
   });
@@ -258,6 +270,7 @@ export function NotificationNewPage() {
       setTouched(new Set());
       setShowIssues(false);
       setError(null);
+      setCreateConflict(false);
     },
     firstFieldId: "notification-new-id",
     fallbackFocusId: "notification-definitions-background",
@@ -393,6 +406,28 @@ export function NotificationNewPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [awaitingVerification, pendingApply, query.refetch]);
+
+  const readLatestConfiguration = async () => {
+    if (query.isFetching || busy) return;
+    try {
+      const refreshed = await query.refetch();
+      const latest = refreshed.data?.ok === true ? refreshed.data.model : null;
+      if (latest === null) {
+        setError(
+          "定义没有创建：读取最新配置失败，表单输入仍保留。恢复读取后重试；读取成功后需对当前表单重新完成签名测试。",
+        );
+        return;
+      }
+      setCreateConflict(false);
+      setError(
+        `已读取最新配置（版本 ${latest.activeConfiguration?.version ?? "未知"}）。本次没有创建；请对当前表单重新完成签名测试后再保存。`,
+      );
+    } catch {
+      setError(
+        "定义没有创建：读取最新配置失败，表单输入仍保留。恢复读取后重试；读取成功后需对当前表单重新完成签名测试。",
+      );
+    }
+  };
 
   const issues = webhookFormIssues(form);
   const testContext = `${form.url}\u0000${form.secretEnv}`;
@@ -551,6 +586,12 @@ export function NotificationNewPage() {
             ) {
               return;
             }
+            if (createConflict) {
+              setError(
+                "本次没有创建。请先读取最新配置，再对当前表单重新完成签名测试。",
+              );
+              return;
+            }
             if (principalId === null) {
               setError(
                 "还没有读到当前账号身份，无法保存可核实的请求标识；稍后重试。",
@@ -646,6 +687,18 @@ export function NotificationNewPage() {
           {error !== null && (
             <StatusBanner variant="error" title="定义没有创建">
               <p>{error}</p>
+              {createConflict && (
+                <div className="mf-actions">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={busy || query.isFetching}
+                    onClick={() => void readLatestConfiguration()}
+                  >
+                    {query.isFetching ? "正在读取…" : "读取最新配置"}
+                  </Button>
+                </div>
+              )}
             </StatusBanner>
           )}
 
@@ -899,6 +952,7 @@ export function NotificationNewPage() {
                 variant="secondary"
                 disabled={
                   busy ||
+                  createConflict ||
                   issues.length > 0 ||
                   webhookId.trim().length === 0 ||
                   revisionId === null ||
