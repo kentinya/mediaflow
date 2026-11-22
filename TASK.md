@@ -1,12 +1,12 @@
 # Task 57.2 — 在系统设置签发、使用和吊销 API 令牌
 
-Next Action: DEVELOPER FIXES TASK57.2
+Next Action: B REVIEWS TASK57.2
 
 ```text
 Task ID: 57.2
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c12cae6fe0226e7efe6850ac68e6581785fb87e3
 Difficulty: High
 Test Level: T4
@@ -141,6 +141,25 @@ Next: SAME TASK FIX LOOP
 **B 本轮实测**。Python 凭证、Web 账号和容器部署定向测试 46 项通过。Web 生产构建通过，原有系统设置真实 Chromium 测试 6 项通过。独立追加检查复现了以上两项阻塞。首次用同一浏览器两标签退出，原页面已由现有跨标签同步移走，未触发令牌列表请求。后续以独立会话中的真实改密完成复现。测试命令累计约 18 秒。原始日志位于 `.git/validation-evidence/8cc082a14212aa4691a0e908f5f87740970e2732/b-review/`。
 
 **Slice 结果核对**。首次设置和密码恢复保留 Task 57.1 的验收记录。RO-1 的令牌卡会话恢复与 RO-2 的丢回包恢复等本 Task 修正。RO-3 中令牌轮换后计划仍正常执行、当前候选的四服务同版本重启还需实测。B 在修正候选上复核这两项阻塞，再执行 T4、真实整理分析及零文件效果、Compose 和 wheel 验收。
+
+## Developer 返工交接 — TASK 57.2
+
+```text
+Candidate: 1c1e366fdeb5ebf59bcd559b42bc82c3a680f3c9
+Fix range: 8cc082a14212aa4691a0e908f5f87740970e2732..1c1e366f
+```
+
+- 丢回包核对改为一次持久列表重读并把结果交给提示。签发或吊销结果未知时，列表重读成功才提示「列表已重新读取」并引导按名称和签发时间找到记录；重读失败时明确「核对仍未完成」，引导恢复连接后点击「重新读取」。手动重读成功后同一提示更新为已读取状态。核对过程只发列表 `GET`，不会重放签发或吊销 `POST`。
+- 令牌列表 `401` 复用既有受保护读取的会话失效流程；签发和吊销的 `401` 通过新增的共用 `useRejectedAuthorityEntry` 执行同一两阶段恢复：先清除被拒身份并停用读取，再清空已认证查询缓存，不自动重放原写请求。重新登录后回到系统设置重新读取列表，由管理员决定是否再次签发或吊销。
+- `ApiTokensApiError` 继承共用 `ApiReadError`，使受保护读取边界识别令牌列表拒绝；列表加载失败时仍保留原有错误提示和显式重读。
+- `web/tests/e2e/configuration-settings.python.spec.ts` 新增两个真实页面旅程：服务端成功签发后回包和随后列表读取均丢失，验证失败提示、恢复读取、按名称找到并吊销原令牌后由管理员点击重新签发，按请求数核对无自动重放；独立浏览器会话通过账号菜单真实改密，在旧页面点「刷新列表」触发真实 `401`，验证旧管理员菜单消失，再用新密码回到系统设置读到原列表。
+- 实际执行：
+  - `web/`：`npm run test -- run src/features/configuration/ConfigurationPage.test.tsx` → **19 passed**；`npm run test -- run src/shared/auth/AuthorizedReadBoundary.test.tsx` → **8 passed**。
+  - `npm run typecheck`、改动文件 ESLint/Prettier、`npm run build` 通过。
+  - `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/configuration-settings.python.spec.ts` → **8 passed**，覆盖新增丢回包与改密 `401` 旅程。
+  - `python3 scripts/check_governance.py`、`git diff --check` 通过。
+- 用时约 14 分钟；测试与定向检查实际约 2 分钟，低于本轮 30%。
+- 剩余风险与 B 验收：完整 T4、真实 Compose 四服务重启、真实 Scheduler/Worker 在令牌轮换后的受理与文件结果、候选镜像和 wheel/源码外安装仍待 B 独立执行。本轮 E2E 在隔离 Python/SQLite 环境验证了页面旅程，未替代 B 的真实部署与整理分析权限验收。
 
 ## Task 57.1 — B 复核结论
 
