@@ -412,6 +412,82 @@ describe("EntryPage", () => {
     ).toHaveLength(1);
   });
 
+  it("keeps the setup reconciliation open while the original submission may still commit", async () => {
+    const user = userEvent.setup();
+    let statusReads = 0;
+    const fetchMock = stubFetch(async (input) => {
+      if (String(input) === "/api/auth/bootstrap") {
+        throw new Error("network down");
+      }
+      if (String(input) === "/api/auth/status") {
+        statusReads += 1;
+        return jsonResponse({
+          authenticated: false,
+          firstAdministratorRequired: statusReads === 1,
+          configurationRequired: true,
+          account: null,
+        });
+      }
+      if (String(input) === "/api/auth/login") {
+        return jsonResponse({ account: ACCOUNT });
+      }
+      if (String(input) === "/api/configuration/status") {
+        return jsonResponse({ setupRequired: true });
+      }
+      if (String(input) === "/api/auth/principal") {
+        return jsonResponse({ account: ACCOUNT });
+      }
+      return jsonResponse({}, 503);
+    });
+    anonymous(true, true);
+    const { router } = renderApp("/");
+    await user.type(
+      await screen.findByLabelText("One-time setup code"),
+      "setup-code",
+    );
+    await user.type(screen.getByLabelText("Login name"), "admin");
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.type(screen.getByLabelText("Confirm password"), "correct-horse");
+    await user.click(
+      screen.getByRole("button", { name: "Create administrator" }),
+    );
+
+    expect(
+      await screen.findByText("First-administrator setup is still pending."),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Create first administrator" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("First-administrator setup is still required."),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/Issue a new setup code on the MediaFlow host/),
+    ).toBeNull();
+    expect(statusReads).toBe(1);
+
+    await user.click(
+      screen.getByRole("button", { name: "Check current status" }),
+    );
+    expect(
+      await screen.findByText("The first administrator is already created."),
+    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(screen.getByLabelText("Login name")).toHaveValue("admin");
+    expect(statusReads).toBe(2);
+
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/configuration"),
+    );
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url]) => String(url) === "/api/auth/bootstrap",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("continues directly to System Settings when the lost bootstrap cookie arrived", async () => {
     const user = userEvent.setup();
     stubFetch(async (input) => {

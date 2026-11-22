@@ -142,44 +142,48 @@ export function EntryPage() {
     setVerifying(true);
     try {
       const value = await fetchAuthStatus();
+      const setupCompleted = !value.firstAdministratorRequired;
       if (journey === "setup") {
-        setupCompletedRef.current = !value.firstAdministratorRequired;
-        setSetupCompletedHere(setupCompletedRef.current);
+        setupCompletedRef.current = setupCompleted;
+        setSetupCompletedHere(setupCompleted);
       }
       authStore.completeSessionRestore({
         firstAdministratorRequired: value.firstAdministratorRequired,
         configurationRequired: value.configurationRequired,
         account: value.authenticated ? value.account : null,
       });
-      setPending(null);
       setStatusUnavailable(false);
+      if (journey === "setup" && value.firstAdministratorRequired) {
+        // The read only proves that no administrator is visible yet. The
+        // original submission may still commit, so keep this reconciliation
+        // open instead of treating the pending setup state as a rejection.
+        setMode("setup");
+        setFeedback({
+          kind: "unknown",
+          title: "First-administrator setup is still pending.",
+          message:
+            "The current server state still requires a first administrator. The submitted request has not been confirmed and may still complete.",
+          nextAction:
+            "Check the current status again after the submitted request finishes. If setup stays required, issue a new setup code on the MediaFlow host and submit the form again.",
+        });
+        return;
+      }
+      setPending(null);
       if (value.authenticated) {
         setFeedback(null);
         return;
       }
       if (journey === "setup") {
-        if (value.firstAdministratorRequired) {
-          setMode("setup");
-          setFeedback({
-            kind: "warning",
-            title: "First-administrator setup is still required.",
-            message:
-              "The submitted setup code did not create an administrator; this instance still has no account.",
-            nextAction:
-              "Issue a new setup code on the MediaFlow host, then submit the setup form again. The previous code cannot be reused.",
-          });
-        } else {
-          setMode("login");
-          setFeedback({
-            kind: "warning",
-            title: "The first administrator is already created.",
-            message:
-              "The setup step is complete, but this browser does not have a signed-in session.",
-            nextAction: value.configurationRequired
-              ? "Sign in with the username and password you submitted to continue to System Settings."
-              : "Sign in with the username and password you submitted to continue.",
-          });
-        }
+        setMode("login");
+        setFeedback({
+          kind: "warning",
+          title: "The first administrator is already created.",
+          message:
+            "The setup step is complete, but this browser does not have a signed-in session.",
+          nextAction: value.configurationRequired
+            ? "Sign in with the username and password you submitted to continue to System Settings."
+            : "Sign in with the username and password you submitted to continue.",
+        });
         return;
       }
       if (journey === "login") {

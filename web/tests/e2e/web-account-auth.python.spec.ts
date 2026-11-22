@@ -93,6 +93,12 @@ async function startAccountHarness(
 
 interface LostReply {
   readonly attempts: () => number;
+  /**
+   * Completes a submission whose upstream was still running when the gateway
+   * timed out.  It sends the captured browser submission once to the real API
+   * without delivering the answer or its cookie to the browser.
+   */
+  readonly completeUpstream?: () => Promise<void>;
   readonly dispose: () => Promise<void>;
 }
 
@@ -101,7 +107,9 @@ interface LostReply {
  * answer before it reaches the browser.  A detached request models a reply
  * lost together with its cookie; `deliverCookies` models a lost body after the
  * response header already set the browser session cookie.  `gateway` returns a
- * proxy 504 instead of a transport abort.
+ * proxy 504 instead of a transport abort.  `holdUpstream` makes that 504
+ * arrive while the forwarded submission is still pending; the returned
+ * `completeUpstream` finishes the same real request later.
  */
 async function loseReplyAfterUpstream(
   page: Page,
@@ -111,11 +119,16 @@ async function loseReplyAfterUpstream(
     readonly base?: string;
     readonly deliverCookies?: boolean;
     readonly gateway?: boolean;
+    readonly holdUpstream?: boolean;
   } = {},
 ): Promise<LostReply> {
   const base = options.base ?? BASE;
   const pattern = `**${path}`;
   let attempts = 0;
+  let deferred: {
+    readonly headers: Record<string, string>;
+    readonly body: Buffer;
+  } | null = null;
   await page.route(pattern, async (route) => {
     const browserRequest = route.request();
     if (browserRequest.method() !== "POST") {
@@ -128,6 +141,15 @@ async function loseReplyAfterUpstream(
     delete headers["host"];
     if (options.deliverCookies) delete headers.cookie;
     const body = browserRequest.postDataBuffer() ?? Buffer.from("");
+    if (options.gateway && options.holdUpstream) {
+      deferred = { headers, body };
+      await route.fulfill({
+        status: 504,
+        contentType: "text/html",
+        body: "<html><body>Gateway Timeout</body></html>",
+      });
+      return;
+    }
     const forward = options.deliverCookies ? page.request : request;
     const upstream = await forward.post(`${base}${path}`, {
       headers,
@@ -146,6 +168,18 @@ async function loseReplyAfterUpstream(
   });
   return {
     attempts: () => attempts,
+    completeUpstream: async () => {
+      if (deferred === null) {
+        throw new Error(`no held upstream ${path} submission`);
+      }
+      const held = deferred;
+      deferred = null;
+      const upstream = await request.post(`${base}${path}`, {
+        headers: held.headers,
+        data: held.body,
+      });
+      expect(upstream.ok(), `real ${path} completed`).toBe(true);
+    },
     dispose: () => page.unroute(pattern),
   };
 }
@@ -646,6 +680,109 @@ test("a lost bootstrap reply with the delivered session continues directly to Sy
       firstAdministratorRequired: false,
     });
     await lost.dispose();
+  } finally {
+    harness.server.kill("SIGTERM");
+    await rm(harness.directory, { recursive: true, force: true });
+  }
+});
+
+test("a setup 504 keeps the pending check until the real submission completes", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const harness = await startAccountHarness(request, PORT + 3);
+  try {
+    const statusReads: string[] = [];
+    const bootstrapRequests: string[] = [];
+    page.on("request", (browserRequest) => {
+      const path = new URL(browserRequest.url()).pathname;
+      if (path === "/api/auth/status") {
+        statusReads.push(browserRequest.method());
+      }
+      if (path === "/api/auth/bootstrap") {
+        bootstrapRequests.push(browserRequest.method());
+      }
+    });
+    await page.goto(`${harness.base}/`);
+    await expect(
+      page.getByRole("heading", { name: "Create first administrator" }),
+    ).toBeVisible();
+    expect(statusReads).toEqual(["GET"]);
+
+    const codeResponse = await request.post(
+      `${harness.base}/__harness__/issue-setup-code`,
+    );
+    expect(codeResponse.ok()).toBe(true);
+    const code = (await codeResponse.json()).code as string;
+    // The gateway answers 504 before the upstream bootstrap commits, exactly
+    // like a proxy timeout while the original request is still running.
+    const lost = await loseReplyAfterUpstream(
+      page,
+      request,
+      "/api/auth/bootstrap",
+      { base: harness.base, gateway: true, holdUpstream: true },
+    );
+    await page.getByLabel("One-time setup code").fill(code);
+    await page.getByLabel("Login name").fill("admin");
+    await page.getByLabel("Password", { exact: true }).fill(INITIAL_PASSWORD);
+    await page.getByLabel("Confirm password").fill(INITIAL_PASSWORD);
+    await page.getByRole("button", { name: "Create administrator" }).click();
+
+    await expect(
+      page.getByText("First-administrator setup is still pending."),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Create first administrator" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Check current status" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("First-administrator setup is still required."),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText(/Issue a new setup code on the MediaFlow host/),
+    ).toHaveCount(0);
+    expect(lost.attempts()).toBe(1);
+    expect(bootstrapRequests).toEqual(["POST"]);
+    expect(statusReads).toEqual(["GET", "GET"]);
+    expect(
+      await (
+        await request.get(`${harness.base}/__harness__/account-state`)
+      ).json(),
+    ).toEqual({ accountCount: 0, firstAdministratorRequired: true });
+
+    await lost.completeUpstream!();
+    expect(
+      await (
+        await request.get(`${harness.base}/__harness__/account-state`)
+      ).json(),
+    ).toEqual({ accountCount: 1, firstAdministratorRequired: false });
+
+    await page.getByRole("button", { name: "Check current status" }).click();
+    await expect(
+      page.getByText("The first administrator is already created."),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    await expect(page.getByLabel("Login name")).toHaveValue("admin");
+    expect(statusReads).toEqual(["GET", "GET", "GET"]);
+    expect(bootstrapRequests).toEqual(["POST"]);
+    await lost.dispose();
+
+    await submitSignIn(page, "admin", INITIAL_PASSWORD);
+    await expect(page).toHaveURL(/\/configuration$/);
+    await expect(
+      page.getByRole("button", { name: "Account menu" }),
+    ).toBeVisible();
+    const state = await (
+      await request.get(`${harness.base}/__harness__/account-state`)
+    ).json();
+    expect(state).toEqual({
+      accountCount: 1,
+      firstAdministratorRequired: false,
+    });
+    expect(bootstrapRequests).toEqual(["POST"]);
   } finally {
     harness.server.kill("SIGTERM");
     await rm(harness.directory, { recursive: true, force: true });
