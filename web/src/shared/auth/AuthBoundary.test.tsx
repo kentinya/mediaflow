@@ -18,10 +18,10 @@ vi.mock("../../shared/auth/session-sync", () => ({
   },
 }));
 
-function anonymous() {
+function anonymous(configurationRequired = false) {
   authStore.completeSessionRestore({
     firstAdministratorRequired: false,
-    configurationRequired: true,
+    configurationRequired,
     account: null,
   });
 }

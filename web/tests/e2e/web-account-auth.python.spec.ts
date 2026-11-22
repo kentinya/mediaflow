@@ -23,15 +23,22 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const INITIAL_PASSWORD = "初始密码12345";
 const CHANGED_PASSWORD = "全新密码ABCD1234";
 const RESET_PASSWORD = "重置密码XYZ9876";
+const ADMIN_PASSWORD = "跨标签管理员密码9";
+const READONLY_PASSWORD = "只读用户密码2468";
+const LOST_CHANGE_PASSWORD = "改密丢回包密码55";
+const RESET_LOST_PASSWORD = "重置丢回包密码66";
 
 let server: ChildProcess | undefined;
 let databaseDirectory: string | undefined;
 
-async function waitForServer(request: APIRequestContext): Promise<void> {
+async function waitForServer(
+  request: APIRequestContext,
+  base = BASE,
+): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     try {
-      const response = await request.get(`${BASE}/__harness__/health`);
+      const response = await request.get(`${base}/__harness__/health`);
       if (response.ok()) return;
     } catch {
       // The process is still starting.
@@ -39,6 +46,108 @@ async function waitForServer(request: APIRequestContext): Promise<void> {
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
   }
   throw new Error("web account harness did not become ready");
+}
+
+interface AccountHarness {
+  readonly server: ChildProcess;
+  readonly directory: string;
+  readonly base: string;
+}
+
+async function startAccountHarness(
+  request: APIRequestContext,
+  port: number,
+): Promise<AccountHarness> {
+  const directory = await mkdtemp(join(tmpdir(), "mediaflow-account-e2e-"));
+  const repositoryRoot = resolve(process.cwd(), "..");
+  const child = spawn(
+    join(repositoryRoot, ".venv", "bin", "python"),
+    [
+      join(repositoryRoot, "scripts", "web_account_auth_harness.py"),
+      "--port",
+      String(port),
+      "--database",
+      join(directory, "runtime.sqlite3"),
+    ],
+    {
+      cwd: repositoryRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stderr = "";
+  child.stderr?.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  child.on("exit", (code) => {
+    if (code !== null && code !== 0) {
+      console.error(`web account harness exited ${code}: ${stderr}`);
+    }
+  });
+  await waitForServer(request, `http://127.0.0.1:${port}`);
+  return {
+    server: child,
+    directory,
+    base: `http://127.0.0.1:${port}`,
+  };
+}
+
+interface LostReply {
+  readonly attempts: () => number;
+  readonly dispose: () => Promise<void>;
+}
+
+/**
+ * Forward one real browser submission to the exact server, then lose the
+ * answer before it reaches the browser.  A detached request models a reply
+ * lost together with its cookie; `deliverCookies` models a lost body after the
+ * response header already set the browser session cookie.  `gateway` returns a
+ * proxy 504 instead of a transport abort.
+ */
+async function loseReplyAfterUpstream(
+  page: Page,
+  request: APIRequestContext,
+  path: string,
+  options: {
+    readonly base?: string;
+    readonly deliverCookies?: boolean;
+    readonly gateway?: boolean;
+  } = {},
+): Promise<LostReply> {
+  const base = options.base ?? BASE;
+  const pattern = `**${path}`;
+  let attempts = 0;
+  await page.route(pattern, async (route) => {
+    const browserRequest = route.request();
+    if (browserRequest.method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    attempts += 1;
+    const headers = { ...(await browserRequest.allHeaders()) };
+    delete headers["content-length"];
+    delete headers["host"];
+    if (options.deliverCookies) delete headers.cookie;
+    const body = browserRequest.postDataBuffer() ?? Buffer.from("");
+    const forward = options.deliverCookies ? page.request : request;
+    const upstream = await forward.post(`${base}${path}`, {
+      headers,
+      data: body,
+    });
+    expect(upstream.ok(), `real ${path} completed`).toBe(true);
+    if (options.gateway) {
+      await route.fulfill({
+        status: 504,
+        contentType: "text/html",
+        body: "<html><body>Gateway Timeout</body></html>",
+      });
+    } else {
+      await route.abort("connectionreset");
+    }
+  });
+  return {
+    attempts: () => attempts,
+    dispose: () => page.unroute(pattern),
+  };
 }
 
 async function issueSetupCode(request: APIRequestContext): Promise<string> {
@@ -115,32 +224,9 @@ async function sessionStatusWithCookie(
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async ({ request }) => {
-  databaseDirectory = await mkdtemp(join(tmpdir(), "mediaflow-account-e2e-"));
-  const repositoryRoot = resolve(process.cwd(), "..");
-  server = spawn(
-    join(repositoryRoot, ".venv", "bin", "python"),
-    [
-      join(repositoryRoot, "scripts", "web_account_auth_harness.py"),
-      "--port",
-      String(PORT),
-      "--database",
-      join(databaseDirectory, "runtime.sqlite3"),
-    ],
-    {
-      cwd: repositoryRoot,
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  let stderr = "";
-  server.stderr?.on("data", (chunk) => {
-    stderr += String(chunk);
-  });
-  server.on("exit", (code) => {
-    if (code !== null && code !== 0) {
-      console.error(`web account harness exited ${code}: ${stderr}`);
-    }
-  });
-  await waitForServer(request);
+  const harness = await startAccountHarness(request, PORT);
+  server = harness.server;
+  databaseDirectory = harness.directory;
 });
 
 test.afterAll(async () => {
@@ -150,7 +236,7 @@ test.afterAll(async () => {
   }
 });
 
-test("an empty instance shows first-administrator setup and completes it from a host code", async ({
+test("a first administrator created after a lost reply is read back and signed in from the entry", async ({
   page,
   request,
 }) => {
@@ -167,6 +253,11 @@ test("an empty instance shows first-administrator setup and completes it from a 
   expect(statusReads).toEqual(["GET"]);
 
   const code = await issueSetupCode(request);
+  const lost = await loseReplyAfterUpstream(
+    page,
+    request,
+    "/api/auth/bootstrap",
+  );
   await page.getByLabel("One-time setup code").fill(code);
   await page.getByLabel("Login name").fill("admin");
   await page.getByLabel("Password", { exact: true }).fill(INITIAL_PASSWORD);
@@ -176,31 +267,30 @@ test("an empty instance shows first-administrator setup and completes it from a 
     .check();
   await page.getByRole("button", { name: "Create administrator" }).click();
 
-  await expect(page).toHaveURL(/\/configuration$/);
   await expect(
-    page.getByRole("button", { name: "Account menu" }),
+    page.getByText("The first administrator is already created."),
   ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await expect(page.getByLabel("Login name")).toHaveValue("admin");
+  await expect(page.getByLabel("Password")).toHaveValue("");
+  await expect(
+    page.getByRole("heading", { name: "Create first administrator" }),
+  ).toHaveCount(0);
+  expect(lost.attempts()).toBe(1);
+  await expect(
+    page.getByText("no account or session changed", { exact: false }),
+  ).toHaveCount(0);
   const state = await (
     await request.get(`${BASE}/__harness__/account-state`)
   ).json();
   expect(state).toEqual({ accountCount: 1, firstAdministratorRequired: false });
-
-  const setupCookie = await sessionCookie(page);
-  await changePasswordFromAccountMenu(page, INITIAL_PASSWORD, CHANGED_PASSWORD);
-  expect(await sessionStatusWithCookie(request, setupCookie)).toBe(401);
+  await lost.dispose();
 
   await submitSignIn(page, "admin", INITIAL_PASSWORD);
+  await expect(page).toHaveURL(/\/configuration$/);
   await expect(
-    page.getByText("The login name or password is incorrect."),
+    page.getByRole("button", { name: "Account menu" }),
   ).toBeVisible();
-  await page.getByLabel("Password").fill(CHANGED_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
-
-  // Restore the shared initial password for the following serial scenarios.
-  await changePasswordFromAccountMenu(page, CHANGED_PASSWORD, INITIAL_PASSWORD);
-  await submitSignIn(page, "admin", INITIAL_PASSWORD);
-  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 });
 
 test("a deep link, refresh and same-version restart restore the session without replay", async ({
@@ -270,17 +360,7 @@ test("a Chinese password change signs in with the new password and revokes the o
   const oldCookie = await sessionCookie(page);
   expect(await sessionStatusWithCookie(request, oldCookie)).toBe(200);
 
-  await page.getByRole("button", { name: "Account menu" }).click();
-  await page.getByRole("menuitem", { name: "Change password" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Change password" }),
-  ).toBeVisible();
-  await page.getByLabel("Current password").fill(INITIAL_PASSWORD);
-  await page.getByLabel("New password", { exact: true }).fill(CHANGED_PASSWORD);
-  await page.getByLabel("Confirm new password").fill(CHANGED_PASSWORD);
-  await page.getByRole("button", { name: "Change password" }).click();
-
-  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await changePasswordFromAccountMenu(page, INITIAL_PASSWORD, CHANGED_PASSWORD);
   expect(await sessionStatusWithCookie(request, oldCookie)).toBe(401);
 
   await submitSignIn(page, "admin", INITIAL_PASSWORD);
@@ -335,9 +415,6 @@ test("a same-browser account switch reconciles the other tab before its next rea
   page,
   request,
 }) => {
-  const ADMIN_PASSWORD = "跨标签管理员密码9";
-  const READONLY_PASSWORD = "只读用户密码2468";
-
   const resetCode = await issueResetCode(request, "admin");
   const reset = await request.post(`${BASE}/api/auth/reset`, {
     data: { code: resetCode, newPassword: ADMIN_PASSWORD },
@@ -388,4 +465,225 @@ test("a same-browser account switch reconciles the other tab before its next rea
   expect(account.roles).toEqual(["viewer"]);
   expect(account.permissions).toEqual(["read"]);
   await second.close();
+});
+
+test("a lost password-change reply is read from the ended session and the new password signs in", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`${BASE}/`);
+  await submitSignIn(page, "admin", ADMIN_PASSWORD);
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+  const oldCookie = await sessionCookie(page);
+  expect(await sessionStatusWithCookie(request, oldCookie)).toBe(200);
+
+  const second = await page.context().newPage();
+  await second.goto(`${BASE}/`);
+  await expect(second.getByRole("region", { name: "探索" })).toBeVisible();
+
+  const lost = await loseReplyAfterUpstream(
+    page,
+    request,
+    "/api/auth/password",
+  );
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Change password" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Change password" }),
+  ).toBeVisible();
+  await page.getByLabel("Current password").fill(ADMIN_PASSWORD);
+  await page
+    .getByLabel("New password", { exact: true })
+    .fill(LOST_CHANGE_PASSWORD);
+  await page.getByLabel("Confirm new password").fill(LOST_CHANGE_PASSWORD);
+  await page.getByRole("button", { name: "Change password" }).click();
+
+  await expect(page.getByText("Your Web session ended.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  expect(lost.attempts()).toBe(1);
+  expect(await sessionStatusWithCookie(request, oldCookie)).toBe(401);
+  await lost.dispose();
+
+  await second.bringToFront();
+  await expect(second.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await second.close();
+
+  await submitSignIn(page, "admin", ADMIN_PASSWORD);
+  await expect(
+    page.getByText("The login name or password is incorrect."),
+  ).toBeVisible();
+  await page.getByLabel("Password").fill(LOST_CHANGE_PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+});
+
+test("a lost reset reply keeps the new-password sign-in path", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/`);
+  await page.getByRole("button", { name: "Use a reset code" }).click();
+  const code = await issueResetCode(request, "admin");
+  const lost = await loseReplyAfterUpstream(page, request, "/api/auth/reset");
+  await page.getByLabel("One-time reset code").fill(code);
+  await page
+    .getByLabel("New password", { exact: true })
+    .fill(RESET_LOST_PASSWORD);
+  await page.getByLabel("Confirm new password").fill(RESET_LOST_PASSWORD);
+  await page.getByRole("button", { name: "Reset password" }).click();
+
+  await expect(
+    page.getByText("The password reset result is not confirmed."),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  expect(lost.attempts()).toBe(1);
+  await lost.dispose();
+
+  await submitSignIn(page, "admin", LOST_CHANGE_PASSWORD);
+  await expect(
+    page.getByText("The login name or password is incorrect."),
+  ).toBeVisible();
+  await page.getByLabel("Password").fill(RESET_LOST_PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+});
+
+test("a lost sign-out reply retains the pending check and resolves to sign in", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/`);
+  await submitSignIn(page, "admin", RESET_LOST_PASSWORD);
+  await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
+  await page.getByRole("button", { name: "Account menu" }).click();
+
+  let statusDown = true;
+  await page.route("**/api/auth/status", async (route) => {
+    if (statusDown) {
+      await route.abort("connectionreset");
+      return;
+    }
+    await route.continue();
+  });
+  const lost = await loseReplyAfterUpstream(page, request, "/api/auth/logout");
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+
+  await expect(
+    page.getByText(
+      "The sign-out result is unknown, and the current sign-in state could not be read. Check the status again before assuming the session ended.",
+    ),
+  ).toBeVisible();
+  expect(lost.attempts()).toBe(1);
+  await expect(
+    page.getByRole("button", { name: "Account menu" }),
+  ).toBeVisible();
+
+  statusDown = false;
+  await page.unroute("**/api/auth/status");
+  await page.getByRole("menuitem", { name: /Check current status/ }).click();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await lost.dispose();
+});
+
+test("a proxy 504 on a committed sign-in is reconciled through the delivered session", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`${BASE}/operations?view=ended`);
+  await expect(page).toHaveURL(`${BASE}/`);
+  const lost = await loseReplyAfterUpstream(page, request, "/api/auth/login", {
+    deliverCookies: true,
+    gateway: true,
+  });
+  await submitSignIn(page, "admin", RESET_LOST_PASSWORD);
+  await expect(page).toHaveURL(`${BASE}/operations?view=ended`);
+  await expect(
+    page.getByRole("button", { name: "Account menu" }),
+  ).toBeVisible();
+  expect(lost.attempts()).toBe(1);
+  await lost.dispose();
+});
+
+test("a lost bootstrap reply with the delivered session continues directly to System Settings", async ({
+  page,
+  request,
+}) => {
+  const harness = await startAccountHarness(request, PORT + 1);
+  try {
+    await page.goto(`${harness.base}/`);
+    await expect(
+      page.getByRole("heading", { name: "Create first administrator" }),
+    ).toBeVisible();
+    const codeResponse = await request.post(
+      `${harness.base}/__harness__/issue-setup-code`,
+    );
+    expect(codeResponse.ok()).toBe(true);
+    const code = (await codeResponse.json()).code as string;
+    const lost = await loseReplyAfterUpstream(
+      page,
+      request,
+      "/api/auth/bootstrap",
+      { base: harness.base, deliverCookies: true },
+    );
+    await page.getByLabel("One-time setup code").fill(code);
+    await page.getByLabel("Login name").fill("admin");
+    await page.getByLabel("Password", { exact: true }).fill(INITIAL_PASSWORD);
+    await page.getByLabel("Confirm password").fill(INITIAL_PASSWORD);
+    await page.getByRole("button", { name: "Create administrator" }).click();
+
+    await expect(page).toHaveURL(/\/configuration$/);
+    await expect(
+      page.getByRole("button", { name: "Account menu" }),
+    ).toBeVisible();
+    expect(lost.attempts()).toBe(1);
+    const state = await (
+      await request.get(`${harness.base}/__harness__/account-state`)
+    ).json();
+    expect(state).toEqual({
+      accountCount: 1,
+      firstAdministratorRequired: false,
+    });
+    await lost.dispose();
+  } finally {
+    harness.server.kill("SIGTERM");
+    await rm(harness.directory, { recursive: true, force: true });
+  }
+});
+
+test("an empty instance completes first-administrator setup from the entry", async ({
+  page,
+  request,
+}) => {
+  const harness = await startAccountHarness(request, PORT + 2);
+  try {
+    await page.goto(`${harness.base}/`);
+    await expect(
+      page.getByRole("heading", { name: "Create first administrator" }),
+    ).toBeVisible();
+    const codeResponse = await request.post(
+      `${harness.base}/__harness__/issue-setup-code`,
+    );
+    expect(codeResponse.ok()).toBe(true);
+    const code = (await codeResponse.json()).code as string;
+    await page.getByLabel("One-time setup code").fill(code);
+    await page.getByLabel("Login name").fill("admin");
+    await page.getByLabel("Password", { exact: true }).fill(INITIAL_PASSWORD);
+    await page.getByLabel("Confirm password").fill(INITIAL_PASSWORD);
+    await page.getByRole("button", { name: "Create administrator" }).click();
+
+    await expect(page).toHaveURL(/\/configuration$/);
+    await expect(
+      page.getByRole("button", { name: "Account menu" }),
+    ).toBeVisible();
+    expect(
+      await (
+        await request.get(`${harness.base}/__harness__/account-state`)
+      ).json(),
+    ).toEqual({ accountCount: 1, firstAdministratorRequired: false });
+  } finally {
+    harness.server.kill("SIGTERM");
+    await rm(harness.directory, { recursive: true, force: true });
+  }
 });

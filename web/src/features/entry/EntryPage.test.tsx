@@ -13,10 +13,13 @@ const ACCOUNT = {
   permissions: ["read", "manage_configuration"],
 };
 
-function anonymous(firstAdministratorRequired = false) {
+function anonymous(
+  firstAdministratorRequired = false,
+  configurationRequired = false,
+) {
   authStore.completeSessionRestore({
     firstAdministratorRequired,
-    configurationRequired: true,
+    configurationRequired,
     account: null,
   });
 }
@@ -260,23 +263,232 @@ describe("EntryPage", () => {
     expect(document.body.textContent).not.toContain("reset-code");
   });
 
-  it("offers an in-place retry when the service cannot be reached", async () => {
+  it("reads back a lost sign-in reply and keeps the login identity", async () => {
     const user = userEvent.setup();
-    const fetchMock = stubFetch(async () => {
-      throw new Error("network down");
+    const fetchMock = stubFetch(async (input) => {
+      if (String(input) === "/api/auth/login") {
+        throw new Error("network down");
+      }
+      if (String(input) === "/api/auth/status") {
+        return jsonResponse({
+          authenticated: false,
+          firstAdministratorRequired: false,
+          configurationRequired: false,
+          account: null,
+        });
+      }
+      return jsonResponse({}, 503);
+    });
+    anonymous();
+    renderApp("/");
+    const username = await screen.findByLabelText("Login name");
+    await user.type(username, "admin");
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText("You are not signed in.")).toBeVisible();
+    expect(username).toHaveValue("admin");
+    expect(screen.getByLabelText("Password")).toHaveValue("");
+    expect(authStore.getToken()).toBeNull();
+    expect(
+      screen.queryByText("no account or session changed", { exact: false }),
+    ).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url) === "/api/auth/login"),
+    ).toHaveLength(1);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url]) => String(url) === "/api/auth/status",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps the pending check when the status read is unavailable, then resolves it", async () => {
+    const user = userEvent.setup();
+    let statusUnavailable = true;
+    const fetchMock = stubFetch(async (input) => {
+      if (String(input) === "/api/auth/login") {
+        throw new Error("network down");
+      }
+      if (String(input) === "/api/auth/status") {
+        if (statusUnavailable) throw new Error("network down");
+        return jsonResponse({
+          authenticated: true,
+          firstAdministratorRequired: false,
+          configurationRequired: false,
+          account: ACCOUNT,
+        });
+      }
+      return jsonResponse(exploreBrowsePayload);
     });
     anonymous();
     renderApp("/");
     await user.type(await screen.findByLabelText("Login name"), "admin");
     await user.type(screen.getByLabelText("Password"), "correct-horse");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
-    expect(await screen.findByText(/could not be reached/i)).toBeVisible();
-    expect(screen.getByText(/check the service and retry/i)).toBeVisible();
+    expect(
+      await screen.findByText(
+        "The current account and session state could not be read, so the submitted request cannot be confirmed.",
+      ),
+    ).toBeVisible();
+    const check = screen.getByRole("button", {
+      name: /Check current status/,
+    });
     expect(authStore.getToken()).toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/auth/login",
-      expect.objectContaining({ method: "POST", credentials: "same-origin" }),
+
+    statusUnavailable = false;
+    await user.click(check);
+    await waitFor(() => expect(authStore.getToken()).toBe("account-1"));
+    await screen.findByRole("region", { name: "探索" });
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url) === "/api/auth/login"),
+    ).toHaveLength(1);
+  });
+
+  it("exits completed setup after a lost bootstrap reply and signs in to System Settings", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(async (input) => {
+      if (String(input) === "/api/auth/bootstrap") {
+        throw new Error("network down");
+      }
+      if (String(input) === "/api/auth/status") {
+        return jsonResponse({
+          authenticated: false,
+          firstAdministratorRequired: false,
+          configurationRequired: true,
+          account: null,
+        });
+      }
+      if (String(input) === "/api/auth/login") {
+        return jsonResponse({ account: ACCOUNT });
+      }
+      if (String(input) === "/api/configuration/status") {
+        return jsonResponse({ setupRequired: true });
+      }
+      if (String(input) === "/api/auth/principal") {
+        return jsonResponse({ account: ACCOUNT });
+      }
+      return jsonResponse({}, 503);
+    });
+    anonymous(true, true);
+    const { router } = renderApp("/");
+    await user.type(
+      await screen.findByLabelText("One-time setup code"),
+      "setup-code",
     );
+    await user.type(screen.getByLabelText("Login name"), "admin");
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.type(screen.getByLabelText("Confirm password"), "correct-horse");
+    await user.click(
+      screen.getByRole("button", { name: "Create administrator" }),
+    );
+    expect(
+      await screen.findByText("The first administrator is already created."),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Create first administrator" }),
+    ).toBeNull();
+    expect(screen.getByLabelText("Login name")).toHaveValue("admin");
+    expect(
+      screen.getByText(
+        "Sign in with the username and password you submitted to continue to System Settings.",
+      ),
+    ).toBeVisible();
+
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/configuration"),
+    );
+    expect(authStore.getToken()).toBe("account-1");
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url]) => String(url) === "/api/auth/bootstrap",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("continues directly to System Settings when the lost bootstrap cookie arrived", async () => {
+    const user = userEvent.setup();
+    stubFetch(async (input) => {
+      if (String(input) === "/api/auth/bootstrap") {
+        throw new Error("network down");
+      }
+      if (String(input) === "/api/auth/status") {
+        return jsonResponse({
+          authenticated: true,
+          firstAdministratorRequired: false,
+          configurationRequired: true,
+          account: ACCOUNT,
+        });
+      }
+      if (String(input) === "/api/configuration/status") {
+        return jsonResponse({ setupRequired: true });
+      }
+      if (String(input) === "/api/auth/principal") {
+        return jsonResponse({ account: ACCOUNT });
+      }
+      return jsonResponse({}, 503);
+    });
+    anonymous(true, true);
+    const { router } = renderApp("/");
+    await user.type(
+      await screen.findByLabelText("One-time setup code"),
+      "setup-code",
+    );
+    await user.type(screen.getByLabelText("Login name"), "admin");
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.type(screen.getByLabelText("Confirm password"), "correct-horse");
+    await user.click(
+      screen.getByRole("button", { name: "Create administrator" }),
+    );
+    await waitFor(() => expect(authStore.getToken()).toBe("account-1"));
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/configuration"),
+    );
+    expect(authStore.getToken()).toBe("account-1");
+  });
+
+  it("reads back a lost reset reply and keeps the sign-in and reset-code paths", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(async (input) => {
+      if (String(input) === "/api/auth/reset") {
+        throw new Error("network down");
+      }
+      if (String(input) === "/api/auth/status") {
+        return jsonResponse({
+          authenticated: false,
+          firstAdministratorRequired: false,
+          configurationRequired: false,
+          account: null,
+        });
+      }
+      return jsonResponse({}, 503);
+    });
+    anonymous();
+    renderApp("/");
+    await user.click(
+      await screen.findByRole("button", { name: "Use a reset code" }),
+    );
+    await user.type(screen.getByLabelText("One-time reset code"), "reset-code");
+    await user.type(screen.getByLabelText("New password"), "new-correct-horse");
+    await user.type(
+      screen.getByLabelText("Confirm new password"),
+      "new-correct-horse",
+    );
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
+    expect(
+      await screen.findByText("The password reset result is not confirmed."),
+    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(
+      screen.getByText(
+        "Sign in with the new password you set. If it is not accepted, issue a new reset code on the host and use the reset code form.",
+      ),
+    ).toBeVisible();
+    expect(document.body.textContent).not.toContain("reset-code");
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url) === "/api/auth/reset"),
+    ).toHaveLength(1);
   });
 
   it("shows a retry when the initial session check is unavailable", async () => {
@@ -294,5 +506,108 @@ describe("EntryPage", () => {
       expect.objectContaining({ method: "GET", credentials: "same-origin" }),
     );
     expect(authStore.isRejected()).toBe(false);
+  });
+
+  it("keeps an explicit setup rejection on the form without a status check", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(async (input) => {
+      if (String(input) === "/api/auth/bootstrap") {
+        return jsonResponse(
+          {
+            error: {
+              code: "invalid_setup_code",
+              message: "The setup code is invalid or expired.",
+              details: {
+                durableState: "no account was created",
+                retrySafe: true,
+                nextAction: "issue a new setup code on the host and try again",
+              },
+            },
+          },
+          401,
+        );
+      }
+      return jsonResponse({}, 503);
+    });
+    anonymous(true, true);
+    renderApp("/");
+    await user.type(
+      await screen.findByLabelText("One-time setup code"),
+      "expired-code",
+    );
+    await user.type(screen.getByLabelText("Login name"), "admin");
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.type(screen.getByLabelText("Confirm password"), "correct-horse");
+    await user.click(
+      screen.getByRole("button", { name: "Create administrator" }),
+    );
+
+    expect(
+      await screen.findByText("The setup code is invalid or expired."),
+    ).toBeVisible();
+    expect(
+      screen.getByText("issue a new setup code on the host and try again"),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Create first administrator" }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Login name")).toHaveValue("admin");
+    expect(screen.getByLabelText("One-time setup code")).toHaveValue("");
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url]) => String(url) === "/api/auth/status",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("keeps an explicit reset rejection on the reset form without a status check", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(async (input) => {
+      if (String(input) === "/api/auth/reset") {
+        return jsonResponse(
+          {
+            error: {
+              code: "invalid_reset_code",
+              message: "The reset code is invalid or expired.",
+              details: {
+                durableState: "no password or session changed",
+                retrySafe: true,
+                nextAction: "issue a new reset code on the host and try again",
+              },
+            },
+          },
+          401,
+        );
+      }
+      return jsonResponse({}, 503);
+    });
+    anonymous();
+    renderApp("/");
+    await user.click(
+      await screen.findByRole("button", { name: "Use a reset code" }),
+    );
+    await user.type(screen.getByLabelText("One-time reset code"), "old-code");
+    await user.type(screen.getByLabelText("New password"), "new-correct-horse");
+    await user.type(
+      screen.getByLabelText("Confirm new password"),
+      "new-correct-horse",
+    );
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
+
+    expect(
+      await screen.findByText("The reset code is invalid or expired."),
+    ).toBeVisible();
+    expect(
+      screen.getByText("issue a new reset code on the host and try again"),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Reset password with a host code" }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("One-time reset code")).toHaveValue("");
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url]) => String(url) === "/api/auth/status",
+      ),
+    ).toHaveLength(0);
   });
 });

@@ -236,4 +236,17 @@ describe("authStore", () => {
       "principal-token",
     );
   });
+
+  it("carries one non-secret entry notice until it is consumed", () => {
+    expect(authStore.getEntryNotice()).toBeNull();
+    authStore.setEntryNotice({
+      kind: "warning",
+      title: "Your Web session ended.",
+      message: "The password change request was submitted.",
+      nextAction: "Sign in with the new password.",
+    });
+    expect(authStore.getEntryNotice()?.title).toBe("Your Web session ended.");
+    authStore.clearEntryNotice();
+    expect(authStore.getEntryNotice()).toBeNull();
+  });
 });

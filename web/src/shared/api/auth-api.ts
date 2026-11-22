@@ -50,6 +50,27 @@ export class AuthApiError extends Error {
   }
 }
 
+/**
+ * The submitted account request produced no trustworthy answer.
+ *
+ * A transport abort, an unexplained server failure or an unreadable success
+ * body cannot prove whether the account or session changed.  The operator
+ * must reconcile the server state through a read before deciding whether to
+ * submit the form again; the request is never replayed automatically.
+ */
+export class AuthUnknownOutcomeError extends AuthApiError {
+  constructor() {
+    super(0, "unknown_outcome", "The request result is unknown.", {
+      durableState:
+        "the submitted request may or may not have changed the account or session",
+      retrySafe: false,
+      nextAction:
+        "check the current account and session state before submitting the form again",
+    });
+    this.name = "AuthUnknownOutcomeError";
+  }
+}
+
 interface ErrorEnvelope {
   readonly error?: {
     readonly code?: unknown;
@@ -82,6 +103,7 @@ async function request<T>(
   init: RequestInit,
   fetchImpl: typeof fetch,
 ): Promise<T> {
+  const submission = (init.method ?? "GET") !== "GET";
   let response: Response;
   try {
     response = await fetchImpl(path, {
@@ -96,6 +118,9 @@ async function request<T>(
       },
     });
   } catch {
+    // A read that never reached the server is a bounded availability failure.
+    // A submitted form may already have committed, so its result stays unknown.
+    if (submission) throw new AuthUnknownOutcomeError();
     throw new AuthApiError(
       503,
       "service_unavailable",
@@ -108,6 +133,11 @@ async function request<T>(
     );
   }
   if (!response.ok) {
+    // No authentication route uses an explicit 5xx rejection; a gateway or
+    // server failure may have happened before or after the write committed.
+    if (submission && response.status >= 500) {
+      throw new AuthUnknownOutcomeError();
+    }
     throw await readError(response);
   }
   if (response.status === 204) {
@@ -116,6 +146,7 @@ async function request<T>(
   try {
     return (await response.json()) as T;
   } catch {
+    if (submission) throw new AuthUnknownOutcomeError();
     throw new AuthApiError(
       502,
       "malformed_response",

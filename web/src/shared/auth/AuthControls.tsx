@@ -7,7 +7,12 @@ import {
   useSessionStatus,
 } from "../api/auth-context";
 import { authStore } from "../api/auth-store";
-import { AuthApiError, logoutAccount } from "../api/auth-api";
+import {
+  AuthApiError,
+  AuthUnknownOutcomeError,
+  fetchAuthStatus,
+  logoutAccount,
+} from "../api/auth-api";
 import { announceSessionChange } from "./session-sync";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icons";
@@ -27,6 +32,9 @@ export function AuthControls() {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [checkPending, setCheckPending] = useState(false);
+  const [statusUnavailable, setStatusUnavailable] = useState(false);
 
   if (status === "restoring") {
     return <span className="mf-auth-state">Checking sign-in…</span>;
@@ -40,10 +48,47 @@ export function AuthControls() {
   }
   const displayName = account?.username ?? "admin";
   const initial = displayName.slice(0, 1).toUpperCase() || "?";
+  const verifySignOut = async () => {
+    if (verifying) return;
+    setVerifying(true);
+    try {
+      const value = await fetchAuthStatus();
+      setStatusUnavailable(false);
+      if (!value.authenticated) {
+        authStore.clearToken();
+        queryClient.clear();
+        announceSessionChange();
+        setOpen(false);
+        setCheckPending(false);
+        setError(null);
+        void navigate({ to: "/" });
+        return;
+      }
+      authStore.applyServerSession({
+        firstAdministratorRequired: value.firstAdministratorRequired,
+        configurationRequired: value.configurationRequired,
+        account: value.account,
+      });
+      setError(
+        `Sign out was not confirmed. This browser is still signed in as ${
+          value.account?.username ?? "the current account"
+        }.`,
+      );
+    } catch {
+      setStatusUnavailable(true);
+      setError(
+        "The sign-out result is unknown, and the current sign-in state could not be read. Check the status again before assuming the session ended.",
+      );
+    } finally {
+      setVerifying(false);
+    }
+  };
   const disconnect = async () => {
     if (signingOut) return;
     setSigningOut(true);
     setError(null);
+    setCheckPending(false);
+    setStatusUnavailable(false);
     try {
       await logoutAccount();
       authStore.clearToken();
@@ -60,6 +105,12 @@ export function AuthControls() {
         announceSessionChange();
         setOpen(false);
         void navigate({ to: "/" });
+      } else if (failure instanceof AuthUnknownOutcomeError) {
+        setCheckPending(true);
+        setError(
+          "The sign-out result is unknown. Checking the current sign-in state.",
+        );
+        void verifySignOut();
       } else {
         setError(
           failure instanceof AuthApiError
@@ -101,11 +152,25 @@ export function AuthControls() {
           <button
             type="button"
             role="menuitem"
-            disabled={signingOut}
+            disabled={signingOut || verifying}
             onClick={() => void disconnect()}
           >
             {signingOut ? "Signing out…" : "Sign out"}
           </button>
+          {checkPending ? (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={verifying}
+              onClick={() => void verifySignOut()}
+            >
+              {verifying
+                ? "Checking status…"
+                : statusUnavailable
+                  ? "Check current status again"
+                  : "Check current status"}
+            </button>
+          ) : null}
           {error !== null ? <p role="alert">{error}</p> : null}
         </div>
       ) : null}

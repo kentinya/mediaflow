@@ -22,6 +22,18 @@ export interface ServerSessionSnapshot {
   readonly account: AuthAccount | null;
 }
 
+/**
+ * One non-secret result notice carried from a protected account action to the
+ * root entry after the action ended the current session.  It only names the
+ * operator-visible outcome and next action; it never carries credentials.
+ */
+export interface AuthEntryNotice {
+  readonly kind: "info" | "success" | "warning" | "error";
+  readonly title: string;
+  readonly message: string;
+  readonly nextAction: string;
+}
+
 export interface MemoryAuthStore {
   getToken(): string | null;
   getAccount(): AuthAccount | null;
@@ -88,6 +100,10 @@ export interface MemoryAuthStore {
    */
   setIntendedPath(path: DestinationPath): void;
   clearIntendedPath(): void;
+  /** A one-shot non-secret outcome notice for the root account entry. */
+  getEntryNotice(): AuthEntryNotice | null;
+  setEntryNotice(notice: AuthEntryNotice): void;
+  clearEntryNotice(): void;
   subscribe(listener: AuthListener): () => void;
 }
 
@@ -101,6 +117,7 @@ export function createMemoryAuthStore(): MemoryAuthStore {
   let firstAdministratorRequired = false;
   let configurationRequired = true;
   let restoreError: "unavailable" | null = null;
+  let entryNotice: AuthEntryNotice | null = null;
   let generation = 0;
   let sessionEpoch = 0;
   const listeners = new Set<AuthListener>();
@@ -261,6 +278,16 @@ export function createMemoryAuthStore(): MemoryAuthStore {
     },
     clearIntendedPath: () => {
       clearIntendedPathInternal();
+      emit();
+    },
+    getEntryNotice: () => entryNotice,
+    setEntryNotice: (next) => {
+      entryNotice = next;
+      emit();
+    },
+    clearEntryNotice: () => {
+      if (entryNotice === null) return;
+      entryNotice = null;
       emit();
     },
     subscribe: (listener) => {

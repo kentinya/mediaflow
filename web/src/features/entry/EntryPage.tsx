@@ -12,7 +12,9 @@ import {
 import { authStore } from "../../shared/api/auth-store";
 import {
   AuthApiError,
+  AuthUnknownOutcomeError,
   bootstrapFirstAdministrator,
+  fetchAuthStatus,
   loginAccount,
   resetPassword,
 } from "../../shared/api/auth-api";
@@ -22,9 +24,10 @@ import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { TextField } from "../../shared/ui/TextField";
 
 type Mode = "login" | "setup" | "reset";
+type PendingSubmission = "login" | "setup" | "reset";
 
 interface Feedback {
-  readonly kind: "error" | "success";
+  readonly kind: "error" | "success" | "warning" | "info" | "unknown";
   readonly title: string;
   readonly message: string;
   readonly nextAction: string;
@@ -44,9 +47,9 @@ function feedbackFrom(error: unknown): Feedback {
   return {
     kind: "error",
     title: "The request could not be completed.",
-    message: "No account or session change was confirmed.",
+    message: "The result of the submitted request was not confirmed.",
     nextAction:
-      "Retry the same form, or reload the page after checking the service.",
+      "Check the current account and session state before submitting the form again.",
   };
 }
 
@@ -74,8 +77,12 @@ export function EntryPage() {
   const restoreError = useRestoreError();
   const intendedPath = useIntendedPath();
   const intendedSearch = useIntendedSearch();
+  // A password change that ended the session leaves one non-secret notice for
+  // this newly mounted root entry. It becomes the initial visible result and
+  // is consumed once, so a later visit never replays an old outcome.
+  const entryNotice = authStore.getEntryNotice();
   const [mode, setMode] = useState<Mode>(
-    firstAdministratorRequired ? "setup" : "login",
+    entryNotice !== null || !firstAdministratorRequired ? "login" : "setup",
   );
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -83,7 +90,21 @@ export function EntryPage() {
   const [code, setCode] = useState("");
   const [remember, setRemember] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [statusUnavailable, setStatusUnavailable] = useState(false);
+  const [pending, setPending] = useState<PendingSubmission | null>(null);
+  const [setupCompletedHere, setSetupCompletedHere] = useState(false);
+  const [feedback, setFeedback] = useState<Feedback | null>(() =>
+    entryNotice === null
+      ? null
+      : {
+          kind: entryNotice.kind,
+          title: entryNotice.title,
+          message: entryNotice.message,
+          nextAction: entryNotice.nextAction,
+        },
+  );
+  const setupCompletedRef = useRef(false);
   const navigated = useRef(false);
 
   const continueAfterSignIn = (
@@ -103,10 +124,113 @@ export function EntryPage() {
 
   useEffect(() => {
     if (status !== "authenticated" || account === null) return;
-    continueAfterSignIn();
+    continueAfterSignIn(
+      setupCompletedHere || setupCompletedRef.current
+        ? { path: "/configuration", search: "" }
+        : undefined,
+    );
     // The continuation consumes the recorded destination exactly once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, account?.principalId]);
+  }, [status, account?.principalId, setupCompletedHere]);
+
+  useEffect(() => {
+    authStore.clearEntryNotice();
+  }, []);
+
+  const verifySubmission = async (journey: PendingSubmission) => {
+    if (verifying) return;
+    setVerifying(true);
+    try {
+      const value = await fetchAuthStatus();
+      if (journey === "setup") {
+        setupCompletedRef.current = !value.firstAdministratorRequired;
+        setSetupCompletedHere(setupCompletedRef.current);
+      }
+      authStore.completeSessionRestore({
+        firstAdministratorRequired: value.firstAdministratorRequired,
+        configurationRequired: value.configurationRequired,
+        account: value.authenticated ? value.account : null,
+      });
+      setPending(null);
+      setStatusUnavailable(false);
+      if (value.authenticated) {
+        setFeedback(null);
+        return;
+      }
+      if (journey === "setup") {
+        if (value.firstAdministratorRequired) {
+          setMode("setup");
+          setFeedback({
+            kind: "warning",
+            title: "First-administrator setup is still required.",
+            message:
+              "The submitted setup code did not create an administrator; this instance still has no account.",
+            nextAction:
+              "Issue a new setup code on the MediaFlow host, then submit the setup form again. The previous code cannot be reused.",
+          });
+        } else {
+          setMode("login");
+          setFeedback({
+            kind: "warning",
+            title: "The first administrator is already created.",
+            message:
+              "The setup step is complete, but this browser does not have a signed-in session.",
+            nextAction: value.configurationRequired
+              ? "Sign in with the username and password you submitted to continue to System Settings."
+              : "Sign in with the username and password you submitted to continue.",
+          });
+        }
+        return;
+      }
+      if (journey === "login") {
+        setMode("login");
+        setFeedback({
+          kind: "warning",
+          title: "You are not signed in.",
+          message:
+            "The server did not confirm a session for this browser; the sign-in request did not finish.",
+          nextAction:
+            "Enter the password and sign in again. Your login name and intended page are kept.",
+        });
+        return;
+      }
+      setMode("login");
+      setFeedback({
+        kind: "warning",
+        title: "The password reset result is not confirmed.",
+        message:
+          "This browser is signed out. The reset may or may not have been applied.",
+        nextAction:
+          "Sign in with the new password you set. If it is not accepted, issue a new reset code on the host and use the reset code form.",
+      });
+    } catch {
+      setStatusUnavailable(true);
+      setFeedback({
+        kind: "unknown",
+        title: "The request result is unknown.",
+        message:
+          "The current account and session state could not be read, so the submitted request cannot be confirmed.",
+        nextAction:
+          "Do not reuse a one-time code. Check the current status again when the service is reachable.",
+      });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const beginUnknownRecovery = (journey: PendingSubmission) => {
+    setPending(journey);
+    setStatusUnavailable(false);
+    setFeedback({
+      kind: "unknown",
+      title: "The request result is unknown.",
+      message:
+        "MediaFlow did not return a confirmed result. The submitted request may already have taken effect.",
+      nextAction:
+        "Checking the current account and session state before anything is submitted again.",
+    });
+    void verifySubmission(journey);
+  };
 
   if (status === "restoring") {
     return (
@@ -124,7 +248,17 @@ export function EntryPage() {
       >
         <p>The session is active. Continuing to your MediaFlow page.</p>
         <div className="mf-actions">
-          <Button onClick={() => continueAfterSignIn()}>Continue</Button>
+          <Button
+            onClick={() =>
+              continueAfterSignIn(
+                setupCompletedHere
+                  ? { path: "/configuration", search: "" }
+                  : undefined,
+              )
+            }
+          >
+            Continue
+          </Button>
         </div>
       </StatusBanner>
     );
@@ -154,10 +288,16 @@ export function EntryPage() {
       setPassword("");
       authStore.setSession(result.account);
       announceSessionChange();
-      continueAfterSignIn();
+      continueAfterSignIn(
+        setupCompletedHere ? { path: "/configuration", search: "" } : undefined,
+      );
     } catch (error) {
       setPassword("");
-      setFeedback(feedbackFrom(error));
+      if (error instanceof AuthUnknownOutcomeError) {
+        beginUnknownRecovery("login");
+      } else {
+        setFeedback(feedbackFrom(error));
+      }
       if (
         error instanceof AuthApiError &&
         (error.code === "invalid_credentials" ||
@@ -201,7 +341,11 @@ export function EntryPage() {
       setCode("");
       setPassword("");
       setConfirmPassword("");
-      setFeedback(feedbackFrom(error));
+      if (error instanceof AuthUnknownOutcomeError) {
+        beginUnknownRecovery("setup");
+      } else {
+        setFeedback(feedbackFrom(error));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -240,17 +384,39 @@ export function EntryPage() {
       setCode("");
       setPassword("");
       setConfirmPassword("");
-      setFeedback(feedbackFrom(error));
+      if (error instanceof AuthUnknownOutcomeError) {
+        beginUnknownRecovery("reset");
+      } else {
+        setFeedback(feedbackFrom(error));
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
+  const bannerVariant =
+    feedback?.kind === "unknown" ? "warning" : (feedback?.kind ?? "error");
   const feedbackBanner =
     feedback === null ? null : (
-      <StatusBanner variant={feedback.kind} title={feedback.title}>
+      <StatusBanner variant={bannerVariant} title={feedback.title}>
         <p>{feedback.message}</p>
         <p>{feedback.nextAction}</p>
+        {pending !== null ? (
+          <div className="mf-actions">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={verifying}
+              onClick={() => void verifySubmission(pending)}
+            >
+              {verifying
+                ? "Checking current status…"
+                : statusUnavailable
+                  ? "Check current status again"
+                  : "Check current status"}
+            </Button>
+          </div>
+        ) : null}
       </StatusBanner>
     );
 
@@ -307,7 +473,7 @@ export function EntryPage() {
         </label>
         {feedbackBanner}
         <div className="mf-actions">
-          <Button type="submit" disabled={submitting}>
+          <Button type="submit" disabled={submitting || verifying}>
             Create administrator
           </Button>
         </div>
@@ -354,7 +520,7 @@ export function EntryPage() {
         />
         {feedbackBanner}
         <div className="mf-actions">
-          <Button type="submit" disabled={submitting}>
+          <Button type="submit" disabled={submitting || verifying}>
             Reset password
           </Button>
           <Button
@@ -416,7 +582,7 @@ export function EntryPage() {
       ) : null}
       {feedbackBanner}
       <div className="mf-actions">
-        <Button type="submit" disabled={submitting}>
+        <Button type="submit" disabled={submitting || verifying}>
           Sign in
         </Button>
         <Button
