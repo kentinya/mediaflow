@@ -1,6 +1,6 @@
 # Task PATCH-20261122-1 — 手动整理弹窗状态与排版修复
 
-Next Action: B 独立审查候选 c1eae8a214caa00829c93928985566912ce40646 的 Base..候选。
+Next Action: Developer 按本 Task 的修正指导处理 B-01 至 B-03，再提交 B 复核。
 
 用户明确要求激活本独立修复 Task。优先级为第一屏「准备中」→ 第三屏「整批复核」→ 第二屏「逐项复核」。
 规划时 `PLANNED` 表示已激活、待 Developer 开始。 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)
@@ -9,7 +9,7 @@ Next Action: B 独立审查候选 c1eae8a214caa00829c93928985566912ce40646 的 B
 Task ID: PATCH-20261122-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 8ce6c2092c328a15c44493f51ae4690b15680960
 Difficulty: Medium
 Test Level: T3
@@ -150,3 +150,52 @@ Task range: 8ce6c2092c328a15c44493f51ae4690b15680960..c1eae8a214caa00829c9392898
   摘要、未纳入原因和按钮旁受阻说明，未把该样本当作成功确认样本。来源占用兄弟准入未另建并发
   竞态浏览器复现，修正点是同一构造位置的统一关键字初值。未运行完整 E2E 组、全量 Python/Web
   回归、Task Center 继续入口和打包门禁；按分工由 B 在候选上独立执行。本轮未推送、未发布。
+
+## B 独立审查 — FIX REQUIRED
+
+```text
+Reviewed Base: 8ce6c2092c328a15c44493f51ae4690b15680960
+Reviewed Implementation: c1eae8a214caa00829c93928985566912ce40646
+Reviewed Handoff Head: d0081a685e0b2655dac07b6ec5fdd0e4703d4317
+Decision: FIX REQUIRED
+Next: SAME TASK FIX LOOP
+```
+
+B 核对完整 Base..交接 Head。候选已修复排队时报「失败说明：0」，来源和目标已分行；1、10、100
+项在桌面、390px 和短视口的复核摘要、长路径布局和单正文滚动通过原生检查。阻塞如下。
+
+- **B-01 准备与复核少算未受理的选择。** 在资源库先整理 A，待分析生成方案后关闭弹窗；从原目录选
+  A 和 B 一起整理。准备页如实显示「已受理 1、未受理 1」，展开入口却叫「查看完整所选范围（1 项）」。
+  进入整批复核，首屏显示「将整理 1 项、未纳入 0 项」，A 只在正文底部的未受理明细里。用户从
+  两项选择进入，首屏无法核对少掉的一项。[准备页范围](web/src/features/operations/ManualOrganizeDialog.tsx#L1649) · [整批摘要](web/src/features/operations/ManualOrganizeDialog.tsx#L2479)
+- **B-02 首次复核把方案受阻说成已被更新取代。** 在资源库选 100 文件夹，等待首次分析后进入
+  整批复核。实际响应是第一份方案，10 文件受阻、方案不可确认，浏览器没有发过修正或重新分析请求；
+  按钮旁仍说「此计划摘要已被更新取代」，也没有指出应先处理哪些文件。候选将既有正文中的错误归因
+  重复到了底栏。[按钮旁说明](web/src/features/operations/ManualOrganizeDialog.tsx#L987)
+- **B-03 原生回归停在整批摘要的旧断言。** 用户从 101 项超限返回原目录，改选单文件，实测已进入
+  复核并看到了「将整理」和「1 项」。原生测试仍按旧结构寻找连续文本，停在这里，未跑到后面的
+  文件效果检查。同组其余旧断言也使用这个写法。[101 项回归](web/tests/e2e/manual-organize-dialog.python.spec.ts#L2188)
+
+### Developer 修正指导
+
+1. **先修 B-01。** 准备页把只列 `selection.scopes` 的展开入口命名为「查看已受理范围」。整批复核
+   保留「未纳入」的方案内计数，在同一个首屏摘要显示实际存在的未受理条目及数量。用现有未受理明细
+   就近查看原因。验收用同一目录的 A、B 两文件，从 A 仍待确认的真实状态重选两项，确认两个屏幕
+   都能对上各项去向。
+2. **再修 B-02。** 用第一份方案和本次不可确认的事实说明按钮为什么不可用。就近提示先回到逐项复核
+   处理当前受阻文件，沿用现有逐项修正及重新分析动作。有新方案已取代旧方案的证据时才用「已被取代」。
+   底栏简明说明，正文让用户能从未纳入的文件定位回逐项复核。用原有 90／10 文件夹样本断言按钮确实
+   禁用、原因和下一步正确、进入复核没有发起执行或重新分析。已有的有效子集确认继续用原生场景核对。
+3. **修 B-03。** 在原生组的整批复核区域按新结构核对「将整理」的标签和值。保留各用例现有的
+   文件效果、执行次数和任务交接断言。Developer 运行原受影响检查，并以 `manual organize readability`
+   或 `101-file directory` 筛选真实浏览器回归。交接记录实际耗时；测试时间小于本轮总时间一半。
+
+### B 实测
+
+- 治理检查、`git diff --check`、产品构建通过。`test_media_discovery.py` 6 项通过。
+- 原生浏览器筛选 `manual organize readability|follows the completed walk|101-file directory`，
+  4 项通过、1 项因 B-03 失败（35 秒）。另走真实 Files 两文件路径复现 B-01；从 100 项用例的浏览器
+  请求及响应核对 B-02。测试及浏览器复现共约 75 秒，包含两次定位修正，低于本轮总时间的一半。
+- 截图、原生用例 trace 和 101 项失败快照保存在
+  `.git/validation-evidence/c1eae8a214caa00829c93928985566912ce40646/b-review/`。
+  完整原生组及 Task Center 继续入口验收留待修正候选。本轮结论适用于同一个独立 Task。
