@@ -4,7 +4,7 @@
 Task ID: PATCH-20261122-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 9027e0a0384bae8c28971d24e5dd666604e5a6f9
 Difficulty: Medium
 Test Level: T3
@@ -74,3 +74,22 @@ Task range: 9027e0a0384bae8c28971d24e5dd666604e5a6f9..1374f356a30dd094c44476f591
   - `npx prettier --check` 两个改动文件、`npm run lint -- --quiet`、`git diff --check` → PASS。
 - 剩余风险：Developer 未运行全量 Python/Web/E2E 与打包矩阵，按 Task 由 B 执行；未发现本修正范围内的
   已知未覆盖入口。新增旅程依赖计数器在隔离 harness 内的当前日志保留值，取相邻合法值完成真实发布。
+
+## B 复审
+
+```text
+Reviewed: 9027e0a0384bae8c28971d24e5dd666604e5a6f9..5be5ce847c30a2d2aca767d858763b83f807ef76
+Decision: FIX REQUIRED
+Authorized bug acceptance complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+- 保存冲突已能在原卡片恢复。真实 Python Chromium 复验了读取、重测和单次成功创建，也通过了回包丢失后的原请求核对。桌面与 390px 设置、通知及规则初始化 Chromium 18 项、真实设置 Chromium 10 项、Webhook Chromium 2 项通过。生产构建和类型检查通过。
+- **P1 · 签名测试遭遇配置版本变化时，原表单缺少读取入口。** 在 390px 从「通知 → 新建 Webhook」填写表单。另一会话从「系统设置 → 常规设置 → 日志」保存后，原表单第一次发送签名测试收到 HTTP 409。页面把变化归因于表单，提示重试。再按一次仍收到 409，表单中没有读取入口，保存保持不可用。`NotificationNewPage.tsx` 目前只在保存冲突时显示恢复入口。复现日志与截图见 `.git/validation-evidence/5be5ce847c30a2d2aca767d858763b83f807ef76/b-review/` 的 `test-conflict.log` 和 `test-conflict-results/`。
+
+## Developer 修复指导 · 签名测试阶段
+
+1. 新建卡收到签名测试的 `configuration_version_conflict` 时，说明生效配置已更新、本次测试请求未发往接收方。复用原卡片已有的「读取最新配置」动作。保留已填字段。读取成功后，用户显式重测并在测试通过后保存。
+2. 在 `operations-inventory.python.spec.ts` 的双会话旅程中覆盖两种顺序。第二会话在第一次签名测试前保存，以及在签名测试通过后、创建前保存。两条旅程都能在卡片内读取，读取只发 GET，完成后各有一条新定义。保留原请求核对用例。测试名称沿用 `recovers a concurrent Webhook creation conflict`，执行上一轮修复指导中的命令。
+
+B 在新候选上复验两种顺序并重跑指定验收。
