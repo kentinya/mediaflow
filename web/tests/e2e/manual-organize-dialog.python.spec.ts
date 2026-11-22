@@ -1544,7 +1544,7 @@ test("ends the first-plan preparation when the selected folder has no primary fi
   page,
   request,
 }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(150_000);
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await connect(page);
   const commands = recordCommands(page);
@@ -1616,6 +1616,77 @@ test("ends the first-plan preparation when the selected folder has no primary fi
   await expect(
     card.getByRole("heading", { name: /第 1 \/ \d+ 个/ }),
   ).toHaveCount(0);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        command.path.endsWith("/files/discoveries"),
+    ),
+  ).toHaveLength(1);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/organize\/discoveries\/[^/]+\/analyze$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+  expect(
+    commands.filter(
+      (command) => command.method === "POST" && /\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+
+  // The durable result does not depend on the Worker that produced it.  Stop
+  // the registered Worker through the real lifecycle and reload the same
+  // hosted preparation: the completed zero-primary result and its one next
+  // step stay authoritative instead of a second "Worker unavailable"
+  // instruction.
+  const stopped = await request.post(`${BASE}/__harness__/stop-manual-worker`);
+  expect(stopped.ok()).toBe(true);
+  expect(await stopped.json()).toMatchObject({
+    stopped: true,
+    status: "stopped",
+  });
+  // The exact read the refreshed card makes already reports the durable
+  // result together with a Worker that no longer advertises discovery.
+  const expiredRead = await request.get(
+    `${BASE}/api/operations/organize/discoveries/${encodeURIComponent(
+      discoveryId as string,
+    )}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(expiredRead.ok()).toBe(true);
+  const expiredPreparation = (await expiredRead.json()) as {
+    readonly status: string;
+    readonly previewId: string | null;
+    readonly primarySourceCount: number;
+    readonly worker: { readonly ready: boolean };
+  };
+  expect(expiredPreparation.status).toBe("completed");
+  expect(expiredPreparation.previewId).toBeNull();
+  expect(expiredPreparation.primarySourceCount).toBe(0);
+  expect(expiredPreparation.worker.ready).toBe(false);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Account menu" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("organizeDiscovery"))
+    .toBe(discoveryId);
+  await expect(card.getByText("未找到可整理的主文件")).toBeVisible();
+  await expect(card.getByText("后台暂不可用")).toHaveCount(0);
+  await expect(card.getByText("请求已保存，请联系管理员。")).toHaveCount(0);
+  await expect(card.locator(".mf-organize-preparation-spinner")).toHaveCount(0);
+  await expect(
+    card.getByText(/已排除 1 个条目：非媒体扩展名 × 1/),
+  ).toBeVisible();
+  await expect(
+    card.getByText("本次没有生成整理方案，也没有整理任何文件。"),
+  ).toBeVisible();
+  await expect(
+    card.getByText("请关闭本弹窗返回原文件页，调整所选范围后重新发起整理。"),
+  ).toBeVisible();
   expect(
     commands.filter(
       (command) =>

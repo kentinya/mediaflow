@@ -143,6 +143,9 @@ function makeBackend() {
     // A completed preparation whose only directory content was excluded as a
     // non-primary extension.  No plan is generated for this walk.
     zeroPrimary: false as boolean,
+    // The same completed zero-primary preparation read after its Worker
+    // stopped or its heartbeat expired; the durable result still governs.
+    zeroPrimaryWorkerUnavailable: false as boolean,
     // The first linked-summary read fails once; the same preparation context
     // keeps the retry entry for that exact summary.
     failFirstPreviewRead: false as boolean,
@@ -300,6 +303,15 @@ function makeBackend() {
       ];
       value["nextAction"] =
         "narrow the selected scope or correct the configured filters, then retry";
+      if (state.zeroPrimaryWorkerUnavailable) {
+        value["worker"] = {
+          ready: false,
+          condition: "no_worker",
+          durableState:
+            "all registered processing workers have stale heartbeats",
+          nextAction: "start the resident Processing Worker",
+        };
+      }
     }
     return value;
   };
@@ -2485,6 +2497,47 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.discoveryPosts).toHaveLength(1);
     expect(backend.calls.analyzePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
+  }, 20_000);
+
+  it("keeps the completed zero-primary result when the Worker heartbeat has expired", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.zeroPrimary = true;
+        value.state.zeroPrimaryWorkerUnavailable = true;
+      },
+      ["Movies"],
+    );
+
+    // This is the same durable preparation a refresh reads after the Worker
+    // stopped: its own completed result, not the missing Worker, owns the
+    // headline and the next step.
+    expect(await screen.findByText("未找到可整理的主文件")).toBeVisible();
+    expect(screen.queryByText("后台暂不可用")).toBeNull();
+    expect(screen.queryByText("请求已保存，请联系管理员。")).toBeNull();
+    expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
+    expect(screen.getByText(/已排除 1 个条目：非媒体扩展名 × 1/)).toBeVisible();
+    expect(
+      screen.getByText("本次没有生成整理方案，也没有整理任何文件。"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "请关闭本弹窗返回原文件页，调整所选范围后重新发起整理。",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "运行分析并生成计划摘要" }),
+    ).toBeNull();
+    expect(backend.calls.discoveryPosts).toHaveLength(1);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    expect(backend.calls.discoveryPosts).toHaveLength(1);
   }, 20_000);
 
   it("replaces the spinner with the saved-request Worker notice and recovers by polling the same preparation", async () => {

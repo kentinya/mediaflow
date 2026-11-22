@@ -1477,15 +1477,30 @@ export function ManualOrganizeDialog({
     }
     return null;
   })();
+  /**
+   * Only a step that actually needs the resident Worker reports it missing.
+   * A preparation that already reached its own durable result (zero primary
+   * sources, failure, cancellation, refusal) or whose plan is linked keeps
+   * reporting that result while its plan summary is read, even if the Worker
+   * stopped or its heartbeat expired after the result was published.
+   */
+  const preparationWorkerBlocking =
+    preparationWorkerUnavailable &&
+    preparationStoppedTitle === null &&
+    (preparation?.previewId ?? null) === null;
 
   const renderFirstPlanPreparation = () => {
+    // A linked plan needs no Worker, only the summary read that is already in
+    // flight, so that compact wait keeps its animation.  Everything that still
+    // needs Worker progress stops when the Worker is gone.
     const canProgress =
-      !preparationWorkerUnavailable && preparationStoppedTitle === null;
+      preparationStoppedTitle === null &&
+      (!preparationWorkerUnavailable || preparation?.previewId != null);
     return (
       <div className="mf-organize-preparation">
         <div
           className={
-            preparationWorkerUnavailable
+            preparationWorkerBlocking
               ? "mf-organize-preparation-state mf-organize-preparation-state-warning"
               : "mf-organize-preparation-state"
           }
@@ -1499,11 +1514,11 @@ export function ManualOrganizeDialog({
             />
           ) : null}
           <p className="mf-organize-preparation-title">
-            {preparationWorkerUnavailable
+            {preparationWorkerBlocking
               ? "后台暂不可用"
               : (preparationStoppedTitle ?? "正在准备")}
           </p>
-          {preparationWorkerUnavailable ? (
+          {preparationWorkerBlocking ? (
             <p className="mf-organize-preparation-copy">
               请求已保存，请联系管理员。
             </p>

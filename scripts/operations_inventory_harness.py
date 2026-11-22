@@ -36,6 +36,9 @@ infrastructure, not product endpoints, and never touch product documents):
   the real API and completes its MOVE through ``ManualOrganizeExecutionWorker``;
 - ``POST /__harness__/register-manual-worker`` makes the real Worker readiness
   projection available to a browser-admitted organize run;
+- ``POST /__harness__/stop-manual-worker`` cleanly stops that same Worker
+  through the production Worker service, so a browser can re-read a completed
+  preparation after its Worker no longer advertises discovery;
 - ``POST /__harness__/run-manual-worker`` claims and completes one already
   admitted browser execution through ``ManualOrganizeExecutionWorker``;
 - ``POST /__harness__/run-standalone-pipeline`` executes one file through the
@@ -2717,6 +2720,13 @@ def register_manual_worker(state: AppState) -> dict[str, object]:
         runtime_schema_version=SCHEMA_VERSION,
     )
     return {"registered": True}
+
+
+def stop_manual_worker(state: AppState) -> dict[str, object]:
+    """Stop the registered Worker through the production lifecycle boundary."""
+
+    worker = state.api._worker_service.stop_worker("harness-manual-worker")
+    return {"stopped": True, "workerId": worker.worker_id, "status": worker.status.value}
 
 
 def _run_manual_task_once(state: AppState, *, task_id: str | None = None):
@@ -6319,6 +6329,8 @@ def application(environ, start_response):
             )
         elif path == "/__harness__/register-manual-worker" and method == "POST":
             document = register_manual_worker(STATE)
+        elif path == "/__harness__/stop-manual-worker" and method == "POST":
+            document = stop_manual_worker(STATE)
         elif path == "/__harness__/run-manual-worker" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             STATE.fail_next_manual_execution = (query.get("failBeforeMutation") or ["0"])[0] == "1"
