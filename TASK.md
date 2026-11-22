@@ -1,8 +1,8 @@
 # Task 58.1 — 切换正式部署和主机恢复入口
 
-Next Action: B INDEPENDENT REVIEW AND ACCEPTANCE OF TASK 58.1 OFFLINE RECOVERY GUIDE
+Next Action: DEVELOPER COMPLETES RECOVERY CUTOVER IN THE OPERATOR GUIDE
 
-用户已授权实施 Task 58.1。Developer 返工已完成，状态为 `READY FOR B REVIEW`。
+用户已授权实施 Task 58.1。Developer 开始本轮返工时将状态改为 `IN PROGRESS`。
 用户授权 A 代 B 规划首个 Task，角色例外限于首个 Task 的规划。B 独立验收，A 按工作流终审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -10,7 +10,7 @@ Next Action: B INDEPENDENT REVIEW AND ACCEPTANCE OF TASK 58.1 OFFLINE RECOVERY G
 Task ID: 58.1
 Task Type: SLICE
 Parent Slice: 58
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
 Difficulty: High
 Test Level: T4
@@ -362,6 +362,40 @@ Candidate state: READY FOR B REVIEW
   wheel 候选、发布安全检查和 Chrome 旅程仍按 Task 分工由 B 执行。
 - 全量测试未在本轮重跑；既有 `test_configuration_package_exchange` 失败仍是父版本可复现的
   既有问题，未用跳过或弱断言掩盖。
+
+## B 离线恢复复核 — FIX REQUIRED
+
+```text
+Reviewed Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
+Reviewed Head: ce3c9e0aa2ab876a619c27910daaeac3789b3864
+Decision: FIX REQUIRED
+Slice Outcomes / Surfaces complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+复验已确认从新终端校验与恢复、选定空目标、保留原库和备份，以及单独启动恢复后的 API。
+Compose 用恢复 bootstrap 接续启动了四个服务。`9f4e526a..ce3c9e0a` 只有文档差异，本次
+Compose 定向复验沿用同一镜像 `sha256:68ff7c437891dfb6356a0717f9475cfa7cc4707e76d1296de96df73596b0dddf`。
+当前离线恢复指引还有两处旅程断点。源码步骤只给 API 的单条命令设置恢复 bootstrap，维护终端
+依然导出了原 bootstrap。登录确认后从该环境按 README 启动后台，三个后台服务登记在原库，
+恢复库只有 API。有一份已验证备份且原库损坏时，按指引校验原库和重新备份都失败；从已保存
+的备份恢复到新文件仍能读回管理员。
+
+### 开发指导与返工验收
+
+1. 给出源码后台接续的实际命令。在核对通过后，把恢复 bootstrap 和原数据目录明确带入三个
+   后台服务所在的终端，并说明后续启动继续使用这组部署变量。确认四个职责都打开恢复库。
+   将文档生成的 `config/mediaflow.restore.json` 按原 bootstrap 的规则加入 Git 忽略。
+2. 在两种部署的同一恢复指引里，从校验已有备份接续恢复。原库可读时可另行生成备份并记录
+   原库摘要。原库不可读时，直接校验并使用已保存的备份，在保留原文件的情况下选新目标、
+   恢复、启动 API 读回，再按原有条件启用后台。
+3. Developer 用隔离实例按文档验收两条完整旅程。从完好的原库恢复并登录核对后，按说明
+   启动后台，确认新启动的服务注册都落在恢复库。再验证原库不可读时从已有备份恢复到新文件，
+   核对原文件和备份摘要不变。运行 `git check-ignore config/mediaflow.restore.json`、
+   `git diff --check` 和 `python3 scripts/check_governance.py`。B 复验后完成原 T4 验收。
+
+本机证据在 `.git/validation-evidence/ce3c9e0aa2ab876a619c27910daaeac3789b3864/b-review/`。
+Slice 58 的通用业务 CLI、专属任务路径、schema 11 切换退役和 Base 合法任务续作验收仍待完成。
 
 ## Latest accepted Task — PATCH-20261122-3
 
