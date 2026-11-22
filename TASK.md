@@ -1,6 +1,6 @@
 # Task 57.1 — 单管理员 Web 登录与定时计划停用
 
-Next Action: DEVELOPER FIXES TASK57.1
+Next Action: B REVIEWS TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3 中的部署、管理员和定时计划旅程。按用户授权，A 更新合同，
 B 根据已提交的 `b22af92f4434a1f343da2b3cddfe2747dc6e1b37` 调整同一 Task。当前返工以本节的
@@ -11,7 +11,7 @@ B 根据已提交的 `b22af92f4434a1f343da2b3cddfe2747dc6e1b37` 调整同一 Tas
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -126,6 +126,49 @@ Next: SAME TASK FIX LOOP
 
 Slice 57 的 RO-1 仍需通过首次建号后直接改密登录。RO-3 的停用旅程通过，发布验证和同版本恢复
 继续在修正候选上验收。RO-2 的分权限 API 令牌与定时计划独立性待后续 Task。
+
+### Developer 本轮修正交付记录（READY FOR B REVIEW）
+
+- 实现候选：`3636331bebdc0f8364c02c64c3e14d055bce37bd`（本轮起点 `6d00d309`，Task Base
+  `4566a74055c698aec704215dd431eb8521bcfedb`）。本轮只修改首次建号后的浏览器入口状态、
+  发布指南所用容器启动/会话夹具、直接受影响的测试与发布说明；保留 Slice 合同、B 的评审
+  记录和未授权范围。
+- P1 首次建号后改密：认证 store 新增 `markFirstAdministratorCreated`，在真实
+  `/api/auth/bootstrap` 成功后同时采纳会话并清除 `firstAdministratorRequired`；根入口据此在
+  改密结束回到登录表单，不再显示创建首位管理员。`web-account-auth.python.spec.ts` 的首次
+  建号场景继续从账号菜单改密，核对旧会话 `401`、旧密码失败、同一标签用新密码登录，再恢复
+  共享初始密码供后续串行场景。
+- P1 发布安全夹具：容器发布安全脚本改用配置生成器、容器内
+  `mediaflow accounts issue-setup-code` 和普通 `/api/auth/bootstrap` 会话；API 读写使用
+  HttpOnly 会话 Cookie，同源写请求带 `Origin`。匿名、无效 Bearer 与五个退役环境令牌均核对
+  `401`，保留镜像、非 root、挂载、投影/日志/SQLite 脱敏；新增退役 `api.principals` 与
+  `api.tokenEnv` 启动前拒绝且不创建数据库。发布指南中的空基线与重启脚本改用同一账号会话，
+  空基线网页旅程从根入口登录后再初始化配置。部署与发布说明同步。
+- 实际验证：
+  - `web/` 下 `npm run test -- run src/features/entry/EntryPage.test.tsx
+    src/shared/api/auth-store.test.ts` 26 项通过；`npm run typecheck` 与 `npm run build` 通过
+    （产物 `index-Dm_ugsiS.js`）。
+  - `web/` 下 `npm run test:e2e -- --config=playwright.python.config.ts
+    tests/e2e/web-account-auth.python.spec.ts` 5 项通过，包含首次建号后同标签改密登录。
+  - Python `tests.test_release_security` 与 `tests.test_web_account_auth` 23 项通过；
+    `tests.test_container_deployment`、`tests.test_container_probe`、
+    `tests.test_configuration_status`、`tests.test_resident_services` 77 项通过。
+  - `.venv/bin/python scripts/docker_release_security_smoke_test.py --image
+    mediaflow:task571-devfix` 通过：从主机设置码创建首位管理员和会话，匿名及退役环境令牌
+    `401`，镜像/非 root/挂载/脱敏检查保持，退役字段启动拒绝且未建库。
+  - `.venv/bin/python scripts/docker_restart_fault_smoke_test.py --image
+    mediaflow:task571-restart-devfix` 通过；
+    `.venv/bin/python scripts/docker_empty_baseline_smoke_test.py --image
+    mediaflow:task571-empty-devfix` 两个栈均通过，网页从根入口登录后完成空配置初始化。
+  - 改动 Web 文件 Prettier/ESLint、改动脚本 Ruff 格式与检查、`compileall`、完整范围
+    `git diff --check` 与治理检查 PASS。
+- 用时：本轮测试/检查执行累计约 10 分钟，整轮约 35 分钟，低于 30%；未运行完整 T4、
+  候选镜像推送、wheel/源码外安装、生产 Waitress 浏览器旅程与其他真实 Python spec。
+- 剩余风险：完整 T4、提交后候选镜像与 wheel/源码外安装、生产 Waitress/Web 浏览器旅程、
+  真实 Scheduler/Worker 撤权执行仍由 B 在修正候选上独立验收。本机 Docker Desktop 默认
+  `/var/folders` 临时目录不能作为 bind 源，发布脚本验证时使用仓内共享临时目录；CI/Linux
+  应按实际 daemon 共享路径配置。发布安全脚本的镜像由脚本从提交前 `HEAD` 构建，B 需在提交
+  候选上重跑。
 
 ### B 上轮复核候选 0e134204 — FIX REQUIRED
 
