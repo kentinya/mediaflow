@@ -178,7 +178,6 @@ export function NotificationEditorPage() {
     currentForm !== null &&
     baseline !== null &&
     !sameWebhookForm(currentForm, baseline.values);
-  const clean = currentForm !== null && baseline !== null && !dirty;
   const clearEvidence = () => {
     setTestResult(null);
   };
@@ -721,10 +720,6 @@ export function NotificationEditorPage() {
   const titleId = "notification-edit-title";
   const retainedLocalInput =
     definition === null && currentForm !== null && baseline !== null;
-  const baselineIsCurrentDefinition =
-    activeConfiguration !== null &&
-    baseline !== null &&
-    activeConfiguration.revisionId === baseline.revisionId;
 
   useEffect(() => {
     // The retained-input explanation and its explicit choices grow above the
@@ -784,7 +779,7 @@ export function NotificationEditorPage() {
               id={SAVE_BUTTON_ID}
               disabled={saveDisabled}
             >
-              {saveMutation.isPending ? "正在应用…" : "应用更改"}
+              {saveMutation.isPending ? "正在应用…" : "保存"}
             </Button>
           )}
         </>
@@ -1028,16 +1023,7 @@ export function NotificationEditorPage() {
         >
           {awaitingVerification && pendingApply !== null && (
             <StatusBanner variant="error" title="应用结果待核实">
-              <p>
-                本次请求没有收到可确认的回包，可能已经发布，也可能没有。
-                正在用同一请求身份只读核对本次结果和当前生效定义；核实期间不会再次发布。系统不会自动重发发布请求。
-              </p>
-              <p>
-                请求身份 {pendingApply.submissionId.slice(0, 8)}…
-                {pendingApply.baselineRevisionId !== baseline.revisionId
-                  ? "；当前显示的生效基线已变化，核实会同时给出本次请求结果与当前生效定义。"
-                  : "。"}
-              </p>
+              <p>暂时无法确认是否已保存。请先核实结果。</p>
               <div className="mf-actions">
                 <Button
                   type="button"
@@ -1122,64 +1108,23 @@ export function NotificationEditorPage() {
               </div>
             </StatusBanner>
           )}
-          <div className="mf-notification-state-strip">
-            {retainedLocalInput ? (
-              <>
-                <span className="mf-notification-badge">
-                  原当前定义 · 版本 {baseline.revisionVersion} · 已不再打开
-                </span>
+          {!readDegraded && (
+            <div className="mf-notification-state-strip">
+              {dirty && (
                 <span className="mf-notification-badge mf-notification-badge-warn">
-                  本地未保存输入已保留
+                  有未保存修改
                 </span>
-                <span className="mf-notification-badge mf-notification-badge-warn">
-                  已生效配置可能已变化
-                </span>
-              </>
-            ) : baselineIsCurrentDefinition ? (
-              <>
-                <span className="mf-notification-badge">
-                  已保存当前定义 · 版本 {baseline.revisionVersion} · 已生效
-                </span>
-                {dirty && (
-                  <span className="mf-notification-badge mf-notification-badge-warn">
-                    有未保存修改
-                  </span>
-                )}
-                {clean && (
-                  <span className="mf-notification-badge mf-notification-badge-active">
-                    当前输入与已保存当前定义一致
-                  </span>
-                )}
-                <span className="mf-notification-badge">已生效配置不变</span>
-              </>
-            ) : (
-              <>
-                <span className="mf-notification-badge">
-                  原当前定义 · 版本 {baseline.revisionVersion}
-                </span>
-                <span className="mf-notification-badge mf-notification-badge-warn">
-                  读取到新的当前定义修订
-                </span>
-                <span className="mf-notification-badge mf-notification-badge-warn">
-                  未写入服务端
-                </span>
-              </>
-            )}
-            {!readDegraded && (
-              <span className="mf-notification-read-action">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={busy || definitionQuery.isFetching}
-                  onClick={() => void definitionQuery.refetch()}
-                >
-                  {definitionQuery.isFetching
-                    ? "正在读取…"
-                    : "读取最新当前定义"}
-                </Button>
-              </span>
-            )}
-          </div>
+              )}
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy || definitionQuery.isFetching}
+                onClick={() => void definitionQuery.refetch()}
+              >
+                {definitionQuery.isFetching ? "读取中…" : "读取最新当前定义"}
+              </Button>
+            </div>
+          )}
 
           {savedNotice !== null && (
             <StatusBanner variant="success" title="已保存到当前定义">
@@ -1198,8 +1143,8 @@ export function NotificationEditorPage() {
               <p>
                 {remote.kind === "revision"
                   ? `打开的是另一个当前定义修订（版本 ${remote.revisionVersion}）。`
-                  : `耐久当前定义现在是版本 ${remote.revisionVersion}。`}
-                你还有未保存的输入；系统没有把本地输入静默绑定到新版本。
+                  : `当前版本是 ${remote.revisionVersion}。`}
+                请选择要保留的内容。
               </p>
               <div className="mf-actions">
                 <Button type="button" variant="secondary" onClick={adoptRemote}>
@@ -1209,13 +1154,6 @@ export function NotificationEditorPage() {
                   保留本地输入并重新保存
                 </Button>
               </div>
-            </StatusBanner>
-          )}
-          {dirty && remote === null && !retainedLocalInput && (
-            <StatusBanner variant="info" title="有未保存的修改">
-              <p>
-                测试、检查和发布只针对已保存的当前定义版本。先保存当前输入，或明确放弃修改后再操作已保存版本。
-              </p>
             </StatusBanner>
           )}
           {error !== null && (
@@ -1247,9 +1185,7 @@ export function NotificationEditorPage() {
                   onChange={(event) => updateForm({ url: event.target.value })}
                   onBlur={() => markTouched("url")}
                 />
-                <p className="mf-notification-field-help">
-                  只接受 HTTPS；不能包含用户名、密码、查询字符串或片段。
-                </p>
+                <p className="mf-notification-field-help">使用 HTTPS 地址。</p>
                 {fieldIssue("url") !== null && (
                   <p className="mf-notification-field-error">
                     {fieldIssue("url")}
@@ -1274,7 +1210,7 @@ export function NotificationEditorPage() {
                   onBlur={() => markTouched("secretEnv")}
                 />
                 <p className="mf-notification-field-help">
-                  只保存环境变量名；密钥值始终由部署环境提供。
+                  填写服务器上存放签名密钥的环境变量名。
                 </p>
                 {fieldIssue("secretEnv") !== null && (
                   <p className="mf-notification-field-error">
@@ -1308,7 +1244,6 @@ export function NotificationEditorPage() {
                         }}
                       />
                       <span>{notificationEventLabel(event)}</span>
-                      <code>{event}</code>
                     </label>
                   ))}
                 </div>
@@ -1329,16 +1264,13 @@ export function NotificationEditorPage() {
                 />
                 <span>
                   <strong>启用这个 Webhook</strong>
-                  <small>
-                    发布后才会使用；当前定义内修改不影响当前已生效配置。
-                  </small>
                 </span>
               </label>
             </div>
           </section>
 
-          <section className="mf-notification-form-section">
-            <h3>超时与重试</h3>
+          <details className="mf-notification-form-section mf-notification-advanced">
+            <summary>超时与重试</summary>
             <div className="mf-notification-form-grid">
               <div className="mf-notification-field">
                 <label htmlFor="notification-edit-timeout">
@@ -1421,13 +1353,13 @@ export function NotificationEditorPage() {
                 )}
               </div>
             </div>
-          </section>
+          </details>
 
           {currentForm !== null && baseline !== null && (
             <section className="mf-notification-form-section">
               <h3>签名测试</h3>
               <p className="mf-notification-field-help">
-                针对当前表单中的接收地址和签名密钥引用发送一次带签名的请求；不会创建投递、不会自动重试，也不会改变配置。修改地址或密钥引用后需重新测试。
+                向接收地址发送一条测试消息。修改地址或密钥后，请重新测试。
               </p>
               <div className="mf-notification-actions">
                 <Button
@@ -1460,14 +1392,11 @@ export function NotificationEditorPage() {
                   title="签名测试结果"
                 >
                   <p>{testResult.message}</p>
-                  <p>
-                    结论只对当前地址和签名引用有效；修改后需重新测试才能应用。
-                  </p>
                 </StatusBanner>
               )}
               {!testedForCurrentForm && (
                 <p className="mf-notification-inline-reason">
-                  应用前必须对当前表单成功完成一次签名测试。
+                  测试成功后即可保存。
                 </p>
               )}
             </section>

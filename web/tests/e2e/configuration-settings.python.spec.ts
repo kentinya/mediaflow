@@ -65,12 +65,35 @@ function recordPublishes(page: Page): Array<Record<string, unknown>> {
   return bodies;
 }
 
+async function openSection(page: Page, name: string) {
+  await page
+    .getByRole("navigation", { name: "设置分区" })
+    .getByRole("button", { name, exact: true })
+    .click();
+}
+
+async function expectActiveSequence(page: Page, sequence: number) {
+  await openSection(page, "配置工具");
+  await page
+    .locator("summary")
+    .filter({ hasText: /^诊断$/ })
+    .click();
+  await expect(
+    page.getByText(`配置序号 ${sequence}`, { exact: true }),
+  ).toBeVisible();
+  await page
+    .locator("summary")
+    .filter({ hasText: /^诊断$/ })
+    .click();
+  await openSection(page, "常规设置");
+}
+
 async function openLogging(page: Page): Promise<void> {
   await connectOn(page, "/configuration");
   await expect(
     page.getByRole("heading", { name: "系统设置", exact: true }),
   ).toBeVisible();
-  await expect(page.getByLabel("配置状态摘要")).toContainText("配置已生效");
+  await openSection(page, "常规设置");
   await page.getByRole("button", { name: "日志", exact: true }).click();
   await expect(page.getByLabel("日志保留天数")).toBeVisible();
 }
@@ -114,11 +137,10 @@ test("desktop Settings applies the log retention directly and reads the exact Ac
   expect(after.revisionVersion).toBe(before.revisionVersion + 1);
   expect(retentionOf(after)).toBe(next);
   await expect(retention).toHaveValue(String(next));
-  await expect(page.getByLabel("配置状态摘要")).toContainText(
-    `序号 ${after.revisionVersion}`,
-  );
+  await expectActiveSequence(page, after.revisionVersion);
 
   // JSON remains an explicit, on-demand read of the published Active.
+  await openSection(page, "配置工具");
   await page.getByRole("button", { name: "配置 JSON", exact: true }).click();
   const activeJson = page.getByLabel("配置 JSON", { exact: true });
   await expect(activeJson).toHaveValue(
@@ -143,9 +165,7 @@ test("390px Settings applies the same direct publication and stays readable", as
   expect(retentionOf(after)).toBe(next);
   expect(after.revisionVersion).toBe(before.revisionVersion + 1);
   await expect(page.getByLabel("日志保留天数")).toHaveValue(String(next));
-  await expect(page.getByLabel("配置状态摘要")).toContainText(
-    `序号 ${after.revisionVersion}`,
-  );
+  await expectActiveSequence(page, after.revisionVersion);
   const overflow = await page.evaluate(
     () =>
       document.documentElement.scrollWidth -
@@ -163,7 +183,7 @@ test("a refused apply keeps the Active value and the operator's input", async ({
   await expect(
     page.getByRole("heading", { name: "系统设置", exact: true }),
   ).toBeVisible();
-  await expect(page.getByLabel("配置状态摘要")).toContainText("配置已生效");
+  await openSection(page, "常规设置");
   const before = await activeSettings(request);
   const originalPath = String(before.sections.Database.historyPath.value);
 
@@ -178,9 +198,7 @@ test("a refused apply keeps the Active value and the operator's input", async ({
     page.getByText("请填写不越出部署范围的安全相对路径。"),
   ).toBeVisible();
   await expect(historyPath).toHaveValue(".");
-  await expect(page.getByLabel("配置状态摘要")).toContainText(
-    `序号 ${before.revisionVersion}`,
-  );
+  await expectActiveSequence(page, before.revisionVersion);
   expect(publishes).toHaveLength(1);
 
   const after = await activeSettings(request);
@@ -236,9 +254,7 @@ test("two sessions on one Active baseline publish once and keep the loser's inpu
   await expect(
     second.getByText(new RegExp(`当前生效值为 ${firstNext}`)),
   ).toBeVisible();
-  await expect(second.getByLabel("配置状态摘要")).toContainText(
-    `序号 ${afterFirst.revisionVersion}`,
-  );
+  await expectActiveSequence(second, afterFirst.revisionVersion);
   expect(secondPublishes).toHaveLength(1);
 
   const afterConflict = await activeSettings(request);
@@ -311,9 +327,7 @@ test("a lost apply answer is verified automatically after reconnect without repl
   expect(retentionOf(after)).toBe(next);
   expect(writes).toBe(1);
   expect(publishes).toHaveLength(1);
-  await expect(page.getByLabel("配置状态摘要")).toContainText(
-    `序号 ${after.revisionVersion}`,
-  );
+  await expectActiveSequence(page, after.revisionVersion);
   await expect(page.getByLabel("日志保留天数")).toHaveValue(String(next));
 });
 
@@ -328,6 +342,7 @@ test("390px touch Settings keeps the token card in view and revokes from the scr
   try {
     const page = await context.newPage();
     await connectOn(page, "/configuration");
+    await openSection(page, "API 令牌");
     const panel = page.getByRole("region", { name: "API 令牌" });
     await expect(panel).toBeVisible();
     await expect(
@@ -432,6 +447,7 @@ test("desktop Settings issues scoped tokens, reconciles a lost answer and revoke
   request,
 }) => {
   await connectOn(page, "/configuration");
+  await openSection(page, "API 令牌");
   const panel = page.getByRole("region", { name: "API 令牌" });
   await expect(panel).toBeVisible();
   await expect(panel.getByLabel("权限")).toHaveValue("read_only");
@@ -522,7 +538,9 @@ test("desktop Settings issues scoped tokens, reconciles a lost answer and revoke
     headers: { Authorization: `Bearer ${analysisPlaintext}` },
   });
   expect(revoked.status()).toBe(401);
-  await expect(page.getByLabel("配置状态摘要")).toContainText("配置已生效");
+  await expect(
+    page.getByRole("button", { name: "API 令牌", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
 });
 
 test("a lost issuance with a failed list reread stays pending until the operator rereads and revokes", async ({
@@ -530,6 +548,7 @@ test("a lost issuance with a failed list reread stays pending until the operator
   request,
 }) => {
   await connectOn(page, "/configuration");
+  await openSection(page, "API 令牌");
   const panel = page.getByRole("region", { name: "API 令牌" });
   await expect(panel).toBeVisible();
 
@@ -624,6 +643,7 @@ test("a proxy timeout on a committed issuance stays pending and the operator rev
   request,
 }) => {
   await connectOn(page, "/configuration");
+  await openSection(page, "API 令牌");
   const panel = page.getByRole("region", { name: "API 令牌" });
   await expect(panel).toBeVisible();
 
@@ -695,6 +715,7 @@ test("a rejected token list after a real password change signs the old page out 
 }) => {
   const newPassword = "e2e-password-changed";
   await connectOn(page, "/configuration");
+  await openSection(page, "API 令牌");
   const panel = page.getByRole("region", { name: "API 令牌" });
   await expect(panel).toBeVisible();
 

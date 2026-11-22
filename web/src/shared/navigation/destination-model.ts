@@ -743,6 +743,17 @@ export function allowlistedDestinationSearch(
     }
     setJourneyOperationsContext(allowed, current);
   };
+  if (path === "/configuration") {
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    setFilterToken(
+      allowed,
+      "panel",
+      current.get("panel"),
+      /^(runtime|general|tokens|tools)$/,
+    );
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
   if (path === "/resourcelib/files") {
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);

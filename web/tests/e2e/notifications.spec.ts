@@ -86,18 +86,21 @@ test("the Operations landing links the Notification workspace with the exact Act
 }) => {
   await connect(page);
   await openNotifications(page);
+  await page.locator("summary").filter({ hasText: "诊断信息" }).click();
   await expect(
-    page.getByText("已生效修订 · 版本 3", { exact: true }),
+    page.getByText(`${ACTIVE_REVISION} · 版本 3`, { exact: true }),
   ).toBeVisible();
   await expect(page.getByText(WEBHOOK_ID)).toBeVisible();
-  await expect(page.getByText("已生效", { exact: true })).toBeVisible();
+  await expect(page.getByText("已启用", { exact: true })).toBeVisible();
   await expect(
     page.getByText("密钥引用：已就绪", { exact: true }),
   ).toBeVisible();
   // Definitions publish directly: the create entry is available without a
   // Draft, and the list still links the durable delivery history.
   await expect(page.getByRole("link", { name: "新建 Webhook" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "查看投递记录" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "投递记录", exact: true }),
+  ).toBeVisible();
   // The definition card links the exact durable detail route and opens the
   // coordinated card over the still-visible list.
   await page.getByRole("link", { name: "查看定义" }).click();
@@ -109,6 +112,70 @@ test("the Operations landing links the Notification workspace with the exact Act
     page.getByRole("heading", { name: "通知", exact: true }),
   ).toBeVisible();
 });
+
+for (const width of [1440, 390]) {
+  test(`the ${width}px notification entry exposes both routes without writes`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await connect(page);
+    const writes: string[] = [];
+    page.on("request", (request) => {
+      if (
+        new URL(request.url()).pathname.startsWith("/api/") &&
+        !["GET", "HEAD", "OPTIONS"].includes(request.method())
+      ) {
+        writes.push(request.url());
+      }
+    });
+    if (width === 390) {
+      await page.getByRole("button", { name: "Open menu" }).click();
+      await page
+        .getByRole("link", { name: "Notifications", exact: true })
+        .click();
+      await expect(page).toHaveURL(/\/operations\/notifications$/);
+    } else {
+      await openNotifications(page);
+    }
+    const sections = page.getByRole("navigation", { name: "通知分区" });
+    const webhooks = sections.getByRole("link", {
+      name: "Webhook",
+      exact: true,
+    });
+    const deliveries = sections.getByRole("link", {
+      name: "投递记录",
+      exact: true,
+    });
+    const create = page.getByRole("link", { name: "新建 Webhook" });
+    await expect(create).toBeInViewport({ ratio: 1 });
+    await expect(deliveries).toBeInViewport({ ratio: 1 });
+    await expect(webhooks).toHaveAttribute("aria-current", "page");
+    await page.screenshot({
+      path: testInfo.outputPath("notifications-entry.png"),
+    });
+    await deliveries.click();
+    await expect(page.getByRole("region", { name: "投递记录" })).toBeVisible();
+    await expect(deliveries).toHaveAttribute("aria-current", "page");
+    await webhooks.click();
+    await create.click();
+    const form = page.getByRole("dialog");
+    const id = form.getByLabel("标识符", { exact: true });
+    const testButton = form.getByRole("button", { name: "发送签名测试" });
+    await expect(id).toBeVisible();
+    await expect(
+      form.getByRole("button", { name: "保存", exact: true }),
+    ).toBeDisabled();
+    await expect(form.getByLabel("最大尝试次数")).toBeHidden();
+    const formOrder = await form.locator("h3").allTextContents();
+    expect(formOrder.indexOf("基本设置")).toBeGreaterThanOrEqual(0);
+    expect(formOrder.indexOf("签名测试")).toBeGreaterThan(
+      formOrder.indexOf("基本设置"),
+    );
+    await expect(testButton).toBeDisabled();
+    await closeCard(page);
+    expect(writes).toEqual([]);
+  });
+}
 
 test("the signed test sends exactly one bound request and never touches deliveries", async ({
   page,
@@ -239,7 +306,7 @@ test("the editor tests the exact form and applies it without draft routes", asyn
     .fill("https://example.invalid/hooks/edited");
   await page.getByRole("button", { name: "发送签名测试" }).click();
   await expect(page.getByText(/签名测试成功/)).toBeVisible();
-  await page.getByRole("button", { name: "应用更改" }).click();
+  await page.getByRole("button", { name: "保存" }).click();
   await expect(
     page.getByText(/更改已通过检查并发布为新的生效配置/),
   ).toBeVisible();
@@ -334,10 +401,10 @@ test("the create form tests the current values before one direct apply", async (
     .fill("https://example.invalid/hooks/new");
   await page.getByLabel("密钥环境变量引用").fill("MEDIAFLOW_WEBHOOK_SECRET");
   await page.getByRole("checkbox").first().check();
-  await expect(page.getByRole("button", { name: "应用更改" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "保存" })).toBeDisabled();
   await page.getByRole("button", { name: "发送签名测试" }).click();
   await expect(page.getByText(/签名测试成功/)).toBeVisible();
-  await page.getByRole("button", { name: "应用更改" }).click();
+  await page.getByRole("button", { name: "保存" }).click();
   await expect(page).toHaveURL(
     new RegExp(`/operations/notifications/webhooks/new-webhook$`),
   );
@@ -360,7 +427,7 @@ test("the delivery list filters dead letters and the detail card requeues with e
   );
   await expect(page).toHaveURL(/status=dead-letter/);
   await expect(
-    page.getByRole("heading", { name: "通知投递记录" }),
+    page.getByRole("region", { name: "投递记录", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("listitem").filter({ hasText: "死信" }).first(),
@@ -427,7 +494,7 @@ test("a stale recovery is rejected once and never replayed automatically", async
 }) => {
   await connect(page);
   await openNotifications(page);
-  await page.getByRole("link", { name: "查看投递记录" }).click();
+  await page.getByRole("link", { name: "投递记录", exact: true }).click();
   await page.getByRole("link", { name: "查看投递" }).first().click();
   await page.getByLabel("我确认重新入队这条精确的死信投递").check();
   await page.getByRole("button", { name: "重新入队死信投递" }).click();
@@ -468,7 +535,7 @@ test("an unauthenticated deep entry continues to the exact Notification route on
   );
   await expect(page).toHaveURL(/status=dead-letter/);
   await expect(
-    page.getByRole("heading", { name: "通知投递记录" }),
+    page.getByRole("region", { name: "投递记录", exact: true }),
   ).toBeVisible();
   // The refresh keeps memory-only semantics: no token in any store.
   const storage = await page.evaluate(() => ({
@@ -486,7 +553,7 @@ test("keyboard-only operators can reach the workspace, filter deliveries and rec
 }) => {
   await connect(page);
   await openNotifications(page);
-  await page.getByRole("link", { name: "查看投递记录" }).focus();
+  await page.getByRole("link", { name: "投递记录", exact: true }).focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/operations\/notifications\/deliveries/);
   await page.getByRole("link", { name: "查看投递" }).first().focus();

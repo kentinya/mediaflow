@@ -4326,6 +4326,10 @@ test("the Notifications page edits the real published Webhook and reads it back"
     name: "编辑 Webhook operations-webhook",
   });
   await expect(dialog).toBeVisible();
+  await dialog
+    .locator("summary")
+    .filter({ hasText: /^超时与重试$/ })
+    .click();
   const attempts = dialog.getByLabel("最大尝试次数");
   await expect(attempts).toBeVisible();
   await attempts.fill("7");
@@ -4350,7 +4354,7 @@ test("the Notifications page edits the real published Webhook and reads it back"
         "/objects/webhooks/operations-webhook",
       ),
   );
-  await dialog.getByRole("button", { name: "应用更改" }).click();
+  await dialog.getByRole("button", { name: "保存" }).click();
   expect((await publish).status()).toBe(200);
   await expect(
     dialog.getByText(/更改已通过检查并发布为新的生效配置/),
@@ -4455,11 +4459,15 @@ test("the Notification editor verifies a lost apply response after reconnect wit
     name: "编辑 Webhook operations-webhook",
   });
   await expect(dialog).toBeVisible();
+  await dialog
+    .locator("summary")
+    .filter({ hasText: /^超时与重试$/ })
+    .click();
   const attempts = dialog.getByLabel("最大尝试次数");
   await attempts.fill("8");
   await dialog.getByRole("button", { name: "发送签名测试" }).click();
   await expect(dialog.getByText(/签名测试成功/)).toBeVisible();
-  await dialog.getByRole("button", { name: "应用更改" }).click();
+  await dialog.getByRole("button", { name: "保存" }).click();
   await firstReconcile;
   await expect(dialog.getByText("应用结果待核实")).toBeVisible();
   await expect(
@@ -4547,7 +4555,7 @@ test("a new Notification publication reconciles after a full reload without repu
   await page.getByRole("checkbox").first().check();
   await page.getByRole("button", { name: "发送签名测试" }).click();
   await expect(page.getByText(/签名测试成功/)).toBeVisible();
-  await page.getByRole("button", { name: "应用更改" }).click();
+  await page.getByRole("button", { name: "保存" }).click();
   await firstReconcile;
   await expect(page.getByText("应用结果待核实")).toBeVisible();
   expect(publishRequests).toBe(1);
@@ -4655,11 +4663,11 @@ test("a settled Task publishes one outbox delivery the delivery pages read", asy
       response.request().method() === "GET" &&
       new URL(response.url()).pathname === "/api/notifications",
   );
-  await page.getByRole("link", { name: "查看投递记录", exact: true }).click();
+  await page.getByRole("link", { name: "投递记录", exact: true }).click();
   expect((await listRead).status()).toBe(200);
   await expect(page).toHaveURL(/\/operations\/notifications\/deliveries$/);
   await expect(
-    page.getByRole("heading", { name: "通知投递记录", exact: true }),
+    page.getByRole("region", { name: "投递记录", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("通知投递记录暂时不可用")).toHaveCount(0);
   // Open this Task's exact operations-Webhook delivery card by its durable

@@ -474,6 +474,20 @@ describe("destination model", () => {
       ).toBeNull();
     });
 
+    it("restores only recognized Settings sections after sign-in", () => {
+      for (const panel of ["runtime", "general", "tokens", "tools"]) {
+        expect(
+          allowlistedDestinationSearch(
+            "/configuration",
+            `panel=${panel}&token=fixture`,
+          ),
+        ).toBe(`panel=${panel}`);
+      }
+      expect(
+        allowlistedDestinationSearch("/configuration", "panel=../unknown"),
+      ).toBeNull();
+    });
+
     it("preserves safe URL encoding", () => {
       const search = allowlistedDestinationSearch(
         "/resourcelib/files",

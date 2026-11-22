@@ -64,6 +64,7 @@ async function openSettings(page: Page, search = ""): Promise<void> {
 
 /** Diagnostics stays secondary; the readiness evidence lives inside it. */
 async function openDiagnostics(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "配置工具", exact: true }).click();
   await page.getByText("诊断", { exact: true }).click();
 }
 

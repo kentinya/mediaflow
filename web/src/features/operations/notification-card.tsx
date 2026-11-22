@@ -216,7 +216,7 @@ export interface NotificationCardProps {
   readonly busy: boolean;
   readonly title: string;
   readonly titleId: string;
-  readonly description: ReactNode;
+  readonly description?: ReactNode;
   readonly closeDisabled: boolean;
   readonly onRequestClose: () => void;
   readonly size?: "form" | "detail";

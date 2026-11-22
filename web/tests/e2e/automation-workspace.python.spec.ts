@@ -952,6 +952,7 @@ test("the workspace keeps narrow and wide layouts usable", async ({
   await page.getByRole("link", { name: "Configuration", exact: true }).click();
   const settingsPanel = page.getByRole("region", { name: "系统运行设置" });
   await expect(settingsPanel).toBeVisible();
+  await settingsPanel.getByText("诊断标识", { exact: true }).click();
   await expect(settingsPanel.getByText("已发布目标")).toBeVisible();
   await expect(settingsPanel.getByLabel(/Worker 轮询间隔/)).toBeVisible();
   await expect(

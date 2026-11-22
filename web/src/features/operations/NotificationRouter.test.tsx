@@ -234,10 +234,37 @@ describe("V2 Notification direct publication", () => {
       await screen.findByText(/https:\/\/example\.invalid\/hooks\/mediaflow/),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: /创建后继草稿/ })).toBeNull();
-    expect(screen.getByText("直接发布", { selector: "strong" })).toBeVisible();
+    expect(screen.getByRole("link", { name: /^Webhook$/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     await userEvent.click(screen.getByRole("link", { name: "新建 Webhook" }));
     const view = within(await dialog());
     expect(await view.findByLabelText("标识符")).toBeVisible();
+  });
+
+  it("explains the permission required when Webhook creation is unavailable", async () => {
+    recordingFetch((call) => {
+      if (!call.url.endsWith("/operations/notifications/webhooks")) return;
+      return jsonResponse(
+        listPayload({
+          actions: {
+            create: {
+              available: false,
+              reason: "cannot manage webhook definitions",
+              method: "POST",
+              path: null,
+            },
+          },
+        }),
+      );
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations/notifications");
+    expect(
+      await screen.findByText(/没有所需的 Webhook 配置管理权限/),
+    ).toBeVisible();
+    expect(screen.queryByRole("link", { name: "新建 Webhook" })).toBeNull();
   });
 
   it("creates a definition through the Active object route without a draft", async () => {
@@ -297,7 +324,7 @@ describe("V2 Notification direct publication", () => {
     await userEvent.click(eventOptions[0]);
     await userEvent.click(view.getByRole("button", { name: "发送签名测试" }));
     expect(await view.findByText(/签名测试成功/)).toBeVisible();
-    await userEvent.click(view.getByRole("button", { name: "应用更改" }));
+    await userEvent.click(view.getByRole("button", { name: "保存" }));
     await waitFor(() => {
       const write = calls.find(
         (call) =>
@@ -359,13 +386,12 @@ describe("V2 Notification direct publication", () => {
     authStore.setToken(TOKEN);
     renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
-    expect(await view.findByText(/点击「应用更改」后/)).toBeVisible();
     const url = await view.findByLabelText("HTTPS 接收地址");
     await userEvent.clear(url);
     await userEvent.type(url, "https://example.invalid/hooks/updated");
     await userEvent.click(view.getByRole("button", { name: "发送签名测试" }));
     expect(await view.findByText(/签名测试成功/)).toBeVisible();
-    await userEvent.click(view.getByRole("button", { name: "应用更改" }));
+    await userEvent.click(view.getByRole("button", { name: "保存" }));
     await waitFor(() => {
       const write = calls.find(
         (call) =>
@@ -516,12 +542,15 @@ describe("V2 Notification direct publication", () => {
     authStore.setToken(TOKEN);
     renderApp(`/operations/notifications/editor/${WEBHOOK_ID}`);
     const view = within(await dialog());
+    await userEvent.click(
+      await view.findByText("超时与重试", { selector: "summary" }),
+    );
     const attempts = await view.findByLabelText("最大尝试次数");
     await userEvent.clear(attempts);
     await userEvent.type(attempts, "7");
     await userEvent.click(view.getByRole("button", { name: "发送签名测试" }));
     expect(await view.findByText(/签名测试成功/)).toBeVisible();
-    await userEvent.click(view.getByRole("button", { name: "应用更改" }));
+    await userEvent.click(view.getByRole("button", { name: "保存" }));
     expect(await view.findByText(/本次请求已确认发布/)).toBeVisible();
     expect(await view.findByText(/当前生效定义版本为 4/)).toBeVisible();
     expect(publishWrites).toBe(1);
@@ -533,7 +562,7 @@ describe("V2 Notification direct publication", () => {
           call.url.endsWith(`/objects/webhooks/${WEBHOOK_ID}`),
       ),
     ).toHaveLength(1);
-    expect(view.getByRole("button", { name: "应用更改" })).toBeDisabled();
+    expect(view.getByRole("button", { name: "保存" })).toBeDisabled();
   });
 
   it("restores a pending new-definition apply after a reload", async () => {
@@ -628,7 +657,7 @@ describe("V2 Notification direct publication", () => {
     await userEvent.click(view.getAllByRole("checkbox")[0]);
     await userEvent.click(view.getByRole("button", { name: "发送签名测试" }));
     expect(await view.findByText(/签名测试成功/)).toBeVisible();
-    await userEvent.click(view.getByRole("button", { name: "应用更改" }));
+    await userEvent.click(view.getByRole("button", { name: "保存" }));
     expect(await view.findByText("应用结果待核实")).toBeVisible();
     expect(publishWrites).toBe(1);
     expect(reconcileReads).toBe(1);

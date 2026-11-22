@@ -880,10 +880,8 @@ test.describe("readable V2 actions", () => {
     //    Settings configuration-package export. Open its panel the way an
     //    operator does, hold the real GET, then continue it.
     await openSurface(page, "/configuration");
-    await expect(
-      page.getByRole("heading", { name: "高级配置", exact: true }),
-    ).toBeVisible();
-    await expect(page.getByLabel("配置 JSON")).toBeVisible();
+    await page.getByRole("button", { name: "配置工具", exact: true }).click();
+    await expect(page.getByRole("region", { name: "配置内容" })).toBeVisible();
     const exportAction = page.getByRole("button", {
       name: /导出/,
     });

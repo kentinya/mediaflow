@@ -336,9 +336,9 @@ describe("Automation engine settings surface", () => {
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // The published target is stated as such, with its exact identity.
     expect(within(panel).getByText(TARGET_REVISION)).toBeTruthy();
-    expect(within(panel).getAllByText(/尚未整体采用/).length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      within(panel).getAllByText(/尚未确认全部服务已使用当前设置/).length,
+    ).toBeGreaterThan(0);
     // A published value is shown in the editable field.
     const worker = within(panel).getByLabelText(
       /Worker 轮询间隔/,
@@ -1435,12 +1435,10 @@ describe("Automation engine settings surface", () => {
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // The fabricated collective flag is refused: the page still says this is
     // not a deployment-wide adoption.
-    expect(within(panel).getAllByText(/尚未整体采用/).length).toBeGreaterThan(
-      0,
-    );
     expect(
-      within(panel).queryByText("全部相关常驻进程都已采用当前发布值"),
-    ).toBeNull();
+      within(panel).getAllByText(/尚未确认全部服务已使用当前设置/).length,
+    ).toBeGreaterThan(0);
+    expect(within(panel).queryByText("运行设置已生效")).toBeNull();
   });
 
   it("shows setup guidance instead of a form when no Active exists", async () => {
@@ -2535,10 +2533,10 @@ describe("Automation engine settings surface", () => {
     });
     await connect("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
+    expect(within(panel).getByText("运行设置已生效")).toBeTruthy();
     expect(
-      within(panel).getByText("全部相关常驻进程都已采用当前发布值"),
-    ).toBeTruthy();
-    expect(within(panel).queryByText(/尚未整体采用/)).toBeNull();
+      within(panel).queryByText(/尚未确认全部服务已使用当前设置/),
+    ).toBeNull();
   });
 
   it("labels a retained stopped predecessor as history, not as a current consumer", async () => {
@@ -2617,9 +2615,7 @@ describe("Automation engine settings surface", () => {
     expect(within(workerAdoption).getByText("worker-stopped-1")).toBeTruthy();
     expect(within(workerAdoption).queryByText("进程已停止")).toBeNull();
     // A healthy replacement means the deployment-wide claim is true.
-    expect(
-      within(panel).getByText("全部相关常驻进程都已采用当前发布值"),
-    ).toBeTruthy();
+    expect(within(panel).getByText("运行设置已生效")).toBeTruthy();
   });
 
   it("refuses a document that mixes a current consumer with a live history row", async () => {
@@ -2676,12 +2672,10 @@ describe("Automation engine settings surface", () => {
     await connect("/configuration");
     const panel = await screen.findByRole("region", { name: "系统运行设置" });
     // Contradictory populations never become a collective success claim.
-    expect(within(panel).getAllByText(/尚未整体采用/).length).toBeGreaterThan(
-      0,
-    );
     expect(
-      within(panel).queryByText("全部相关常驻进程都已采用当前发布值"),
-    ).toBeNull();
+      within(panel).getAllByText(/尚未确认全部服务已使用当前设置/).length,
+    ).toBeGreaterThan(0);
+    expect(within(panel).queryByText("运行设置已生效")).toBeNull();
   });
 
   it("states no current adoption and actionable recovery when nothing is live", async () => {
@@ -2787,20 +2781,16 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
     // the embedded engine read are both on screen while that read is still
     // inside its fast window. The observed defect (B52.2-02) was this wait
     // line appearing immediately and being replaced a moment later.
-    expect(await screen.findByText("配置已生效")).toBeTruthy();
+    const sections = await screen.findByRole("navigation", {
+      name: "设置分区",
+    });
+    expect(sections).toBeVisible();
     expect(
       heldRead.calls.some((call) =>
         call.url.includes("/operations/automation/settings"),
       ),
     ).toBe(true);
     expect(screen.queryByText("正在读取引擎设置")).toBeNull();
-    // The reading block below the engine region is already up with the
-    // workspace while the engine read is still outstanding, and it stays up
-    // when the form takes over — the read-driven handoff may not remove it
-    // or replace it (B52.2-02 continuity).
-    expect(
-      screen.getByRole("heading", { name: "整理规则就绪状态" }),
-    ).toBeTruthy();
     // The read completes inside the window: the ready form takes over
     // directly and the wait line never entered the screen at all.
     heldRead.release();
@@ -2809,9 +2799,7 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
     });
     expect(within(panel).getByText(TARGET_REVISION)).toBeTruthy();
     expect(screen.queryByText("正在读取引擎设置")).toBeNull();
-    expect(
-      screen.getByRole("heading", { name: "整理规则就绪状态" }),
-    ).toBeTruthy();
+    expect(sections).toBeVisible();
     expect(heldRead.calls.filter((call) => call.method !== "GET")).toHaveLength(
       0,
     );
@@ -2820,7 +2808,10 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
   it("shows one stable engine wait state once the read is genuinely slow", async () => {
     const heldRead = heldSettingsRead();
     await connect("/configuration");
-    expect(await screen.findByText("配置已生效")).toBeTruthy();
+    const sections = await screen.findByRole("navigation", {
+      name: "设置分区",
+    });
+    expect(sections).toBeVisible();
     // Past the shared reveal window the waiting line appears — one stable,
     // perceivable state while the read is outstanding, not a flicker.
     const banner = await screen.findByText("正在读取引擎设置", undefined, {
@@ -2830,11 +2821,7 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(screen.getByText("正在读取引擎设置")).toBeTruthy();
     expect(screen.queryByRole("region", { name: "系统运行设置" })).toBeNull();
-    // The reading block below the engine region was retained through the
-    // whole wait stretch (B52.2-02 continuity).
-    expect(
-      screen.getByRole("heading", { name: "整理规则就绪状态" }),
-    ).toBeTruthy();
+    expect(sections).toBeVisible();
     // The slow read completes: the ready form takes over and the wait line is
     // gone for good — it is not re-armed by the handoff itself.
     heldRead.release();
@@ -2843,9 +2830,7 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
     });
     expect(within(panel).getByText(TARGET_REVISION)).toBeTruthy();
     expect(screen.queryByText("正在读取引擎设置")).toBeNull();
-    expect(
-      screen.getByRole("heading", { name: "整理规则就绪状态" }),
-    ).toBeTruthy();
+    expect(sections).toBeVisible();
     expect(heldRead.calls.filter((call) => call.method !== "GET")).toHaveLength(
       0,
     );
@@ -2859,13 +2844,16 @@ describe("engine settings read handoff on System Settings (Slice52 RO-3)", () =>
       return undefined;
     });
     await connect("/configuration");
-    expect(await screen.findByText("配置已生效")).toBeTruthy();
+    const sections = await screen.findByRole("navigation", {
+      name: "设置分区",
+    });
+    expect(sections).toBeVisible();
     // The failed read is a direct answer on the existing bounded recovery,
     // never delayed behind a waiting presentation, and it stays read-only.
     expect(await screen.findByText("引擎设置暂不可用")).toBeTruthy();
     expect(await screen.findByText(/此页面不会猜测任何发布值/)).toBeTruthy();
     expect(screen.queryByText("正在读取引擎设置")).toBeNull();
-    expect(screen.getByText("配置已生效")).toBeTruthy();
+    expect(sections).toBeVisible();
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
   });
 });

@@ -157,7 +157,7 @@ transaction back and leaves the previous store intact. The same transaction also
 build's store origin marker, because it rewrites the supported previous store into the current
 layout. Start or restart the services after a successful switch.
 
-Web settings, business forms and `系统设置` → `高级配置` → `导入配置` share the same direct
+Web settings, business forms and `系统设置` → `配置工具` → `导入配置` share the same direct
 publication services. The import entry accepts either the complete configuration JSON or a
 previously exported redacted configuration package, checks it against the current Active baseline
 and publishes only after the operator selects `核对并应用`. Package import requires both
@@ -195,10 +195,10 @@ restart-only values; another snapshot's values cannot be labelled consumed.
 ## System Settings Web
 
 Open `系统设置` (`/configuration`) from the sidebar or a business page's setup/recovery
-link. The page starts with a compact configuration summary and the three system runtime settings.
-Published values and actual process adoption remain separate; instance details can be expanded.
-Command readiness, rule-family counts, exact snapshot identities and consumption evidence are in
-the secondary `诊断` section rather than repeated in the main settings view.
+link. Choose `运行设置`, `常规设置`, `API 令牌` or `配置工具` at the top of the page.
+First setup and recovery appear when needed. Runtime settings distinguish published values from
+actual process adoption and let you expand instance details. Open `配置工具` → `诊断` for command
+readiness, rule-family counts, the current snapshot and runtime adoption evidence.
 
 Settings reads the latest published values on entry, tab return, reconnect and after application.
 It updates untouched fields and keeps edits in progress. A field changed by another operator is
@@ -206,13 +206,13 @@ marked for review.
 
 The two save paths use the same direct publication rule:
 
-- `系统运行设置` → `应用更改` publishes only the changed runtime fields through the focused checked
+- `运行设置` → `保存设置` publishes only the changed runtime fields through the focused checked
   command. No draft or separate activation clicks are required.
-- `高级配置` groups the wider allowlisted fields into `语言与时区`, `路径`, `日志`, `重试`
+- `常规设置` groups the wider allowlisted fields into `语言与时区`, `路径`, `日志`, `重试`
   and `通知运行`. `应用更改` publishes only that group's changed fields; other groups'
   unsaved input stays in the form. `放弃本组修改` affects only that group. Booleans use explicit
-  choices, numbers are validated without truncation or blank-to-zero conversion, and each group
-  shows whether the new value takes effect immediately or requires a restart.
+  choices, numbers are validated without truncation or blank-to-zero conversion, and fields that
+  require a restart are marked.
 
 The backend binds the exact Active baseline and runs applicable checks in place. A failed check or
 stale baseline keeps the previous Active and the correctable input; there is no saved draft to
@@ -340,7 +340,7 @@ from the observed immutable Active. Other settings and definitions are preserved
 the whole candidate is validated, and the runtime binding is prepared before atomic activation. An
 unchanged save publishes nothing. Out-of-scope keys, booleans, fractional integers, non-finite and
 out-of-range values are rejected before a candidate exists. The wider field set uses the same direct
-publication through `高级配置`; there is no separate Draft validate/activate journey.
+publication through `常规设置`; there is no separate Draft validate/activate journey.
 
 Publication and adoption are reported as separate outcomes. Each live resident instance publishes
 its own adopted values, the publication identity it adopted, freshness and any explicit

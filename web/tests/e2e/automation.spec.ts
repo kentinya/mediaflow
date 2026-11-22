@@ -175,11 +175,12 @@ test("system runtime settings render three fields and an honest adoption readbac
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   // The published target is labelled as such; it is never presented as adopted.
+  await panel.getByText("诊断标识", { exact: true }).click();
   await expect(panel.getByText("已发布目标")).toBeVisible();
-  await expect(panel.getByText(/尚未整体采用/).first()).toBeVisible();
   await expect(
-    panel.getByText(/全部相关常驻进程都已采用当前发布值/),
-  ).toHaveCount(0);
+    panel.getByText(/尚未确认全部服务已使用当前设置/).first(),
+  ).toBeVisible();
+  await expect(panel.getByText(/运行设置已生效/)).toHaveCount(0);
   // The three shared runtime fields are the only editable values in this form.
   for (const label of [
     /整理任务队列上限|并行任务上限/,

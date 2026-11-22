@@ -37,7 +37,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { Button } from "../../shared/ui/Button";
-import { AutomationTime } from "./AutomationInventory";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
@@ -1216,25 +1215,11 @@ export function AutomationSettingsPanel() {
                   )}
                   <dl className="mf-detail-grid mf-automation-settings-target">
                     <div>
-                      <dt>已发布目标</dt>
-                      <dd>版本 {target.revisionVersion ?? "—"} · Active</dd>
-                    </div>
-                    <div>
-                      <dt>读取时间</dt>
-                      <dd>
-                        {model.asOf === null ? (
-                          "—"
-                        ) : (
-                          <AutomationTime value={model.asOf} />
-                        )}
-                      </dd>
-                    </div>
-                    <div>
                       <dt>部署整体采用</dt>
                       <dd>
                         {model.adoption.allAdopted
-                          ? "全部相关常驻进程都已采用当前发布值"
-                          : "尚未整体采用;下方逐进程显示真实状态"}
+                          ? "运行设置已生效"
+                          : "尚未确认全部服务已使用当前设置，请查看下方详情。"}
                       </dd>
                     </div>
                     {lastPublished !== null && (
@@ -1253,6 +1238,8 @@ export function AutomationSettingsPanel() {
                     <dl>
                       <dt>精确读取时间</dt>
                       <dd>{model.asOf ?? "—"}</dd>
+                      <dt>已发布目标</dt>
+                      <dd>版本 {target.revisionVersion ?? "—"}</dd>
                       <dt>配置复检上限</dt>
                       <dd>{model.configRecheckSeconds} 秒</dd>
                       <dt>Active 修订</dt>
@@ -1280,9 +1267,6 @@ export function AutomationSettingsPanel() {
                 aria-label="采用情况"
               >
                 <h3>采用情况</h3>
-                <p className="mf-dashboard-meta">
-                  正常状态只需整体结论；每个服务的实例证据与下一步可就地展开。
-                </p>
                 <div className="mf-automation-consumers">
                   {model.consumers.map((consumer) => (
                     <ConsumerAdoption

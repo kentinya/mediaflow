@@ -164,6 +164,14 @@ const baseFetch = () =>
     return response(activeStatus());
   });
 
+async function expectActiveSequence(sequence: number) {
+  await userEvent.click(screen.getByRole("button", { name: "配置工具" }));
+  await userEvent.click(screen.getByText("诊断", { selector: "summary" }));
+  expect(
+    await screen.findByText(`配置序号 ${sequence}`, { exact: true }),
+  ).toBeVisible();
+}
+
 afterEach(() => {
   cleanup();
   authStore.clearToken();
@@ -207,7 +215,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=general");
 
     await userEvent.click(await screen.findByRole("button", { name: "日志" }));
     await userEvent.selectOptions(
@@ -313,7 +321,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=general");
     await userEvent.click(await screen.findByRole("button", { name: "日志" }));
     await userEvent.selectOptions(
       screen.getByLabelText("启用操作日志"),
@@ -326,7 +334,7 @@ describe("V2 configuration direct publication", () => {
       screen.getByText(/另一会话已发布新的生效配置（序号 5）/),
     ).toBeVisible();
     expect(screen.getByLabelText("启用操作日志")).toHaveValue("true");
-    expect(screen.getByText("配置已生效")).toBeVisible();
+    await expectActiveSequence(4);
   });
 
   it("keeps the old Active and marks a backend validation refusal", async () => {
@@ -365,7 +373,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=general");
     await userEvent.click(
       await screen.findByRole("button", { name: "语言与时区" }),
     );
@@ -378,7 +386,7 @@ describe("V2 configuration direct publication", () => {
       screen.getByText("请填写可识别的 IANA 时区，例如 Asia/Shanghai。"),
     ).toBeVisible();
     expect(timezone).toHaveValue("Not/AZone");
-    expect(screen.getByText("配置已生效")).toBeVisible();
+    await expectActiveSequence(4);
   });
 
   it("automatically verifies the exact lost request without a second publish", async () => {
@@ -412,7 +420,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=general");
     await userEvent.click(await screen.findByRole("button", { name: "日志" }));
     await userEvent.selectOptions(
       screen.getByLabelText("启用操作日志"),
@@ -492,20 +500,20 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=general");
     await userEvent.click(await screen.findByRole("button", { name: "日志" }));
     expect(screen.getByLabelText("日志保留天数")).toHaveValue("30");
 
     remotePublished = true;
     window.dispatchEvent(new Event("online"));
 
-    expect(await screen.findByText("序号 5", { exact: true })).toBeVisible();
     await waitFor(() =>
       expect(screen.getByLabelText("日志保留天数")).toHaveValue("52"),
     );
     await userEvent.click(screen.getByRole("button", { name: "语言与时区" }));
     expect(screen.getByLabelText("系统语言")).toHaveValue("en-US");
     expect(screen.queryByText(/其他会话已修改此字段/)).toBeNull();
+    await expectActiveSequence(5);
   });
 
   it("keeps typed input and edit baseline when another session changes the same field", async () => {
@@ -566,7 +574,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=general");
     await userEvent.click(await screen.findByRole("button", { name: "日志" }));
     const input = screen.getByLabelText("日志保留天数");
     fireEvent.change(input, { target: { value: "51" } });
@@ -577,7 +585,6 @@ describe("V2 configuration direct publication", () => {
     remotePublished = true;
     window.dispatchEvent(new Event("online"));
 
-    expect(await screen.findByText("序号 5", { exact: true })).toBeVisible();
     await waitFor(() =>
       expect(screen.getByLabelText("日志保留天数")).toHaveValue("51"),
     );
@@ -589,6 +596,7 @@ describe("V2 configuration direct publication", () => {
     expect(screen.getByText(/当前生效值为 52/)).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "语言与时区" }));
     expect(screen.getByLabelText("系统语言")).toHaveValue("en-US");
+    await expectActiveSequence(5);
   });
 
   it("shows a corrupt Active without offering a resumable draft", async () => {
@@ -639,7 +647,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tools");
     expect(
       await screen.findByRole("button", { name: "配置 JSON" }),
     ).toBeVisible();
@@ -690,7 +698,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tools");
     const importPanel = await screen.findByRole("region", {
       name: "导入配置",
     });
@@ -767,7 +775,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tools");
     const importPanel = await screen.findByRole("region", {
       name: "导入配置",
     });
@@ -916,7 +924,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tools");
     const importPanel = await screen.findByRole("region", {
       name: "导入配置",
     });
@@ -1024,7 +1032,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tools");
     const importPanel = await screen.findByRole("region", {
       name: "导入配置",
     });
@@ -1107,7 +1115,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tokens");
 
     const panel = await screen.findByRole("region", { name: "API 令牌" });
     await userEvent.type(within(panel).getByLabelText("令牌名称"), "monitor");
@@ -1199,7 +1207,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tokens");
 
     const panel = await screen.findByRole("region", { name: "API 令牌" });
     await userEvent.type(
@@ -1283,7 +1291,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tokens");
 
     const panel = await screen.findByRole("region", { name: "API 令牌" });
     await userEvent.type(
@@ -1354,7 +1362,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tokens");
 
     const panel = await screen.findByRole("region", { name: "API 令牌" });
     expect(await screen.findByText("revoke-timeout-monitor")).toBeVisible();
@@ -1395,7 +1403,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tokens");
 
     const panel = await screen.findByRole("region", { name: "API 令牌" });
     listRejected = true;
@@ -1427,7 +1435,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tokens");
 
     const panel = await screen.findByRole("region", { name: "API 令牌" });
     await userEvent.type(
@@ -1471,7 +1479,7 @@ describe("V2 configuration direct publication", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("admin-token");
-    renderApp("/configuration");
+    renderApp("/configuration?panel=tokens");
 
     const panel = await screen.findByRole("region", { name: "API 令牌" });
     await userEvent.click(

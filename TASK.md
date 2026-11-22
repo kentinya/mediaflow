@@ -4,7 +4,7 @@
 Task ID: PATCH-20261122-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 9027e0a0384bae8c28971d24e5dd666604e5a6f9
 Difficulty: Medium
 Test Level: T3

@@ -17,10 +17,10 @@ import { useAuthToken } from "../../shared/api/auth-context";
 import { notificationListQueryOptions } from "./notification-query";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
+import { NotificationWorkspaceHeader } from "./NotificationWorkspaceHeader";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
-  activeConfigurationSummary,
   notificationEventLabel,
   notificationReasonLabel,
   secretReadinessDetail,
@@ -76,88 +76,36 @@ export function NotificationListPage() {
             id="notification-definitions-background"
             tabIndex={-1}
           >
-            <header className="mf-notifications-head">
-              <div>
-                <h2>通知</h2>
-                <p>
-                  管理签名
-                  Webhook、定义事件与投递记录。密钥值不会显示；这里只保存部署提供的密钥引用。
-                </p>
-              </div>
-              <RefreshControl
-                onRefresh={refresh}
-                refreshing={isFetching}
-                label="刷新"
-                refreshingLabel="刷新中…"
-              />
-            </header>
-
-            <div
-              className="mf-notification-summary"
-              role="group"
-              aria-label="配置状态"
+            <NotificationWorkspaceHeader
+              section="webhooks"
+              refresh={refresh}
+              refreshing={isFetching}
             >
-              <div className="mf-notification-summary-item">
-                <span>已生效配置</span>
-                <strong>
-                  {activeConfigurationSummary(page.activeConfiguration)}
-                </strong>
-              </div>
-              <div className="mf-notification-summary-item">
-                <span>发布方式</span>
-                <strong>直接发布</strong>
-              </div>
-              <div className="mf-notification-summary-item">
-                <span>定义数量</span>
-                <strong>{page.total}</strong>
-                <span className="mf-notification-technical">
-                  {page.truncated ? "列表已截断" : "完整列表"}
-                </span>
-              </div>
-            </div>
-
-            <div className="mf-notification-toolbar">
-              <div className="mf-notification-toolbar-primary">
-                {create.available ? (
-                  <Link
-                    className="mf-button mf-button-primary"
-                    to="/operations/notifications/webhooks/new"
-                  >
-                    新建 Webhook
-                  </Link>
-                ) : (
-                  <button
-                    type="button"
-                    className="mf-button mf-button-secondary"
-                    disabled
-                    title={create.reason ?? "当前不能新建 Webhook"}
-                  >
-                    新建 Webhook（不可用）
-                  </button>
-                )}
+              {create.available && (
                 <Link
-                  className="mf-button mf-button-secondary"
-                  to="/operations/notifications/deliveries"
+                  className="mf-button mf-button-primary"
+                  to="/operations/notifications/webhooks/new"
                 >
-                  查看投递记录
+                  新建 Webhook
                 </Link>
-              </div>
-              {!create.available && create.reason !== null && (
-                <p className="mf-notification-inline-reason">
-                  {notificationReasonLabel(
-                    create.reason,
-                    "当前不能新建 Webhook；请先处理权限或完成配置初始化。",
-                  )}
-                </p>
               )}
-            </div>
+            </NotificationWorkspaceHeader>
+            {!create.available && create.reason !== null && (
+              <p className="mf-notification-inline-reason">
+                {notificationReasonLabel(
+                  create.reason,
+                  "当前不能新建 Webhook；请先处理权限或完成配置初始化。",
+                )}
+              </p>
+            )}
 
-            <section className="mf-notification-list-section">
-              <h3>Webhook 定义</h3>
+            <section
+              className="mf-notification-list-section"
+              aria-label="Webhook"
+            >
               {page.items.length === 0 ? (
                 <div className="mf-notification-empty">
                   <p>还没有 Webhook 定义。</p>
-                  <p>应用后会直接发布为新的生效配置。</p>
                 </div>
               ) : (
                 <ul className="mf-notification-cards">
@@ -175,9 +123,6 @@ export function NotificationListPage() {
                             <strong className="mf-notification-webhook-name">
                               {document.id}
                             </strong>
-                            <span className="mf-notification-badge mf-notification-badge-active">
-                              已生效
-                            </span>
                             <span className="mf-notification-badge">
                               {document.enabled ? "已启用" : "已停用"}
                             </span>
@@ -243,8 +188,6 @@ export function NotificationListPage() {
                         <details className="mf-notification-diagnostics">
                           <summary>诊断信息</summary>
                           <dl>
-                            <dt>定义状态</dt>
-                            <dd>当前生效配置</dd>
                             <dt>事件标识</dt>
                             <dd>{document.events.join(", ")}</dd>
                             <dt>密钥引用</dt>
@@ -257,8 +200,6 @@ export function NotificationListPage() {
                                 ? "无"
                                 : `${item.activeConfiguration.revisionId} · 版本 ${item.activeConfiguration.version}`}
                             </dd>
-                            <dt>发布方式</dt>
-                            <dd>校验并直接发布为生效配置</dd>
                             <dt>投递边界</dt>
                             <dd>
                               超时 {document.timeoutSeconds} 秒 · 最大尝试{" "}
@@ -274,6 +215,11 @@ export function NotificationListPage() {
                 </ul>
               )}
             </section>
+            {page.truncated && (
+              <p className="mf-dashboard-meta">
+                仅显示前 {page.items.length} 条 Webhook。
+              </p>
+            )}
           </div>
         );
       }}

@@ -7,7 +7,12 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useBlocker, useSearch } from "@tanstack/react-router";
+import {
+  Link,
+  useBlocker,
+  useNavigate,
+  useSearch,
+} from "@tanstack/react-router";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import { AutomationSettingsPanel } from "../operations/AutomationSettingsPanel";
 import { ApiTokensPanel } from "./ApiTokensPanel";
@@ -47,11 +52,8 @@ import {
 } from "../../shared/api/configuration-api";
 import {
   baselineValues,
-  booleanStateLabel,
-  boundaryLabel,
   collectGroupEdits,
   fieldChanged,
-  groupBoundaryLabel,
   groupChanged,
   readSettingGroups,
   type SettingField,
@@ -474,7 +476,6 @@ interface StatusModel {
   readonly canManage: boolean;
   readonly canActivate: boolean;
   readonly statusLabel: string;
-  readonly statusTone: "success" | "warning" | "error" | "info";
 }
 
 function readStatusModel(data: ConfigurationStatus | undefined): StatusModel {
@@ -498,11 +499,6 @@ function readStatusModel(data: ConfigurationStatus | undefined): StatusModel {
         : activeHealthy
           ? "配置已生效"
           : "等待配置";
-  const statusTone = activeUnavailable
-    ? "error"
-    : setupRequired
-      ? "warning"
-      : "success";
   return {
     activeId,
     activeRecord,
@@ -515,7 +511,6 @@ function readStatusModel(data: ConfigurationStatus | undefined): StatusModel {
     canManage: data?.canManageConfiguration !== false,
     canActivate: data?.canActivateConfiguration !== false,
     statusLabel,
-    statusTone,
   };
 }
 
@@ -854,10 +849,18 @@ function RuleReadinessPanel({
   );
 }
 
+const SETTINGS_SECTIONS = [
+  { id: "runtime", label: "运行设置" },
+  { id: "general", label: "常规设置" },
+  { id: "tokens", label: "API 令牌" },
+  { id: "tools", label: "配置工具" },
+] as const;
+
 export function ConfigurationPage() {
   const token = useAuthToken();
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const returnContext = readSettingsReturnContext(search);
+  const navigate = useNavigate();
   const client = useQueryClient();
   const query = useQuery({
     queryKey: QUERY_KEY,
@@ -1107,6 +1110,9 @@ export function ConfigurationPage() {
   const data = query.data;
   const model = useMemo(() => readStatusModel(data), [data]);
   const showManage = model.canManage;
+  const section =
+    SETTINGS_SECTIONS.find(({ id }) => id === search["panel"])?.id ??
+    (model.activeHealthy ? "runtime" : "tools");
   // A Save keeps sibling/group input editable: the request snapshot is already
   // fixed, and the response must merge onto whatever the operator typed after
   // it started. Validation/activation/export stay locked for the short command.
@@ -1324,9 +1330,6 @@ export function ConfigurationPage() {
       : (groups[0]?.id ?? null);
   const startGroup =
     groups.find((group) => group.id === effectiveGroupId) ?? null;
-  const groupHasMixedBoundaries =
-    startGroup !== null &&
-    new Set(startGroup.fields.map((field) => field.boundary)).size > 1;
   const writeFailure = (error: unknown, action: MutationAction) => {
     const failure = configurationMutationFailure(error, action);
     setNotice({
@@ -2120,38 +2123,49 @@ export function ConfigurationPage() {
             <header className="mf-settings-page-header">
               <div>
                 <h1>系统设置</h1>
-                <p>
-                  查看当前生效配置、修改运行参数，并显式验证和激活高级配置。
-                </p>
               </div>
+              {returnContext !== null && (
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to={settingsReturnDestination(returnContext).to}
+                  search={settingsReturnDestination(returnContext).search}
+                >
+                  {returnContext.target === "rules"
+                    ? returnContext.section !== undefined
+                      ? `返回整理规则 · ${RULE_FAMILY_LABELS[returnContext.section]}`
+                      : "返回整理规则"
+                    : "返回上一页"}
+                </Link>
+              )}
             </header>
-            {returnContext !== null && (
-              <StatusBanner variant="info" title="来自其他页面">
-                <p>
-                  本次访问带有受支持的返回地址；设置页不会自动跳转，只有你明确点击下面的返回操作时才会回到来源位置。
-                </p>
-                <div className="mf-actions">
-                  <Link
-                    to={settingsReturnDestination(returnContext).to}
-                    search={settingsReturnDestination(returnContext).search}
-                  >
-                    {returnContext.target === "rules"
-                      ? returnContext.section !== undefined
-                        ? `返回整理规则 · ${
-                            RULE_FAMILY_LABELS[returnContext.section]
-                          }`
-                        : "返回整理规则"
-                      : "返回上一页"}
-                  </Link>
-                </div>
-              </StatusBanner>
-            )}
+            <nav
+              className="mf-run-tabs mf-view-tabs mf-settings-sections"
+              aria-label="设置分区"
+            >
+              {SETTINGS_SECTIONS.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  aria-current={section === id ? "page" : undefined}
+                  aria-controls={`settings-section-${id}`}
+                  onClick={() => {
+                    if (section === id) return;
+                    void navigate({
+                      to: "/configuration",
+                      search: (previous) => ({ ...previous, panel: id }),
+                      replace: true,
+                      // Sections stay mounted so switching preserves form input.
+                      ignoreBlocker: true,
+                    });
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
             {awaitingVerification && (
               <StatusBanner variant="error" title="操作结果待核实">
-                <p>
-                  正在用同一请求身份只读核实本次应用结果；核实期间不会再次发布。
-                  在结果可证明前，写入操作保持阻止。
-                </p>
+                <p>正在确认上次更改是否已保存。确认后才能再次保存。</p>
                 <div className="mf-actions">
                   <Button
                     variant="secondary"
@@ -2202,7 +2216,7 @@ export function ConfigurationPage() {
                           ? ""
                           : `（序号 ${reconciliation.currentVersion}）`
                       }`}
-                  。表单与摘要均按这次只读读回更新。
+                  。表单已按核实结果更新。
                 </p>
                 {reconciliation.nextAction !== null && (
                   <p>{reconciliation.nextAction}</p>
@@ -2214,60 +2228,40 @@ export function ConfigurationPage() {
                 <p>{readNotice}</p>
               </StatusBanner>
             )}
-            <section
-              className={`mf-settings-summary mf-settings-summary-${model.statusTone}`}
-              aria-label="配置状态摘要"
-            >
-              <div className="mf-settings-summary-item">
-                <span>配置状态</span>
-                <strong>{model.statusLabel}</strong>
-              </div>
-              <div className="mf-settings-summary-item">
-                <span>生效配置</span>
-                <strong>
-                  {model.activeHealthy
-                    ? `序号 ${model.activeVersion ?? "未知"}`
-                    : model.activeUnavailable
-                      ? "不可用"
-                      : "无"}
-                </strong>
-              </div>
-              <div className="mf-settings-summary-item">
-                <span>未发布内容</span>
-                <strong>无</strong>
-              </div>
-              <div className="mf-settings-summary-item">
-                <span>上次读取</span>
-                <strong>
-                  {query.dataUpdatedAt > 0
-                    ? new Date(query.dataUpdatedAt).toLocaleTimeString(
-                        "zh-CN",
-                        {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          second: "2-digit",
-                        },
-                      )
-                    : "尚未读取"}
-                </strong>
-              </div>
-              {model.setupRequired && showManage && (
-                <div className="mf-settings-summary-action">
-                  <Button
-                    type="button"
-                    disabled={busy !== null || awaitingVerification}
-                    onClick={() => void initializeEmpty()}
-                  >
-                    {busy?.kind === "create" ? "初始化中…" : "初始化为空配置"}
-                  </Button>
-                </div>
-              )}
-            </section>
+            {(model.setupRequired || model.emptyActive) && (
+              <section aria-label="配置状态摘要">
+                <StatusBanner variant="info" title={model.statusLabel}>
+                  {model.setupRequired && (
+                    <>
+                      <p>
+                        {showManage
+                          ? "先初始化配置，或导入已有配置。"
+                          : "请联系管理员初始化配置。"}
+                      </p>
+                      {showManage && (
+                        <div className="mf-actions">
+                          <Button
+                            type="button"
+                            disabled={busy !== null || awaitingVerification}
+                            onClick={() => void initializeEmpty()}
+                          >
+                            {busy?.kind === "create"
+                              ? "初始化中…"
+                              : "初始化为空配置"}
+                          </Button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </StatusBanner>
+              </section>
+            )}
             {model.activeUnavailable && (
               <StatusBanner variant="error" title="生效配置需要恢复">
                 <p>
-                  当前生效配置不可用；系统不会用旧缓存、旧修订或部署配置代替它。
-                  请通过权限校验后明确发布一份完整替换内容恢复。
+                  {showManage
+                    ? "请粘贴一份完整配置来恢复。"
+                    : "请联系管理员恢复配置。"}
                 </p>
                 {showManage && (
                   <div className="mf-settings-replacement">
@@ -2306,562 +2300,485 @@ export function ConfigurationPage() {
                 )}
               </StatusBanner>
             )}
-            <AutomationSettingsPanel />
-            <ApiTokensPanel />
-            <section
-              className="mf-settings-advanced"
-              aria-labelledby="settings-advanced-title"
-            >
-              <header className="mf-settings-section-head">
-                <div>
-                  <h2 id="settings-advanced-title">高级配置</h2>
-                  <p>
-                    编辑允许的设置字段，点击「应用更改」后由后端检查并原子发布为新的生效快照。
-                  </p>
-                </div>
-              </header>
-              {selectedView !== null && (
-                <div className="mf-settings-toolbar">
-                  <div className="mf-settings-version">
-                    <span className="mf-settings-badge mf-settings-badge-active">
-                      生效配置
-                    </span>
-                    <span>配置序号 {selectedSequence ?? "未知"}</span>
-                    <span className="mf-settings-boundary">
-                      此快照已生效；更改会在应用后发布为新快照
-                    </span>
-                  </div>
-                  {!showManage && (
-                    <div className="mf-settings-toolbar-actions">
-                      <span className="mf-settings-boundary">
-                        当前账号只能查看生效配置；应用需要配置管理员权限。
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
+            <div id="settings-section-runtime" hidden={section !== "runtime"}>
+              <AutomationSettingsPanel />
+            </div>
+            <div id="settings-section-tokens" hidden={section !== "tokens"}>
+              <ApiTokensPanel />
+            </div>
+            <div id="settings-section-general" hidden={section !== "general"}>
               {selectedView === null ? (
-                <section className="mf-panel mf-settings-empty">
-                  <h2>
-                    {model.activeUnavailable
-                      ? "等待恢复生效配置"
-                      : model.setupRequired
-                        ? "先初始化配置"
-                        : "尚未读取配置"}
-                  </h2>
-                  <p>
-                    {model.activeUnavailable
-                      ? "生效配置损坏时，系统不会用旧修订替代它；请明确发布完整替换内容完成恢复。"
-                      : model.setupRequired
-                        ? "初始化为空配置后，运行时即可采用后续业务对象的直接保存。"
-                        : "读取只返回当前权威状态；应用更改会检查并原子发布。"}
-                  </p>
-                </section>
+                <StatusBanner variant="info" title="配置不可编辑">
+                  <p>请先完成上方的配置初始化或恢复。</p>
+                </StatusBanner>
               ) : (
-                <div className="mf-settings-advanced-grid">
-                  <section
-                    className="mf-panel mf-settings-groups"
-                    aria-label="高级设置字段"
-                  >
-                    {selectedView.settingsState === "error" ? (
-                      <StatusBanner variant="error" title="系统设置读取失败">
-                        <p>{selectedView.readError ?? SETTINGS_READ_FAILURE}</p>
-                      </StatusBanner>
-                    ) : selectedView.settingsState === "loading" ? (
-                      <p className="mf-settings-loading" role="status">
-                        正在读取允许的设置字段…
-                      </p>
-                    ) : groups.length === 0 ? (
-                      <p className="mf-settings-loading" role="status">
-                        后端没有提供可编辑的设置字段；这里不会生成默认值。
-                      </p>
-                    ) : (
-                      <>
-                        {selectedView.detailState === "error" && (
-                          <StatusBanner variant="warning" title="修订状态未知">
-                            <p>
-                              配置 JSON
-                              读取失败，因此当前生效内容无法确认；请刷新后再应用更改。
-                            </p>
-                          </StatusBanner>
-                        )}
-                        <div
-                          className="mf-settings-group-tabs"
-                          role="group"
-                          aria-label="设置分组"
-                        >
-                          {groups.map((group) => (
-                            <button
-                              key={group.id}
-                              type="button"
-                              className="mf-settings-group-tab"
-                              aria-pressed={group.id === effectiveGroupId}
-                              onClick={() => setActiveGroup(group.id)}
-                            >
-                              {group.title}
-                              {groupChanged(group, values, baseline) && (
-                                <span className="mf-settings-dirty-dot" />
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                        {startGroup !== null && (
-                          <div
-                            className="mf-settings-group"
-                            role="group"
-                            aria-label={`${startGroup.title}设置`}
+                <section
+                  className="mf-panel mf-settings-groups"
+                  aria-label="高级设置字段"
+                >
+                  {selectedView.settingsState === "error" ? (
+                    <StatusBanner variant="error" title="系统设置读取失败">
+                      <p>{selectedView.readError ?? SETTINGS_READ_FAILURE}</p>
+                    </StatusBanner>
+                  ) : selectedView.settingsState === "loading" ? (
+                    <p className="mf-settings-loading" role="status">
+                      正在读取允许的设置字段…
+                    </p>
+                  ) : groups.length === 0 ? (
+                    <p className="mf-settings-loading" role="status">
+                      后端没有提供可编辑的设置字段；这里不会生成默认值。
+                    </p>
+                  ) : (
+                    <>
+                      {selectedView.detailState === "error" && (
+                        <StatusBanner variant="warning" title="修订状态未知">
+                          <p>
+                            配置 JSON
+                            读取失败，因此当前生效内容无法确认；请刷新后再应用更改。
+                          </p>
+                        </StatusBanner>
+                      )}
+                      <div
+                        className="mf-settings-group-tabs"
+                        role="group"
+                        aria-label="设置分组"
+                      >
+                        {groups.map((group) => (
+                          <button
+                            key={group.id}
+                            type="button"
+                            className="mf-settings-group-tab"
+                            aria-pressed={group.id === effectiveGroupId}
+                            onClick={() => setActiveGroup(group.id)}
                           >
-                            <header className="mf-settings-group-head">
-                              <div>
-                                <h3>{startGroup.title}</h3>
-                                <p className="mf-dashboard-meta">
-                                  {startGroup.description}
-                                </p>
-                              </div>
-                              <span className="mf-settings-boundary">
-                                {groupBoundaryLabel(startGroup)}
-                              </span>
-                            </header>
-                            <div className="mf-settings-field-grid">
-                              {startGroup.fields.map((field) => {
-                                const fieldError =
-                                  fieldErrors[startGroup.id]?.[field.path];
-                                const inputId = `settings-field-${field.path.replaceAll(
-                                  ".",
-                                  "-",
-                                )}`;
-                                const value = values[field.path] ?? "";
-                                const changed = fieldChanged(
-                                  field,
-                                  value,
-                                  baseline,
-                                );
-                                const editBaseline = form?.initial[field.path];
-                                const remoteChanged =
-                                  form !== undefined &&
-                                  editBaseline !== undefined &&
-                                  editBaseline !== (baseline[field.path] ?? "");
-                                const fieldBoundary = groupHasMixedBoundaries
-                                  ? boundaryLabel(field.boundary)
-                                  : null;
-                                const rangeHelp =
-                                  field.minimum !== null &&
-                                  field.maximum !== null
-                                    ? `允许范围 ${field.minimum}–${field.maximum}`
-                                    : field.positive
-                                      ? "必须是有限正数"
-                                      : null;
-                                return (
-                                  <div
-                                    className={`mf-settings-field${
-                                      changed
-                                        ? " mf-settings-field-changed"
-                                        : ""
-                                    }${
-                                      remoteChanged
-                                        ? " mf-settings-field-remote"
-                                        : ""
-                                    }`}
-                                    key={field.path}
-                                  >
-                                    <label htmlFor={inputId}>
-                                      <span>{field.label}</span>
-                                      {field.required && (
-                                        <span className="mf-settings-required">
-                                          必填
-                                        </span>
-                                      )}
-                                    </label>
-                                    {remoteChanged && (
-                                      <p
-                                        className="mf-settings-remote-change"
-                                        role="status"
-                                      >
-                                        其他会话已修改此字段；编辑基线仍为{" "}
-                                        {editBaseline === ""
-                                          ? "未配置"
-                                          : editBaseline}
-                                        ，当前生效值为{" "}
-                                        {(baseline[field.path] ?? "") === ""
-                                          ? "未配置"
-                                          : baseline[field.path]}
-                                        {changed ? "，你的输入已保留。" : "。"}
-                                      </p>
-                                    )}
-                                    <div className="mf-settings-control">
-                                      {field.valueType === "boolean" ? (
-                                        <select
-                                          id={inputId}
-                                          value={value}
-                                          disabled={!showManage || inputsLocked}
-                                          onChange={(event) => {
-                                            updateFieldInput(
-                                              field,
-                                              event.target.value,
-                                            );
-                                            setFieldErrors((previous) => {
-                                              const groupErrors = {
-                                                ...(previous[startGroup.id] ??
-                                                  {}),
-                                              };
-                                              delete groupErrors[field.path];
-                                              return {
-                                                ...previous,
-                                                [startGroup.id]: groupErrors,
-                                              };
-                                            });
-                                          }}
-                                        >
-                                          <option value="true">开启</option>
-                                          <option value="false">关闭</option>
-                                          {value === "unset" && (
-                                            <option value="unset">
-                                              未配置
-                                            </option>
-                                          )}
-                                        </select>
-                                      ) : field.valueType === "enum" ? (
-                                        <select
-                                          id={inputId}
-                                          value={value}
-                                          disabled={!showManage || inputsLocked}
-                                          onChange={(event) => {
-                                            updateFieldInput(
-                                              field,
-                                              event.target.value,
-                                            );
-                                            setFieldErrors((previous) => {
-                                              const groupErrors = {
-                                                ...(previous[startGroup.id] ??
-                                                  {}),
-                                              };
-                                              delete groupErrors[field.path];
-                                              return {
-                                                ...previous,
-                                                [startGroup.id]: groupErrors,
-                                              };
-                                            });
-                                          }}
-                                        >
-                                          {field.options.map((option) => (
-                                            <option
-                                              key={option.value}
-                                              value={option.value}
-                                            >
-                                              {option.label}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      ) : (
-                                        <input
-                                          id={inputId}
-                                          type="text"
-                                          inputMode={
-                                            field.valueType === "integer" ||
-                                            field.valueType === "number"
-                                              ? "decimal"
-                                              : "text"
-                                          }
-                                          spellCheck={false}
-                                          autoComplete="off"
-                                          value={value}
-                                          placeholder={
-                                            field.rawValue === null ||
-                                            field.rawValue === undefined
-                                              ? "未配置（留空不提交）"
-                                              : undefined
-                                          }
-                                          disabled={!showManage || inputsLocked}
-                                          aria-invalid={
-                                            fieldError !== undefined
-                                              ? true
-                                              : undefined
-                                          }
-                                          onChange={(event) => {
-                                            updateFieldInput(
-                                              field,
-                                              event.target.value,
-                                            );
-                                            setFieldErrors((previous) => {
-                                              const groupErrors = {
-                                                ...(previous[startGroup.id] ??
-                                                  {}),
-                                              };
-                                              delete groupErrors[field.path];
-                                              return {
-                                                ...previous,
-                                                [startGroup.id]: groupErrors,
-                                              };
-                                            });
-                                          }}
-                                        />
-                                      )}
-                                      {field.valueType === "boolean" && (
-                                        <span className="mf-settings-state">
-                                          当前：{booleanStateLabel(value)}
-                                        </span>
-                                      )}
-                                      {field.unit !== null &&
-                                        field.valueType !== "boolean" && (
-                                          <span className="mf-settings-unit">
-                                            {field.unit}
-                                          </span>
-                                        )}
-                                    </div>
-                                    {(fieldBoundary !== null ||
-                                      rangeHelp !== null) && (
-                                      <p className="mf-settings-field-help">
-                                        {fieldBoundary !== null && (
-                                          <span>{fieldBoundary}</span>
-                                        )}
-                                        {fieldBoundary !== null &&
-                                          rangeHelp !== null &&
-                                          " · "}
-                                        {rangeHelp}
-                                      </p>
-                                    )}
-                                    {fieldError !== undefined && (
-                                      <p
-                                        className="mf-settings-field-error"
-                                        role="alert"
-                                      >
-                                        {fieldError}
-                                      </p>
-                                    )}
-                                  </div>
-                                );
-                              })}
+                            {group.title}
+                            {groupChanged(group, values, baseline) && (
+                              <span className="mf-settings-dirty-dot" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                      {startGroup !== null && (
+                        <div
+                          className="mf-settings-group"
+                          role="group"
+                          aria-label={`${startGroup.title}设置`}
+                        >
+                          <header className="mf-settings-group-head">
+                            <div>
+                              <h3>{startGroup.title}</h3>
                             </div>
-                            <div className="mf-settings-group-actions">
-                              {showManage && (
-                                <>
+                          </header>
+                          <div className="mf-settings-field-grid">
+                            {startGroup.fields.map((field) => {
+                              const fieldError =
+                                fieldErrors[startGroup.id]?.[field.path];
+                              const inputId = `settings-field-${field.path.replaceAll(
+                                ".",
+                                "-",
+                              )}`;
+                              const value = values[field.path] ?? "";
+                              const changed = fieldChanged(
+                                field,
+                                value,
+                                baseline,
+                              );
+                              const editBaseline = form?.initial[field.path];
+                              const remoteChanged =
+                                form !== undefined &&
+                                editBaseline !== undefined &&
+                                editBaseline !== (baseline[field.path] ?? "");
+                              const fieldBoundary =
+                                field.boundary === "restart_required"
+                                  ? "重启后生效"
+                                  : null;
+                              const rangeHelp =
+                                field.minimum !== null && field.maximum !== null
+                                  ? `允许范围 ${field.minimum}–${field.maximum}`
+                                  : field.positive
+                                    ? "必须是有限正数"
+                                    : null;
+                              return (
+                                <div
+                                  className={`mf-settings-field${
+                                    changed ? " mf-settings-field-changed" : ""
+                                  }${
+                                    remoteChanged
+                                      ? " mf-settings-field-remote"
+                                      : ""
+                                  }`}
+                                  key={field.path}
+                                >
+                                  <label htmlFor={inputId}>
+                                    <span>{field.label}</span>
+                                    {field.required && (
+                                      <span className="mf-settings-required">
+                                        必填
+                                      </span>
+                                    )}
+                                  </label>
+                                  {remoteChanged && (
+                                    <p
+                                      className="mf-settings-remote-change"
+                                      role="status"
+                                    >
+                                      其他会话已修改此字段；编辑基线仍为{" "}
+                                      {editBaseline === ""
+                                        ? "未配置"
+                                        : editBaseline}
+                                      ，当前生效值为{" "}
+                                      {(baseline[field.path] ?? "") === ""
+                                        ? "未配置"
+                                        : baseline[field.path]}
+                                      {changed ? "，你的输入已保留。" : "。"}
+                                    </p>
+                                  )}
+                                  <div className="mf-settings-control">
+                                    {field.valueType === "boolean" ? (
+                                      <select
+                                        id={inputId}
+                                        value={value}
+                                        disabled={!showManage || inputsLocked}
+                                        onChange={(event) => {
+                                          updateFieldInput(
+                                            field,
+                                            event.target.value,
+                                          );
+                                          setFieldErrors((previous) => {
+                                            const groupErrors = {
+                                              ...(previous[startGroup.id] ??
+                                                {}),
+                                            };
+                                            delete groupErrors[field.path];
+                                            return {
+                                              ...previous,
+                                              [startGroup.id]: groupErrors,
+                                            };
+                                          });
+                                        }}
+                                      >
+                                        <option value="true">开启</option>
+                                        <option value="false">关闭</option>
+                                        {value === "unset" && (
+                                          <option value="unset">未配置</option>
+                                        )}
+                                      </select>
+                                    ) : field.valueType === "enum" ? (
+                                      <select
+                                        id={inputId}
+                                        value={value}
+                                        disabled={!showManage || inputsLocked}
+                                        onChange={(event) => {
+                                          updateFieldInput(
+                                            field,
+                                            event.target.value,
+                                          );
+                                          setFieldErrors((previous) => {
+                                            const groupErrors = {
+                                              ...(previous[startGroup.id] ??
+                                                {}),
+                                            };
+                                            delete groupErrors[field.path];
+                                            return {
+                                              ...previous,
+                                              [startGroup.id]: groupErrors,
+                                            };
+                                          });
+                                        }}
+                                      >
+                                        {field.options.map((option) => (
+                                          <option
+                                            key={option.value}
+                                            value={option.value}
+                                          >
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <input
+                                        id={inputId}
+                                        type="text"
+                                        inputMode={
+                                          field.valueType === "integer" ||
+                                          field.valueType === "number"
+                                            ? "decimal"
+                                            : "text"
+                                        }
+                                        spellCheck={false}
+                                        autoComplete="off"
+                                        value={value}
+                                        placeholder={
+                                          field.rawValue === null ||
+                                          field.rawValue === undefined
+                                            ? "未配置（留空不提交）"
+                                            : undefined
+                                        }
+                                        disabled={!showManage || inputsLocked}
+                                        aria-invalid={
+                                          fieldError !== undefined
+                                            ? true
+                                            : undefined
+                                        }
+                                        onChange={(event) => {
+                                          updateFieldInput(
+                                            field,
+                                            event.target.value,
+                                          );
+                                          setFieldErrors((previous) => {
+                                            const groupErrors = {
+                                              ...(previous[startGroup.id] ??
+                                                {}),
+                                            };
+                                            delete groupErrors[field.path];
+                                            return {
+                                              ...previous,
+                                              [startGroup.id]: groupErrors,
+                                            };
+                                          });
+                                        }}
+                                      />
+                                    )}
+                                    {field.unit !== null &&
+                                      field.valueType !== "boolean" && (
+                                        <span className="mf-settings-unit">
+                                          {field.unit}
+                                        </span>
+                                      )}
+                                  </div>
+                                  {(fieldBoundary !== null ||
+                                    rangeHelp !== null) && (
+                                    <p className="mf-settings-field-help">
+                                      {fieldBoundary !== null && (
+                                        <span>{fieldBoundary}</span>
+                                      )}
+                                      {fieldBoundary !== null &&
+                                        rangeHelp !== null &&
+                                        " · "}
+                                      {rangeHelp}
+                                    </p>
+                                  )}
+                                  {fieldError !== undefined && (
+                                    <p
+                                      className="mf-settings-field-error"
+                                      role="alert"
+                                    >
+                                      {fieldError}
+                                    </p>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="mf-settings-group-actions">
+                            {showManage && (
+                              <>
+                                <Button
+                                  type="button"
+                                  disabled={
+                                    !canWrite ||
+                                    !groupChanged(startGroup, values, baseline)
+                                  }
+                                  onClick={() => void saveGroup(startGroup)}
+                                >
+                                  {busy?.kind === "save" &&
+                                  busy.groupId === startGroup.id
+                                    ? "保存中…"
+                                    : "应用更改"}
+                                </Button>
+                                {groupChanged(startGroup, values, baseline) && (
                                   <Button
                                     type="button"
-                                    disabled={
-                                      !canWrite ||
-                                      !groupChanged(
-                                        startGroup,
-                                        values,
-                                        baseline,
-                                      )
-                                    }
-                                    onClick={() => void saveGroup(startGroup)}
+                                    variant="secondary"
+                                    disabled={busy !== null}
+                                    onClick={() => {
+                                      if (selectionId === null) return;
+                                      const groupPaths = new Set(
+                                        startGroup.fields.map(
+                                          (field) => field.path,
+                                        ),
+                                      );
+                                      updateForms((previousForms) => {
+                                        const current =
+                                          previousForms[selectionId];
+                                        if (current === undefined) {
+                                          return previousForms;
+                                        }
+                                        const values = { ...current.values };
+                                        for (const path of groupPaths) {
+                                          const initial = current.initial[path];
+                                          if (initial === undefined) {
+                                            delete values[path];
+                                          } else {
+                                            values[path] = initial;
+                                          }
+                                        }
+                                        return {
+                                          ...previousForms,
+                                          [selectionId]: {
+                                            ...current,
+                                            values,
+                                          },
+                                        };
+                                      });
+                                      setFieldErrors((previous) => ({
+                                        ...previous,
+                                        [startGroup.id]: {},
+                                      }));
+                                    }}
                                   >
-                                    {busy?.kind === "save" &&
-                                    busy.groupId === startGroup.id
-                                      ? "保存中…"
-                                      : "应用更改"}
+                                    放弃本组修改
                                   </Button>
-                                  {groupChanged(
-                                    startGroup,
-                                    values,
-                                    baseline,
-                                  ) && (
-                                    <Button
-                                      type="button"
-                                      variant="secondary"
-                                      disabled={busy !== null}
-                                      onClick={() => {
-                                        if (selectionId === null) return;
-                                        const groupPaths = new Set(
-                                          startGroup.fields.map(
-                                            (field) => field.path,
-                                          ),
-                                        );
-                                        updateForms((previousForms) => {
-                                          const current =
-                                            previousForms[selectionId];
-                                          if (current === undefined) {
-                                            return previousForms;
-                                          }
-                                          const values = { ...current.values };
-                                          for (const path of groupPaths) {
-                                            const initial =
-                                              current.initial[path];
-                                            if (initial === undefined) {
-                                              delete values[path];
-                                            } else {
-                                              values[path] = initial;
-                                            }
-                                          }
-                                          return {
-                                            ...previousForms,
-                                            [selectionId]: {
-                                              ...current,
-                                              values,
-                                            },
-                                          };
-                                        });
-                                        setFieldErrors((previous) => ({
-                                          ...previous,
-                                          [startGroup.id]: {},
-                                        }));
-                                      }}
-                                    >
-                                      放弃本组修改
-                                    </Button>
-                                  )}
-                                </>
-                              )}
-                              <span className="mf-dashboard-meta">
-                                {groupChanged(startGroup, values, baseline)
-                                  ? "本组有未保存修改；保存只提交这些字段。"
-                                  : "本组与最新读取一致。"}
-                              </span>
-                            </div>
-                            {!showManage && (
-                              <p className="mf-settings-readonly">
-                                当前账号没有管理配置的权限，只能查看。
-                              </p>
+                                )}
+                              </>
                             )}
-                            <p className="mf-settings-group-note">
-                              点击「应用更改」会检查本组字段并原子发布新的生效快照；其他分组和未提交输入不会随本次保存提交。
-                            </p>
+                            <span className="mf-dashboard-meta">
+                              {groupChanged(startGroup, values, baseline)
+                                ? "本组有未保存修改；保存只提交这些字段。"
+                                : "本组与最新读取一致。"}
+                            </span>
                           </div>
-                        )}
-                      </>
-                    )}
-                  </section>
-                  <section
-                    className="mf-panel mf-settings-inspector"
-                    aria-label="配置内容"
-                  >
-                    <header className="mf-settings-inspector-head">
-                      <div>
-                        <h3>配置内容</h3>
-                        <p className="mf-dashboard-meta">
-                          只读查看当前所选修订；导出不会改变配置。
-                        </p>
-                      </div>
-                      <div className="mf-actions">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={busy !== null}
-                          onClick={() => setShowInspector((value) => !value)}
-                        >
-                          {showInspector ? "收起配置内容" : "配置 JSON"}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={busy !== null}
-                          onClick={() => void exportPackage()}
-                        >
-                          {busy?.kind === "export"
-                            ? "导出中…"
-                            : "导出脱敏配置包"}
-                        </Button>
-                      </div>
-                    </header>
-                    {!showInspector ? (
-                      <p className="mf-settings-loading" role="status">
-                        配置 JSON
-                        与脱敏包按需打开；未打开时不会额外读取完整文档。
-                      </p>
-                    ) : (
-                      <>
-                        <div
-                          className="mf-settings-inspector-tabs"
-                          role="group"
-                          aria-label="配置内容种类"
-                        >
-                          <button
-                            type="button"
-                            className="mf-settings-inspector-tab"
-                            aria-pressed={inspectorTab === "json"}
-                            onClick={() => setInspectorTab("json")}
-                          >
-                            配置 JSON
-                          </button>
-                          <button
-                            type="button"
-                            className="mf-settings-inspector-tab"
-                            aria-pressed={inspectorTab === "package"}
-                            onClick={() => setInspectorTab("package")}
-                          >
-                            脱敏配置包
-                          </button>
-                        </div>
-                        {inspectorTab === "json" ? (
-                          <>
-                            <p className="mf-settings-source">
-                              内容：完整配置文档 · 来源： 生效配置（配置序号{" "}
-                              {selectedSequence ?? "未知"}）
-                            </p>
-                            {selectedView.detailState === "loading" ? (
-                              <p className="mf-settings-loading" role="status">
-                                正在读取配置 JSON…
-                              </p>
-                            ) : selectedView.detailState === "error" ? (
-                              <p
-                                className="mf-settings-read-error"
-                                role="alert"
-                              >
-                                {DETAIL_READ_FAILURE}
-                              </p>
-                            ) : selectedView.detailState === "empty" ? (
-                              <p className="mf-settings-loading" role="status">
-                                此修订没有返回可显示的配置文档；这不是空配置，也没有旧内容可替代。
-                              </p>
-                            ) : (
-                              <textarea
-                                className="mf-settings-json"
-                                aria-label="配置 JSON"
-                                readOnly
-                                value={selectedView.json ?? ""}
-                                rows={16}
-                              />
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            <p className="mf-settings-source">
-                              内容：脱敏配置包
-                              {selectedView.packageKind !== null
-                                ? `（${selectedView.packageKind}）`
-                                : ""}{" "}
-                              · 来源： 生效配置（配置序号{" "}
-                              {selectedSequence ?? "未知"}）
-                            </p>
-                            {selectedView.packageState === "loading" ? (
-                              <p className="mf-settings-loading" role="status">
-                                正在生成脱敏配置包…
-                              </p>
-                            ) : selectedView.packageState === "error" ? (
-                              <p
-                                className="mf-settings-read-error"
-                                role="alert"
-                              >
-                                {selectedView.packageError ??
-                                  "配置包导出失败；没有使用旧内容替代。"}
-                              </p>
-                            ) : selectedView.packageState === "ready" &&
-                              selectedView.packageJson !== null ? (
-                              <textarea
-                                className="mf-settings-json"
-                                aria-label="脱敏配置包"
-                                readOnly
-                                value={selectedView.packageJson}
-                                rows={16}
-                              />
-                            ) : (
-                              <p className="mf-settings-loading" role="status">
-                                尚未导出配置包；导出只读取并脱敏，不会改变配置。
-                              </p>
-                            )}
-                          </>
-                        )}
-                        {selectedView.readError !== null &&
-                          selectedView.detailState !== "error" && (
-                            <p className="mf-settings-read-error" role="status">
-                              {selectedView.readError}
+                          {!showManage && (
+                            <p className="mf-settings-readonly">
+                              当前账号没有管理配置的权限，只能查看。
                             </p>
                           )}
-                      </>
-                    )}
-                  </section>
-                </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </section>
+              )}
+            </div>
+            <div
+              className="mf-settings-tools"
+              id="settings-section-tools"
+              hidden={section !== "tools"}
+            >
+              {selectedView !== null && (
+                <section
+                  className="mf-panel mf-settings-inspector"
+                  aria-label="配置内容"
+                >
+                  <header className="mf-settings-inspector-head">
+                    <div>
+                      <h3>配置内容</h3>
+                    </div>
+                    <div className="mf-actions">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={busy !== null}
+                        onClick={() => setShowInspector((value) => !value)}
+                      >
+                        {showInspector ? "收起配置内容" : "配置 JSON"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={busy !== null}
+                        onClick={() => void exportPackage()}
+                      >
+                        {busy?.kind === "export" ? "导出中…" : "导出脱敏配置包"}
+                      </Button>
+                    </div>
+                  </header>
+                  {showInspector && (
+                    <>
+                      <div
+                        className="mf-settings-inspector-tabs"
+                        role="group"
+                        aria-label="配置内容种类"
+                      >
+                        <button
+                          type="button"
+                          className="mf-settings-inspector-tab"
+                          aria-pressed={inspectorTab === "json"}
+                          onClick={() => setInspectorTab("json")}
+                        >
+                          配置 JSON
+                        </button>
+                        <button
+                          type="button"
+                          className="mf-settings-inspector-tab"
+                          aria-pressed={inspectorTab === "package"}
+                          onClick={() => setInspectorTab("package")}
+                        >
+                          脱敏配置包
+                        </button>
+                      </div>
+                      {inspectorTab === "json" ? (
+                        <>
+                          <p className="mf-settings-source">
+                            内容：完整配置文档 · 来源： 生效配置（配置序号{" "}
+                            {selectedSequence ?? "未知"}）
+                          </p>
+                          {selectedView.detailState === "loading" ? (
+                            <p className="mf-settings-loading" role="status">
+                              正在读取配置 JSON…
+                            </p>
+                          ) : selectedView.detailState === "error" ? (
+                            <p className="mf-settings-read-error" role="alert">
+                              {DETAIL_READ_FAILURE}
+                            </p>
+                          ) : selectedView.detailState === "empty" ? (
+                            <p className="mf-settings-loading" role="status">
+                              此修订没有返回可显示的配置文档；这不是空配置，也没有旧内容可替代。
+                            </p>
+                          ) : (
+                            <textarea
+                              className="mf-settings-json"
+                              aria-label="配置 JSON"
+                              readOnly
+                              value={selectedView.json ?? ""}
+                              rows={16}
+                            />
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <p className="mf-settings-source">
+                            内容：脱敏配置包
+                            {selectedView.packageKind !== null
+                              ? `（${selectedView.packageKind}）`
+                              : ""}{" "}
+                            · 来源： 生效配置（配置序号{" "}
+                            {selectedSequence ?? "未知"}）
+                          </p>
+                          {selectedView.packageState === "loading" ? (
+                            <p className="mf-settings-loading" role="status">
+                              正在生成脱敏配置包…
+                            </p>
+                          ) : selectedView.packageState === "error" ? (
+                            <p className="mf-settings-read-error" role="alert">
+                              {selectedView.packageError ??
+                                "配置包导出失败；没有使用旧内容替代。"}
+                            </p>
+                          ) : selectedView.packageState === "ready" &&
+                            selectedView.packageJson !== null ? (
+                            <textarea
+                              className="mf-settings-json"
+                              aria-label="脱敏配置包"
+                              readOnly
+                              value={selectedView.packageJson}
+                              rows={16}
+                            />
+                          ) : (
+                            <p className="mf-settings-loading" role="status">
+                              尚未导出配置包；导出只读取并脱敏，不会改变配置。
+                            </p>
+                          )}
+                        </>
+                      )}
+                      {selectedView.readError !== null &&
+                        selectedView.detailState !== "error" && (
+                          <p className="mf-settings-read-error" role="status">
+                            {selectedView.readError}
+                          </p>
+                        )}
+                    </>
+                  )}
+                </section>
               )}
               {!model.activeUnavailable && (
                 <section
@@ -2871,10 +2788,7 @@ export function ConfigurationPage() {
                   <header className="mf-settings-section-head">
                     <div>
                       <h2 id="settings-import-title">导入配置</h2>
-                      <p>
-                        粘贴完整配置 JSON
-                        或已导出的脱敏配置包，核对后明确应用；系统只在校验通过时原子发布新的生效快照。
-                      </p>
+                      <p>粘贴要导入的配置。</p>
                     </div>
                   </header>
                   {!showManage || !model.canActivate ? (
@@ -2966,137 +2880,132 @@ export function ConfigurationPage() {
                             : "核对并应用"}
                         </Button>
                       </div>
-                      <p className="mf-settings-group-note">
-                        完整配置按当前生效身份核对
-                        {model.activeHealthy
-                          ? "；若其他会话先发布了新快照，本次会被拒绝。"
-                          : "；首次导入会在校验通过后建立新的生效快照。"}
-                        脱敏配置包只能在导出它的同一生效修订上导入。
-                      </p>
+                      {importMode === "package" && (
+                        <p className="mf-settings-group-note">
+                          请使用从当前配置导出的备份包。
+                        </p>
+                      )}
                     </>
                   )}
                 </section>
               )}
-            </section>
-            <details className="mf-panel mf-settings-diagnostics">
-              <summary>诊断</summary>
-              <p className="mf-dashboard-meta">
-                内部标识、版本、命令就绪与规则就绪证据；普通操作不需要展开此处。
-              </p>
-              {commandReadiness !== null && (
-                <section
-                  className="mf-settings-diagnostic-block"
-                  aria-label="命令就绪状态"
-                >
-                  <h3>命令就绪状态</h3>
+              <details className="mf-panel mf-settings-diagnostics">
+                <summary>诊断</summary>
+                {commandReadiness !== null && (
+                  <section
+                    className="mf-settings-diagnostic-block"
+                    aria-label="命令就绪状态"
+                  >
+                    <h3>命令就绪状态</h3>
+                    <dl className="mf-detail-grid">
+                      {Object.entries(COMMAND_LABELS).map(([key, label]) => {
+                        const item = asRecord(commandReadiness[key]);
+                        const condition = text(item?.condition, "unavailable");
+                        return (
+                          <div key={key}>
+                            <dt>{label}</dt>
+                            <dd>{READINESS_LABELS[condition] ?? "暂不可用"}</dd>
+                          </div>
+                        );
+                      })}
+                    </dl>
+                  </section>
+                )}
+                {ruleReadiness !== null ? (
+                  <RuleReadinessPanel
+                    readiness={ruleReadiness}
+                    activeRevisionId={model.activeId}
+                  />
+                ) : (
+                  <section
+                    className="mf-settings-diagnostic-block"
+                    aria-label="整理规则就绪状态"
+                  >
+                    <h3>整理规则就绪状态</h3>
+                    <p className="mf-error" role="status">
+                      后端未提供可解析的整理规则就绪证据；这不代表规则图为空。请刷新或前往整理规则工作区查看实际
+                      Active。
+                    </p>
+                    <div className="mf-actions">
+                      <Link to="/rules">打开整理规则工作区</Link>
+                    </div>
+                  </section>
+                )}
+                <section className="mf-settings-diagnostic-block">
+                  <h3>配置身份</h3>
                   <dl className="mf-detail-grid">
-                    {Object.entries(COMMAND_LABELS).map(([key, label]) => {
-                      const item = asRecord(commandReadiness[key]);
-                      const condition = text(item?.condition, "unavailable");
-                      return (
-                        <div key={key}>
-                          <dt>{label}</dt>
-                          <dd>{READINESS_LABELS[condition] ?? "暂不可用"}</dd>
-                        </div>
-                      );
-                    })}
+                    <div>
+                      <dt>Authority</dt>
+                      <dd>{model.authority}</dd>
+                    </div>
+                    <div>
+                      <dt>生效修订</dt>
+                      <dd>
+                        <code>{model.activeId ?? "无"}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>生效版本</dt>
+                      <dd>{model.activeVersion ?? "无"}</dd>
+                    </div>
+                    <div>
+                      <dt>生效摘要</dt>
+                      <dd>
+                        <code>{text(model.activeRecord?.digest, "无")}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>当前查看修订</dt>
+                      <dd>
+                        <code>{selectionId ?? "未选择"}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>当前查看版本</dt>
+                      <dd>配置序号 {selectedSequence ?? "未知"}</dd>
+                    </div>
+                    <div>
+                      <dt>后端下一步</dt>
+                      <dd>{text(data.nextAction, "无")}</dd>
+                    </div>
+                    <div>
+                      <dt>不可用原因</dt>
+                      <dd>{text(data.unavailableReason, "无")}</dd>
+                    </div>
                   </dl>
                 </section>
-              )}
-              {ruleReadiness !== null ? (
-                <RuleReadinessPanel
-                  readiness={ruleReadiness}
-                  activeRevisionId={model.activeId}
-                />
-              ) : (
-                <section
-                  className="mf-settings-diagnostic-block"
-                  aria-label="整理规则就绪状态"
-                >
-                  <h3>整理规则就绪状态</h3>
-                  <p className="mf-error" role="status">
-                    后端未提供可解析的整理规则就绪证据；这不代表规则图为空。请刷新或前往整理规则工作区查看实际
-                    Active。
+                <section className="mf-settings-diagnostic-block">
+                  <h3>运行时消费证据</h3>
+                  <p className="mf-dashboard-meta">
+                    描述当前生效配置的消费情况。
                   </p>
-                  <div className="mf-actions">
-                    <Link to="/rules">打开整理规则工作区</Link>
-                  </div>
+                  <dl className="mf-detail-grid">
+                    <div>
+                      <dt>消费快照</dt>
+                      <dd>
+                        <code>{consumptionRevision || "无"}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>消费结论</dt>
+                      <dd>{consumptionSummary}</dd>
+                    </div>
+                  </dl>
+                  {restartRequiredFields.length > 0 && (
+                    <p className="mf-dashboard-meta">
+                      需重启后生效：
+                      {restartRequiredFields.join("、")}
+                    </p>
+                  )}
+                  {hotConsumedFields.length > 0 && (
+                    <p className="mf-dashboard-meta">
+                      激活后即时生效：
+                      {hotConsumedFields.join("、")}
+                    </p>
+                  )}
                 </section>
-              )}
-              <section className="mf-settings-diagnostic-block">
-                <h3>配置身份</h3>
-                <dl className="mf-detail-grid">
-                  <div>
-                    <dt>Authority</dt>
-                    <dd>{model.authority}</dd>
-                  </div>
-                  <div>
-                    <dt>生效修订</dt>
-                    <dd>
-                      <code>{model.activeId ?? "无"}</code>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>生效版本</dt>
-                    <dd>{model.activeVersion ?? "无"}</dd>
-                  </div>
-                  <div>
-                    <dt>生效摘要</dt>
-                    <dd>
-                      <code>{text(model.activeRecord?.digest, "无")}</code>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>当前查看修订</dt>
-                    <dd>
-                      <code>{selectionId ?? "未选择"}</code>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>当前查看版本</dt>
-                    <dd>配置序号 {selectedSequence ?? "未知"}</dd>
-                  </div>
-                  <div>
-                    <dt>后端下一步</dt>
-                    <dd>{text(data.nextAction, "无")}</dd>
-                  </div>
-                  <div>
-                    <dt>不可用原因</dt>
-                    <dd>{text(data.unavailableReason, "无")}</dd>
-                  </div>
-                </dl>
-              </section>
-              <section className="mf-settings-diagnostic-block">
-                <h3>运行时消费证据</h3>
-                <p className="mf-dashboard-meta">
-                  描述当前生效配置的消费情况。
-                </p>
-                <dl className="mf-detail-grid">
-                  <div>
-                    <dt>消费快照</dt>
-                    <dd>
-                      <code>{consumptionRevision || "无"}</code>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>消费结论</dt>
-                    <dd>{consumptionSummary}</dd>
-                  </div>
-                </dl>
-                {restartRequiredFields.length > 0 && (
-                  <p className="mf-dashboard-meta">
-                    需重启后生效：
-                    {restartRequiredFields.join("、")}
-                  </p>
-                )}
-                {hotConsumedFields.length > 0 && (
-                  <p className="mf-dashboard-meta">
-                    激活后即时生效：
-                    {hotConsumedFields.join("、")}
-                  </p>
-                )}
-              </section>
-            </details>
+              </details>
+            </div>
             {activeDecision !== null && (
               <SettingsDecisionDialog
                 title={busy !== null ? "操作正在进行" : "有未保存修改"}

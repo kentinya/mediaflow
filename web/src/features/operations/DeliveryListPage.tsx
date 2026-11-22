@@ -21,6 +21,7 @@ import {
 } from "../../entities/operations/notification";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
+import { NotificationWorkspaceHeader } from "./NotificationWorkspaceHeader";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
   deliveryStatusLabel,
@@ -103,29 +104,13 @@ export function DeliveryListPage() {
             id="notification-deliveries-background"
             tabIndex={-1}
           >
-            <header className="mf-notifications-head">
-              <div>
-                <h2>通知投递记录</h2>
-                <p>
-                  每条投递独立保存状态、尝试次数和恢复资格。打开一条记录不会改变任何媒体结果。
-                </p>
-              </div>
-              <RefreshControl
-                onRefresh={refresh}
-                refreshing={isFetching}
-                label="刷新"
-                refreshingLabel="刷新中…"
-              />
-            </header>
-
+            <NotificationWorkspaceHeader
+              section="deliveries"
+              refresh={refresh}
+              refreshing={isFetching}
+            />
             <div className="mf-notification-toolbar">
               <div className="mf-notification-toolbar-primary">
-                <Link
-                  className="mf-button mf-button-secondary"
-                  to="/operations/notifications"
-                >
-                  返回通知
-                </Link>
                 <label
                   className="mf-notification-filter"
                   htmlFor="delivery-status-filter"
@@ -156,15 +141,13 @@ export function DeliveryListPage() {
               </div>
             </div>
 
-            <section className="mf-notification-list-section">
-              <h3>投递</h3>
+            <section
+              className="mf-notification-list-section"
+              aria-label="投递记录"
+            >
               {page.items.length === 0 ? (
                 <div className="mf-notification-empty">
                   <p>当前筛选下没有投递记录。</p>
-                  <p>
-                    投递由通知事件产生；测试 Webhook
-                    只发送一次签名请求，不会创建投递记录。
-                  </p>
                 </div>
               ) : (
                 <ul className="mf-notification-cards">
@@ -202,14 +185,13 @@ export function DeliveryListPage() {
                         </span>
                       </div>
                       <p className="mf-notification-events">
-                        <span className="mf-notification-event">
-                          {notificationEventLabel(item.eventType)}
-                        </span>
-                        {item.responseStatus !== null && (
-                          <span className="mf-notification-event">
-                            HTTP {item.responseStatus}
-                          </span>
-                        )}
+                        {item.responseStatus !== null &&
+                          item.failureCategory !==
+                            `http_${item.responseStatus}` && (
+                            <span className="mf-notification-event">
+                              HTTP {item.responseStatus}
+                            </span>
+                          )}
                         {failureCategoryLabel(item.failureCategory) !==
                           null && (
                           <span className="mf-notification-event mf-notification-event-danger">

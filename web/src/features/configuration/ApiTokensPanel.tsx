@@ -342,15 +342,8 @@ export function ApiTokensPanel() {
       <header className="mf-settings-section-head">
         <div>
           <h2 id="settings-api-tokens-title">API 令牌</h2>
-          <p>
-            为监控或整理分析脚本单独签发有期限的 Bearer 令牌。默认只读、90
-            天；明文只在签发成功时显示一次，之后只能核对状态和单独吊销。
-          </p>
         </div>
       </header>
-      <p className="mf-settings-group-note">
-        令牌管理、发布或启用定时计划、确认文件执行仍只使用管理员网页会话。脚本只获得所选权限。
-      </p>
       {notice !== null && (
         <StatusBanner variant={notice.tone} title={notice.title}>
           <p>{notice.text}</p>
@@ -417,10 +410,8 @@ export function ApiTokensPanel() {
             disabled={busy !== null}
             onChange={(event) => setScope(event.target.value as ApiTokenScope)}
           >
-            <option value="read_only">只读（READ）</option>
-            <option value="read_and_analysis">
-              只读与整理分析（READ + SUBMIT_DRY_RUN）
-            </option>
+            <option value="read_only">只读</option>
+            <option value="read_and_analysis">只读与整理分析</option>
           </select>
         </div>
         <div className="mf-settings-field">

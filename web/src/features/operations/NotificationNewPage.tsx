@@ -429,7 +429,6 @@ export function NotificationNewPage() {
       busy={busy}
       title={title}
       titleId={titleId}
-      description="点击「应用更改」后，后端会校验并原子发布为新的生效配置。"
       closeDisabled={busy}
       onRequestClose={guard.attemptClose}
       size="form"
@@ -454,7 +453,7 @@ export function NotificationNewPage() {
                 !testedForCurrentForm
               }
             >
-              {createMutation.isPending ? "正在应用…" : "应用更改"}
+              {createMutation.isPending ? "保存中…" : "保存"}
             </Button>
           )}
         </>
@@ -601,10 +600,7 @@ export function NotificationNewPage() {
         >
           {awaitingVerification && pendingApply !== null && (
             <StatusBanner variant="error" title="应用结果待核实">
-              <p>
-                本次请求没有收到可确认的回包，可能已经发布，也可能没有。
-                正在用同一请求身份只读核对本次结果和当前生效配置；核实期间不会再次发布，系统不会自动重发发布请求。
-              </p>
+              <p>暂时无法确认是否已保存。请先核实结果。</p>
               <div className="mf-actions">
                 <Button
                   type="button"
@@ -647,76 +643,6 @@ export function NotificationNewPage() {
               </div>
             </StatusBanner>
           )}
-          {!readDegraded && (
-            <div className="mf-notification-state-strip">
-              <span className="mf-notification-badge">
-                生效配置 · 版本 {revisionVersion ?? "未知"} · 已生效
-              </span>
-              <span className="mf-notification-badge">已生效配置不变</span>
-              <span className="mf-notification-read-action">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={busy || query.isFetching}
-                  onClick={() => void query.refetch()}
-                >
-                  {query.isFetching ? "正在读取…" : "读取最新配置状态"}
-                </Button>
-              </span>
-            </div>
-          )}
-          <StatusBanner variant="info" title="先测试，再应用">
-            <p>
-              定义将发布为新的生效快照（当前版本 {revisionVersion ?? "未知"}）
-              。已生效配置在明确发布前保持不变。
-            </p>
-          </StatusBanner>
-          <section className="mf-notification-form-section">
-            <h3>签名测试</h3>
-            <p className="mf-notification-field-help">
-              针对当前表单中的接收地址和签名密钥引用发送一次带签名的请求；不会创建投递、不会自动重试，也不会改变配置。修改地址或密钥引用后需重新测试。
-            </p>
-            <div className="mf-notification-actions">
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={
-                  busy ||
-                  issues.length > 0 ||
-                  webhookId.trim().length === 0 ||
-                  revisionId === null ||
-                  revisionVersion === null
-                }
-                onClick={() => {
-                  if (revisionId === null || revisionVersion === null) return;
-                  testMutation.mutate({
-                    context: testContext,
-                    webhook: buildWebhookObject(webhookId.trim(), form),
-                    revisionId,
-                    revisionVersion,
-                  });
-                }}
-              >
-                {testMutation.isPending ? "正在发送签名测试…" : "发送签名测试"}
-              </Button>
-            </div>
-            {testResult !== null && testResult.context === testContext && (
-              <StatusBanner
-                variant={testResult.success ? "success" : "error"}
-                title="签名测试结果"
-              >
-                <p>{testResult.message}</p>
-                <p>
-                  结论只对当前地址和签名引用有效；修改后需重新测试才能应用。
-                </p>
-              </StatusBanner>
-            )}
-            {!testedForCurrentForm && (
-              <p className="mf-notification-inline-reason">
-                应用前必须对当前表单成功完成一次签名测试。
-              </p>
-            )}
-          </section>
           {error !== null && (
             <StatusBanner variant="error" title="定义没有创建">
               <p>{error}</p>
@@ -780,7 +706,7 @@ export function NotificationNewPage() {
                   className="mf-notification-field-help"
                   id="notification-new-url-help"
                 >
-                  只接受 HTTPS；不能包含用户名、密码、查询字符串或片段。
+                  使用 HTTPS 地址。
                 </p>
                 {fieldIssue("url") !== null && (
                   <p className="mf-notification-field-error">
@@ -808,7 +734,7 @@ export function NotificationNewPage() {
                   onBlur={() => markTouched("secretEnv")}
                 />
                 <p className="mf-notification-field-help">
-                  部署环境提供这个变量的值；页面只保存变量名，从不读取或显示密钥值。
+                  填写服务器上存放签名密钥的环境变量名。
                 </p>
                 {fieldIssue("secretEnv") !== null && (
                   <p className="mf-notification-field-error">
@@ -840,7 +766,6 @@ export function NotificationNewPage() {
                         }}
                       />
                       <span>{notificationEventLabel(event)}</span>
-                      <code>{event}</code>
                     </label>
                   ))}
                 </div>
@@ -861,14 +786,13 @@ export function NotificationNewPage() {
                 />
                 <span>
                   <strong>启用这个 Webhook</strong>
-                  <small>应用后会发布到当前生效配置。</small>
                 </span>
               </label>
             </div>
           </section>
 
-          <section className="mf-notification-form-section">
-            <h3>超时与重试</h3>
+          <details className="mf-notification-form-section mf-notification-advanced">
+            <summary>超时与重试</summary>
             <div className="mf-notification-form-grid">
               <div className="mf-notification-field">
                 <label htmlFor="notification-new-timeout">请求超时（秒）</label>
@@ -963,6 +887,49 @@ export function NotificationNewPage() {
               暂时失败会按有界退避重试；其他 4xx
               会进入死信。测试请求不会创建投递。
             </p>
+          </details>
+          <section className="mf-notification-form-section">
+            <h3>签名测试</h3>
+            <p className="mf-notification-field-help">
+              向接收地址发送一条测试消息。修改地址或密钥后，请重新测试。
+            </p>
+            <div className="mf-notification-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={
+                  busy ||
+                  issues.length > 0 ||
+                  webhookId.trim().length === 0 ||
+                  revisionId === null ||
+                  revisionVersion === null
+                }
+                onClick={() => {
+                  if (revisionId === null || revisionVersion === null) return;
+                  testMutation.mutate({
+                    context: testContext,
+                    webhook: buildWebhookObject(webhookId.trim(), form),
+                    revisionId,
+                    revisionVersion,
+                  });
+                }}
+              >
+                {testMutation.isPending ? "正在发送签名测试…" : "发送签名测试"}
+              </Button>
+            </div>
+            {testResult !== null && testResult.context === testContext && (
+              <StatusBanner
+                variant={testResult.success ? "success" : "error"}
+                title="签名测试结果"
+              >
+                <p>{testResult.message}</p>
+              </StatusBanner>
+            )}
+            {!testedForCurrentForm && (
+              <p className="mf-notification-inline-reason">
+                测试成功后即可保存。
+              </p>
+            )}
           </section>
         </form>
       )}

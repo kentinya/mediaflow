@@ -41,6 +41,7 @@ async function connectOn(
 interface SettingsDocument {
   readonly target: {
     readonly revisionId: string;
+    readonly revisionVersion: number;
     readonly digest: string;
     readonly values: Record<string, number>;
   } | null;
@@ -96,22 +97,23 @@ test("system runtime settings render the three fields and states publication apa
 
   const before = await settingsDocument(page);
   expect(before.target).not.toBeNull();
-  await expect(panel.getByText("已发布目标")).toBeVisible();
-  // The published target is stated as the exact Active it came from.  The raw
-  // revision identity is diagnostic and stays folded rather than being the
-  // primary page content, so the operator sees the version and can expand it.
-  await expect(panel.getByText(/版本 \d+ · Active/)).toBeVisible();
-  const diagnostics = panel.getByText("诊断标识");
+  // The published version and revision are available under diagnostics.
+  const diagnostics = panel.getByText("诊断标识", { exact: true });
   await expect(diagnostics).toBeVisible();
+  await expect(panel.getByText("已发布目标")).toBeHidden();
   await diagnostics.click();
+  await expect(panel.getByText("已发布目标")).toBeVisible();
+  await expect(
+    panel.getByText(`版本 ${before.target!.revisionVersion}`, { exact: true }),
+  ).toBeVisible();
   await expect(
     panel.getByText(new RegExp(before.target!.revisionId)),
   ).toBeVisible();
   // Before any consumer has adopted this publication, the page says so.
-  await expect(panel.getByText(/尚未整体采用/).first()).toBeVisible();
   await expect(
-    panel.getByText(/全部相关常驻进程都已采用当前发布值/),
-  ).toHaveCount(0);
+    panel.getByText(/尚未确认全部服务已使用当前设置/).first(),
+  ).toBeVisible();
+  await expect(panel.getByText(/运行设置已生效/)).toHaveCount(0);
 
   for (const label of [
     /整理任务队列上限|并行任务上限/,
@@ -121,8 +123,10 @@ test("system runtime settings render the three fields and states publication apa
     await expect(panel.getByLabel(label)).toBeVisible();
   }
 
-  // Reading never wrote anything.
-  expect(api.filter((call) => call.method !== "GET")).toHaveLength(0);
+  // Sign-in is the only write. Opening Settings and diagnostics stays read-only.
+  expect(api.filter((call) => call.method !== "GET")).toEqual([
+    { method: "POST", path: "/api/auth/login" },
+  ]);
 });
 
 test("a live resident consumer adopts the published cadence without a restart", async ({
@@ -310,9 +314,9 @@ test("a graceful resident restart restores current adoption and keeps the predec
   await expect(schedulerAdoption.getByText(predecessor)).toBeVisible({
     timeout: 20_000,
   });
-  await expect(
-    panel.getByText(/全部相关常驻进程都已采用当前发布值/),
-  ).toBeVisible({ timeout: 20_000 });
+  await expect(panel.getByText(/运行设置已生效/)).toBeVisible({
+    timeout: 20_000,
+  });
 });
 
 test("a stale form is refused and the published Active is preserved", async ({
@@ -430,7 +434,7 @@ test("a checked Save from the form publishes once and keeps adoption separate", 
   expect(body.expectedRevisionId).toBe(before.target!.revisionId);
   // Publication is still shown apart from adoption.
   await expect(
-    panel.getByText(/尚未整体采用|全部相关常驻进程都已采用当前发布值/).first(),
+    panel.getByText(/尚未确认全部服务已使用当前设置|运行设置已生效/).first(),
   ).toBeVisible();
 });
 
@@ -939,8 +943,12 @@ test("system runtime settings use the System Settings page as the one ordinary e
   const panel = page.getByRole("region", { name: "系统运行设置" });
   await expect(panel).toBeVisible();
   const document = await settingsDocument(page);
-  await expect(panel.getByText(/版本 \d+ · Active/)).toBeVisible();
   await panel.getByText("诊断标识").click();
+  await expect(
+    panel.getByText(`版本 ${document.target!.revisionVersion}`, {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(
     panel.getByText(new RegExp(document.target!.revisionId)),
   ).toBeVisible();

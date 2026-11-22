@@ -647,8 +647,9 @@ are reconciled from durable identity before another explicit attempt; reads neve
 ## Configuration lifecycle
 
 - **Goal/entry:** change runtime behavior through Settings/Configuration or focused business forms.
-  `系统设置` starts with compact state and the three runtime fields; wider typed settings are grouped
-  in `高级配置`, with rule counts, command readiness and technical identities in secondary diagnostics.
+  Open `运行设置`, `常规设置`, `API 令牌` or `配置工具` from the top of `系统设置`.
+  First setup and recovery appear when needed. Rule counts, command readiness and snapshot
+  details are available under `配置工具` → `诊断`.
 - **State:** management bootstrap provides setup and recovery. Current Active and historical published
   revisions show exact versions, digests, references, evidence and capability readiness. Only Active
   governs runtime. Settings synchronizes automatically, keeping edits in progress when published
@@ -1412,7 +1413,8 @@ Actions share RBAC/audit/validation and preserve prior Active/correctable input 
 
 ### Notification definitions and deliveries
 
-Enter 通知 from the sidebar. The definitions list shows each published definition's enabled state,
+Enter 通知 from the sidebar. Use 新建 Webhook to add a definition or switch to 投递记录 for
+individual delivery outcomes. The Webhook list shows each published definition's enabled state,
 HTTPS endpoint, readable events and secret-reference readiness. Add, view and edit open centered
 cards over that list; delivery detail opens over the delivery list. Cards retain list context on
 return, support direct links/reconnection, and keep their contents and primary/close actions reachable

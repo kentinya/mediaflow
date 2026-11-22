@@ -890,59 +890,28 @@ interface SettingsFrame {
   readonly banner: boolean;
   /** The ready engine form region exists in this frame. */
   readonly form: boolean;
-  /** The page's own configuration-status summary is on screen. */
+  /** The settings workspace is on screen. */
   readonly workspace: boolean;
   /** The engine read's bounded failure banner is on screen. */
   readonly error: boolean;
-  /** The advanced-settings block below the engine region is rendered. */
-  readonly readiness: boolean;
-  /** Its document-absolute top, or null while the block is not rendered. */
-  readonly readinessTop: number | null;
+  /** The section controls' document-absolute top once rendered. */
+  readonly sectionsTop: number | null;
 }
 
-/**
- * B52.2-02 (fix loop, updated for the settings page hierarchy): the advanced
- * configuration block below the engine region must be up as soon as the
- * page's own status is, stay up through every handoff of the engine region,
- * and — when its position adapts to the region's changing height — move
- * gradually across frames. A single frame carrying (most of) the whole
- * displacement is exactly the sudden kick the engine form used to give the
- * content below it; equal coordinates in every frame are not required.
- */
-function expectReadinessKeptThroughHandoff(
+/** The section controls stay available and stationary as the engine form loads. */
+function expectSectionsStableThroughHandoff(
   frames: readonly SettingsFrame[],
 ): void {
-  expect(frames.length).toBeGreaterThan(10);
-  // The block is rendered with the workspace and never vanishes afterwards.
-  expect(frames.some((frame) => frame.workspace && frame.readiness)).toBe(true);
-  const firstShown = frames.findIndex((frame) => frame.readiness);
-  expect(firstShown).toBeGreaterThan(-1);
-  expect(frames.slice(firstShown).some((frame) => !frame.readiness)).toBe(
-    false,
+  const workspaceFrames = frames.filter((frame) => frame.workspace);
+  expect(workspaceFrames.length).toBeGreaterThan(10);
+  const positions = workspaceFrames.map((frame) => frame.sectionsTop);
+  expect(positions).not.toContain(null);
+  const first = positions[0]!;
+  expect(positions.every((position) => Math.abs(position! - first) <= 2)).toBe(
+    true,
   );
-  const positions = frames
-    .map((frame) => frame.readinessTop)
-    .filter((top): top is number => top !== null);
-  expect(positions.length).toBeGreaterThan(10);
-  const movement = Math.max(...positions) - Math.min(...positions);
-  let biggestStep = 0;
-  for (let index = 1; index < positions.length; index += 1) {
-    biggestStep = Math.max(
-      biggestStep,
-      Math.abs(positions[index] - positions[index - 1]),
-    );
-  }
-  // Gradual adaptation across frames passes; one frame taking the whole move
-  // (the reported 442.5 → 1146.2 kick) fails.
-  expect(biggestStep).toBeLessThanOrEqual(Math.max(movement * 0.5, 2));
 }
 
-/**
- * B52.2-02: observe the System Settings handoff itself — status section,
- * engine waiting line and ready form — frame by frame, so the proof covers the
- * middle of the journey rather than only the first heading or the final
- * settled page.
- */
 async function startSettingsProbe(page: Page, windowMs = 2_400): Promise<void> {
   await page.evaluate((sampleWindowMs) => {
     const frames: SettingsFrame[] = [];
@@ -950,22 +919,17 @@ async function startSettingsProbe(page: Page, windowMs = 2_400): Promise<void> {
     let stopped = false;
     const tick = () => {
       const text = document.body.innerText;
-      const readiness = document.querySelector(
-        '[aria-labelledby="settings-advanced-title"]',
-      );
+      const sections = document.querySelector('nav[aria-label="设置分区"]');
       frames.push({
         at: performance.now() - started,
         banner: text.includes("正在读取引擎设置"),
         form: document.querySelector('[aria-label="系统运行设置"]') !== null,
-        workspace: text.includes("配置状态"),
+        workspace: document.querySelector(".mf-settings-page") !== null,
         error: text.includes("引擎设置暂不可用"),
-        readiness: readiness !== null,
-        readinessTop:
-          readiness === null
+        sectionsTop:
+          sections === null
             ? null
-            : Math.round(
-                readiness.getBoundingClientRect().top + window.scrollY,
-              ),
+            : Math.round(sections.getBoundingClientRect().top + window.scrollY),
       });
       if (!stopped && performance.now() - started < sampleWindowMs) {
         requestAnimationFrame(tick);
@@ -1041,16 +1005,18 @@ test("settings handoff keeps the engine wait hidden through a fast read and a ca
   await expect.poll(() => currentPath(page)).toBe("/configuration");
   const form = page.getByRole("region", { name: "系统运行设置" });
   await expect(form).toBeVisible();
-  await expect(page.getByRole("heading", { name: "高级配置" })).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "设置分区" }),
+  ).toBeVisible();
   await page.waitForTimeout(200);
   let frames = await stopSettingsProbe(page);
   expect(frames.length).toBeGreaterThan(10);
-  // The status section was on screen before the form arrived, and the wait
+  // The workspace was on screen before the form arrived, and the wait
   // line never appeared in any frame of this handoff.
   expect(frames.some((frame) => frame.workspace && !frame.form)).toBe(true);
   expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
   expect(frames.at(-1)?.form).toBe(true);
-  expectReadinessKeptThroughHandoff(frames);
+  expectSectionsStableThroughHandoff(frames);
 
   // Cached re-entry through the same sidebar: the engine query already holds
   // data, so the form is there again with no wait line in any frame.
@@ -1065,11 +1031,10 @@ test("settings handoff keeps the engine wait hidden through a fast read and a ca
   expect(frames.some((frame) => frame.form)).toBe(true);
   expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
   expect(frames.at(-1)?.form).toBe(true);
-  expectReadinessKeptThroughHandoff(frames);
+  expectSectionsStableThroughHandoff(frames);
 
   // The same fast handoff at 390px through the same real sidebar entry: the
-  // narrow layout makes the engine region taller, so the reading block below
-  // had the farthest to move when the form attached.
+  // section controls should stay fixed even when the engine form is taller.
   await page.setViewportSize({ width: 390, height: 844 });
   await openSidebarLink(page, "Explore");
   await expect.poll(() => currentPath(page)).toBe("/explore");
@@ -1077,12 +1042,14 @@ test("settings handoff keeps the engine wait hidden through a fast read and a ca
   await openSidebarLink(page, "Configuration");
   await expect.poll(() => currentPath(page)).toBe("/configuration");
   await expect(form).toBeVisible();
-  await expect(page.getByRole("heading", { name: "高级配置" })).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "设置分区" }),
+  ).toBeVisible();
   await page.waitForTimeout(250);
   frames = await stopSettingsProbe(page);
   expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
   expect(frames.at(-1)?.form).toBe(true);
-  expectReadinessKeptThroughHandoff(frames);
+  expectSectionsStableThroughHandoff(frames);
 
   // Handoff and reads only: no command was ever submitted.
   expect(writes).toEqual([]);
@@ -1110,7 +1077,7 @@ test("a slow engine read shows one stable waiting state before the form takes ov
   ).toBeVisible();
   await page.waitForTimeout(200);
   const frames = await stopSettingsProbe(page);
-  // The status section answered first, without the wait line.
+  // The section controls appeared first, without the wait line.
   expect(
     frames.some((frame) => frame.workspace && !frame.banner && !frame.form),
   ).toBe(true);
@@ -1127,9 +1094,8 @@ test("a slow engine read shows one stable waiting state before the form takes ov
   }
   expect(frames.at(-1)?.banner).toBe(false);
   expect(frames.at(-1)?.form).toBe(true);
-  // The reading block below was retained for the whole slow handoff —
-  // through the wait line appearing and the form taking over (B52.2-02).
-  expectReadinessKeptThroughHandoff(frames);
+  // The controls stay fixed through the waiting line and form handoff.
+  expectSectionsStableThroughHandoff(frames);
   await expect(page.getByText("正在读取引擎设置")).toHaveCount(0);
   await expectNoHorizontalOverflow(page);
 });
@@ -1164,7 +1130,7 @@ test("a failed engine read lands on the existing recovery without a wait flash",
   await openSidebarLink(page, "Configuration");
   await expect.poll(() => currentPath(page)).toBe("/configuration");
   // The failure reaches the operator on its own terms with its existing
-  // recovery copy, while the page's own status section stays in place.
+  // recovery copy while the section controls stay in place.
   await expect(page.getByText("引擎设置暂不可用")).toBeVisible();
   await expect(page.getByText(/此页面不会猜测任何发布值/)).toBeVisible();
   await page.waitForTimeout(200);
@@ -1173,8 +1139,7 @@ test("a failed engine read lands on the existing recovery without a wait flash",
   expect(frames.some((frame) => frame.workspace)).toBe(true);
   // The waiting line played no part in the failure path.
   expect(frames.filter((frame) => frame.banner)).toHaveLength(0);
-  // The failure branch landing next to the workspace keeps the same block
-  // steady: the error path never kicks it away either.
-  expectReadinessKeptThroughHandoff(frames);
+  // The error path also leaves the section controls in place.
+  expectSectionsStableThroughHandoff(frames);
   expect(writes).toEqual([]);
 });
