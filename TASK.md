@@ -1,12 +1,12 @@
 # Task 57.2 — 在系统设置签发、使用和吊销 API 令牌
 
-Next Action: DEVELOPER STARTS TASK57.2 IMPLEMENTATION
+Next Action: B REVIEWS TASK57.2
 
 ```text
 Task ID: 57.2
 Task Type: SLICE
 Parent Slice: 57
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: c12cae6fe0226e7efe6850ac68e6581785fb87e3
 Difficulty: High
 Test Level: T4
@@ -84,6 +84,38 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.2
   会话和审计，重启后复查。用隔离媒体观察既有计划在脚本凭证变化后继续受理及完成。
 - 运行[共享 T4 门禁](docs/development-workflow.md#shared-full-regression-commands)，对候选镜像
   和源码外安装的 wheel 验收，并取齐 Slice 57 的最终证据。
+
+## Developer 交接 — TASK 57.2
+
+```text
+Candidate: 2f3bff357fb5dad7894c7a9437fc6451e0d5acb8
+```
+
+- 候选实现提交为 `2f3bff35`，范围为 `c12cae6f..2f3bff35`。运行库 schema 从 59 升到 60，
+  新增 `api_tokens` 表；只保存稳定令牌 ID、签发管理员、名称、范围、权限、创建/到期/吊销/
+  最近使用时间和 SHA-256 摘要，未回填或改写既有账号、任务、结果与配置。
+- 后端新增令牌签发、列表、独立吊销和每次请求的令牌解析。只读范围为 `READ`，整理分析范围
+  为 `READ + SUBMIT_DRY_RUN`；令牌管理、计划发布/启用和确认执行仍只接受管理员 Cookie
+  会话。显式 Authorization 无效时不会回退到 Cookie；成功请求审计使用令牌 ID，签发/吊销
+  另以管理员账号 ID 写入既有账号审计。
+- 系统设置新增「API 令牌」卡：默认只读/90 天，明文仅在签发响应/当前页面状态展示，列表
+  回读非秘密状态；丢回包后刷新并按名称与签发时间核对，吊销前二次确认。部署与配置指南
+  记录了现有 API 的 Bearer 调用示例和凭证保护边界。
+- 实际执行：
+  - `.venv/bin/python -m unittest tests.test_api_credentials tests.test_web_account_auth`
+    → **26 passed**；`.venv/bin/python -m unittest tests.test_container_deployment` → **20 passed**。
+  - `web/`：`npm run test -- run src/features/configuration/ConfigurationPage.test.tsx` →
+    **15 passed**；`npm run typecheck`、改动文件 ESLint/Prettier、`npm run build` 通过。
+  - `npm run test:e2e -- --config=playwright.python.config.ts
+    tests/e2e/configuration-settings.python.spec.ts` → **6 passed**，覆盖真实 Python 设置页、
+    两种令牌签发、丢回包列表核对、只读 `403`、吊销 `401` 和浏览器持久存储无明文。
+  - `python3 scripts/check_governance.py`、改动 Python Ruff/format、编译、完整范围
+    `git diff --check` 通过。
+- 用时约 16 分钟；测试与检查实际执行约 2–3 分钟，低于本轮 30%。
+- 剩余风险与 B 验收：完整 T4 Python/Web/E2E、真实 Compose 四服务重启、真实 Scheduler/Worker
+  在令牌轮换后的受理与文件结果、候选镜像、wheel/源码外安装仍待 B 独立执行。本轮定向测试
+  在无 Active 的隔离库验证了整理分析令牌通过既有分析入口的权限边界，但实际准备/分析成功、
+  零文件效果与结果回读需在 B 的真实 Active/Worker 环境中完成。
 
 ## Task 57.1 — B 复核结论
 
