@@ -4,7 +4,7 @@
 Task ID: PATCH-20261122-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c714e0806620bb54701639a8776517ba5e1e9685
 Difficulty: Medium
 Test Level: T3
@@ -227,3 +227,34 @@ Fix range: b28174c668da3559ab8c2b9613310664af3331b7..f7c0fb04c49edbc3c5a3bffe5bb
   结算结果，任务中心仍保留一条空的、人工资格未结束的整理任务；再次打开显示同一无方案结论和
   返回文件页入口，本 Task 未改变既有任务结算规则。恢复动作的容量不足/并发冲突拒绝由单元用例覆盖，
   本轮未用真实 Worker 制造该拒绝。
+
+## B 复核（修正轮） — FIX REQUIRED
+
+```text
+Reviewed Base: c714e0806620bb54701639a8776517ba5e1e9685
+Reviewed Implementation: f7c0fb04c49edbc3c5a3bffe5bbf1390f8547689
+Reviewed Handoff Head: f8b5154203f96937819721dc82edee3f61002d98
+Decision: FIX REQUIRED
+Next: SAME TASK FIX LOOP
+```
+
+从「文件」选择只有文本文件的文件夹发起整理。检查完成时，弹窗正确显示「未找到可整理的主文件」。
+等测试 Worker 心跳自然过期后刷新原弹窗。服务端仍记录检查完成、零主文件、无方案，弹窗主提示却变成
+「后台暂不可用，请联系管理员」，下方则要求回文件页重新选择。用户收到两条不同的下一步。
+候选仍使用 `6bda4d45` 引入的显示顺序，后台就绪状态盖过了已读到的准备结果。
+
+### 开发指导
+
+用同一准备的实际阶段决定主提示。已完成且零主文件时，显示「未找到可整理的主文件」、排除原因和返回
+文件页重新选择的动作。只有当前步骤确实依赖后台继续处理时，才显示后台不可用和联系管理员。
+复用 `ManualOrganizeDialog` 已读取的准备和方案状态。
+
+在现有零主文件用例增加刷新同一准备的回归，验证后台不可用时仍显示已完成的结果和同一个下一步。
+沿用现有排队用例验证真正等待后台的请求仍显示原位提示，并在后台恢复后进入同一准备的复核。
+在 `web/` 运行 `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx`，以及
+`npm run test:e2e -- --config playwright.python.config.ts manual-organize-dialog.python.spec.ts -g 'first-plan preparation|linked plan'`。
+
+B 核对了完整 Base..Head。生产 Web 构建成功，后端 78 项、受影响的 Web 单测 163 项和真实 Chromium
+8 项通过。上轮的自动分析无多余按钮、390px 首份摘要等待和读取恢复、后台在线时的零主文件结果均通过。
+另在真实 Files 旅程完成扫描，等已有心跳自然过期，再刷新同一准备，复现上述阻塞。完整 T3 验收留待修正候选。
+日志和截图保存在 `.git/validation-evidence/f7c0fb04c49edbc3c5a3bffe5bbf1390f8547689/b-review/`。
