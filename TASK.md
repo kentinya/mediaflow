@@ -1,6 +1,6 @@
 # Task 57.1 — 从空实例创建管理员并完成 Web 登录
 
-Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
+Next Action: DEVELOPER FIXES TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3。用户已授权激活，Developer 开始实施时将状态从
 `PLANNED` 转为 `IN PROGRESS`。A 按用户授权代 B 规划本 Task，B 独立验收，A 终审。
@@ -10,7 +10,7 @@ Next Action: B REVIEWS TASK57.1 IMPLEMENTATION
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -451,6 +451,48 @@ Slice 57 的 RO-1 首位设置、会话恢复、改密和重置已通过上述�
   权限执行、生产 Web 浏览器旅程及其他真实 Python spec 仍由 B 在修正候选上独立验收。
   Developer 本轮只做了单容器生产入口复测，未运行完整 Compose 矩阵。证据位于本地
   `.git/validation-evidence/task57.1-prior-db-recheck/`。
+
+#### B 复核结果：上一版本仅初始化配置的数据库
+
+```text
+Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..04d917e180ca24557b6bf96fb105469607570f89
+Implementation: 5d7fcfb0f708c0dab3aa771c352310f0d96fdd51
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1｜旧版只初始化配置的数据目录仍会被新版本改写。** 部署者可以按旧版配置指南生成最小
+  启动配置，执行 `mediaflow config initialize`，稍后再启动服务。B 用 Task Base 的 CLI
+  执行这一步，得到已有 Active、只有配置版本 `12` 的 SQLite 库。换用候选镜像和新版本的
+  最小配置挂载该目录后，Compose API 正常监听。`/health` 显示已有业务配置、等待首位管理员，
+  数据库增加了 `runtime 59`，文件 SHA-256 也发生变化。Slice 57 要求拒绝该数据目录，
+  保留原文件并提示使用新空目录。
+- 候选 `5d7fcfb0` 在 2026-11-22 加入的限制仅检查已有的 runtime 标记。旧版 `config
+  initialize` 是现有 CLI 入口，通过配置仓库发布 Active，不创建 runtime 标记。新预检把这份
+  库当成可启动数据，随后 API 打开仓库并建立运行时及账号表。
+
+#### Developer 修正指导
+
+1. 让本版本的 `config initialize` 和 `config publish` 首次创建数据库时留下能表明本版本
+   创建来源的标记。按现有数据库适用性入口检查该标记。在任何建表前拒绝旧版 CLI 创建的仅配置
+   数据库，提示保留旧文件并使用新空目录。同步部署与配置指南所列的可启动范围。
+2. 用 Task Base 的生成器和 `config initialize` 生成旧版夹具，验证 Compose 预检退出、没有
+   API 监听、数据库文件哈希一致。保留已有 `runtime 58` 拒绝测试。用本版本的相同 CLI
+   流程验证首次启动读取原 Active，然后创建管理员并重启，确认账号和 Active 可用。
+3. Developer 运行 `test_container_deployment.py`、`test_container_probe.py` 和
+   `test_configuration_status.py`，并记录以上两条部署旅程。B 负责修正候选的 T4 验收。
+
+B 独立使用候选镜像 `sha256:09cb1fe4b9a516ac931ba6c54429896e29e1b340764c945c9116d782d9d657fb`
+复测。旧版 API 创建的 `runtime 58` 库在 Compose 预检退出 `1`，文件哈希一致，日志给出
+新空目录指引。空数据目录可启动并显示等待首位管理员和业务配置。首次探测复用了上一版本的
+测试端口，无法判断响应归属。证据以每个场景分配独立端口后的复测为准。原始记录位于本地
+`.git/validation-evidence/04d917e180ca24557b6bf96fb105469607570f89/b-review/`，
+其中 `config-only-r2-verified-health.json` 与相应的 schema、SHA-256 日志记录本轮阻塞。
+
+RO-1 的既有浏览器证据保留，RO-2 用户管理和 API 令牌仍待后续 Task。RO-3 的旧库拒绝待
+修正，本轮以已复现的阻塞结束验收。当前候选的完整 T4、同版本浏览器重启及实际
+Scheduler／Worker 撤权执行仍待验收。
 
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
