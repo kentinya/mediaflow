@@ -1,12 +1,12 @@
 # Task 57.2 — 在系统设置签发、使用和吊销 API 令牌
 
-Next Action: B REVIEWS TASK57.2
+Next Action: DEVELOPER FIXES TASK57.2
 
 ```text
 Task ID: 57.2
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c12cae6fe0226e7efe6850ac68e6581785fb87e3
 Difficulty: High
 Test Level: T4
@@ -66,7 +66,7 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.2
 
 ## 测试
 
-**Developer — 受影响范围**
+**Developer — 新增／修改与直接受影响测试**
 
 - 在仓库根目录执行 `.venv/bin/python -m unittest tests.test_api_credentials tests.test_web_account_auth`。
   将凭证回归放在现有测试模块，覆盖签发和持久状态、两组权限、`401/403`、Authorization 优先级、
@@ -78,7 +78,7 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.2
   `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/configuration-settings.python.spec.ts`
   验证签发、丢回包核对和吊销。跑改动文件的静态检查及 `git diff --check`。
 
-**B — 独立验收**
+**B — 独立验收与完整回归**
 
 - 从真实 Compose 的系统设置签发两种令牌，用正式 Tasks 及整理 API 核对权限、效果、轮换、
   会话和审计，重启后复查。用隔离媒体观察既有计划在脚本凭证变化后继续受理及完成。
@@ -203,6 +203,32 @@ Fix range: 981870752f8490e2520b5a383e5c7ebaa7e00506..afb94518
   - `python3 scripts/check_governance.py`、全范围 `git diff --check` 通过。
 - 用时约 12 分钟；测试与定向检查执行约 1.5 分钟，低于本轮 30%。
 - 剩余风险与 B 验收：完整 T4、真实 Compose 四服务重启、真实 Scheduler/Worker 在令牌轮换后的受理与文件结果、候选镜像和 wheel/源码外安装仍待 B 独立执行。默认 Node 测试服务只提供空令牌列表读取，不承载签发/吊销；本轮未改动 Python 后端。
+
+## Task 57.2 — B 复核代理超时修正与全量门禁
+
+```text
+Reviewed: c12cae6fe0226e7efe6850ac68e6581785fb87e3..58d89a26b9506a6d7d790b514011db8480aff0be
+Implementation: afb945180fa351f2c7ed8ba09bae9ea77bf2c169
+Decision: FIX REQUIRED
+Slice Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1 — 监控脚本成功读取任务，审计缺少对应令牌（RO-2 / AC-03）。** 管理员在系统设置为监控脚本签发只读令牌。脚本调用文档中的 `GET /api/tasks` 得到 `200`，列表能看到最近使用时间。随后以管理员身份读取 `/api/security-audit`，该令牌 ID 的对应记录是零条。候选 Compose 和最小 API 路径均已复现。`2f3bff35` 接入令牌身份时沿用了 `/api/tasks` 对普通读取的审计过滤。[审计过滤](mediaflow/interfaces/service_api.py#L9959)
+- **T4 Python 回归阻塞。** `2f3bff35` 使 HTTP 应用构造过程探查 `authenticate_api_token`，静态入口和只读系统状态的隔离验证在发出请求前就失败，共 16 项。运行库升到 60，但两个 Worker 服务默认仍为 59，整理契约测试注册的 Worker 拿不到任务，另一个就绪测试报告的预期版本为 59。真实 Compose 启动显式传入 60，独立的分析和定时复制已通过。[入口组装](mediaflow/interfaces/service_api.py#L430) · [Worker 版本](mediaflow/application/automation.py#L67)
+
+### Developer 返工指导
+
+1. 让已签发令牌成功调用 `/api/tasks` 时使用现有审计记录，保留稳定令牌 ID、方法、路由和结果。从新建只读令牌出发，先只调用这条正式入口，再用管理员身份读取审计，断言记录来自这次成功调用。令牌列表的最近使用时间继续用于运营查看。
+2. 在已有账号运行库的入口组装令牌服务。只有固定 principal 的静态入口和系统状态测试继续按原路径构造并验证。把 Worker 注册与就绪服务两处现行默认版本同本轮运行库 60 对齐，保留真实版本不匹配时的拒绝。
+3. Developer 定向运行 `.venv/bin/python -m unittest tests.test_web_account_auth tests.test_v2_ui tests.test_configuration_status tests.test_manual_operations_contract tests.test_processing_worker_readiness`，并检查改动文件。B 负责完整门禁和候选镜像复验。
+
+### Slice 结果与本轮证据
+
+- **RO-1** 首次部署和后台主机密码恢复有 Task 57.1 证据。候选默认 Chromium 中的账号旅程和系统设置改密重登通过。
+- **RO-2** 代理模拟 `504` 后的签发核对通过，真实浏览器只发一次签发写请求，可从列表读回并吊销。真实 Compose 通过两种令牌的权限、轮换和重启回读。分析令牌在 Worker 中生成可读方案，源与目标文件效果为零。核对了浏览器存储、SQLite 数据及 WAL、令牌列表、配置导出和服务日志，均无明文。监控脚本的任务列表审计仍阻塞。
+- **RO-3** 候选空实例、隔离媒体、发布安全、重启和故障门禁通过。监控令牌轮换并重启四服务后，原启用计划产生一个可回读的已完成任务，源文件保留并得到一份字节一致的复制。当前候选真实自动化浏览器 32 项通过。
+- Web 单测 1,611 项、默认 Chromium 279 项、真实设置 Chromium 9 项通过。Web 构建、静态检查、两份配置样例及源码外 wheel 冒烟通过。Python 2,357 项中 18 失败、2 错误、7 跳过。其中一项为 Task 标题与发布门禁约定不符，B 已将两处标题对齐并单独复跑。候选镜像 `sha256:c63533fc44fbe497c8f33b496bb695ebe3ab8b1d272c1d8fdf489c08b858150e`。日志、截图和制品位于 `.git/validation-evidence/58d89a26b9506a6d7d790b514011db8480aff0be/b-review/`。
 
 ## Task 57.1 — B 复核结论
 
