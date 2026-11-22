@@ -1,6 +1,6 @@
 # Task 57.1 — 单管理员 Web 登录与定时计划停用
 
-Next Action: DEVELOPER FIXES TASK57.1
+Next Action: B REVIEWS TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3 中的部署、管理员和定时计划旅程。按用户授权，A 更新合同，
 B 根据已提交的 `b22af92f4434a1f343da2b3cddfe2747dc6e1b37` 调整同一 Task。当前返工以本节的
@@ -11,7 +11,7 @@ B 根据已提交的 `b22af92f4434a1f343da2b3cddfe2747dc6e1b37` 调整同一 Tas
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -118,6 +118,37 @@ Next: SAME TASK FIX LOOP
 
 Slice 57 的 RO-1 已有首位设置、登录恢复和改密重置证据。RO-3 仍需解决本轮执行记录问题并完成部署验收。
 RO-2 的 API 令牌签发、权限、吊销、轮换和定时计划独立性待后续 Task。
+
+### Developer 本轮修正交付记录（READY FOR B REVIEW）
+
+- 实现候选：`fba3279c4d444829bc388a5a8263e519c61ba05a`（本轮起点 `aa94024affb8a1422c32296d87a3da0bc01e68bc`，
+  Task Base `4566a74055c698aec704215dd431eb8521bcfedb`）。只修改停用原因传递、执行记录说明
+  及直接受影响的 Python/浏览器用例；保留原 Slice 合同、B 的评审记录和未授权范围。
+- 已确认原因：`assert_schedule_continuity` 遍历发布链时，遇到明确停用该定义的历史 revision
+  会抛出 `ScheduleContinuityStopped`；执行授权将其转换为任务级 `schedule_disabled`。
+  发布链缺失或激活证据不可读时仍保持原 `scheduled_intent_stopped` 语义，不把不可证记录
+  说成已确认停用。
+- 执行记录：`automation_record_display` 对 `schedule_disabled` 显示「本次运行因计划停用而停止」，
+  下一步说明计划已重新启用、等待下一次定时执行、新一轮单独受理且原任务保留在执行记录中；
+  仍按该任务真实成功/部分/不确定计数说明文件效果。无文件效果时显示「在开始处理文件前停止；
+  没有产生文件效果」。
+- 实际验证：
+  - `.venv/bin/python -m unittest discover -s tests -p test_v2_automation_lifecycle.py`
+    38 项通过（25.9s）；`... -p test_v2_automation_operations.py` 9 项通过（0.7s），
+    新增「停用→重新启用→Worker 领取原任务」用例，核对原任务失败、零文件效果、记录原因/
+    下一步及重新启用后 Scheduler 受理的独立新 Task。
+  - `.venv/bin/python -m unittest tests.test_automation_execution_intent` 20 项通过，
+    覆盖确认停用分类 `schedule_disabled` 与发布链证据不可读时保留 `scheduled_intent_stopped`。
+  - `web/` 下 `npm run build`、`npm run typecheck` 通过；正式产物构建后
+    `npm run test:e2e -- --config=playwright.python.automation.config.ts
+    tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-workspace.python.spec.ts`
+    32 项通过（59.6s），包含新增的真实浏览器停用→重新启用→Worker→执行详情→下一次 Scheduler 旅程。
+  - 改动文件 Ruff 格式/检查、`compileall`、`git diff --check`、治理检查 PASS。
+- 用时：本轮测试/检查执行累计约 2 分钟，整轮约 9 分钟，低于 30%；未运行完整 T4、
+  真实 Compose/候选镜像、生产 Waitress/CLI、wheel/源码外安装及其他浏览器 spec。
+- 剩余风险：完整 T4、Compose、候选镜像与 wheel 验收仍由 B 在修正候选上独立执行；本轮之前
+  已持久化为 `scheduled_intent_stopped` 的历史记录不会被回溯重标，新停止的原任务使用上述
+  已确认原因。
 
 ### Developer 本轮交付记录（READY FOR B REVIEW）
 
