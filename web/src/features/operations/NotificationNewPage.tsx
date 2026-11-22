@@ -100,7 +100,10 @@ export function NotificationNewPage() {
   const [reconciledVersion, setReconciledVersion] = useState<number | null>(
     null,
   );
-  const [createConflict, setCreateConflict] = useState(false);
+  const [refusalStage, setRefusalStage] = useState<"create" | "test" | null>(
+    null,
+  );
+  const [readLatestRequired, setReadLatestRequired] = useState(false);
   const verifiedSubmissionRef = useRef<string | null>(null);
   const verificationInFlightRef = useRef(false);
   const verifyOutcomeRef = useRef<(pending: PendingNotificationApply) => void>(
@@ -144,7 +147,8 @@ export function NotificationNewPage() {
     },
     onSuccess: (result, input) => {
       if (result.ok) {
-        setCreateConflict(false);
+        setRefusalStage(null);
+        setReadLatestRequired(false);
         setPendingApply(null);
         setAwaitingVerification(false);
         writePendingNotificationApply(
@@ -201,13 +205,15 @@ export function NotificationNewPage() {
         // Keep every input, drop the stale test conclusion and require an
         // explicit read plus a fresh signed test before another submission.
         setTestResult(null);
-        setCreateConflict(true);
+        setRefusalStage("create");
+        setReadLatestRequired(true);
         setError(
           "定义没有发布：本次没有创建。配置在你编辑期间已经变化，或签名测试证据与当前表单不一致。请先读取最新配置，读取后须对当前表单重新完成签名测试才能保存；服务端保留了胜出的版本。",
         );
         return;
       }
-      setCreateConflict(false);
+      setRefusalStage(null);
+      setReadLatestRequired(false);
       setError(
         `定义没有发布（${result.code}）。修正表单后重试；系统没有自动重试。`,
       );
@@ -234,6 +240,7 @@ export function NotificationNewPage() {
     },
     onSuccess: (result, input) => {
       if (result.ok) {
+        setRefusalStage(null);
         setTestResult({
           context: input.context,
           success: result.model.outcome === "success",
@@ -245,11 +252,21 @@ export function NotificationNewPage() {
         });
         return;
       }
-      setError(
-        result.status === 409
-          ? "当前表单已变化，因此没有发送测试请求；请核对后重试。"
-          : `测试没有执行（${result.code}）。系统没有自动重试。`,
-      );
+      if (result.code === "configuration_version_conflict") {
+        // The signed test is bound to the exact revision the form was opened
+        // against. Nothing was sent to the receiver, so keep every input and
+        // require an explicit read plus a fresh test before saving.
+        setTestResult(null);
+        setRefusalStage("test");
+        setReadLatestRequired(true);
+        setError(
+          "签名测试没有发出：生效配置在你编辑期间已经变化，本次测试请求没有发往接收方。请先读取最新配置，读取成功后对当前表单重新完成签名测试；通过后才能保存。",
+        );
+        return;
+      }
+      setRefusalStage(null);
+      setReadLatestRequired(false);
+      setError(`测试没有执行（${result.code}）。系统没有自动重试。`);
     },
   });
 
@@ -270,7 +287,8 @@ export function NotificationNewPage() {
       setTouched(new Set());
       setShowIssues(false);
       setError(null);
-      setCreateConflict(false);
+      setRefusalStage(null);
+      setReadLatestRequired(false);
     },
     firstFieldId: "notification-new-id",
     fallbackFocusId: "notification-definitions-background",
@@ -409,23 +427,31 @@ export function NotificationNewPage() {
 
   const readLatestConfiguration = async () => {
     if (query.isFetching || busy) return;
+    const refusedTest = refusalStage === "test";
+    const readFailed = refusedTest
+      ? "签名测试没有发出：读取最新配置失败，表单输入仍保留。恢复读取后重试；读取成功后需对当前表单重新完成签名测试。"
+      : "定义没有创建：读取最新配置失败，表单输入仍保留。恢复读取后重试；读取成功后需对当前表单重新完成签名测试。";
     try {
       const refreshed = await query.refetch();
-      const latest = refreshed.data?.ok === true ? refreshed.data.model : null;
+      // A failed refetch keeps the last successful data, so the read outcome
+      // must come from the refetch status rather than the retained model.
+      const latest =
+        refreshed.status === "success" && refreshed.data?.ok === true
+          ? refreshed.data.model
+          : null;
       if (latest === null) {
-        setError(
-          "定义没有创建：读取最新配置失败，表单输入仍保留。恢复读取后重试；读取成功后需对当前表单重新完成签名测试。",
-        );
+        setError(readFailed);
         return;
       }
-      setCreateConflict(false);
+      setReadLatestRequired(false);
+      const version = latest.activeConfiguration?.version ?? "未知";
       setError(
-        `已读取最新配置（版本 ${latest.activeConfiguration?.version ?? "未知"}）。本次没有创建；请对当前表单重新完成签名测试后再保存。`,
+        refusedTest
+          ? `已读取最新配置（版本 ${version}）。本次签名测试没有发出；请对当前表单重新完成签名测试后再保存。`
+          : `已读取最新配置（版本 ${version}）。本次没有创建；请对当前表单重新完成签名测试后再保存。`,
       );
     } catch {
-      setError(
-        "定义没有创建：读取最新配置失败，表单输入仍保留。恢复读取后重试；读取成功后需对当前表单重新完成签名测试。",
-      );
+      setError(readFailed);
     }
   };
 
@@ -586,9 +612,11 @@ export function NotificationNewPage() {
             ) {
               return;
             }
-            if (createConflict) {
+            if (readLatestRequired) {
               setError(
-                "本次没有创建。请先读取最新配置，再对当前表单重新完成签名测试。",
+                refusalStage === "test"
+                  ? "本次签名测试没有发出。请先读取最新配置，再对当前表单重新完成签名测试。"
+                  : "本次没有创建。请先读取最新配置，再对当前表单重新完成签名测试。",
               );
               return;
             }
@@ -685,9 +713,14 @@ export function NotificationNewPage() {
             </StatusBanner>
           )}
           {error !== null && (
-            <StatusBanner variant="error" title="定义没有创建">
+            <StatusBanner
+              variant="error"
+              title={
+                refusalStage === "test" ? "签名测试没有发出" : "定义没有创建"
+              }
+            >
               <p>{error}</p>
-              {createConflict && (
+              {readLatestRequired && (
                 <div className="mf-actions">
                   <Button
                     type="button"
@@ -952,7 +985,7 @@ export function NotificationNewPage() {
                 variant="secondary"
                 disabled={
                   busy ||
-                  createConflict ||
+                  readLatestRequired ||
                   issues.length > 0 ||
                   webhookId.trim().length === 0 ||
                   revisionId === null ||

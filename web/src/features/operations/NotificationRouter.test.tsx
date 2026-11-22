@@ -415,6 +415,241 @@ describe("V2 Notification direct publication", () => {
     ).toBe(false);
   });
 
+  it("recovers in place when the signed test meets a newer Active revision", async () => {
+    const NEW_REVISION = "revision-active-2";
+    let advanced = false;
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.method === "GET" &&
+        call.url === "/api/operations/notifications/webhooks"
+      ) {
+        if (!advanced) return undefined;
+        return jsonResponse(
+          listPayload({
+            activeConfiguration: {
+              revisionId: NEW_REVISION,
+              version: 4,
+              revisionSequence: 3,
+              status: "active",
+            },
+            actions: {
+              create: {
+                available: true,
+                reason: null,
+                method: "POST",
+                path: `/api/configuration/revisions/${NEW_REVISION}/objects/webhooks`,
+                sideEffects: "none",
+                durableOutcome: "the definition is published directly",
+                nextAction: "apply the definition",
+              },
+            },
+          }),
+        );
+      }
+      if (
+        call.method === "POST" &&
+        call.url === "/api/operations/notifications/webhooks/new-webhook/test"
+      ) {
+        if (!advanced) {
+          // The Active moved after this form and its baseline were read. The
+          // real server refuses before it contacts the receiver.
+          advanced = true;
+          return jsonResponse(
+            {
+              error: {
+                code: "configuration_version_conflict",
+                message:
+                  "the selected Webhook revision is stale; reload before testing",
+                details: {
+                  durableState: "no test request was sent",
+                  sideEffects: "none",
+                  retrySafe: true,
+                },
+              },
+            },
+            409,
+          );
+        }
+        return jsonResponse({
+          testId: "test-new-after-read",
+          testEvidenceId: "evidence-new-after-read",
+          webhook: webhookDocument({ id: "new-webhook" }),
+          revision: {
+            revisionId: NEW_REVISION,
+            version: 4,
+            status: "active",
+          },
+          outcome: "success",
+          category: "http_204",
+          responseStatus: 204,
+          message: "delivered",
+          durableState: "no_delivery_created_no_configuration_change",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "apply the tested form",
+        });
+      }
+      if (
+        call.method === "POST" &&
+        call.url ===
+          `/api/configuration/revisions/${NEW_REVISION}/objects/webhooks`
+      ) {
+        return jsonResponse({
+          revisionId: "revision-active-3",
+          version: 2,
+          publishedFromRevisionId: NEW_REVISION,
+          publishedFromVersion: 4,
+          webhook: webhookDocument({ id: "new-webhook" }),
+        });
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations/notifications/webhooks/new");
+    const view = within(await dialog());
+    await userEvent.clear(await view.findByLabelText("标识符"));
+    await userEvent.type(view.getByLabelText("标识符"), "new-webhook");
+    await userEvent.type(
+      view.getByLabelText("HTTPS 接收地址"),
+      "https://example.invalid/hooks/new",
+    );
+    await userEvent.type(
+      view.getByLabelText("密钥环境变量引用"),
+      "MEDIAFLOW_WEBHOOK_SECRET",
+    );
+    await userEvent.click(view.getAllByRole("checkbox")[0]);
+    await userEvent.click(view.getByRole("button", { name: "发送签名测试" }));
+    expect(await view.findByText(/本次测试请求没有发往接收方/)).toBeVisible();
+    expect(view.getByText("签名测试没有发出", { exact: true })).toBeVisible();
+    expect(view.getByLabelText("最大尝试次数")).toHaveValue("5");
+    expect(view.getByRole("button", { name: "发送签名测试" })).toBeDisabled();
+    expect(view.getByRole("button", { name: "保存" })).toBeDisabled();
+    const testWrites = calls.filter((call) => call.method !== "GET");
+    expect(testWrites.map((call) => `${call.method} ${call.url}`)).toEqual([
+      "POST /api/operations/notifications/webhooks/new-webhook/test",
+    ]);
+
+    await userEvent.click(view.getByRole("button", { name: "读取最新配置" }));
+    expect(await view.findByText(/已读取最新配置（版本 4）/)).toBeVisible();
+    expect(view.getByText(/本次签名测试没有发出/)).toBeVisible();
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(1);
+    expect(view.getByRole("button", { name: "发送签名测试" })).toBeEnabled();
+    expect(view.getByRole("button", { name: "保存" })).toBeDisabled();
+
+    await userEvent.click(view.getByRole("button", { name: "发送签名测试" }));
+    expect(await view.findByText(/签名测试成功/)).toBeVisible();
+    expect(view.getByRole("button", { name: "保存" })).toBeEnabled();
+    await userEvent.click(view.getByRole("button", { name: "保存" }));
+    await waitFor(() => {
+      const write = calls.find(
+        (call) =>
+          call.method === "POST" &&
+          call.url ===
+            `/api/configuration/revisions/${NEW_REVISION}/objects/webhooks`,
+      );
+      expect(write).toBeDefined();
+      expect(write?.body).toMatchObject({
+        expectedVersion: 4,
+        testEvidenceId: "evidence-new-after-read",
+      });
+    });
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "POST" && call.url.endsWith("/objects/webhooks"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps the signed test locked when reading the latest configuration fails", async () => {
+    const NEW_REVISION = "revision-active-2";
+    let refusedTest = false;
+    let readAttempts = 0;
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.method === "GET" &&
+        call.url === "/api/operations/notifications/webhooks" &&
+        refusedTest
+      ) {
+        readAttempts += 1;
+        if (readAttempts === 1) {
+          return jsonResponse({ error: { code: "forbidden" } }, 403);
+        }
+        return jsonResponse(
+          listPayload({
+            activeConfiguration: {
+              revisionId: NEW_REVISION,
+              version: 4,
+              revisionSequence: 3,
+              status: "active",
+            },
+            actions: {
+              create: {
+                available: true,
+                reason: null,
+                method: "POST",
+                path: `/api/configuration/revisions/${NEW_REVISION}/objects/webhooks`,
+                sideEffects: "none",
+                durableOutcome: "the definition is published directly",
+                nextAction: "apply the definition",
+              },
+            },
+          }),
+        );
+      }
+      if (
+        call.method === "POST" &&
+        call.url === "/api/operations/notifications/webhooks/new-webhook/test"
+      ) {
+        refusedTest = true;
+        return jsonResponse(
+          { error: { code: "configuration_version_conflict" } },
+          409,
+        );
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations/notifications/webhooks/new");
+    const view = within(await dialog());
+    await userEvent.clear(await view.findByLabelText("标识符"));
+    await userEvent.type(view.getByLabelText("标识符"), "new-webhook");
+    await userEvent.type(
+      view.getByLabelText("HTTPS 接收地址"),
+      "https://example.invalid/hooks/new",
+    );
+    await userEvent.type(
+      view.getByLabelText("密钥环境变量引用"),
+      "MEDIAFLOW_WEBHOOK_SECRET",
+    );
+    await userEvent.click(view.getAllByRole("checkbox")[0]);
+    await userEvent.click(view.getByRole("button", { name: "发送签名测试" }));
+    expect(await view.findByText(/本次测试请求没有发往接收方/)).toBeVisible();
+
+    await userEvent.click(view.getByRole("button", { name: "读取最新配置" }));
+    expect(
+      await view.findByText(
+        /签名测试没有发出：读取最新配置失败，表单输入仍保留/,
+      ),
+    ).toBeVisible();
+    expect(view.getByRole("button", { name: "读取最新配置" })).toBeEnabled();
+    expect(view.getByRole("button", { name: "发送签名测试" })).toBeDisabled();
+    expect(view.getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(view.getByLabelText("HTTPS 接收地址")).toHaveValue(
+      "https://example.invalid/hooks/new",
+    );
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(1);
+
+    // The same action stays available and completes the recovery read once the
+    // read authority is back; only then does the explicit retest unlock.
+    await userEvent.click(view.getByRole("button", { name: "读取最新配置" }));
+    expect(await view.findByText(/已读取最新配置（版本 4）/)).toBeVisible();
+    expect(view.getByRole("button", { name: "发送签名测试" })).toBeEnabled();
+    expect(view.getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(readAttempts).toBe(2);
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(1);
+  });
+
   it("sends exactly one signed test when explicitly requested", async () => {
     const { calls } = recordingFetch((call) => {
       if (

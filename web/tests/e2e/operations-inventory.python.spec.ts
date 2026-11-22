@@ -4751,6 +4751,207 @@ test("recovers a concurrent Webhook creation conflict", async ({
   }
 });
 
+test("recovers a concurrent Webhook creation conflict at the signed test", async ({
+  page,
+  browser,
+}) => {
+  const webhookId = "test-stage-conflict-webhook";
+  const secondContext = await browser.newContext();
+  try {
+    // The refusal was reported on the narrow entry, so this journey proves the
+    // in-card recovery at the same 390px width.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await connect(page, ADMIN_TOKEN);
+    await page.getByRole("button", { name: "Open menu" }).click();
+    await page
+      .getByRole("link", { name: "Notifications", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/operations\/notifications$/);
+    await page.getByRole("link", { name: "新建 Webhook" }).click();
+    await expect(page).toHaveURL(/\/operations\/notifications\/webhooks\/new$/);
+    await page.getByLabel("标识符").fill(webhookId);
+    await page
+      .getByLabel("HTTPS 接收地址")
+      .fill("https://example.invalid/hooks/test-stage-conflict");
+    await page.getByLabel("密钥环境变量引用").fill("MEDIAFLOW_WEBHOOK_SECRET");
+    await page.getByRole("checkbox").first().check();
+    await page
+      .locator("summary")
+      .filter({ hasText: /^超时与重试$/ })
+      .click();
+    await page.getByLabel("最大尝试次数").fill("6");
+
+    // A second real browser session publishes ordinary log retention after the
+    // create form and its Active baseline were read, but before the operator
+    // sends the signed test. No browser route substitutes the refusal.
+    const secondPage = await secondContext.newPage();
+    await connect(secondPage, ADMIN_TOKEN);
+    await secondPage.goto("/configuration");
+    await expect(
+      secondPage.getByRole("heading", { name: "系统设置", exact: true }),
+    ).toBeVisible();
+    await secondPage
+      .getByRole("navigation", { name: "设置分区" })
+      .getByRole("button", { name: "常规设置", exact: true })
+      .click();
+    await secondPage.getByRole("button", { name: "日志", exact: true }).click();
+    const retention = secondPage.getByLabel("日志保留天数");
+    const current = Number(await retention.inputValue());
+    await retention.fill(String(current < 3650 ? current + 1 : current - 1));
+    await secondPage.getByRole("button", { name: "应用更改" }).click();
+    await expect(
+      secondPage.getByText("更改已应用", { exact: true }),
+    ).toBeVisible();
+
+    const refused = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname ===
+          `/api/operations/notifications/webhooks/${webhookId}/test`,
+    );
+    await page.getByRole("button", { name: "发送签名测试" }).click();
+    const refusedResponse = await refused;
+    expect(refusedResponse.status()).toBe(409);
+    const refusedEnvelope = (await refusedResponse.json()) as {
+      readonly error?: {
+        readonly code?: string;
+        readonly details?: { readonly sideEffects?: string };
+      };
+    };
+    expect(refusedEnvelope.error?.code).toBe("configuration_version_conflict");
+    expect(refusedEnvelope.error?.details?.sideEffects).toBe("none");
+    await expect(
+      page.getByText("签名测试没有发出", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText(/本次测试请求没有发往接收方/)).toBeVisible();
+
+    // The refusal created nothing and kept the whole form, including the
+    // advanced fields. Only the explicit read may follow.
+    const refusedList = await page.request.get(
+      "/api/operations/notifications/webhooks",
+    );
+    expect(refusedList.ok()).toBe(true);
+    const refusedItems = (
+      (await refusedList.json()) as {
+        readonly items: readonly { readonly id: string }[];
+      }
+    ).items;
+    expect(refusedItems.map((item) => item.id)).not.toContain(webhookId);
+    await expect(page.getByLabel("标识符")).toHaveValue(webhookId);
+    await expect(page.getByLabel("HTTPS 接收地址")).toHaveValue(
+      "https://example.invalid/hooks/test-stage-conflict",
+    );
+    await expect(page.getByLabel("密钥环境变量引用")).toHaveValue(
+      "MEDIAFLOW_WEBHOOK_SECRET",
+    );
+    await expect(page.getByLabel("最大尝试次数")).toHaveValue("6");
+    await expect(page.getByRole("checkbox").first()).toBeChecked();
+    await expect(
+      page.getByRole("button", { name: "发送签名测试" }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "保存", exact: true }),
+    ).toBeDisabled();
+
+    // The read is one bounded GET of the current Active. It neither retests
+    // against a guessed baseline nor publishes anything.
+    const writesAfterRefusal: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        url.pathname.startsWith("/api/") &&
+        !["GET", "HEAD", "OPTIONS"].includes(request.method())
+      ) {
+        writesAfterRefusal.push(`${request.method()} ${url.pathname}`);
+      }
+    });
+    const refreshed = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname ===
+          "/api/operations/notifications/webhooks",
+    );
+    await page.getByRole("button", { name: "读取最新配置" }).click();
+    const refreshedResponse = await refreshed;
+    expect(refreshedResponse.status()).toBe(200);
+    const refreshedPayload = (await refreshedResponse.json()) as {
+      readonly activeConfiguration?: { readonly version?: number };
+    };
+    await expect(page.getByText(/已读取最新配置/)).toBeVisible();
+    expect(writesAfterRefusal).toEqual([]);
+    await expect(page.getByLabel("最大尝试次数")).toHaveValue("6");
+    await expect(
+      page.getByRole("button", { name: "发送签名测试" }),
+    ).toBeEnabled();
+    await expect(
+      page.getByRole("button", { name: "保存", exact: true }),
+    ).toBeDisabled();
+
+    const retested = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname ===
+          `/api/operations/notifications/webhooks/${webhookId}/test`,
+    );
+    await page.getByRole("button", { name: "发送签名测试" }).click();
+    const retestRequest = (await (await retested).request().postDataJSON()) as {
+      readonly expectedRevisionId?: string;
+      readonly expectedVersion?: number;
+    };
+    expect(retestRequest.expectedVersion).toBe(
+      refreshedPayload.activeConfiguration?.version,
+    );
+    await expect(page.getByText(/签名测试成功/)).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "保存", exact: true }),
+    ).toBeEnabled();
+
+    const published = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        /\/api\/configuration\/revisions\/[^/]+\/objects\/webhooks$/.test(
+          new URL(response.url()).pathname,
+        ),
+    );
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    const publishedResponse = await published;
+    expect(publishedResponse.status()).toBe(200);
+    const publishRequest = (await publishedResponse
+      .request()
+      .postDataJSON()) as {
+      readonly expectedVersion?: number;
+    };
+    expect(publishRequest.expectedVersion).toBe(
+      refreshedPayload.activeConfiguration?.version,
+    );
+    await expect(page).toHaveURL(
+      new RegExp(`/operations/notifications/webhooks/${webhookId}$`),
+    );
+    const dialog = page.getByRole("dialog", { name: `Webhook ${webhookId}` });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("定义已发布", { exact: true })).toBeVisible();
+    await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(
+      page.locator(".mf-notification-list-card").filter({ hasText: webhookId }),
+    ).toHaveCount(1);
+    const publishedList = await page.request.get(
+      "/api/operations/notifications/webhooks",
+    );
+    expect(publishedList.ok()).toBe(true);
+    const publishedItems = (
+      (await publishedList.json()) as {
+        readonly items: readonly { readonly id: string }[];
+      }
+    ).items;
+    expect(publishedItems.filter((item) => item.id === webhookId)).toHaveLength(
+      1,
+    );
+  } finally {
+    await secondContext.close();
+  }
+});
+
 test("a settled Task publishes one outbox delivery the delivery pages read", async ({
   page,
   request,
