@@ -1,6 +1,6 @@
 # Task 57.1 — 单管理员 Web 登录与定时计划停用
 
-Next Action: B REVIEWS TASK57.1
+Next Action: DEVELOPER FIXES TASK57.1
 
 本 Task 落实 Slice 57 的 RO-1 与 RO-3 中的部署、管理员和定时计划旅程。按用户授权，A 更新合同，
 B 根据已提交的 `b22af92f4434a1f343da2b3cddfe2747dc6e1b37` 调整同一 Task。当前返工以本节的
@@ -11,7 +11,7 @@ B 根据已提交的 `b22af92f4434a1f343da2b3cddfe2747dc6e1b37` 调整同一 Tas
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
@@ -84,7 +84,50 @@ Implementation Authorization: AUTHORIZED BY USER FOR TASK57.1
 - 按[共享全量门禁](docs/development-workflow.md#shared-full-regression-commands)运行适用的
   T4 全量、生产打包与 wheel 验收。Developer 先交付受影响用例结果，B 用对应候选验收。
 
-### B 最新复核 — FIX REQUIRED
+### B 复核候选 b541bbda — FIX REQUIRED
+
+```text
+Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..b541bbda861227e5851dda9ff52e63847284da3b
+Implementation: cb521ab7be1c0250d0edc65df09cb36d75b81693
+Decision: FIX REQUIRED
+Next: SAME TASK FIX LOOP
+```
+
+- **P1｜首次创建管理员后，在同一标签页改密会返回创建管理员。** 用生成器的最小配置启动四服务，
+  从主机签发设置码，在网页创建管理员并初始化为空配置。直接在这个标签页打开账号菜单改密。
+  正式 API 返回成功，页面回到根地址却停在「Create first administrator」，管理员无法在当前页面用新密码登录。
+  Chromium 连接真实 Python API 也复现了同样结果，服务端已经确认不再需要设置。
+  `8c0e2c85`（2026-11-21）引入首次创建旅程时沿用了普通登录的状态更新，浏览器保留了首次访问读到的待设置状态。
+- **P1｜发布指南的容器安全验收仍以退役账号配置启动。** 维护者按发布指南运行
+  `scripts/docker_release_security_smoke_test.py`，镜像和 Compose 拓扑检查完成后脚本仍填入
+  `api.principals`。四个服务均按 `8c0e2c85` 引入的预检退出，脚本等待服务健康后超时，
+  维护者无法通过已公布的命令验证运行中的非 root、挂载、会话和脱敏。
+
+#### Developer 修正指导
+
+1. 在现有首次建号成功路径同步已完成设置的浏览器状态，根入口根据实例设置状态选择创建或登录表单。
+   用 `web-account-auth.python.spec.ts` 的首次建号场景接着从账号菜单改密，在同一标签页直接用
+   新密码登录。核对旧会话失效。运行本 Task 的账号浏览器命令，以及 `web/` 中的
+   `npm run test -- run src/features/entry/EntryPage.test.tsx src/shared/api/auth-store.test.ts`。
+2. 更新发布说明和现有容器发布安全脚本的正常启动夹具，复用配置生成器、主机设置码和当前会话入口。
+   在原有检查中验证无凭证和退役环境令牌均被拒绝，保留镜像、非 root、挂载和脱敏检查。
+   保持退役字段拒绝的验证。核对发布指南列出的空基线及重启命令共享的启动夹具，直接复用本版本的登录方式。
+   Developer 核对改动处的启动和会话，B 用新候选重跑发布验收。
+
+上轮停用提示已通过。重新启用后再次停用，列表显示停用且 Scheduler 零新增，旧执行详情保留原因和
+零文件效果，下一步指向自动化列表核对当前状态。
+
+本轮生产 Web 构建和静态检查通过，Python 2,354 项含 7 项跳过，Web 单测 1,602 项、默认浏览器
+279 项、真实自动化浏览器 32 项、真实账号浏览器 5 项通过。wheel 源码外安装通过。候选镜像
+`sha256:07905fcc45e7393134d1bd6c572ee638af6baf14a1bbb9e5f91ec22ecafb89a5` 的全新 Compose
+四服务健康，网页创建唯一管理员并完成空配置，匿名和旧环境令牌均为 `401`。正式改密返回成功，
+同标签重新登录受上述问题阻塞。日志、截图和 trace 位于本地
+`.git/validation-evidence/b541bbda861227e5851dda9ff52e63847284da3b/b-review/`。
+
+Slice 57 的 RO-1 仍需通过首次建号后直接改密登录。RO-3 的停用旅程通过，发布验证和同版本恢复
+继续在修正候选上验收。RO-2 的分权限 API 令牌与定时计划独立性待后续 Task。
+
+### B 上轮复核候选 0e134204 — FIX REQUIRED
 
 ```text
 Reviewed: 4566a74055c698aec704215dd431eb8521bcfedb..0e134204a46d86e80444ba385c52f28cf81b473c
