@@ -317,6 +317,116 @@ test("a lost apply answer is verified automatically after reconnect without repl
   await expect(page.getByLabel("日志保留天数")).toHaveValue(String(next));
 });
 
+test("390px touch Settings keeps the token card in view and revokes from the scrolled list", async ({
+  browser,
+  request,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+  });
+  try {
+    const page = await context.newPage();
+    await connectOn(page, "/configuration");
+    const panel = page.getByRole("region", { name: "API 令牌" });
+    await expect(panel).toBeVisible();
+    await expect(
+      panel.getByText("尚未签发 API 令牌。", { exact: true }),
+    ).toBeVisible();
+    await expect(panel.getByLabel("权限")).toHaveValue("read_only");
+    await expect(panel.getByLabel("有效期（天）")).toHaveValue("90");
+
+    await panel.getByLabel("令牌名称").fill("narrow-monitor");
+    await panel.getByRole("button", { name: "签发令牌" }).tap();
+    await expect(panel.getByText("令牌已签发", { exact: true })).toBeVisible();
+    const plaintext = (await panel.getByLabel("新令牌明文").innerText()).trim();
+    expect(plaintext).toContain("mf_");
+    const tasks = await request.get("/api/tasks", {
+      headers: { Authorization: `Bearer ${plaintext}` },
+    });
+    expect(tasks.status()).toBe(200);
+    await panel.getByRole("button", { name: "我已保存" }).tap();
+    await expect(panel.getByLabel("新令牌明文")).toHaveCount(0);
+
+    const refreshed = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/auth/tokens" &&
+        response.request().method() === "GET" &&
+        response.status() === 200,
+    );
+    await panel.getByRole("button", { name: "刷新列表" }).tap();
+    await refreshed;
+
+    // The wide table scrolls inside its own container; the settings card and
+    // its refresh action stay inside the 390px viewport without page overflow.
+    const layout = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+    }));
+    expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth + 1);
+    const panelBox = await panel.boundingBox();
+    expect(panelBox).not.toBeNull();
+    expect(panelBox!.x).toBeGreaterThanOrEqual(0);
+    expect(panelBox!.x + panelBox!.width).toBeLessThanOrEqual(
+      layout.innerWidth + 1,
+    );
+    const refresh = panel.getByRole("button", { name: "刷新列表" });
+    await refresh.scrollIntoViewIfNeeded();
+    await expect(refresh).toBeInViewport();
+    const refreshBox = await refresh.boundingBox();
+    expect(refreshBox).not.toBeNull();
+    expect(refreshBox!.x).toBeGreaterThanOrEqual(0);
+    expect(refreshBox!.x + refreshBox!.width).toBeLessThanOrEqual(
+      layout.innerWidth + 1,
+    );
+
+    const wrap = panel.locator(".mf-settings-token-table-wrap");
+    const tableMetrics = await wrap.evaluate((element) => ({
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+    }));
+    expect(tableMetrics.scrollWidth).toBeGreaterThan(tableMetrics.clientWidth);
+    await wrap.evaluate((element) => {
+      element.scrollLeft = element.scrollWidth;
+    });
+
+    const revokes: string[] = [];
+    page.on("request", (requestEvent) => {
+      const url = new URL(requestEvent.url());
+      if (
+        requestEvent.method() === "POST" &&
+        url.pathname.startsWith("/api/auth/tokens/") &&
+        url.pathname.endsWith("/revoke")
+      ) {
+        revokes.push(url.pathname);
+      }
+    });
+    const row = panel.getByRole("row", { name: /narrow-monitor/ });
+    await expect(row).toBeVisible();
+    const revoke = panel.getByRole("button", {
+      name: "吊销令牌 narrow-monitor",
+    });
+    await expect(revoke).toBeInViewport();
+    await revoke.tap();
+    const confirm = panel.getByRole("button", {
+      name: "确认吊销 narrow-monitor",
+    });
+    await expect(confirm).toBeInViewport();
+    await confirm.tap();
+    await expect(
+      panel.getByText("已吊销 narrow-monitor", { exact: true }),
+    ).toBeVisible();
+    expect(revokes).toHaveLength(1);
+    await expect(row.getByLabel("令牌状态 已吊销")).toBeVisible();
+    const revoked = await request.get("/api/tasks", {
+      headers: { Authorization: `Bearer ${plaintext}` },
+    });
+    expect(revoked.status()).toBe(401);
+  } finally {
+    await context.close();
+  }
+});
+
 test("desktop Settings issues scoped tokens, reconciles a lost answer and revokes them", async ({
   page,
   request,

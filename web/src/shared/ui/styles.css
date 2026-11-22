@@ -10850,7 +10850,14 @@ tr[aria-selected="true"] {
 
 .mf-settings-page {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
+  min-width: 0;
+}
+
+/* A settings card may contain a wide table; its own scroll container must
+   absorb that width instead of sizing the page column to the table. */
+.mf-settings-page > * {
   min-width: 0;
 }
 
