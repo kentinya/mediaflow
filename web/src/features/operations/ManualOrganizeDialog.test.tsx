@@ -91,10 +91,12 @@ function makeBackend() {
     walkOnlyReads: 0 as number,
     frozenOnlyReads: 0 as number,
     // A live analysis request whose durable stage is analysing before the plan
-    // links, and a bounded rejection of the preparation's own action.
+    // links, a bounded rejection of the preparation's own action, and the
+    // advertised human-waiting recovery state that really accepts a re-analysis.
     analyzingReads: 0 as number,
     analyzeShowsAnalyzing: false as boolean,
     rejectAnalysisOnce: false as boolean,
+    manualAnalysisRecovery: false as boolean,
     discoveryReads: 0 as number,
     // A real no-candidate problem on the first file, plus the durable
     // metadata-correction decision the same TaskItem exposes after analysis.
@@ -138,6 +140,12 @@ function makeBackend() {
     // exact summary, and bounded admission-read failures.
     requireOverwrite: false as boolean,
     failAdmissionReads: 0 as number,
+    // A completed preparation whose only directory content was excluded as a
+    // non-primary extension.  No plan is generated for this walk.
+    zeroPrimary: false as boolean,
+    // The first linked-summary read fails once; the same preparation context
+    // keeps the retry entry for that exact summary.
+    failFirstPreviewRead: false as boolean,
     // Previews whose Execute the backend durably admitted. A lost response
     // changes nothing about this record.
     admittedPreviewIds: [] as string[],
@@ -188,7 +196,7 @@ function makeBackend() {
       state.scopeSelections.length > 0
         ? state.scopeSelections
         : [{ kind: "directory" as const, path: "Movies" }];
-    return {
+    const value: Json = {
       journey: "discovery",
       discoveryId: DISCOVERY_ID,
       resourceLibraryId: "library",
@@ -269,6 +277,31 @@ function makeBackend() {
       zeroMutation: true,
       execution: "not_available_from_discovery",
     };
+    if (state.zeroPrimary) {
+      value["status"] = "completed";
+      value["previewId"] = null;
+      value["prepared"] = false;
+      value["intentId"] = null;
+      value["frozen"] = false;
+      value["primarySourceCount"] = 0;
+      const progress = value["progress"] as Json;
+      progress["phase"] = "completed";
+      progress["message"] =
+        "the bounded walk completed with no primary media source";
+      progress["primarySources"] = 0;
+      progress["visitedEntries"] = 1;
+      progress["excludedEntries"] = 1;
+      progress["reasons"] = [
+        {
+          reason: "unsupported_extension",
+          count: 1,
+          examplePath: "Gamma-Directory/child.txt",
+        },
+      ];
+      value["nextAction"] =
+        "narrow the selected scope or correct the configured filters, then retry";
+    }
+    return value;
   };
 
   function discoveryAction() {
@@ -853,9 +886,16 @@ function makeBackend() {
             const prepare = (intermediate["actions"] as Json)[
               "prepare"
             ] as Json;
-            prepare["available"] = true;
-            prepare["path"] =
-              `/api/operations/organize/discoveries/${DISCOVERY_ID}/analyze`;
+            // The real backend advertises this action only at the Task's
+            // human-waiting boundary.  While the Worker still owns the freeze
+            // it reports the same work as pending instead.
+            prepare["available"] = state.manualAnalysisRecovery;
+            prepare["pendingReason"] = state.manualAnalysisRecovery
+              ? null
+              : "discovery_analysis_pending";
+            prepare["path"] = state.manualAnalysisRecovery
+              ? `/api/operations/organize/discoveries/${DISCOVERY_ID}/analyze`
+              : null;
           }
           return jsonResponse(intermediate);
         }
@@ -1023,6 +1063,15 @@ function makeBackend() {
       if (previewMatch !== null && method === "GET") {
         const previewId = previewMatch[1] ?? "";
         if (previewId === PREVIEW_ID) {
+          if (state.failFirstPreviewRead) {
+            state.failFirstPreviewRead = false;
+            return jsonResponse(
+              {
+                error: { code: "unavailable", message: "summary read failed" },
+              },
+              503,
+            );
+          }
           return jsonResponse(previewDocument(PREVIEW_ID, false));
         }
         if (previewId === "preview-2") {
@@ -2346,7 +2395,7 @@ describe("ManualOrganizeDialog", () => {
       // The real Worker publishes the completed walk first, then freezes and
       // enters analysis.  Neither intermediate state is the whole preparation.
       value.state.walkOnlyReads = 1;
-      value.state.frozenOnlyReads = 1;
+      value.state.frozenOnlyReads = 3;
     });
 
     await screen.findByText("正在准备");
@@ -2357,18 +2406,83 @@ describe("ManualOrganizeDialog", () => {
     ).toBeNull();
 
     // The frozen intent is durable while the plan is still linking.  The card
-    // keeps polling and then shows the linked plan without a second submit.
-    await screen.findByRole(
-      "button",
-      { name: "运行分析并生成计划摘要" },
+    // keeps polling and then shows the linked plan without a second submit;
+    // the Worker still owns this Task stage, so no second analysis action is
+    // advertised while it works.
+    await waitFor(
+      () => expect(backend.state.discoveryReads).toBeGreaterThanOrEqual(2),
       { timeout: 5_000 },
     );
+    expect(
+      screen.queryByRole("button", { name: "运行分析并生成计划摘要" }),
+    ).toBeNull();
+    await screen.findByRole(
+      "heading",
+      { name: /第 1 \/ 10 个/ },
+      { timeout: 10_000 },
+    );
+    expect(backend.state.discoveryReads).toBeGreaterThanOrEqual(3);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 20_000);
+
+  it("keeps the source and admitted scope while the first summary read fails, then retries that same summary", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.failFirstPreviewRead = true;
+    });
+
+    expect(await screen.findByText("计划摘要暂时无法读取")).toBeVisible();
+    expect(card()).toHaveTextContent("来源资源库");
+    expect(card()).toHaveTextContent("library");
+    expect(card()).toHaveTextContent("受理范围");
+    expect(card()).not.toHaveTextContent(/每次复核一个主文件及其关联附件/);
+    expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
+    expect(screen.queryByRole("heading", { name: /第 1 \/ 10 个/ })).toBeNull();
+    expect(screen.getByText(/已保存的准备与选择保持不变/)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "重新读取计划摘要" }));
     await screen.findByRole(
       "heading",
       { name: /第 1 \/ 10 个/ },
       { timeout: 5_000 },
     );
-    expect(backend.state.discoveryReads).toBeGreaterThanOrEqual(3);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 20_000);
+
+  it("ends the first-plan wait with the real exclusions when the folder has no primary file", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.zeroPrimary = true;
+      },
+      ["Movies"],
+    );
+
+    expect(await screen.findByText("未找到可整理的主文件")).toBeVisible();
+    expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
+    expect(screen.getByText(/已排除 1 个条目：非媒体扩展名 × 1/)).toBeVisible();
+    expect(
+      screen.getByText("本次没有生成整理方案，也没有整理任何文件。"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "请关闭本弹窗返回原文件页，调整所选范围后重新发起整理。",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/未受影响的已受理条目会继续准备/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "运行分析并生成计划摘要" }),
+    ).toBeNull();
+    expect(screen.queryByRole("heading", { name: /第 1 \/ 10 个/ })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    expect(backend.calls.discoveryPosts).toHaveLength(1);
     expect(backend.calls.analyzePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 20_000);
@@ -2404,12 +2518,15 @@ describe("ManualOrganizeDialog", () => {
   it("reports a rejected preparation analysis nearby and re-reads the same updated preparation", async () => {
     const user = userEvent.setup();
     const backend = await openDialog(user, (value) => {
-      // Keep the card on the stale frozen walk while its real plan is already
-      // linked in durable state: this is the version-conflict the operator hit.
+      // The Task has already settled into its human-waiting recovery boundary,
+      // but the stale preparation read still shows the frozen walk while its
+      // real plan is already linked in durable state.
       value.state.frozenOnlyReads = 100;
+      value.state.manualAnalysisRecovery = true;
       value.state.rejectAnalysisOnce = true;
     });
 
+    await screen.findByText("等待重新运行分析");
     const analyze = await screen.findByRole(
       "button",
       { name: "运行分析并生成计划摘要" },
@@ -2436,9 +2553,11 @@ describe("ManualOrganizeDialog", () => {
     const user = userEvent.setup();
     const backend = await openDialog(user, (value) => {
       value.state.frozenOnlyReads = 100;
+      value.state.manualAnalysisRecovery = true;
       value.state.analyzeShowsAnalyzing = true;
     });
 
+    await screen.findByText("等待重新运行分析");
     const analyze = await screen.findByRole(
       "button",
       { name: "运行分析并生成计划摘要" },

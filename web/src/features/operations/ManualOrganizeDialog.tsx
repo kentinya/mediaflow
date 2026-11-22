@@ -1351,10 +1351,7 @@ export function ManualOrganizeDialog({
     session.phase === "submitting" ||
     preparationUnavailable ||
     preparation === undefined ||
-    (!organizeFlowEnded &&
-      preparation !== undefined &&
-      preparation.previewId === null &&
-      preview === undefined);
+    (!organizeFlowEnded && preview === undefined);
 
   /** The preparation's own analysis request, reported where it was made. */
   const renderPreparationNotice = () =>
@@ -1433,11 +1430,45 @@ export function ManualOrganizeDialog({
       (total, item) => total + item.count,
       0,
     ) ?? 0;
+  const preparationSummaryReadFailed =
+    preparation !== undefined &&
+    summaryPreviewId !== "" &&
+    preview === undefined &&
+    (previewQuery.isError || previewQuery.data?.ok === false);
+  const preparationNoPrimarySources =
+    preparation !== undefined &&
+    preparation.previewId === null &&
+    preparation.primarySourceCount === 0 &&
+    !primaryLimitStopped &&
+    (preparation.status === "completed" ||
+      preparation.status === "partial_success") &&
+    preparation.failure === null;
+  /**
+   * A frozen first preparation the resident Worker left at the human-waiting
+   * boundary without linking its plan.  Only this exact advertised backend
+   * action can continue the same Task zero-mutation analysis; it is never
+   * shown while the Worker still owns the stage.
+   */
+  const preparationManualAnalysisAvailable =
+    preparation !== undefined &&
+    !preparationWorkerUnavailable &&
+    preparationPlanExpected &&
+    preparation.frozen &&
+    preparation.status !== "analyzing" &&
+    preparation.previewId === null &&
+    preparation.actions.prepare.available;
   const preparationStoppedTitle = (() => {
     if (preparation === undefined) return null;
     if (primaryLimitStopped) return "超出主文件上限";
     if (preparation.status === "failed") return "准备失败";
     if (preparation.status === "cancelled") return "准备已取消";
+    if (preparationSummaryReadFailed) return "计划摘要暂时无法读取";
+    if (preparationNoPrimarySources) {
+      return preparation.progress.incomplete
+        ? "准备未完成"
+        : "未找到可整理的主文件";
+    }
+    if (preparationManualAnalysisAvailable) return "等待重新运行分析";
     if (
       preparation.progress.incomplete &&
       preparation.progress.materialRefusal !== null
@@ -1595,6 +1626,33 @@ export function ManualOrganizeDialog({
             <p>准备已取消，没有执行任何整理；请关闭后从文件页重新发起。</p>
           </div>
         ) : null}
+        {preparationSummaryReadFailed ? (
+          <div className="mf-organize-preparation-note" role="status">
+            <p>
+              准备已产生精确计划摘要,但摘要暂时无法读取;没有创建执行、没有修改文件。
+            </p>
+            <p>已保存的准备与选择保持不变;重新读取同一份摘要即可继续核对。</p>
+            <div className="mf-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={previewQuery.isFetching}
+                onClick={() => void previewQuery.refetch()}
+              >
+                {previewQuery.isFetching
+                  ? "正在重新读取..."
+                  : "重新读取计划摘要"}
+              </Button>
+            </div>
+          </div>
+        ) : preparationNoPrimarySources ? (
+          <div className="mf-organize-preparation-note" role="status">
+            <p>本次没有生成整理方案，也没有整理任何文件。</p>
+            {preparation.progress.incomplete ? null : (
+              <p>请关闭本弹窗返回原文件页，调整所选范围后重新发起整理。</p>
+            )}
+          </div>
+        ) : null}
         {preparation !== undefined &&
         preparation.progress.reasons.length > 0 ? (
           <div className="mf-organize-preparation-note" role="status">
@@ -1608,7 +1666,9 @@ export function ManualOrganizeDialog({
                 .join("、")}
               。
             </p>
-            <p>未受影响的已受理条目会继续准备，无需重新提交。</p>
+            {canProgress ? (
+              <p>未受影响的已受理条目会继续准备，无需重新提交。</p>
+            ) : null}
           </div>
         ) : null}
         {preparation !== undefined &&
@@ -1618,13 +1678,16 @@ export function ManualOrganizeDialog({
             项；展开「受理范围」可核对每项原因和下一步。
           </p>
         ) : null}
+        {preparationManualAnalysisAvailable ? (
+          <div className="mf-organize-preparation-note" role="status">
+            <p>
+              后台当前没有继续生成方案；无需重新提交，可重新运行同一零变更分析。
+            </p>
+          </div>
+        ) : null}
         {preparation !== undefined &&
         !preparationWorkerUnavailable &&
-        preparationPlanExpected &&
-        preparation.frozen &&
-        preparation.status !== "analyzing" &&
-        preparation.previewId === null &&
-        preparation.actions.prepare.available ? (
+        preparationManualAnalysisAvailable ? (
           <div className="mf-organize-preparation-action">
             <Button
               type="button"
@@ -2750,27 +2813,8 @@ export function ManualOrganizeDialog({
       renderPreparationContent()
     ) : organizeFlowEnded ? (
       renderPreparationContent()
-    ) : preparation.previewId === null && preview === undefined ? (
-      renderPreparationContent()
-    ) : previewQuery.isError || previewQuery.data?.ok === false ? (
-      <StatusBanner variant="error" title="无法读取计划摘要">
-        <p role="status">
-          准备已产生精确计划摘要,但摘要暂时无法读取;没有创建执行、没有修改文件。
-        </p>
-        <div className="mf-actions">
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => void previewQuery.refetch()}
-          >
-            重新读取计划摘要
-          </Button>
-        </div>
-      </StatusBanner>
     ) : preview === undefined ? (
-      <div className="mf-modal-card-status" role="status">
-        <p>正在读取零变更计划摘要…</p>
-      </div>
+      renderPreparationContent()
     ) : (
       <>
         {renderPreparationNotice()}

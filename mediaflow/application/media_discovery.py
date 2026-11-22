@@ -3087,7 +3087,61 @@ class MediaDiscoveryService:
             )
         if discovery.status is DiscoveryStatus.ANALYZING:
             return (False, None, None, True)
+        # A kernel-owned preparation can only re-enter its analysis from the
+        # exact human-waiting scheduling boundary that ``requeue_scheduled_analysis``
+        # accepts.  While the resident Worker still owns the Task stage (a
+        # finalize committed before the analysis publication, for example), the
+        # request converges on that already-running work instead of being
+        # advertised as an operator action the backend would refuse.
+        scheduling = self._analysis_scheduling(discovery)
+        if scheduling is not None:
+            if scheduling.queue_state is not TaskQueueState.WAITING_HUMAN:
+                if scheduling.queue_state in {
+                    TaskQueueState.QUEUED,
+                    TaskQueueState.CLAIMED,
+                }:
+                    return (False, None, None, True)
+                return (
+                    False,
+                    "analysis_not_waiting",
+                    "wait for the current Task stage to finish, then read this preparation "
+                    "and request the analysis again",
+                    False,
+                )
+            if scheduling.mutation_state is not None:
+                return (
+                    False,
+                    "analysis_mutation_in_flight",
+                    "verify this Task's unverified in-flight file effect before any new analysis",
+                    False,
+                )
+            if scheduling.control_request is TaskControl.CANCEL:
+                return (
+                    False,
+                    "analysis_cancel_requested",
+                    "a cancellation was accepted for this Task; start a new preparation if "
+                    "the scope is still wanted",
+                    False,
+                )
         return (True, None, None, False)
+
+    def _analysis_scheduling(self, discovery: MediaDiscovery) -> TaskSchedulingState | None:
+        """The exact Task scheduling row which accepts this run's re-analysis.
+
+        ``None`` means this is a record without one current kernel owner (a
+        legacy or pre-change discovery): its existing adoption path keeps its
+        own semantics.  The read is the same row ``_requeue_kernel_analysis``
+        later fences against, so the published availability and the real
+        admission cannot disagree about the Task's stage.
+        """
+
+        task_id = discovery.organize_task_id
+        if not isinstance(task_id, str) or not task_id:
+            return None
+        reader = getattr(self._repository, "get_task_scheduling", None)
+        if not callable(reader):
+            return None
+        return reader(task_id)
 
     def finalize(self, discovery_id: str, *, actor: str, expected_version: int) -> MediaDiscovery:
         """Freeze the discovered source list under an explicit operator action.

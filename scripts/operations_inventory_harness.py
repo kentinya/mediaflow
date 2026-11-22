@@ -722,6 +722,18 @@ def build_managed_fixture(
     (dialog_root / "DialogPendingSibling.2034.mkv").write_bytes(
         b"patch pending sibling source synthetic media"
     )
+    # PATCH-20261122-3 recovery fixture: its own unambiguous source so the
+    # browser can reach the frozen human-waiting preparation and prove the
+    # advertised same-Task analysis action still runs.
+    (dialog_root / "DialogRecovery.2036.mkv").write_bytes(
+        b"patch preparation recovery synthetic media"
+    )
+    # PATCH-20261122-3 summary-read failure fixture: its own unambiguous source
+    # so the same preparation can survive one failed linked-summary read and
+    # retry that exact summary without a new admission.
+    (dialog_root / "DialogReadRetry.2037.mkv").write_bytes(
+        b"patch preparation summary retry synthetic media"
+    )
     conflict_time = time.time() - 86400
     os.utime(dialog_root / "DialogConflict.2022.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSibling.2023.mkv", (conflict_time, conflict_time))
@@ -736,6 +748,8 @@ def build_managed_fixture(
     os.utime(dialog_root / "DialogSubsetSecond.2031.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogPendingOwned.2033.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogPendingSibling.2034.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogRecovery.2036.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogReadRetry.2037.mkv", (conflict_time, conflict_time))
     # PATCH-20261120-2 browser fixture: one dedicated directory with exactly
     # 101 eligible primaries.  Its walk stops at the durable primary bound; one
     # of them is the unambiguous source re-selected for the new small batch.
@@ -1568,6 +1582,24 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogPrepAction",
                         year=2026,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "710",
+                        MediaType.MOVIE,
+                        "DialogRecovery",
+                        year=2036,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "711",
+                        MediaType.MOVIE,
+                        "DialogReadRetry",
+                        year=2037,
                         genres=("Animation",),
                         countries=("JP",),
                     ),

@@ -1316,6 +1316,39 @@ test("follows the completed walk into the same preparation's linked plan without
   await expect(card.getByText("正在准备", { exact: true })).toBeVisible({
     timeout: 10_000,
   });
+  // The backend advertises the preparation's own analysis action only at the
+  // Task's human-waiting boundary.  While the Worker still owns the freeze the
+  // same work is pending, so the card offers no second analysis to click.
+  const duringFreeze = await request.get(
+    `${BASE}/api/operations/organize/discoveries/${encodeURIComponent(
+      discoveryId as string,
+    )}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(duringFreeze.ok()).toBe(true);
+  const frozenPreparation = (await duringFreeze.json()) as {
+    readonly status: string;
+    readonly frozen: boolean;
+    readonly previewId: string | null;
+    readonly primarySourceCount: number;
+    readonly actions: {
+      readonly prepare: {
+        readonly available: boolean;
+        readonly pendingReason: string | null;
+      };
+    };
+  };
+  expect(frozenPreparation.status).toBe("completed");
+  expect(frozenPreparation.frozen).toBe(true);
+  expect(frozenPreparation.previewId).toBeNull();
+  expect(frozenPreparation.primarySourceCount).toBe(1);
+  expect(frozenPreparation.actions.prepare).toMatchObject({
+    available: false,
+    pendingReason: "discovery_analysis_pending",
+  });
+  await expect(
+    card.getByRole("button", { name: "运行分析并生成计划摘要" }),
+  ).toHaveCount(0);
   expect(analyzePosts()).toHaveLength(0);
 
   // Release the paused real Worker; its next passes enter the analysis and
@@ -1335,7 +1368,7 @@ test("follows the completed walk into the same preparation's linked plan without
   expect(executePosts()).toHaveLength(0);
 });
 
-test("reports a preparation analysis refusal nearby and still follows the same preparation's linked plan", async ({
+test("keeps the compact first-plan preparation while the linked summary response is delayed", async ({
   page,
   request,
 }) => {
@@ -1352,62 +1385,380 @@ test("reports a preparation analysis refusal nearby and still follows the same p
   await expect(page).toHaveURL(/organizeDiscovery=/);
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(card.getByText("正在准备", { exact: true })).toBeVisible();
+  await expect(card.getByText("1 个文件", { exact: true })).toBeVisible();
+  await expect(card.getByText(/每次复核一个主文件/)).toHaveCount(0);
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let observed!: (value: {
+    readonly status: number;
+    readonly path: string;
+  }) => void;
+  const reading = new Promise<{
+    readonly status: number;
+    readonly path: string;
+  }>((resolve) => {
+    observed = resolve;
+  });
+  await page.route(
+    /\/api\/operations\/organize\/previews\/[^/?]+(?:\?.*)?$/,
+    async (route) => {
+      const response = await route.fetch();
+      observed({
+        status: response.status(),
+        path: new URL(route.request().url()).pathname,
+      });
+      await gate;
+      await route.fulfill({ response });
+    },
+  );
+  try {
+    const plan = await driveDiscoveryFor(page, request, discoveryId as string);
+    expect(await reading).toEqual({
+      status: 200,
+      path: "/api/operations/organize/previews/" + plan,
+    });
+    // The same compact preparation stays mounted until the real summary is
+    // readable; the source and admitted scope never disappear behind an empty
+    // review shell, and the first file is never shown early.
+    await expect(card.getByText("正在准备", { exact: true })).toBeVisible();
+    await expect(card.getByText("来源资源库", { exact: true })).toBeVisible();
+    await expect(card.getByText("受理范围", { exact: true })).toBeVisible();
+    await expect(card.getByText(/每次复核一个主文件/)).toHaveCount(0);
+    await expect(
+      card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
+    ).toHaveCount(0);
+    expect(
+      commands.filter(
+        (command) =>
+          command.method === "POST" &&
+          command.path.endsWith("/files/discoveries"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      commands.filter(
+        (command) =>
+          command.method === "POST" &&
+          /\/organize\/discoveries\/[^/]+\/analyze$/.test(command.path),
+      ),
+    ).toHaveLength(0);
+    expect(
+      commands.filter(
+        (command) =>
+          command.method === "POST" &&
+          /\/previews\/[^/]+\/execute$/.test(command.path),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    release();
+  }
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(card.getByText(actionFile).first()).toBeVisible();
+});
+
+test("keeps the same preparation and re-reads its exact summary after a failed read", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const retryFile = "DialogReadRetry.2037.mkv";
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+  await openDialogDirectory(page, retryFile);
+  await selectFiles(page, [retryFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+
+  let failedOnce = false;
+  await page.route(
+    /\/api\/operations\/organize\/previews\/[^/?]+(?:\?.*)?$/,
+    async (route) => {
+      if (!failedOnce) {
+        failedOnce = true;
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: { code: "unavailable", message: "summary read failed" },
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    },
+  );
+  await driveDiscoveryFor(page, request, discoveryId as string);
+
+  // The plan exists durably, but its read failed: the card keeps the same
+  // compact preparation facts and the retry entry for that exact summary
+  // instead of showing an empty review or a new admission.
+  await expect(card.getByText("计划摘要暂时无法读取")).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(card.getByText("来源资源库", { exact: true })).toBeVisible();
+  await expect(card.getByText("受理范围", { exact: true })).toBeVisible();
+  await expect(card.getByText(/每次复核一个主文件/)).toHaveCount(0);
+  await expect(card.locator(".mf-organize-preparation-spinner")).toHaveCount(0);
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toHaveCount(
+    0,
+  );
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        command.path.endsWith("/files/discoveries"),
+    ),
+  ).toHaveLength(1);
+
+  await card.getByRole("button", { name: "重新读取计划摘要" }).click();
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(card.getByText(retryFile).first()).toBeVisible();
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/organize\/discoveries\/[^/]+\/analyze$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+  expect(
+    commands.filter(
+      (command) => command.method === "POST" && /\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+});
+
+test("ends the first-plan preparation when the selected folder has no primary file", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+  await openReadabilityDirectory(page, "Live", "Alpha.2001.mkv");
+  await page
+    .getByRole("checkbox", { name: "选择 Gamma-Directory", exact: true })
+    .check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await expect(card.getByText("正在准备", { exact: true })).toBeVisible();
+
+  const settledRead = page.waitForResponse(async (response) => {
+    if (
+      new URL(response.url()).pathname !==
+      "/api/operations/organize/discoveries/" + discoveryId
+    ) {
+      return false;
+    }
+    if (!response.ok()) return false;
+    const body = (await response.json()) as {
+      readonly status: string;
+      readonly previewId: string | null;
+      readonly progress: { readonly primarySources: number };
+    };
+    return (
+      body.status === "completed" &&
+      body.previewId === null &&
+      body.progress.primarySources === 0
+    );
+  });
+  const advanced = await request.post(
+    `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
+      discoveryId as string,
+    )}`,
+  );
+  expect(advanced.ok()).toBe(true);
+  const workerResult = (await advanced.json()) as {
+    readonly status: string;
+    readonly previewId: string | null;
+    readonly sourceCount: number;
+  };
+  expect(workerResult.status).toBe("completed");
+  expect(workerResult.previewId).toBeNull();
+  expect(workerResult.sourceCount).toBe(0);
+  await settledRead;
+
+  // The terminal zero-primary walk is the real end of this preparation: no
+  // plan will link, so the spinner stops and the exclusion explains the next
+  // step instead of promising progress forever.
+  await expect(card.getByText("未找到可整理的主文件")).toBeVisible();
+  await expect(card.locator(".mf-organize-preparation-spinner")).toHaveCount(0);
+  await expect(
+    card.getByText(/已排除 1 个条目：非媒体扩展名 × 1/),
+  ).toBeVisible();
+  await expect(
+    card.getByText("本次没有生成整理方案，也没有整理任何文件。"),
+  ).toBeVisible();
+  await expect(
+    card.getByText("请关闭本弹窗返回原文件页，调整所选范围后重新发起整理。"),
+  ).toBeVisible();
+  await expect(card.getByText(/未受影响的已受理条目会继续准备/)).toHaveCount(0);
+  await expect(
+    card.getByRole("button", { name: "运行分析并生成计划摘要" }),
+  ).toHaveCount(0);
+  await expect(
+    card.getByRole("heading", { name: /第 1 \/ \d+ 个/ }),
+  ).toHaveCount(0);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        command.path.endsWith("/files/discoveries"),
+    ),
+  ).toHaveLength(1);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/organize\/discoveries\/[^/]+\/analyze$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+  expect(
+    commands.filter(
+      (command) => command.method === "POST" && /\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+
+  await card.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(card).toHaveCount(0);
+  await expect(page).not.toHaveURL(/organizeDiscovery=/);
+  await expect(page.getByRole("table")).toBeVisible();
+});
+
+test("accepts the advertised manual analysis from the human-waiting frozen preparation", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(180_000);
+  const recoveryFile = "DialogRecovery.2036.mkv";
+  const auth = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+
+  // Create the same bounded preparation through the supported API entry, but
+  // without automatic preparation.  Its real Worker walk completes and the
+  // Task settles at the human-waiting boundary; the explicit Finalize then
+  // freezes the reviewed source list without linking a plan.  That is the
+  // durable recovery state the Files card must keep offering.
+  const admittedResponse = await request.post(
+    `${BASE}/api/resource-libraries/source/files/discoveries`,
+    {
+      headers: auth,
+      data: {
+        paths: [`Dialog/${recoveryFile}`],
+      },
+    },
+  );
+  expect(admittedResponse.status()).toBe(202);
+  const admitted = (await admittedResponse.json()) as {
+    readonly discoveryId: string;
+  };
+  const discoveryId = admitted.discoveryId;
+  const advanced = await request.post(
+    `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
+      discoveryId,
+    )}`,
+  );
+  expect(advanced.ok()).toBe(true);
+  expect(await advanced.json()).toMatchObject({
+    status: "completed",
+    previewId: null,
+    sourceCount: 1,
+    frozen: false,
+  });
+
+  const beforeRead = await request.get(
+    `${BASE}/api/operations/organize/discoveries/${encodeURIComponent(
+      discoveryId,
+    )}`,
+    { headers: auth },
+  );
+  expect(beforeRead.ok()).toBe(true);
+  const before = (await beforeRead.json()) as {
+    readonly version: number;
+    readonly actions: { readonly finalize: { readonly available: boolean } };
+  };
+  expect(before.actions.finalize.available).toBe(true);
+  const finalizedResponse = await request.post(
+    `${BASE}/api/operations/organize/discoveries/${encodeURIComponent(
+      discoveryId,
+    )}/finalize`,
+    { headers: auth, data: { expectedVersion: before.version } },
+  );
+  expect(finalizedResponse.ok()).toBe(true);
+  const frozen = (await finalizedResponse.json()) as {
+    readonly status: string;
+    readonly frozen: boolean;
+    readonly previewId: string | null;
+    readonly primarySourceCount: number;
+    readonly actions: {
+      readonly prepare: { readonly available: boolean };
+    };
+  };
+  expect(frozen.status).toBe("completed");
+  expect(frozen.frozen).toBe(true);
+  expect(frozen.previewId).toBeNull();
+  expect(frozen.primarySourceCount).toBe(1);
+  expect(frozen.actions.prepare.available).toBe(true);
+
+  // The canonical Files address reopens exactly this preparation; the card
+  // advertises the one analysis action the backend really accepts and runs it
+  // on the same Task.
+  await page.goto(
+    `${BASE}/resourcelib/files?organizeDiscovery=${encodeURIComponent(
+      discoveryId,
+    )}`,
+  );
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByText("等待重新运行分析")).toBeVisible();
+  await expect(card.getByText("来源资源库", { exact: true })).toBeVisible();
+  await expect(card.getByText("受理范围", { exact: true })).toBeVisible();
   const analyzePosts = () =>
     commands.filter(
       (command) =>
         command.method === "POST" &&
         /\/organize\/discoveries\/[^/]+\/analyze$/.test(command.path),
     );
+  expect(analyzePosts()).toHaveLength(0);
 
-  expect(
-    (await request.post(`${BASE}/__harness__/arm-preparation-freeze`)).ok(),
-  ).toBe(true);
-  const workerPass = request.post(
-    `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
-      discoveryId as string,
-    )}`,
-  );
-  await expect
-    .poll(
-      async () => {
-        const state = await request.get(
-          `${BASE}/__harness__/preparation-freeze-state`,
-        );
-        return ((await state.json()) as { readonly reached: boolean }).reached;
-      },
-      { timeout: 20_000 },
-    )
-    .toBe(true);
-  await expect(card.getByText("正在准备", { exact: true })).toBeVisible({
-    timeout: 10_000,
-  });
-
-  // While the real Worker still owns this Task stage, the preparation action
-  // is offered but the backend refuses a second analysis without mutation.
-  // The card reports that exact refusal beside the same preparation; it does
-  // not relabel the refusal as an accepted analysis.
   await card.getByRole("button", { name: "运行分析并生成计划摘要" }).click();
-  await expect(
-    card.getByText(/分析请求未获受理\(analysis_rejected\)/),
-  ).toBeVisible({
-    timeout: 10_000,
+  await expect(card.getByText(/零变更分析正在运行/)).toBeVisible({
+    timeout: 15_000,
   });
-  await expect(
-    card.getByText(/没有执行任何整理,已保存的选择保持不变/),
-  ).toBeVisible();
   expect(analyzePosts()).toHaveLength(1);
-
-  const released = await request.post(
-    `${BASE}/__harness__/release-preparation-freeze`,
-  );
-  expect(released.ok()).toBe(true);
-  await workerPass;
-  await driveDiscoveryFor(page, request, discoveryId as string);
+  await driveDiscoveryFor(page, request, discoveryId);
   await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
     { timeout: 30_000 },
   );
-  await expect(card.getByText(actionFile).first()).toBeVisible();
+  await expect(card.getByText(recoveryFile).first()).toBeVisible();
   expect(analyzePosts()).toHaveLength(1);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/previews\/[^/]+\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
 });
 
 test("a missing metadata candidate is corrected on the current file and confirmed into the exact Task", async ({
