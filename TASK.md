@@ -4,7 +4,7 @@
 Task ID: PATCH-20261122-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: c714e0806620bb54701639a8776517ba5e1e9685
 Difficulty: Medium
 Test Level: T3
@@ -83,3 +83,50 @@ Planner / Reviewer: B
   `npm run test:e2e -- --config playwright.python.config.ts manual-organize-dialog.python.spec.ts`。
   用临时媒体根目录和真实 Worker 验证后台恢复、目录多文件进度、部分拒绝和超限。核对桌面与 390px 首屏，
   以及首份方案到逐文件复核、整批确认和准确任务交接的原有流程。
+
+## Developer 交接 — 精简准备页与 Worker 就绪
+
+```text
+Candidate: 6bda4d4533cde0e6890c05a7f47315637463994f
+Task range: c714e0806620bb54701639a8776517ba5e1e9685..6bda4d4533cde0e6890c05a7f47315637463994f
+```
+
+- 生产装配的 `ResidentProcessingWorker` 在接入实际负责任务发现的 `ManualTaskEngineWorker` 后声明
+  `media_discovery`；若此前已登记则失效，由下一次同一边界重新登记。健康 Worker 的排队准备因此
+  返回真实就绪，停止、过期、运行库版本不兼容和缺少命令的 Worker 仍按原条件拒绝。文件页整理的
+  认领、原配置快照和执行权限检查未改。
+- `ManualOrganizeDialog` 的首份方案准备视图只保留「整理所选文件」标题、居中的加载状态「正在准备」、
+  「来源资源库」和「受理范围」两行事实。受理范围沿用可展开的确切路径，并同时列出来自本次请求的
+  已受理、同一工作已受理和未受理条目及原因。发现至少两个主文件时增加「整理进度：已找到 N 个主文件」
+  事实，不显示未知百分比。提交时使用页面已有的资源库与所选路径，读回后使用实际受理记录。
+- 后台不可用时在原加载位置显示「后台暂不可用」/「请求已保存，请联系管理员。」，不显示动画；
+  同一准备的读取、轮询与恢复保持不变。失败、遍历不完整、排除和分析请求结果只在异常时就近说明
+  原因与下一步；101 个主文件上限仍保留关闭并回文件页缩小范围的入口。首份方案读入后继续进入
+  原有逐文件复核、整批复核、确认和执行交接。常驻阶段卡、准备计数区、独立后台提示框和技术诊断
+  已从该准备视图移除。
+- 测试初始化补充 `media_discovery` 命令就绪的不可用对照；新增生产 CLI 登记 → 排队准备 GET
+  `worker.ready: true` → 同一 Task 生成首份方案的真实 SQLite/本地文件用例。界面用例覆盖单文件
+  两行事实、可展开确切路径、拒绝项、至少两个主文件的真实进度、后台不可用原位提示与自动恢复。
+- 实际执行（仓库根目录 / `web/`，候选 `6bda4d4533cde0e6890c05a7f47315637463994f`）：
+  - `.venv/bin/python -m unittest tests.test_processing_worker_readiness tests.test_manual_task_engine`
+    → 66 passed。
+  - `npm run typecheck` → PASS。
+  - `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx src/features/library/StorageFilesPage.test.tsx src/features/operations/OperationsInventory.test.tsx`
+    → 161 passed（既有 jsdom `scrollTo` 提示）。
+  - `npm run build` → PASS；310 modules，产物 `index-CmzshM9b.js` 1,580.78 kB（既有大包提示）。
+  - `npm run test:e2e -- library-files.spec.ts -g 'preparation|bounded discovery|multi-file intent|Organize admission'`
+    → 9 passed。
+  - `npm run test:e2e -- --config playwright.python.config.ts manual-organize-dialog.python.spec.ts -g 'follows the completed walk|preparation analysis refusal|pending owned file'`
+    → 3 passed；`-g '101-file directory'` → 1 passed。
+  - `npm run lint`、`npm run format:check`、`.venv/bin/ruff format --check mediaflow tests`、
+    `.venv/bin/ruff check mediaflow tests`、`git diff --check` → PASS。
+- 测试修正说明：原先真实解析恢复用例名为「analysis request as accepted」，实际匹配的是旧阶段卡
+  文案，并没有证明后端受理；在 Worker 仍持有该 Task 阶段的真实窗口中，后端返回
+  `analysis_rejected`（无变更）。新准备视图不再显示该阶段卡后，用例改为断言可见的拒绝说明仍出现在
+  同一准备旁，并在释放 Worker 后进入原逐文件复核。该用例名称与断言变化请 B 一并核对；准备页的
+  按权限分析动作本身保留。另修正 `library-files.spec.ts` 中两处早于基线的失效定位（批量摘要的
+  `dt`/`dd` 与不存在的「零变更摘要」拼接文本），业务断言未降低。
+- 剩余风险：Developer 未运行全量 Python/Web/E2E 和打包矩阵，按 Task 由 B 执行；未保存桌面与
+  390px 截图，也未用真实 Worker 覆盖后台从不可用到恢复的浏览器旅程。来源资源库仍显示准备记录中的
+  库标识（既有模型未发布名称）；准备页在后台自动关联方案期间仍可能显示后端公布的分析恢复动作，
+  该动作在 Task 阶段仍被持有时会得到上述可见拒绝，而不是静默失败。
