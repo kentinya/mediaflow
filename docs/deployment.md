@@ -592,11 +592,13 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 Missing, expired and revoked credentials return `401`; a live token without the
 required business permission returns `403`. An explicit `Authorization` header
-takes precedence over any browser cookie. Look the token up in the Settings list
-by name and issue time when a creation response is lost. Rotate by issuing and
-verifying the new token first, then revoking the old one separately. Revoking a
-script token does not stop an already enabled scheduled plan or invalidate the
-administrator's Web session.
+takes precedence over any browser cookie. Every successful token call is
+recorded in `GET /api/security-audit` under the token's stable ID, method and
+route, so the administrator can confirm what a script actually did. Look the
+token up in the Settings list by name and issue time when a creation response
+is lost. Rotate by issuing and verifying the new token first, then revoking the
+old one separately. Revoking a script token does not stop an already enabled
+scheduled plan or invalidate the administrator's Web session.
 
 Restart one service without replacing state:
 

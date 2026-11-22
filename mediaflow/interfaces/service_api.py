@@ -119,7 +119,7 @@ from mediaflow.application.task_item_recovery import TaskItemRecoveryError, Task
 from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.application.webhook_test import WebhookTestService, webhook_events_supported
 from mediaflow.domain.accounts import AccountAuthenticationError, AuthenticatedAccount
-from mediaflow.domain.api_tokens import ApiTokenRecord
+from mediaflow.domain.api_tokens import ApiTokenRecord, AuthenticatedApiToken
 from mediaflow.domain.automation import (
     AutomationQueueFull,
     AutomationTaskDefinition,
@@ -431,11 +431,12 @@ class MediaFlowApi:
         self._repository = repository
         self._principals = principals
         self._accounts = account_service
-        self._api_tokens = (
-            ApiTokenService(repository)
-            if callable(getattr(repository, "authenticate_api_token", None))
-            else None
-        )
+        # Issued bearer tokens belong to the account runtime: they are minted,
+        # listed and revoked by an administrator session and authenticate
+        # against the same durable rows.  The fixed-principal focused
+        # authorities keep their existing construction path and never expose
+        # repository capabilities they do not use.
+        self._api_tokens = ApiTokenService(repository) if account_service is not None else None
         self._runtime_snapshot_validator = recovery_snapshot_validator
         self._storage_adapters = dict(storage_adapters or {})
         self._configuration_service = configuration_service
@@ -9957,9 +9958,17 @@ class MediaFlowApi:
 
     @staticmethod
     def _suppress_file_detail_audit(path: str, method: str, principal) -> bool:
-        """Read-only journey projections must not create durable audit mutations."""
+        """Read-only journey projections must not create durable audit mutations.
+
+        A browser session's page reads only project already durable state, so
+        they add no audit noise.  An issued API token is an independent script
+        identity whose successful calls are the operator's audit evidence, so
+        every token read is recorded with its stable token ID.
+        """
 
         if method != "GET" or principal is None:
+            return False
+        if isinstance(principal, AuthenticatedApiToken):
             return False
         if ApiPermission.READ not in getattr(principal, "permissions", ()):
             return False

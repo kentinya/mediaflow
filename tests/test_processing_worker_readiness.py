@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from mediaflow.application.automation import (
     ProcessingWorkerService,
+    ResidentProcessingWorker,
 )
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.automation import (
@@ -107,6 +108,33 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         self.assertEqual(registered.label, reregistered.label)
         self.assertGreaterEqual(reregistered.last_heartbeat_at, registered.last_heartbeat_at)
         self.assertEqual(len(self.service.list_workers()), 1)
+
+    def test_worker_defaults_register_under_the_current_runtime_schema(self) -> None:
+        """An additive runtime bump must move both Worker defaults with it.
+
+        The application layer cannot import the infrastructure schema constant,
+        so the aligned defaults are the only thing keeping an ordinary Worker
+        registration claimable against the database this version opens.
+        """
+
+        registered = self.service.register_worker(
+            worker_id="default-schema-worker",
+            label="default-schema-worker",
+            heartbeat_interval_seconds=5.0,
+            supported_commands=("scan",),
+            configuration_snapshot_id="cfg-1",
+            configuration_snapshot_digest="digest-1",
+            now=datetime.now(UTC),
+        )
+        self.assertEqual(SCHEMA_VERSION, registered.runtime_schema_version)
+
+        resident = ResidentProcessingWorker(
+            self.repository,
+            worker_id="resident-default-schema",
+            configuration_snapshot_id="cfg-1",
+            configuration_snapshot_digest="digest-1",
+        ).register(now=datetime.now(UTC))
+        self.assertEqual(SCHEMA_VERSION, resident.runtime_schema_version)
 
     def test_register_worker_rejects_path_or_url_label(self) -> None:
         for bad in ("/etc/passwd", "C:\\\\secrets", "https://x/token"):

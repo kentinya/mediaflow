@@ -633,6 +633,52 @@ class WebAccountAuthTests(unittest.TestCase):
         self.assertNotEqual(issued["token"], token_rows[0]["token_hash"])
         self.assertNotIn(issued["token"], self.database.read_bytes().decode("latin-1"))
 
+    def test_read_only_token_task_read_is_audited_under_its_stable_identity(self) -> None:
+        grant = self._admin()
+        cookie = cookie_for(grant)
+        status, issued, _ = request(
+            self.api,
+            "POST",
+            "/api/auth/tokens",
+            document={"name": "monitor"},
+            cookie=cookie,
+            origin=ORIGIN,
+        )
+        self.assertEqual(201, status, issued)
+
+        # The fresh script identity calls only the documented read entry once.
+        self.assertEqual(
+            request(self.api, "GET", "/api/tasks", authorization=f"Bearer {issued['token']}")[0],
+            200,
+        )
+
+        status, audit, _ = request(self.api, "GET", "/api/security-audit", cookie=cookie)
+        self.assertEqual(200, status, audit)
+        token_rows = [item for item in audit["items"] if item["principal_id"] == issued["tokenId"]]
+        self.assertTrue(token_rows, "the successful token read left no audit evidence")
+        for item in token_rows:
+            self.assertEqual("GET", item["method"])
+            self.assertEqual("/api/tasks", item["route"])
+            self.assertEqual("request", item["action"])
+        self.assertEqual(
+            {("started", 0), ("allowed", 200)},
+            {(item["outcome"], item["http_status"]) for item in token_rows},
+        )
+        self.assertEqual(
+            {issued["tokenId"]},
+            {
+                item["principal_id"]
+                for item in audit["items"]
+                if item["method"] == "GET" and item["route"] == "/api/tasks"
+            },
+        )
+        self.assertNotIn(issued["token"], json.dumps(audit))
+
+        # The operational token list still reports the same use.
+        status, listing, _ = request(self.api, "GET", "/api/auth/tokens", cookie=cookie)
+        self.assertEqual(200, status, listing)
+        self.assertIsNotNone(listing["items"][0]["lastUsedAt"])
+
     def test_api_tokens_permissions_expiry_revocation_and_authorization_precedence(self) -> None:
         grant = self._admin()
         cookie = cookie_for(grant)
