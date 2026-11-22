@@ -4,7 +4,7 @@
 Task ID: PATCH-20261122-3
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c714e0806620bb54701639a8776517ba5e1e9685
 Difficulty: Medium
 Test Level: T3
@@ -175,3 +175,55 @@ Next: SAME TASK FIX LOOP
   两个定向复现均观察到上述结果。窄屏首跑未打开移动导航而超时，沿既有用例在 Files 打开弹窗后切到 390px
   并完成复现。完整 T3 验收留待修正候选。
 - 本地日志和截图在 `.git/validation-evidence/6bda4d4533cde0e6890c05a7f47315637463994f/b-review/`。
+
+## Developer 交接（修正轮） — 首份方案等待、摘要读取与零主文件
+
+```text
+Candidate: f7c0fb04c49edbc3c5a3bffe5bbf1390f8547689
+Task Base: c714e0806620bb54701639a8776517ba5e1e9685
+Reviewed implementation: 6bda4d4533cde0e6890c05a7f47315637463994f
+Reviewed handoff head: d83789e802ed8ab39ba6c0882b168695866d8797
+Fix range: b28174c668da3559ab8c2b9613310664af3331b7..f7c0fb04c49edbc3c5a3bffe5bbf1390f8547689
+```
+
+- `analysis_availability` 现在读取同一 Task 的 `get_task_scheduling` 记录，只在真实的
+  `WAITING_HUMAN` 边界公布可受理的分析动作；`QUEUED`/`CLAIMED` 返回待处理而不公布动作，
+  `mutation_state` 未结算或已受理取消时拒绝。判断条件与 `_requeue_kernel_analysis` 实际使用的
+  调度条件一致；权限、版本、快照、容量与受理判断仍由后端负责。后台生成首份方案时准备页因此只
+  保留等待和轮询，不再出现会被同一 Task 拒绝的分析按钮。
+- 首份方案的准备视图现在贯穿提交、读取准备、后台遍历/冻结/分析和读取首份摘要。摘要成功读到
+  后才切换到逐文件复核；摘要读取失败时保留同一准备、来源、受理范围和「重新读取计划摘要」入口，
+  不再显示空复核外壳或提前显示复核说明，修复 390px 下来源与受理范围消失的问题。
+- 零主文件终态（`completed`/`partial_success`、`previewId` 为空、无方案）在原位显示
+  「未找到可整理的主文件」（未完整遍历时显示「准备未完成」），停止加载动画，保留真实排除原因，
+  说明本次没有生成方案、没有整理文件，并给出关闭返回文件页重新选择的下一步；不再显示
+  「未受影响的已受理条目会继续准备」，也不再提供无用的分析动作。分析/执行请求仍为零。
+- 真实可受理的人工恢复状态（例如 `autoPrepare=false` 的完成遍历经显式 Finalize 冻结，或 Worker
+  在冻结与分析发布之间停止后由 Task 结算到人工资格）继续显示「等待重新运行分析」和同一个
+  「运行分析并生成计划摘要」动作。用真实 API 创建并冻结该状态、经 canonical Files 地址重新打开，
+  点击一次后同一 Task 接受分析并链接方案；不新增受理记录，不执行任何文件。
+- 测试修正：删除原先在自动准备冻结窗口中点击分析并断言 `analysis_rejected` 的 E2E，因为修正后
+  该动作不再公布，原用例制造的是用户不应得到的操作；被拒绝/冲突的呈现仍由单元用例在真实可受理
+  的恢复状态下覆盖。新增两个独立夹具 `DialogRecovery.2036.mkv`、`DialogReadRetry.2037.mkv` 与
+  对应 Provider 身份，不与其他旅程共用源文件。单元测试补充零主文件、摘要读取失败后同一入口重试、
+  自动准备期间无分析动作和人工资格恢复动作。该用例名称与断言变化请 B 一并核对。
+- 实际执行（仓库根目录 / `web/`，候选 `f7c0fb04c49edbc3c5a3bffe5bbf1390f8547689`）：
+  - `.venv/bin/python -m unittest tests.test_processing_worker_readiness tests.test_manual_task_engine`
+    → 66 passed。
+  - `.venv/bin/python -m unittest tests.test_media_discovery` → 6 passed；
+    `.venv/bin/python -m unittest tests.test_failed_preparation_ownership` → 6 passed
+    （分析动作/准备归属直接受影响用例）。
+  - `npm run typecheck` → PASS。
+  - `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx src/features/library/StorageFilesPage.test.tsx src/features/operations/OperationsInventory.test.tsx`
+    → 163 passed（既有 jsdom `scrollTo` 提示）。
+  - `npm run build` → PASS；310 modules，产物 `index-C5pwCUI7.js` 1,581.64 kB（既有大包提示）。
+  - `npm run test:e2e -- --config playwright.python.config.ts manual-organize-dialog.python.spec.ts -g 'preparation|linked plan'`
+    → 7 passed，包含完成遍历交接、390px 首份摘要延迟、摘要读取失败重读、零主文件、人工分析恢复、
+    取消 Back/刷新和 101 主文件超限。
+  - `npm run lint`、`npm run format:check`、`.venv/bin/ruff format --check mediaflow scripts/operations_inventory_harness.py`、
+    `.venv/bin/ruff check mediaflow scripts/operations_inventory_harness.py`、`git diff --check` → PASS。
+- 剩余风险：Developer 未运行全量 Python/Web/E2E 和打包矩阵，按 Task 由 B 执行；未保存桌面与 390px
+  截图。来源资源库仍显示准备记录中的库标识（既有模型未发布名称）。零主文件准备沿用现有 Task
+  结算结果，任务中心仍保留一条空的、人工资格未结束的整理任务；再次打开显示同一无方案结论和
+  返回文件页入口，本 Task 未改变既有任务结算规则。恢复动作的容量不足/并发冲突拒绝由单元用例覆盖，
+  本轮未用真实 Worker 制造该拒绝。
