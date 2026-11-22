@@ -618,6 +618,37 @@ RO-1 的既有浏览器证据保留。RO-2 用户管理与 API 令牌待后续 T
   未构建镜像或运行 Compose；旧库验证使用本机容器入口与真实 CLI，证据位于本地
   `.git/validation-evidence/task57.1-pending-switch/`。
 
+**Developer 实作复测记录（READY FOR B REVIEW）**
+
+- 源码身份：实现候选 `a639fa953afa1da781ebff61e2d7e9f08e88b26b`（`91c23b00` 及本记录只
+  更新文档）。Task Base `4566a74055c698aec704215dd431eb8521bcfedb`。本轮未改产品源码、
+  Web 或测试。
+- 候选镜像：从当前源码构建 `mediaflow:dev-task571-91c23b00`（本地镜像 ID
+  `e56816566608`），仅用于真实四服务 Compose，未推送。
+- 旧库夹具：沿用 `be55d699` 生成器与 `config draft-import --file` 产物，复制到隔离数据
+  目录，SHA-256 `12372b73825e3f976d08a79c5708392be69d87eb41eb6b79f833d291562b4b7d`；
+  标记为 configuration 11、草稿 `0997550f-a901-48cb-b212-9fa062bde1e1`，无 runtime／
+  store_origin。
+- 四服务拒绝：`compose.yaml` 加隔离数据/配置绑定启动 api、worker、scheduler、
+  notification-worker，四项均为 `Exited (1)`；各自日志给出同一待切换错误、草稿 revision
+  及 `config status`／`config retire-unpublished --confirm` 指引。API 端口未监听，
+  数据库 SHA-256 和标记保持不变。为读取终态退出码，本次复测覆盖 `restart: "no"`；默认
+  `unless-stopped` 会在同一只读拒绝上重试。
+- 显式切换：同一副本 `config status` 退出 0 且哈希不变；`retire-unpublished --confirm`
+  移除草稿，写入 configuration 12／store_origin 59。四服务随后 health 正常，`/health`
+  显示等待首位管理员与业务配置。
+- 带 Active 的副本：SHA-256 `c01e3289a79f020a4afa3e479696df1db4bf8b83a380c26c0c06ae8e317f4364`
+  经同一显式切换保留 Active revision `f86724a2-5a9f-4d2e-88fc-d5e98d551978`／digest
+  `6c468f55dce832ca4b83223e51477c16c5e38d205e2ae8aff8038463c2b3c38c`。四服务 health
+  正常，`/health.configurationRequired=false`；匿名 `/api/tasks` 返回 `401`，
+  `/api/auth/status` 仍要求首位管理员。
+- 定向测试：`test_container_deployment` 20 项、`test_container_probe` 12 项、
+  `test_configuration_status` 15 项、`test_resident_services` 30 项，共 77 项通过；
+  `git diff --check` 与治理检查 PASS。证据位于本地
+  `.git/validation-evidence/task57.1-a639fa95-compose/`。
+- 剩余风险：完整 T4、B 的候选镜像／正式 Waitress／生产 Web 浏览器、wheel／源码外安装、
+  真实 Scheduler／Worker 撤权执行仍由 B 验收；本记录只补四服务 Compose 的待切换旧库旅程。
+
 ## PATCH-20261120-5 — 彻底退役配置草稿 — B PASS
 
 - 复核范围为 `e279077c4bca208ab7168983d15eca66ec8833d1..039284e2cfb44ece7b4625d7b50bdcd02691ecb3`，实现版本为 `2837d9bc6c0dcc1360b02ccf659922a121bba667`。独立 Task 验收完成。实施计划及交付记录见 `039284e2:TASK.md`。
