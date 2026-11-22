@@ -4,13 +4,13 @@
 Task ID: 57.1
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4566a74055c698aec704215dd431eb8521bcfedb
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: ORIGINAL TASK57.1 CORRECTION SCOPE
-Next Action: DEVELOPER CORRECTS THE FIRST-SETUP STATUS CHECK
+Next Action: B REVIEWS TASK57.1 CORRECTION
 ```
 
 ## A 终审退回
@@ -127,3 +127,32 @@ Next: SAME TASK FIX LOOP
 3. 在现有账号浏览器用例加入「`504` → 首次读取仍待设置 → 原 POST 完成 → 再次核对 →
    登录并进入系统设置」的真实后端回归，核对可见提示、一次建号和唯一管理员。运行原测试
    安排里的 Web 入口受影响单测、生产构建及真实账号浏览器用例，保留建号和改密原通过分支。
+
+## Developer 修正交接 — A57-01 首次建号状态核对
+
+```text
+Candidate: 5d2f215fb7afaceeae677877fdb4990fc6815077
+Fix range: f54cf44e9bd1b4f92db0143fc8050fe4b5a9855f..5d2f215f
+Task range: 4566a74055c698aec704215dd431eb8521bcfedb..5d2f215f
+```
+
+- **首页建号恢复。** 提交结果未知后的首次 `GET /api/auth/status` 仍显示实例待设置时，页面
+  只报告当前设置状态，不再断言设置码没有建号，也不要求领取新码。原提交的待核对结果和
+  「Check current status」保持可见，表单仍由部署者决定是否重新填写提交。明确错码、过期码等
+  `4xx` 拒绝继续显示服务端原因并停留在原表单，不发状态读取。
+- **原请求完成后的核对。** 在同一页面再次核对到管理员已存在时，沿用原成功路径：有有效
+  会话直接进入系统设置；无会话显示登录，保留提交时的登录名，登录后进入待初始化的系统
+  设置。核对只调用现有状态读取，原建号 POST 不重放。
+- **真实后端回归。** `web-account-auth.python.spec.ts` 新增隔离空库用例：真实浏览器提交
+  被代理 `504` 后，首次读取仍为待设置；随后原上游请求以同一提交内容真实完成 `201`；再次
+  点「Check current status」显示管理员已创建，登录后进入系统设置。断言首次读取时库中无管理员、
+  完成后只有一个管理员，建号 POST 一次，核对只发 GET，窄屏 `390×844` 可完成。
+- **实际执行（候选工作树）。**
+  - `web/`：`npm run test -- run src/features/entry src/shared/auth src/shared/api/auth-store.test.ts src/shared/ui/AppShell.test.tsx` → **87 passed**（8 files，7.98s）。
+  - `web/`：`npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/web-account-auth.python.spec.ts` → **12 passed**（9.2s），含原建号、改密、重置、退出、深链、重启及新 `504` 顺序。
+  - `npm run typecheck`、`npm run build` 通过；改动文件 Prettier 与 ESLint 检查通过；
+    `python3 scripts/check_governance.py`、`git diff --check` 通过。
+  - 本轮约 6 分钟；测试执行合计约 23 秒（含构建和静态检查约 40 秒），低于本轮 30%。
+- **剩余风险。** 未改 Python、账号事务、会话、权限或持久 schema；真实浏览器证据使用现有
+  账号 harness，不是正式 Waitress/Compose。B 仍需按要求复核完整差异，独立复验原 `504`
+  顺序和改密旅程，并执行适用 T4 全量、wheel 与真实 Compose 门禁。
