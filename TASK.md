@@ -4,7 +4,7 @@
 Task ID: PATCH-20261122-2
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 9027e0a0384bae8c28971d24e5dd666604e5a6f9
 Difficulty: Medium
 Test Level: T3
@@ -48,3 +48,29 @@ Next: SAME TASK FIX LOOP
 3. 在 `web/tests/e2e/operations-inventory.python.spec.ts` 用两个真实浏览器会话走上述旅程。断言首次保存未创建定义，重新读取只发 GET，表单输入保留。用户再次测试、保存后打开刚创建的定义，列表只有一条该定义。用测试名称 `recovers a concurrent Webhook creation conflict`，在 `web/` 跑 `npm run test:e2e -- --config playwright.python.config.ts operations-inventory.python.spec.ts --grep 'recovers a concurrent Webhook creation conflict|a new Notification publication reconciles'`、`npm run test:e2e -- notifications.spec.ts` 和 `npm run typecheck`。运行 Chromium 前构建生产产物。
 
 B 在修正候选独立复核新增并发旅程，并重跑本 Task 的两组指定 Chromium 验收。
+
+## Developer 修正交接 — P1 并发 Webhook 创建冲突
+
+```text
+Candidate: 1374f356a30dd094c44476f591cc46f643aa908d
+Fix range: 9b5ac2ee91a43f1ef3a51067e87250582c5fefd9..1374f356a30dd094c44476f591cc46f643aa908d
+Task range: 9027e0a0384bae8c28971d24e5dd666604e5a6f9..1374f356a30dd094c44476f591cc46f643aa908d
+```
+
+- 已知版本冲突时保留全部未提交输入，清除旧签名测试结论，停止保存与重测。错误提示说明本次未创建，
+  并在原位置提供「读取最新配置」。读取复用当前 Webhook 列表查询，只做有界 GET；成功后显示最新版本并
+  要求重新测试，测试成功后才重新开放保存。读取失败继续使用原「最新读取失败」提示和重试入口，表单
+  与已知命令结果不被替换。未知回包的原请求核对路径未改动。
+- 新增 `recovers a concurrent Webhook creation conflict`：两个真实浏览器会话，第一会话填写并测试，
+  第二会话从「系统设置 → 常规设置 → 日志」保存新的保留值。第一会话保存收到真实 409，服务端未创建
+  定义，标识符、地址、密钥引用与高级字段保留；读取最新配置只发 GET；重新测试后保存并打开新定义，
+  列表和 API 都只有一条该定义。
+- 实际执行（`web/`，候选 `1374f356a30dd094c44476f591cc46f643aa908d`）：
+  - `npm run typecheck` → PASS。
+  - `npm run build` → PASS；310 modules，产物 `index-BFSWBVEx.js` 1,582.41 kB（既有大包提示）。
+  - `npm run test:e2e -- --config playwright.python.config.ts operations-inventory.python.spec.ts --grep 'recovers a concurrent Webhook creation conflict|a new Notification publication reconciles'` → 2 passed。
+  - `npm run test:e2e -- notifications.spec.ts` → 11 passed。
+  - `npm run test -- run src/features/operations/NotificationRouter.test.tsx` → 8 passed（仅既有 jsdom `scrollTo` 提示）。
+  - `npx prettier --check` 两个改动文件、`npm run lint -- --quiet`、`git diff --check` → PASS。
+- 剩余风险：Developer 未运行全量 Python/Web/E2E 与打包矩阵，按 Task 由 B 执行；未发现本修正范围内的
+  已知未覆盖入口。新增旅程依赖计数器在隔离 harness 内的当前日志保留值，取相邻合法值完成真实发布。
