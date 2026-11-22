@@ -1,6 +1,6 @@
 # Task PATCH-20261122-1 — 手动整理弹窗状态与排版修复
 
-Next Action: B 复核修正候选 6b462f5432070bfe1cae7eef48799d94e2e8a1ef 的 Task Base..交接 Head，重点核对 B-01 至 B-03。
+Next Action: Developer 更新同一原生组的两条旧断言，按本轮修正指导交回 B。
 
 用户明确要求激活本独立修复 Task。优先级为第一屏「准备中」→ 第三屏「整批复核」→ 第二屏「逐项复核」。
 规划时 `PLANNED` 表示已激活、待 Developer 开始。 [Development Workflow](docs/development-workflow.md#31-independent-minor-bugs)
@@ -9,7 +9,7 @@ Next Action: B 复核修正候选 6b462f5432070bfe1cae7eef48799d94e2e8a1ef 的 T
 Task ID: PATCH-20261122-1
 Task Type: STANDALONE MINOR BUG
 Parent Slice: NONE
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 8ce6c2092c328a15c44493f51ae4690b15680960
 Difficulty: Medium
 Test Level: T3
@@ -246,3 +246,47 @@ Task range: 8ce6c2092c328a15c44493f51ae4690b15680960..6b462f5432070bfe1cae7eef48
 - **剩余风险。** 后端在首次分析后把受阻项标记为失效的既有行为未改（Task 范围外），本轮只如实
   呈现第一份方案的受阻原因和下一步。Developer 未运行完整原生组、全量 Python/Web 回归、Task
   Center 继续入口及打包门禁；按分工由 B 在候选上执行。未推送、未发布。
+
+## B 修正复核 — FIX REQUIRED
+
+```text
+Reviewed Base: 8ce6c2092c328a15c44493f51ae4690b15680960
+Reviewed Implementation: 6b462f5432070bfe1cae7eef48799d94e2e8a1ef
+Reviewed Handoff Head: c642ce96a9fc556c4e695d2dcbf4bdbf670ab691
+Decision: FIX REQUIRED
+Next: SAME TASK FIX LOOP
+```
+
+B 核对完整 Base..交接 Head。上轮两项产品问题已经修复，101 项缩小选择后的新摘要断言也已通过。真实浏览器
+复现 A 仍待确认时再次选中 A、B，准备和整批复核都能说明 A 未受理、B 纳入整理。100 文件在桌面、390px
+和短视口均可核对数量、实际影响和受阻原因，未纳入明细能回到准确文件。真实「继续整理」重新打开原任务，
+有效子集只执行所选文件。完整原生组剩下两条等待旧界面的断言。
+
+- **刷新仍有会话时，用例等错了页面。** 在资源库打开整理、选候选、取消浏览器后退，再正常刷新。
+  管理员会话仍有效，页面直接恢复同一次整理。用例强制等「Login name」，因而没有继续核对整理标识、
+  未保存选择和请求计数。原始 Base 在 `0847a1d9` 引入的同一断言已存在；Slice 57 接受的正常刷新流程
+  会沿用有效会话。[现有断言](web/tests/e2e/manual-organize-dialog.python.spec.ts#L1649)
+- **新方案编号已经移到折叠的诊断里。** 用户确认 A 后响应丢失，A 已实际移动；用户修正 B 并重新分析，
+  再进入整批复核。候选的全新 B 方案编号在「方案标识与诊断」内，旧断言直接要求编号可见，停在恢复
+  原提交核对之前。编号移入诊断来自本 Task 的 `c1eae8a2`。[现有断言](web/tests/e2e/manual-organize-dialog.python.spec.ts#L1875)
+
+### Developer 修正指导
+
+1. 更新 `manual-organize-dialog.python.spec.ts` 的刷新场景。保留有效会话，刷新后核对已登录视图、原地址
+   和原整理卡片；确认未保存候选未被提交、准入次数仍为一，关闭只退出弹窗。已有取消后退和请求次数断言
+   继续保留。本场景按正常刷新命名。
+2. 更新同文件的原提交跨新方案场景。在第三屏展开「方案标识与诊断」，确认其中显示 B 的新方案编号，再
+   恢复对原提交的读取。保留对原方案 ID、所选条目、版本、授权设置、执行次数、准确任务及文件效果的断言。
+3. 在 `web/` 运行
+   `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts -g 'cancelled browser Back|unknown original submission'`，
+   标题调整时同步用实际标题筛选。记录实际耗时和结果。测试时间小于本轮总时间的一半。
+
+### B 实测
+
+- 治理、静态检查、产品构建通过。Python 6 项媒体发现和 2 项直接涉及的自动化检查通过，Web 45 项通过。
+- 提交候选的完整原生组 13 项通过、2 项失败，137 秒。保留失败日志和 trace。
+- 在隔离副本中只更新上述两处浏览器操作，使用同一候选的生产构建复跑，两条旅程均通过，17 秒。
+  正常刷新读回同一准备；展开诊断读到 B 的新方案后，自动核对仍使用 A 的原确认请求，最终打开准确的
+  原任务。隔离复跑用于确认修正方法，候选上的完整原生组仍须通过。
+- 验收命令按并行墙钟合计约 156 秒，低于本轮用时的一半。
+- 证据位于 `.git/validation-evidence/6b462f5432070bfe1cae7eef48799d94e2e8a1ef/b-review/`。
