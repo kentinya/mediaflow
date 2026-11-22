@@ -1,12 +1,12 @@
 # Task 57.2 — 在系统设置签发、使用和吊销 API 令牌
 
-Next Action: DEVELOPER FIXES TASK57.2
+Next Action: B REVIEWS TASK57.2
 
 ```text
 Task ID: 57.2
 Task Type: SLICE
 Parent Slice: 57
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c12cae6fe0226e7efe6850ac68e6581785fb87e3
 Difficulty: High
 Test Level: T4
@@ -229,6 +229,24 @@ Next: SAME TASK FIX LOOP
 - **RO-2** 代理模拟 `504` 后的签发核对通过，真实浏览器只发一次签发写请求，可从列表读回并吊销。真实 Compose 通过两种令牌的权限、轮换和重启回读。分析令牌在 Worker 中生成可读方案，源与目标文件效果为零。核对了浏览器存储、SQLite 数据及 WAL、令牌列表、配置导出和服务日志，均无明文。监控脚本的任务列表审计仍阻塞。
 - **RO-3** 候选空实例、隔离媒体、发布安全、重启和故障门禁通过。监控令牌轮换并重启四服务后，原启用计划产生一个可回读的已完成任务，源文件保留并得到一份字节一致的复制。当前候选真实自动化浏览器 32 项通过。
 - Web 单测 1,611 项、默认 Chromium 279 项、真实设置 Chromium 9 项通过。Web 构建、静态检查、两份配置样例及源码外 wheel 冒烟通过。Python 2,357 项中 18 失败、2 错误、7 跳过。其中一项为 Task 标题与发布门禁约定不符，B 已将两处标题对齐并单独复跑。候选镜像 `sha256:c63533fc44fbe497c8f33b496bb695ebe3ab8b1d272c1d8fdf489c08b858150e`。日志、截图和制品位于 `.git/validation-evidence/58d89a26b9506a6d7d790b514011db8480aff0be/b-review/`。
+
+## Developer 返工交接（第三轮）— TASK 57.2
+
+```text
+Candidate: e85fba92241dabf71aa16ac77cec136e0e5c04dc
+Fix range: 58d89a26b9506a6d7d790b514011db8480aff0be..e85fba92
+```
+
+- 已签发令牌的读取不再沿用浏览器只读投影的审计豁免：`_suppress_file_detail_audit` 只为账号会话和固定 principal 的投影免审计，`AuthenticatedApiToken` 的每次请求都写入既有安全审计，保留稳定令牌 ID、方法、路由、动作与结果状态。浏览器会话与固定 principal 的只读投影行为不变，既有 `/api/tasks` 不产生审计行的断言继续成立。新增用例从新建只读令牌出发，只调用一次正式入口 `GET /api/tasks`，再以管理员身份读取 `/api/security-audit`，断言该令牌 ID 的 `started`/`allowed` 记录来自这次成功调用、`/api/tasks` 审计只属于该令牌、响应不含明文；令牌列表的最近使用时间继续用于运营查看。
+- 入口组装改为在已有账号运行库上装配令牌服务：只有传入 `account_service` 才创建 `ApiTokenService`，固定 principal 的静态入口、只读系统状态与配置对象隔离测试恢复原构造路径，不再探测 `authenticate_api_token`。已签发令牌的认证、签发、列表和吊销路径本身未改。
+- Worker 注册服务与常驻 Worker 两处默认运行库版本由 59 对齐到 60，与当前 `SCHEMA_VERSION` 一致；真实版本不匹配仍由既有 `SCHEMA_MISMATCH` 路径拒绝。新增用例分别用两处默认值注册，断言记录的版本等于当前运行库版本。
+- `docs/deployment.md` 令牌段落补充：成功的令牌调用以稳定令牌 ID、方法和路由出现在 `GET /api/security-audit`，供管理员核对脚本实际行为。
+- 实际执行（最终工作树）：
+  - `.venv/bin/python -m unittest tests.test_web_account_auth tests.test_v2_ui tests.test_configuration_status tests.test_manual_operations_contract tests.test_processing_worker_readiness` → **70 passed**。
+  - 直接受影响扩展：`test_web_account_auth test_api_credentials test_v2_ui test_configuration_status test_configuration_objects test_manual_operations_contract test_processing_worker_readiness test_api_security test_container_deployment test_container_probe` → **195 passed**；另 `test_container_deployment test_task_scheduling test_v2_manual_organize test_manual_organize_execution test_execution_authorization` → **143 passed**，`test_management_setup test_automation_entrance_recovery test_automation_task_definition test_organize_source_history test_v2_automation_run_once` → **103 passed**。
+  - 改动文件 Ruff format/check、`python -m compileall`、`scripts/check_governance.py`、`git diff --check` 通过。
+- 用时约 25 分钟；定向测试与检查实际执行约 1.5 分钟，低于本轮 30%。
+- 剩余风险与 B 验收：完整 T4、真实 Compose 四服务重启、候选镜像、wheel/源码外安装及真实 Scheduler/Worker 在令牌轮换后的受理与文件结果仍待 B 独立执行。本轮审计证据来自进程内真实 WSGI 分发与 SQLite 运行库，未在候选镜像上复验。
 
 ## Task 57.1 — B 复核结论
 
