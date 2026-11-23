@@ -1,16 +1,15 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: B REVIEWS TASK 58.2 BROWSER TEST ENTRY CUTOVER
+Next Action: DEVELOPER UPDATES THE RETAINED DOCKER ACCEPTANCE ENTRY
 
-用户已授权激活 Task 58.2。Developer 提交的首轮修正为 `f162cf0e`，B 已复审并给出 FIX REQUIRED；
-Developer 已完成浏览器验收入口切换并提交 `e2cb3028`，交 B 复审。
+用户已授权激活 Task 58.2。Developer 的浏览器验收入口修正为 `e2cb3028`，B 已复审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Difficulty: High
 Test Level: T4
@@ -18,123 +17,47 @@ Planner / Reviewer: B
 Implementation Authorization: AUTHORIZED BY USER FOR TASK 58.2
 ```
 
-## Developer 交接 — 浏览器验收入口切换
-
-```text
-Candidate: e2cb3028
-Scope: 六个旧入口浏览器验收脚本退役 + 三处过期引用
-```
-
-- 删除 `files_toolbar_browser_proof.py`、`storage_settings_browser_proof.py`、
-  `classification_destination_browser_proof.py`、`rules_identity_browser_proof.py`、
-  `rules_object_analysis_browser_proof.py`、`rules_workspace_browser_proof.py`。它们都从
-  `.venv/bin/mediaflow config import/validate-draft/activate` 起步，58.2 已删除该 console script
-  与命令，因此运行即在启动阶段退出。修正后的工作区已无旧命令的可执行调用；其余引用只剩
-  `tests/` 中的退役断言。
-- 删除前逐个核对现行自动化：
-  - 两种库的精确目录、条目、超长名、边界空白、游标分页与读取零效果 →
-    `web/tests/e2e/live-files.python.spec.ts`（真实 Python + 真实 Storage 读）。
-  - 长路径工具栏与面包屑 → 结构断言 `web/src/shared/ui/files-toolbar-styles.test.ts`、
-    行为断言 `web/src/shared/ui/files-path.test.tsx`、命令与列表/网格
-    `web/tests/e2e/library-files.spec.ts`、`medialib-files.spec.ts`、`medialib-commands.spec.ts`；
-    生产镜像上的同一测量矩阵仍在 `scripts/docker_files_toolbar_browser_proof.py`。
-  - Storage 卡片的 checked 保存与回读 → `web/tests/e2e/storage-dialog.python.spec.ts`；
-    空库首次设置与空 Active → `scripts/docker_empty_baseline_smoke_test.py`。
-  - Rules 对象身份、发布、复制与引用影响 → `web/tests/e2e/rules-identity.spec.ts`。
-  - Rules 对象分析与 C 复用 A 的 Naming/Classification 策略后仍为 C →
-    `tests/test_v2_rules_object_analysis.py` 与 `web/src/features/rules/RulesObjectTestPanel.test.tsx`。
-  - Rules 工作区八张导航卡、七族表单、B54-02/03/05/06 与卡片样式 →
-    `web/src/features/rules/RulesWorkspacePage.test.tsx`、`RulesEditPage.test.tsx`、
-    `web/src/shared/ui/rules-form-styles.test.ts`。
-  - 分类目标契约、历史前缀保留与导出不持久化只读键 →
-    `tests/test_classification_destination_contract.py`、
-    `web/src/features/rules/ClassificationDestinationForm.test.tsx`。
-  核对后没有仅存在于这些脚本、且在现行入口下仍可发生的合同断言缺口，因此未新增用例；
-  历史截图与定量结果从原 Git 检查点取得。
-- 三处指向已删脚本的过期引用改为现行证据位置：
-  `scripts/docker_files_toolbar_browser_proof.py` docstring、
-  `web/src/shared/ui/rules-form-styles.test.ts`、
-  `web/src/features/rules/RulesWorkspacePage.test.tsx`。
-
-本轮实际运行（仓库根目录，除注明外）：
-
-- `python3 scripts/check_governance.py` → PASS；`git diff --check` → 无输出。
-- `.venv/bin/ruff check .` → All checks passed；`.venv/bin/ruff format --check .` → 356 files
-  already formatted；`.venv/bin/python -m compileall -q mediaflow tests scripts` → 通过。
-- 定向 Python：`test_container_deployment test_container_probe test_resident_services
-  test_runtime_lease test_sqlite_backup test_sqlite_restore test_file_index_retirement
-  test_runtime_strategy_configuration test_release_validation test_release_security` → 125 项通过；
-  `test_automation_entrance_recovery test_resident_correction test_configuration_snapshot`
-  → 45 项通过。
-- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 通过。
-- `web/`：`npx vitest run src/shared/ui/rules-form-styles.test.ts
-  src/features/rules/RulesWorkspacePage.test.tsx` → 60 项通过。
-- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/live-files.python.spec.ts` → 6 项通过（登录后两个库的真实目录、分页与零效果）；
-  `tests/e2e/storage-dialog.python.spec.ts` → 8 项通过（Storage 卡片 checked 保存与回读）；
-  `npm run test:e2e -- tests/e2e/files-interactions.spec.ts tests/e2e/rules-identity.spec.ts`
-  → 8 项通过；`--config=playwright.python.automation.config.ts
-  tests/e2e/configuration-settings.python.spec.ts` → 10 项通过（Settings checked 发布）。
-
-剩余风险与待 B 验收：
-
-- 被删脚手架曾产出定量几何与截图证据。现行仓库仍在 Docker 工具栏脚本、
-  `rules-readiness.spec.ts` 等处以真实浏览器测量保留同类断言，历史数值只存于原 Git 检查点。
-- `docs/v2-requirements.md` 的 schema 11 切换例外、`docs/architecture.md` 的 switch 描述与
-  `docs/requirements.md` 的 CLI 命令清单尚未随退役实现同步，按 Task 由 A 终审时更新。
-- 全量 Python/Web/E2E、源码外安装、wheel、候选镜像与固定 Slice Base 接续仍归 B。
-
 ## B 复审 — FIX REQUIRED
 
 ```text
 Reviewed Base: 307eaaf8b006527a11fa2514de839a5528e6c202
-Reviewed Head: 1daad11a500aaab876f465f142f8164681d8bdf2
+Reviewed Head: f23ed9711016dcb11753501ca1680ec48e84ebe3
 Decision: FIX REQUIRED
 Slice Outcomes / Surfaces complete: NO
 ```
 
-**P1 / RO-4：仍可执行的浏览器验收脚本没有完成入口切换。** 维护者构建 Web 后，按仓库
-现有入口运行 `.venv/bin/python scripts/files_toolbar_browser_proof.py`，目的是在真实 API
-上打开资源库、浏览长路径并检查工具栏。脚本创建临时库后在 API 启动阶段退出。预检指出
-历史文件和媒体根与部署配置不符，浏览器尚未打开。脚本还保留旧 `mediaflow` 的导入、
-验证和激活调用。真实 Rules 识别验收脚本也在启动阶段退出，源码核对共发现六个仍执行
-旧命令的脚本。Task Base 已带有未切换的设置代码，58.2 删除了它们仍引用的通用命令。
+**P1 / RO-4：替代旧 Files 脚本的 Docker 验收仍无法启动。** 构建 Web 后，维护者按现有入口运行
+`.venv/bin/python scripts/docker_files_toolbar_browser_proof.py`，期望在正式镜像打开两种库的
+长路径目录，检查列表、网格和窄屏工具栏。用本 Slice 已测、生产输入与本轮一致的候选镜像实跑，
+四个服务均因脚本写入已退役的 `api.principals` 而在预检退出。已读取四服务日志并结束等待，
+浏览器尚未打开。产品拒绝行为正确。Task Base 已含这套部署输入，`e2cb3028` 保留该脚本作为
+生产镜像上的替代证据，但只更新了它的说明。两个文件传输 Docker 脚本的正式启动函数也生成
+同一种旧认证配置，分别见 `prepare_transfer_config` 和 `prepare`。
 
-首轮三项修正已复验。旧库校验和发布指引给出原版本或新目录的去向。两个专属文件列表模块
-已从候选 wheel 移除。整理、来源历史和元数据回归从 Files、Run once 等现行入口受理。
-首轮细节见 `03464d11:TASK.md`。
+六个旧 CLI 浏览器脚本已退役。B 复验两个库的真实分页、准确文件名和读取零效果，6 项通过；
+Rules 相关单测 60 项通过。前两轮通过的旧库恢复指引、wheel 清单及 Files/Automation 受理
+覆盖保持可核对。交接和两轮复审记录见 `f23ed971:TASK.md`、`8cb501e1:TASK.md` 与
+`03464d11:TASK.md`。
 
 ### 本轮返工开发指导
 
-1. 核对 `scripts/` 下的 `files_toolbar_browser_proof.py`、
-   `storage_settings_browser_proof.py`、`classification_destination_browser_proof.py`、
-   `rules_identity_browser_proof.py`、`rules_object_analysis_browser_proof.py` 和
-   `rules_workspace_browser_proof.py`。现行自动化已覆盖的场景直接清除重复脚本，历史证据从
-   原 Git 检查点取得。先对照 `live-files.python.spec.ts`、`files-interactions.spec.ts`、
-   `storage-dialog.python.spec.ts`、`rules-identity.spec.ts` 与
-   `tests/test_v2_rules_object_analysis.py`，把仍缺的合同断言接到已有测试。
-2. 保留的验收从最小 bootstrap、真实管理员会话和 Settings／正式配置 API 的 checked
-   publication 起步。复用现有隔离夹具，保留两种库的精确浏览和零效果、Storage 只读检查、
-   Rules 分析与 C 使用 A/A 策略后仍为 C 的断言。沿用现行服务启动入口。
-3. 在修正后的工作区核对旧命令的可执行调用已清除。用现有测试从启动、登录或配置发布走到
-   至少一个受影响的浏览器任务结果。运行相关场景、`python3 scripts/check_governance.py`
-   和 `git diff --check`。全量验收和固定 Slice Base 接续仍由 B 负责。
+1. 修正保留的 `scripts/docker_files_toolbar_browser_proof.py` 启动到浏览器的完整路径。
+   复用 `scripts/docker_empty_baseline_smoke_test.py` 的隔离部署及真实登录做法。Compose
+   只挂载最小 bootstrap；从当前主机入口领设置码并创建管理员，再用管理员会话把临时媒体
+   配置提交给 `POST /api/configuration/publish`。浏览器用实际管理员登录后打开两个库。
+   保留已有长路径和四种视口断言。
+2. 一并核对保留的 Docker 启动与文件传输冒烟调用。普通入口共用正式 bootstrap、主机发码、
+   管理员会话和 checked publication；已有现行验收完整承接的重复入口可以退役。保留
+   `docker_release_security_smoke_test.py` 对旧认证输入的负向验证。按现有脚本入口复验
+   受影响的实际启动、登录和浏览结果，并执行治理和差异检查。
 
-### 本轮验证与 Slice 重评
+### Slice 重评与剩余验收
 
-- Python 全量 2326 项，2319 通过、7 跳过。定向 80 项通过。治理、Ruff、编译、依赖、
-  样例和禁用依赖检查通过。Web 静态检查、1642 单测及 289 常规浏览器用例通过。
-- 源码外 wheel 冒烟通过。独立的安装后恢复脚本首跑缺 `tests/account_fixtures.py`，在
-  测试清单临时补入现有夹具后，同一 wheel 的两个恢复用例通过，仓库脚本未改动。
-- 正式 Compose 空库、媒体挂载、重启故障和发布安全冒烟通过。Colima 首跑无法访问系统临时目录，
-  使用 Docker 可访问的临时目录后重跑。启动、账号和离线恢复继承 58.1 已验收的范围，本轮也
-  核对了更新后的旧库恢复指引及当前库的 wheel 备份恢复。
-- 原生合跑记录 44 项通过、3 个 Task Center 用例失败、1 项中止、40 项未运行。
-  其中运行列表和整理计划历史两项分别在 Task Base 与候选的独立夹具中通过。合跑结果保留，
-  后续由 B 复验。RO-4 的浏览器脚手架和固定 Slice Base 接续尚待验收。
-
-日志、浏览器产物和制品标识在
-`.git/validation-evidence/1daad11a500aaab876f465f142f8164681d8bdf2/b-review/`。
+RO-1、RO-2 和 RO-3 的已验收旅程见 Task 58.1 及上一轮候选证据。本轮 diff 只删除旧验收
+脚本并调整其余测试的说明，生产代码、部署清单和依赖输入无变化。RO-4 的替代验收脚手架
+仍未完成，固定 Slice Base 的 AC-05 和原生浏览器待补项继续由 B 执行。
+本轮日志位于
+`.git/validation-evidence/f23ed9711016dcb11753501ca1680ec48e84ebe3/b-review/`。
 
 ## 目标与当前缺口
 
