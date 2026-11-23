@@ -1,15 +1,15 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: DEVELOPER STARTS TASK 58.2 IMPLEMENTATION
+Next Action: B REVIEWS TASK 58.2 IMPLEMENTATION
 
-用户已授权激活 Task 58.2。Developer 开始实施时将状态从 `PLANNED` 改为 `IN PROGRESS`。
+用户已授权激活 Task 58.2。Developer 已实施并交 B 审查（`b0190338`）。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Difficulty: High
 Test Level: T4
