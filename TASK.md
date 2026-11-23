@@ -10,7 +10,7 @@ Next Action: DEVELOPER COMPLETES THE TASK 58.1 ACCEPTANCE CONSUMERS
 Task ID: 58.1
 Task Type: SLICE
 Parent Slice: 58
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
 Difficulty: High
 Test Level: T4
@@ -502,6 +502,66 @@ Web 单测 1642 通过，常规 Chromium E2E 289 通过，原生整理 E2E 18 �
 
 证据在 `.git/validation-evidence/c0315d8795fb042448fdc22f1e05b1fb43fcb29f/b-review/`。
 Slice 58 仍须完成通用 CLI、专属任务路径、schema 11 切换退役和 Base 合法任务续作验收。
+
+## Developer fix handoff — Task 58.1 T4 gate corrections
+
+```text
+Fix Implementation Head: dfb3f08280ded255164daba1656c8e568a7410ba
+Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
+Reviewed Candidate: c0315d8795fb042448fdc22f1e05b1fb43fcb29f
+Candidate state: READY FOR B REVIEW
+```
+
+### 本轮改动（对应 B 返工四项）
+
+1. **空库浏览器导航。** `activate_empty_baseline_through_web` 在初始化并刷新后先点击
+   「配置工具」分区按钮，再展开其中的「诊断」details（`getByText('诊断', {exact:true})`）。
+   诊断面板位于挂载但隐藏的 tools 分区内，默认分区是运行设置，因此直接点「诊断」会永远
+   等不到可见元素。仅一次初始化、零额外受理、读回同一 Active、浏览器凭据脱敏的原断言
+   全部保留。
+2. **媒体挂载段改走正式整理旅程。** 移除对容器 `organize --execute --limit 1` 的调用及
+   其 `wait_task` 辅助，改为 `POST /api/resource-libraries/source/files/organize` 受理
+   指定文件，保存 pinned 规则的显式 choice，POST previews 进入持久分析并等 Worker 链接
+   精确方案，再以显式 Execute（confirmation、itemIds、expectedIntentVersion）授权执行。
+   受理与 choice 后、分析与预览后均核对源字节与目标目录零变化；执行延续分析同一
+   Task（`taskId` 相同）并完成后恰好一份原字节 COPY，源文件保留；两库普通 Copy 与服务
+   身份断言不变。新增 `admit_json` 对每个变更请求断言精确状态码（201/200/202）。
+   元数据不固定在 choice 中：MetadataPolicy A 是在线 movie 策略，由 Worker 的持久分析
+   经本地 TLS 夹具实时解析身份，预览复用持久身份出具方案（离线＋种子证据路径仍由
+   `docker_release_security_smoke_test.py` 覆盖）。
+3. **脱敏单测夹具。** `test_environment_references_preserved_and_literal_secrets_redacted`
+   改用独立明确的输入，原字段位置、值保留与明文移除断言逐条保留；新增
+   `test_example_document_templates_keep_their_environment_references` 按输入自身派生
+   断言：当前样例（含合并后的 `_examples` 模板）的每个 `*Env` 引用都以
+   `environment_reference` 保留在原字段路径且变量名保留在安全文档中。
+4. **离线恢复指引。** Compose 诊断副本改复制到已被 Git 忽略的 `.mediaflow/` 目录并说明
+   不要复制到会被 Git 跟踪的项目根目录；源码与 Compose 两条「原库不可读时」支路在摘要
+   核对后直接执行第 5 步的恢复库 API 启动命令（内联实际命令，跳过该步开头已知失败的
+   原库 `verify`）。
+
+### 实际验证（本轮返工）
+
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_configuration_package_exchange`：13 项通过。
+- `.venv/bin/ruff format --check`、`.venv/bin/ruff check`（改动文件）、
+  `python3 scripts/check_governance.py`、`git diff --check`、`py_compile` 通过。
+- 隔离 Compose（本机 daemon 看不到宿主 `/tmp`，按既有约定用
+  `MEDIAFLOW_SMOKE_TEMP_DIR=$PWD/.dsh-docker-tmp`）：完整
+  `docker_empty_baseline_smoke_test.py --image mediaflow:task58.1-devcheck`
+  （`sha256:8c95943b03416e9a…`）两段栈全部通过。空库段浏览器旅程按新导航走到诊断并读回
+  同一 Active（`3da1a115…`）；媒体挂载段按新整理链路输出
+  「admitted one intent and saved the pinned-rule choice; Storage untouched」→
+  「durable analysis linked the exact plan with zero Storage mutation」→「explicit Execute
+  produced exactly one original-byte COPY through the same Task」→「Organize and both
+  library Copy operations completed; same processes」，全程四容器身份不变。
+
+### 剩余风险与待 B 验收
+
+- 全量 Python 回归、精确 wheel、发布安全、重启故障与真实浏览器 E2E 按分工由 B 在最终
+  候选上执行；本轮镜像仅用于 Developer 定向核对，B 需从最终候选重建并打标。
+- 媒体挂载段的整理选择不固定元数据身份，依赖在线策略的持久分析路径；离线（
+  `mediaQueryType=none`）路径与逐项元数据决定由发布安全冒烟和浏览器 E2E 覆盖。
+- `test_configuration_package_exchange` 的既有全量失败即本轮修正的夹具问题；修复后
+  该模块 13 项通过，全量结果以 B 复跑为准。
 
 ## Latest accepted Task — PATCH-20261122-3
 
