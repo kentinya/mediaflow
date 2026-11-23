@@ -46,6 +46,7 @@ import type {
   OrganizeIntentItemModel,
   OrganizePreviewModel,
 } from "../../entities/operations/organize";
+import type { ManualPreviewItemModel } from "../../entities/operations/preview";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
@@ -102,8 +103,16 @@ export type ManualOrganizeDialogSession =
     }
   | { readonly phase: "admitted"; readonly discoveryId: string };
 
+export type ManualOrganizeDialogHost = "files" | "continuation";
+
 export interface ManualOrganizeDialogProps {
   readonly session: ManualOrganizeDialogSession;
+  /**
+   * Which existing entry hosts this shared card. Files owns the readable
+   * preparation/overview detail hierarchy; Task Center in-place continuation
+   * and historical addresses keep their Slice53 presentation unchanged.
+   */
+  readonly host?: ManualOrganizeDialogHost;
   readonly onClose: () => void;
   /** Hand the exact durable task to the task center's existing selection mechanism. */
   readonly onHandoff: (taskId: string) => void;
@@ -190,13 +199,164 @@ function conflictTypeLabel(value: string | null): string {
   return labels[value.toUpperCase()] ?? displayEnum(value);
 }
 
+/** One Files overview row, derived only from the current exact summary. */
+type OrganizeOverviewStatus = "pending" | "ready" | "included" | "recorded";
+
+const OVERVIEW_STATUS_LABELS: Readonly<Record<OrganizeOverviewStatus, string>> =
+  {
+    pending: "待处理",
+    ready: "可确认",
+    included: "已纳入",
+    recorded: "已有记录",
+  };
+
+/**
+ * The native four-type problem one current plan item still represents.
+ * Mirrors the backend's own `manual_preview_plan_problem` boundary so the
+ * overview can tell a real operator decision from a technical condition.
+ */
+function previewItemProblemKind(item: ManualPreviewItemModel): string | null {
+  // A current, executable plan item has no remaining operator problem even
+  // when its analysis evidence still carries the stage that produced it.
+  if (
+    item.current &&
+    item.status === "previewed" &&
+    item.executionState === "ready_for_explicit_authorization"
+  ) {
+    return null;
+  }
+  if (
+    item.conflicts.length > 0 &&
+    item.capabilities?.verdict !== "capability_gap"
+  ) {
+    return "conflict";
+  }
+  const analysis = item.analysis;
+  if (analysis !== null) {
+    const recognition = analysis.recognition;
+    if (recognition?.status != null && recognition.status !== "matched") {
+      return "recognition";
+    }
+    const metadataStatus = analysis.metadata?.status ?? null;
+    if (metadataStatus === "need_confirm" || metadataStatus === "ambiguous") {
+      return "metadata";
+    }
+    if (
+      metadataStatus === "not_found" ||
+      metadataStatus === "metadata_mismatch"
+    ) {
+      return "metadata_correction";
+    }
+    if (analysis.classification?.status === "unclassified") {
+      return "classification";
+    }
+  }
+  switch (item.stage) {
+    case "recognition":
+      return "recognition";
+    case "metadata":
+      return "metadata";
+    case "metadata_correction":
+      return "metadata_correction";
+    case "classification":
+      return "classification";
+    case "conflict":
+      return "conflict";
+    default:
+      return null;
+  }
+}
+
+/** Metadata candidate and correction stay one family for "same problem" reads. */
+function problemFamily(value: string | null): string | null {
+  return value === "metadata_correction" ? "metadata" : value;
+}
+
+function problemKindLabel(value: string): string {
+  switch (value) {
+    case "recognition":
+      return "识别类型";
+    case "metadata":
+      return "元数据候选";
+    case "metadata_correction":
+      return "作品搜索修正";
+    case "classification":
+      return "分类目标";
+    case "conflict":
+      return "目标冲突";
+    default:
+      return "方案问题";
+  }
+}
+
+/**
+ * The exact item facts a delayed re-analysis may change. A newer sibling
+ * summary without a different signature for this item proves nothing about
+ * this file and must not move the operator.
+ */
+function previewItemResultSignature(item: ManualPreviewItemModel): string {
+  return JSON.stringify({
+    status: item.status,
+    current: item.current,
+    executionState: item.executionState,
+    recognitionType: item.recognitionType,
+    operation: item.operation,
+    target: item.targetPath ?? item.destination?.storageRelativePath ?? null,
+    title: item.title,
+    providerId: item.providerId,
+    failure:
+      item.failure === null
+        ? null
+        : [item.failure.category, item.failure.message],
+    problemTaskItemId: item.problemTaskItemId,
+    conflicts: item.conflicts.map((value) => value.type),
+    recognition: item.analysis?.recognition?.status ?? null,
+    metadata: item.analysis?.metadata?.status ?? null,
+    classification: item.analysis?.classification?.status ?? null,
+    attachments: item.attachments.length,
+    warnings: item.warnings.length,
+  });
+}
+
+function overviewStatusFor(
+  item: ManualPreviewItemModel,
+  executableIds: readonly string[],
+  admittedItemIds: ReadonlySet<string>,
+  excluded: ReadonlySet<string>,
+): OrganizeOverviewStatus {
+  if (admittedItemIds.has(item.itemId)) return "recorded";
+  if (!item.current || !executableIds.includes(item.itemId)) return "pending";
+  return excluded.has(item.itemId) ? "ready" : "included";
+}
+
+/** One operator-facing next step for an item that is not ready to confirm. */
+function overviewPendingReason(item: ManualPreviewItemModel): string {
+  if (!item.current) {
+    return "该文件已不在当前方案中；需要重新分析后才能再次核对或纳入。";
+  }
+  const problem = previewItemProblemKind(item);
+  if (problem !== null) {
+    return `需要处理${problemKindLabel(problem)}；保存决定并重新分析后可回到概览核对。`;
+  }
+  if (item.capabilities?.verdict === "capability_gap") {
+    const missing = item.capabilities.missing.join("、");
+    return missing === ""
+      ? "目标存储缺少所需能力；本次不会执行整理。"
+      : `目标存储缺少所需能力：${missing}；本次不会执行整理。`;
+  }
+  if (item.failure !== null) return item.failure.message;
+  return item.nextAction ?? "该文件当前未就绪；核对当前事实后重新分析。";
+}
+
 export function ManualOrganizeDialog({
   session,
+  host = "continuation",
   onClose,
   onHandoff,
   fallbackFocusId = "mf-files-refresh",
   taskReadNotice = null,
 }: ManualOrganizeDialogProps) {
+  const filesHost = host === "files";
   const token = useAuthToken();
   const queryClient = useQueryClient();
   const principalIdentity = usePrincipalIdentity();
@@ -298,6 +458,46 @@ export function ManualOrganizeDialog({
 
   // ---- per-file state ------------------------------------------------
   const [step, setStep] = useState<"review" | "confirm">("review");
+  /**
+   * Files enters through its same-dialog overview before any file detail.
+   * Task Center in-place/historical continuation keeps the Slice53 review
+   * entry unchanged.
+   */
+  const [filesOverviewVisible, setFilesOverviewVisible] = useState(filesHost);
+  const [filesOverviewNotice, setFilesOverviewNotice] = useState<{
+    readonly kind: "success" | "warning";
+    readonly text: string;
+  } | null>(null);
+  const [filesOverviewFocus, setFilesOverviewFocus] = useState<
+    | { readonly kind: "heading" }
+    | { readonly kind: "item"; readonly itemId: string }
+    | null
+  >(null);
+  /**
+   * The exact per-file decision response this Files card is waiting for. The
+   * baseline signature and preview identity are captured when analysis is
+   * accepted, so only a different read-back for this same item may return the
+   * operator to the overview.
+   */
+  interface FilesDecisionReturn {
+    readonly itemId: string;
+    readonly filename: string;
+    readonly previewId: string;
+    readonly signature: string;
+    readonly problem: string | null;
+    readonly draftRevision: number;
+  }
+  const [filesDecisionReturn, setFilesDecisionReturn] =
+    useState<FilesDecisionReturn | null>(null);
+  /**
+   * The pre-save baseline of a native decision form. It is captured on the
+   * operator's edit, before the accepted continuation can race with a new
+   * preparation read, and promoted only by the exact item's analysis.
+   */
+  const [filesDecisionBaseline, setFilesDecisionBaseline] =
+    useState<FilesDecisionReturn | null>(null);
+  /** Bumped only by a real operator edit, never by saving or read-back. */
+  const fileDraftRevision = useRef(0);
   /** The visible position before any durable anchor has been picked. */
   const [index, setIndex] = useState(0);
   /**
@@ -608,6 +808,8 @@ export function ManualOrganizeDialog({
     retry: false,
     onMutate: () => {
       setResult(null);
+      setFilesDecisionReturn(null);
+      setFilesOverviewNotice(null);
       // A fresh explicit action supersedes the last preparation-level
       // request fact; the refetch (or rejection) below reports this one.
       setPreparationNotice(null);
@@ -650,6 +852,7 @@ export function ManualOrganizeDialog({
               retryAnalysis: false,
             },
           }));
+          beginFilesDecisionReturn(variables.itemId);
           void preparationQuery.refetch();
           void intentQuery.refetch();
           return;
@@ -682,6 +885,7 @@ export function ManualOrganizeDialog({
             retryAnalysis: false,
           },
         }));
+        beginFilesDecisionReturn(variables.itemId);
         void preparationQuery.refetch();
       } else {
         setNotices((previous) => ({
@@ -1262,6 +1466,7 @@ export function ManualOrganizeDialog({
         ? "plan-current"
         : "plan-superseded",
     preview?.previewId ?? "",
+    filesHost && filesOverviewVisible ? "overview" : "detail",
     step,
     currentItemId ?? "",
     savedDecisionStage,
@@ -1274,14 +1479,25 @@ export function ManualOrganizeDialog({
   // previous file's unrelated content.
   useLayoutEffect(() => {
     const anchor =
-      preview === undefined ? "preparation" : `${step}:${currentItemId ?? ""}`;
+      preview === undefined
+        ? "preparation"
+        : filesHost && filesOverviewVisible
+          ? "overview"
+          : `${step}:${currentItemId ?? ""}`;
     if (lastScrollAnchor.current === anchor) return;
     lastScrollAnchor.current = anchor;
     const body = layer.layerRef.current?.querySelector<HTMLElement>(
       ".mf-organize-dialog-body",
     );
     if (body !== null && body !== undefined) body.scrollTop = 0;
-  }, [currentItemId, layer.layerRef, preview, step]);
+  }, [
+    currentItemId,
+    filesHost,
+    filesOverviewVisible,
+    layer.layerRef,
+    preview,
+    step,
+  ]);
   // The stage stays mounted, so the current decision form, drafts, selection
   // and original submission identity survive; only the local fade restarts.
   // If a replaced control had focus, the content boundary takes it back
@@ -1328,8 +1544,204 @@ export function ManualOrganizeDialog({
     selectedRecognition.classificationPolicyId !== null &&
     selectedRecognition.organizePolicyId !== null;
 
+  /**
+   * Capture the exact item read-back that existed when this Files analysis was
+   * accepted. Only that item's own newer durable facts may return the operator
+   * to the overview; an accepted request or any sibling summary cannot.
+   */
+  const filesDecisionBaselineFor = (
+    item: ManualPreviewItemModel,
+  ): FilesDecisionReturn | null => {
+    if (!filesHost || preview === undefined) return null;
+    return {
+      itemId: item.itemId,
+      filename: item.sourceFilename ?? item.itemId,
+      previewId: preview.previewId,
+      signature: previewItemResultSignature(item),
+      problem: previewItemProblemKind(item),
+      draftRevision: fileDraftRevision.current,
+    };
+  };
+  const beginFilesDecisionReturn = (itemId: string) => {
+    const item = items.find((value) => value.itemId === itemId);
+    const baseline = item === undefined ? null : filesDecisionBaselineFor(item);
+    if (baseline !== null) setFilesDecisionReturn(baseline);
+  };
+
+  const openFilesOverviewItem = (itemId: string) => {
+    const position = items.findIndex((item) => item.itemId === itemId);
+    if (position < 0) return;
+    setIndex(position);
+    setAnchorItemId(itemId);
+    setStep("review");
+    setFilesOverviewVisible(false);
+    setFilesOverviewNotice(null);
+  };
+
+  const returnToFilesOverview = () => {
+    setStep("review");
+    setFilesOverviewVisible(true);
+    setFilesDecisionReturn(null);
+    setFilesOverviewFocus(
+      currentItemId === null
+        ? { kind: "heading" }
+        : { kind: "item", itemId: currentItemId },
+    );
+  };
+
+  const filesDecisionReturnItem =
+    filesDecisionReturn === null
+      ? undefined
+      : items.find((item) => item.itemId === filesDecisionReturn.itemId);
+  const filesDecisionReturnSignature =
+    filesDecisionReturnItem === undefined
+      ? ""
+      : previewItemResultSignature(filesDecisionReturnItem);
+  useEffect(() => {
+    if (!filesHost || filesDecisionReturn === null) return;
+    // The operator already moved to another file, the batch review or the
+    // overview: the late read still updates data, but never navigates or
+    // steals focus from the interface they chose.
+    // A newly linked summary has a short read window with no preview value;
+    // that is not the operator leaving this file.
+    if (preview === undefined) return;
+    if (
+      filesOverviewVisible ||
+      step !== "review" ||
+      currentItemId !== filesDecisionReturn.itemId
+    ) {
+      // Leaving this exact file is the event that retires the pending return.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setFilesDecisionReturn(null);
+      return;
+    }
+    if (preview.previewId === filesDecisionReturn.previewId) return;
+    if (filesDecisionReturn.draftRevision !== fileDraftRevision.current) {
+      // A newer edit belongs to the operator, not to the old response.
+      setFilesDecisionReturn(null);
+      return;
+    }
+    const item = filesDecisionReturnItem;
+    if (item === undefined) {
+      // The exact item is absent from the newly linked exact summary. That is
+      // this item's own read-back result (for example an explicit ignore),
+      // not a sibling's change; return to the overview without inventing a row.
+      setFilesOverviewNotice({
+        kind: "warning",
+        text: `「${filesDecisionReturn.filename}」已重新分析，但未出现在当前方案中；请核对当前范围。`,
+      });
+      setFilesDecisionReturn(null);
+      setFilesOverviewFocus({ kind: "heading" });
+      setFilesOverviewVisible(true);
+      setStep("review");
+      return;
+    }
+    if (filesDecisionReturnSignature === filesDecisionReturn.signature) {
+      // A newer summary was published for other files. This item's own
+      // readable facts did not change, so its analysis result is not proven.
+      return;
+    }
+    const problem = previewItemProblemKind(item);
+    const executable = item.current && executableIds.includes(item.itemId);
+    if (executable) {
+      setFilesOverviewNotice({
+        kind: "success",
+        text:
+          item.operation === "SKIP"
+            ? `「${filesDecisionReturn.filename}」已重新分析，并按当前决定明确跳过文件操作。`
+            : `「${filesDecisionReturn.filename}」已重新分析，现在可以纳入本次整理。`,
+      });
+      setFilesDecisionReturn(null);
+      setFilesOverviewFocus({ kind: "heading" });
+      setFilesOverviewVisible(true);
+      setStep("review");
+      return;
+    }
+    if (
+      problem !== null &&
+      problemFamily(problem) !== problemFamily(filesDecisionReturn.problem)
+    ) {
+      setFilesOverviewNotice({
+        kind: "warning",
+        text: `「${filesDecisionReturn.filename}」已重新分析，当前出现新的待处理问题：${problemKindLabel(problem)}。`,
+      });
+      setFilesDecisionReturn(null);
+      setFilesOverviewFocus({ kind: "heading" });
+      setFilesOverviewVisible(true);
+      setStep("review");
+      return;
+    }
+    if (problem !== null) {
+      // The same decision kind still needs correction: keep the form, the
+      // operator's place and any inputs exactly where they are.
+      setNotices((previous) => ({
+        ...previous,
+        [item.itemId]: {
+          kind: "warning",
+          text: `已重新分析，当前文件仍需处理${problemKindLabel(problem)}；输入和位置已保留。`,
+          retryAnalysis: false,
+        },
+      }));
+      // A later exact summary may still publish this item's resolved plan.
+      // Keep the same-file wait armed until the operator edits or leaves.
+      return;
+    }
+    // A technical, terminal or otherwise non-decision result is shown where
+    // the operator acted; it never becomes a fabricated overview state.
+    setNotices((previous) => ({
+      ...previous,
+      [item.itemId]: {
+        kind: "warning",
+        text: `分析已完成，但该文件当前未就绪：${
+          item.failure?.message ??
+          item.nextAction ??
+          "请核对当前文件的实际结果。"
+        }`,
+        retryAnalysis: false,
+      },
+    }));
+    setFilesDecisionReturn(null);
+  }, [
+    currentItemId,
+    executableIds,
+    filesDecisionReturn,
+    filesDecisionReturnItem,
+    filesDecisionReturnSignature,
+    filesHost,
+    filesOverviewVisible,
+    preview,
+    step,
+  ]);
+
+  const overviewHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const overviewListRef = useRef<HTMLUListElement | null>(null);
+  useLayoutEffect(() => {
+    if (!filesHost || !filesOverviewVisible || filesOverviewFocus === null) {
+      return;
+    }
+    if (filesOverviewFocus.kind === "item") {
+      const buttons =
+        overviewListRef.current?.querySelectorAll<HTMLButtonElement>(
+          "[data-organize-overview-item]",
+        ) ?? [];
+      const target = [...buttons].find(
+        (button) =>
+          button.dataset.organizeOverviewItem === filesOverviewFocus.itemId,
+      );
+      target?.focus();
+      target?.scrollIntoView?.({ block: "nearest" });
+    } else {
+      overviewHeadingRef.current?.focus();
+    }
+    // The focus request is consumed once by this layout boundary.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFilesOverviewFocus(null);
+  }, [filesHost, filesOverviewFocus, filesOverviewVisible]);
+
   const patchDraft = (patch: Partial<FileDraft>) => {
     if (currentItemId === null) return;
+    fileDraftRevision.current += 1;
+    setFilesDecisionReturn(null);
     setDrafts((previous) => ({
       ...previous,
       [currentItemId]: {
@@ -1488,6 +1900,37 @@ export function ManualOrganizeDialog({
     preparationWorkerUnavailable &&
     preparationStoppedTitle === null &&
     (preparation?.previewId ?? null) === null;
+  /**
+   * Files names the actual durable stage instead of one anonymous "preparing"
+   * word. Read failures, refusals and cancellations keep their own title and
+   * next action above.
+   */
+  const preparationStageText = (() => {
+    if (!filesHost || preparationWorkerBlocking) return null;
+    if (session.phase === "submitting") return "正在提交整理申请";
+    if (preparationUnavailable) return null;
+    if (preparation === undefined) return "正在读取准备状态";
+    if (preparationStoppedTitle !== null) return null;
+    switch (preparation.status) {
+      case "queued":
+        return "申请已受理，正在排队等待处理";
+      case "running":
+        return "正在有界检查所选文件与文件夹";
+      case "waiting_stability":
+        return "正在等待来源文件稳定";
+      case "analyzing":
+        return "正在完整分析并生成精确方案";
+      case "completed":
+      case "partial_success":
+        return preparation.previewId === null
+          ? preparation.frozen
+            ? "来源已冻结，等待后台生成精确方案"
+            : "准备已完成，正在读取方案摘要"
+          : "方案已生成，正在读取摘要";
+      default:
+        return null;
+    }
+  })();
 
   const renderFirstPlanPreparation = () => {
     // A linked plan needs no Worker, only the summary read that is already in
@@ -1497,7 +1940,13 @@ export function ManualOrganizeDialog({
       preparationStoppedTitle === null &&
       (!preparationWorkerUnavailable || preparation?.previewId != null);
     return (
-      <div className="mf-organize-preparation">
+      <div
+        className={
+          filesHost
+            ? "mf-organize-preparation mf-organize-files-preparation"
+            : "mf-organize-preparation"
+        }
+      >
         <div
           className={
             preparationWorkerBlocking
@@ -1521,6 +1970,10 @@ export function ManualOrganizeDialog({
           {preparationWorkerBlocking ? (
             <p className="mf-organize-preparation-copy">
               请求已保存，请联系管理员。
+            </p>
+          ) : preparationStageText !== null ? (
+            <p className="mf-organize-preparation-stage">
+              {preparationStageText}
             </p>
           ) : null}
         </div>
@@ -1898,6 +2351,178 @@ export function ManualOrganizeDialog({
     return renderFirstPlanPreparation();
   };
 
+  const renderFilesOverview = () => {
+    if (preview === undefined) return null;
+    const rows = items.map((item) => ({
+      item,
+      status: overviewStatusFor(item, executableIds, admittedItemIds, excluded),
+    }));
+    const countOf = (status: OrganizeOverviewStatus) =>
+      rows.filter((row) => row.status === status).length;
+    const pendingCount = countOf("pending");
+    const readyCount = countOf("ready");
+    const includedCount = countOf("included");
+    const recordedCount = countOf("recorded");
+    return (
+      <section
+        aria-label="本次整理概览"
+        aria-labelledby="mf-organize-overview-title"
+        className="mf-organize-overview"
+      >
+        <header className="mf-organize-overview-head">
+          <div className="mf-organize-overview-title">
+            <p className="mf-organize-file-eyebrow">当前状态</p>
+            <h3
+              id="mf-organize-overview-title"
+              ref={overviewHeadingRef}
+              tabIndex={-1}
+            >
+              本次整理概览
+            </h3>
+            <p className="mf-organize-overview-plan mf-dashboard-meta">
+              方案 {preview.previewId}
+              {preview.intentVersion !== null
+                ? ` · 版本 ${preview.intentVersion}`
+                : ""}{" "}
+              · 零变更核对
+            </p>
+          </div>
+          <span
+            className={
+              preview.current
+                ? "mf-organize-overview-version mf-organize-overview-version-current"
+                : "mf-organize-overview-version"
+            }
+          >
+            {preview.current ? "当前方案" : "非当前方案"}
+          </span>
+        </header>
+        {filesOverviewNotice !== null ? (
+          <StatusBanner
+            variant={
+              filesOverviewNotice.kind === "success" ? "success" : "warning"
+            }
+            title={
+              filesOverviewNotice.kind === "success"
+                ? "重新分析已读回"
+                : "出现新的待处理问题"
+            }
+          >
+            <p role="status">{filesOverviewNotice.text}</p>
+          </StatusBanner>
+        ) : null}
+        <dl
+          className="mf-organize-overview-counts"
+          aria-label="本次整理概览计数"
+        >
+          <div>
+            <dt>待处理</dt>
+            <dd>{pendingCount}</dd>
+          </div>
+          <div>
+            <dt>可确认</dt>
+            <dd>{readyCount}</dd>
+          </div>
+          <div>
+            <dt>已纳入</dt>
+            <dd>{includedCount}</dd>
+          </div>
+          <div>
+            <dt>已有记录</dt>
+            <dd>{recordedCount}</dd>
+          </div>
+        </dl>
+        <p className="mf-organize-overview-copy" role="status">
+          已纳入 {includedCount} 项，待处理 {pendingCount} 项
+          {recordedCount > 0 ? `，已有记录 ${recordedCount} 项` : ""}。
+          打开任一文件可核对来源、目标、操作与附件；核对与翻页不会修改文件。
+        </p>
+        {preview.truncated ? (
+          <p className="mf-organize-overview-note" role="status">
+            该方案摘要曾被截断，不能作为执行依据；请缩小范围后重新准备。
+          </p>
+        ) : null}
+        {!preview.current ? (
+          <p className="mf-organize-overview-note" role="status">
+            当前摘要不是最新可执行方案；打开文件核对后重新分析，生成当前方案再确认。
+          </p>
+        ) : null}
+        <ul className="mf-organize-overview-list" ref={overviewListRef}>
+          {rows.map(({ item, status }) => {
+            const itemName = item.sourceFilename ?? item.itemId;
+            const target =
+              item.targetPath ??
+              item.destination?.storageRelativePath ??
+              "目标尚未生成";
+            const operation = operationLabel(item.operation);
+            const retention = operationRetentionLabel(item.operation);
+            return (
+              <li
+                key={`overview-${item.itemId}`}
+                className={`mf-organize-overview-item mf-organize-overview-item-${status}`}
+              >
+                <div className="mf-organize-overview-row">
+                  <button
+                    type="button"
+                    className="mf-link-button mf-organize-overview-file"
+                    data-organize-overview-item={item.itemId}
+                    aria-label={`查看 ${itemName}`}
+                    onClick={() => openFilesOverviewItem(item.itemId)}
+                  >
+                    {itemName}
+                  </button>
+                  <span
+                    className={`mf-organize-overview-status mf-organize-overview-status-${status}`}
+                  >
+                    {OVERVIEW_STATUS_LABELS[status]}
+                  </span>
+                </div>
+                <p className="mf-organize-overview-route mf-exact-identity">
+                  {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
+                  {" → "}
+                  {item.targetStorageId ?? "—"}:{target}
+                </p>
+                <p className="mf-organize-overview-facts">
+                  {operation}
+                  {retention !== null ? ` · ${retention}` : ""}
+                  {item.attachments.length > 0
+                    ? ` · 附件 ${item.attachments.length} 个`
+                    : " · 无关联附件"}
+                </p>
+                {status === "pending" ? (
+                  <p className="mf-organize-overview-reason" role="status">
+                    {overviewPendingReason(item)}
+                  </p>
+                ) : status === "recorded" ? (
+                  <p className="mf-organize-overview-reason" role="status">
+                    该文件已受理执行；独立结果以任务中心的原任务详情为准，不会重放。
+                  </p>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+        {preparation !== undefined &&
+        preparation.selection.refused.length > 0 ? (
+          <details className="mf-organize-overview-refused">
+            <summary>
+              未受理的所选条目({preparation.selection.refused.length} 项)
+            </summary>
+            <ul>
+              {preparation.selection.refused.map((refused) => (
+                <li key={`overview-refused-${refused.kind}:${refused.path}`}>
+                  <span className="mf-exact-identity">{refused.path}</span> —{" "}
+                  {label(REASON_LABELS, refused.reason)}
+                  {refused.nextAction === "" ? "" : `；${refused.nextAction}`}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+      </section>
+    );
+  };
+
   const renderReview = () => {
     if (items.length === 0 || currentItem === undefined) {
       return (
@@ -1949,6 +2574,14 @@ export function ManualOrganizeDialog({
           retryAnalysis: false,
         },
       }));
+      setFilesDecisionReturn(
+        filesDecisionBaseline?.itemId === item.itemId
+          ? filesDecisionBaseline
+          : // The baseline reads the edit revision captured before the save.
+            // eslint-disable-next-line react-hooks/refs
+            filesDecisionBaselineFor(item),
+      );
+      setFilesDecisionBaseline(null);
       void preparationQuery.refetch();
       void intentQuery.refetch();
       void previewQuery.refetch();
@@ -2048,12 +2681,17 @@ export function ManualOrganizeDialog({
                 mode="decision"
                 onAnalysisRequested={decisionAnalysisRequested}
                 decisionDraft={decisionDrafts[problemTaskItemId]}
-                onDecisionDraftChange={(draft) =>
+                onDecisionDraftChange={(draft) => {
+                  if (draft.dirty) {
+                    fileDraftRevision.current += 1;
+                    setFilesDecisionReturn(null);
+                    setFilesDecisionBaseline(filesDecisionBaselineFor(item));
+                  }
                   setDecisionDrafts((previous) => ({
                     ...previous,
                     [problemTaskItemId]: draft,
-                  }))
-                }
+                  }));
+                }}
                 onDecisionStatusChange={(status) =>
                   setDecisionStatuses((previous) =>
                     previous[problemTaskItemId] === status
@@ -2636,6 +3274,7 @@ export function ManualOrganizeDialog({
                         items.findIndex((row) => row.itemId === item.itemId),
                       );
                       setStep("review");
+                      setFilesOverviewVisible(false);
                     }}
                   >
                     {item.sourceFilename ?? item.itemId}
@@ -2650,6 +3289,19 @@ export function ManualOrganizeDialog({
                       item.destination?.storageRelativePath ??
                       "—"}
                   </span>
+                  {filesHost ? (
+                    <>
+                      <span className="mf-organize-batch-source mf-exact-identity">
+                        来源 {item.sourceStorageId ?? "—"}:
+                        {item.sourcePath ?? "—"}
+                      </span>
+                      <span className="mf-organize-batch-attachments">
+                        {item.attachments.length === 0
+                          ? "无关联附件"
+                          : `附件 ${item.attachments.length} 个`}
+                      </span>
+                    </>
+                  ) : null}
                 </li>
               );
             })}
@@ -2671,6 +3323,7 @@ export function ManualOrganizeDialog({
                         items.findIndex((row) => row.itemId === item.itemId),
                       );
                       setStep("review");
+                      setFilesOverviewVisible(false);
                     }}
                   >
                     {item.sourceFilename ?? item.itemId}
@@ -2852,7 +3505,14 @@ export function ManualOrganizeDialog({
           </StatusBanner>
         ) : null}
         <OrganizeHistoryReminder items={items} />
-        {step === "review" ? renderReview() : renderConfirm()}
+        {filesHost &&
+        filesOverviewVisible &&
+        preview !== undefined &&
+        items.length > 0
+          ? renderFilesOverview()
+          : step === "review"
+            ? renderReview()
+            : renderConfirm()}
       </>
     );
 
@@ -2862,6 +3522,17 @@ export function ManualOrganizeDialog({
   // re-analysis entry.
   const preparationOnlyFooter =
     !organizeFlowEnded && (preview === undefined || items.length === 0);
+  const filesOverviewFooter =
+    filesHost &&
+    filesOverviewVisible &&
+    !organizeFlowEnded &&
+    preview !== undefined &&
+    items.length > 0;
+  const openBatchReview = () => {
+    setFilesOverviewNotice(null);
+    setStep("confirm");
+    setFilesOverviewVisible(false);
+  };
   const footer =
     organizeFlowEnded || preparationOnlyFooter ? (
       <>
@@ -2875,8 +3546,43 @@ export function ManualOrganizeDialog({
           关闭
         </Button>
       </>
+    ) : filesOverviewFooter ? (
+      <>
+        <span className="mf-dashboard-meta">
+          已纳入 {activeSelection.length} 项 · 待处理{" "}
+          {
+            items.filter(
+              (item) =>
+                !admittedItemIds.has(item.itemId) &&
+                (!item.current || !executableIds.includes(item.itemId)),
+            ).length
+          }{" "}
+          项
+        </span>
+        <span className="mf-modal-footer-spacer" />
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={closeLocked}
+          onClick={attemptClose}
+        >
+          关闭
+        </Button>
+        <Button type="button" onClick={openBatchReview}>
+          整批复核(已选 {activeSelection.length} 项)
+        </Button>
+      </>
     ) : step === "review" ? (
       <>
+        {filesHost ? (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={returnToFilesOverview}
+          >
+            返回概览
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="secondary"
@@ -2911,7 +3617,7 @@ export function ManualOrganizeDialog({
         <Button
           type="button"
           disabled={items.length === 0}
-          onClick={() => setStep("confirm")}
+          onClick={openBatchReview}
         >
           整批复核(已选 {activeSelection.length} 项)
         </Button>
@@ -2921,9 +3627,12 @@ export function ManualOrganizeDialog({
         <Button
           type="button"
           variant="secondary"
-          onClick={() => setStep("review")}
+          onClick={() => {
+            if (filesHost) returnToFilesOverview();
+            else setStep("review");
+          }}
         >
-          返回逐项复核
+          {filesHost ? "返回概览" : "返回逐项复核"}
         </Button>
         <span className="mf-modal-footer-spacer" />
         <Button

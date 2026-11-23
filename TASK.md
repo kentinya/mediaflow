@@ -1,6 +1,6 @@
 # Task 59.1 — 文件入口的手动整理弹窗与整批确认
 
-Next Action: DEVELOPER STARTS TASK 59.1 IMPLEMENTATION
+Next Action: B REVIEW TASK 59.1 IMPLEMENTATION CANDIDATE
 
 用户已授权激活 Task 59.1。Developer 开始实施时将状态从 `PLANNED` 转为
 `IN PROGRESS`。原 Task ID、Base、范围和验收条件沿用。A 代 B 的授权限于本 Task 的规划，
@@ -11,7 +11,7 @@ B 独立复核实施候选，A 负责 Slice 终审。
 Task ID: 59.1
 Task Type: SLICE
 Parent Slice: 59
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
 Difficulty: High
 Test Level: T3
@@ -123,7 +123,32 @@ Shell、文件和任务列表、共享弹窗外壳、命令与权限、API/Worke
 
 ### Developer Completion Report
 
-待实施候选和受影响测试结果。
+已按 Task 范围实施并冻结候选：
+
+- Files 现有入口显式承载新增层级；Task Center 原位/历史仍走原逐文件视图。
+- 准备首屏补充真实阶段文案；方案读回后进入「本次整理概览」，按当前摘要与执行读回显示
+  待处理、可确认、已纳入、已有记录，未受理范围单列；同一弹窗可打开逐文件复核并返回概览，
+  返回时定位对应文件。
+- 逐文件决定仅在原文件仍被查看、没有新编辑、且该条目自身的更新读回证明结果时回落：
+  可确认方案/明确跳过回概览，新的四类问题回概览，同类问题保留输入与位置，技术结果原位显示；
+  迟到兄弟摘要只更新数据，不切页、不抢焦点。
+- 整批复核补充 Files 专属来源、操作、附件与不纳入原因；Task Center 批次展示保持 Base。
+- 复用原准备、决定、计划、确认与原请求核对权威；未新增 API/schema/Worker/权限。
+
+实际命令与结果（cwd `web/`）：
+
+- `npm run typecheck` — 通过。
+- `npx eslint` 触及源/测试文件 — 通过。
+- `npx prettier --check` 触及源/样式/测试 — 通过。
+- `npm run test -- run` 六个受影响文件 — 6 files / 152 tests passed。
+- `npm run build` — 通过。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts --grep 'Task59[.]1|unknown original submission|100-file batch|101-file directory'` —
+  首轮 16 passed / 1 既有入口时序失败（`Task59.1 manual organize readability: one file` 在
+  `organizeDiscovery=` 地址更新前读取，弹窗已可见）；单独重跑通过（1 passed），首轮失败保留记录。
+- 另跑受影响的 6 个原生旅程（逐项决定、第二次确认、冲突、元数据修正、未知原提交、新概览）全部通过。
+
+已知限制/风险：概览行按当前摘要逐条渲染，100 项时正文较长但保持单一滚动；真实原生全量由 B 执行，
+B 需重点复核 100 项可读性、兄弟迟到读回和 Task Center 原行为。
 
 ### B Review Result
 

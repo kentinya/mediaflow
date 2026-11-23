@@ -136,6 +136,19 @@ function makeBackend() {
     previewStaleTail: 0 as number,
     // A different durable latest plan is the only proof of supersession.
     latestPlanPreviewId: null as string | null,
+    // The exact read-back a Files per-file analysis may publish for item-1:
+    // a resolved ready plan, an explicit skip, a new conflict/next problem,
+    // or the same problem still needing correction.
+    secondPlanKind: null as
+      | null
+      | "ready"
+      | "skip"
+      | "conflict"
+      | "metadata"
+      | "classification"
+      | "sibling",
+    secondPlanProblemTaskItemId: "problem-item-1" as string,
+    previewAttachmentCount: 0 as number,
     // The A53-01 journey: an overwrite the operator must authorize on every
     // exact summary, and bounded admission-read failures.
     requireOverwrite: false as boolean,
@@ -468,6 +481,27 @@ function makeBackend() {
         const implications = plan["destructiveImplications"] as Json;
         implications["overwriteRequired"] = true;
       }
+      if (state.previewAttachmentCount > 0) {
+        plan["attachments"] = Array.from(
+          { length: state.previewAttachmentCount },
+          (_, attachmentIndex) => ({
+            type: "subtitle",
+            source: {
+              storageId: "source",
+              path: `Movies/Movie.01.${attachmentIndex + 1}.srt`,
+            },
+            destination: {
+              storageId: "target",
+              path: `Movies/Movie.01.${attachmentIndex + 1}.srt`,
+            },
+            operation: "MOVE",
+            suffix: "srt",
+            language: "zh",
+            blockedReason: null,
+            nextAction: null,
+          }),
+        );
+      }
       return item;
     });
     value["executionCandidateItemIds"] = order.map(
@@ -477,6 +511,91 @@ function makeBackend() {
       selectedItemIds: order.map((index) => `item-${index + 1}`),
       unselectedItemIds: [],
     };
+    if (previewId === "preview-2" && state.secondPlanKind !== null) {
+      const item = (value["items"] as Json[]).find(
+        (row) => row["itemId"] === "item-1",
+      );
+      const plan = item?.["plan"] as Json | undefined;
+      if (item !== undefined && plan !== undefined) {
+        if (state.secondPlanKind === "sibling") {
+          const sibling = (value["items"] as Json[]).find(
+            (row) => row["itemId"] === "item-2",
+          );
+          const siblingPlan = sibling?.["plan"] as Json | undefined;
+          if (siblingPlan !== undefined) {
+            const identity = siblingPlan["mediaIdentity"] as Json;
+            identity["title"] = "Sibling Resolved";
+            const destination = siblingPlan["destination"] as Json;
+            destination["storageRelativePath"] = "Movies/Sibling Resolved.mkv";
+            destination["relativePath"] = "Movies/Sibling Resolved.mkv";
+          }
+        } else if (state.secondPlanKind === "ready") {
+          const identity = plan["mediaIdentity"] as Json;
+          identity["title"] = "Resolved Movie";
+          identity["providerId"] = "777";
+          const destination = plan["destination"] as Json;
+          destination["storageRelativePath"] = "Movies/Resolved Movie.mkv";
+          destination["relativePath"] = "Movies/Resolved Movie.mkv";
+          destination["filename"] = "Resolved Movie.mkv";
+        } else if (state.secondPlanKind === "skip") {
+          plan["operation"] = "SKIP";
+          plan["planStatus"] = "noop";
+        } else if (state.secondPlanKind === "conflict") {
+          item["status"] = "blocked";
+          item["executionState"] = "not_available_in_this_task";
+          item["stage"] = "conflict";
+          item["failure"] = null;
+          plan["executionState"] = "not_available_in_this_task";
+          plan["conflicts"] = [
+            {
+              type: "DESTINATION_EXISTS",
+              source: `source:Movies/${filename(0)}`,
+              destination: "target:Movies/Resolved Movie.mkv",
+              details: "the destination already exists",
+            },
+          ];
+        } else {
+          // metadata / classification: the same item publishes a fresh
+          // problem TaskItem of that family.
+          item["status"] = "blocked";
+          item["executionState"] = "not_available_in_this_task";
+          item["stage"] = state.secondPlanKind;
+          item["failure"] = {
+            category: "business_problem",
+            message:
+              state.secondPlanKind === "classification"
+                ? "classification could not select a destination"
+                : "metadata identity still needs the operator",
+            nextAction: "save the current file decision and re-analyze",
+          };
+          plan["problemTaskItemId"] = state.secondPlanProblemTaskItemId;
+          const analysis = plan["analysis"] as Json;
+          if (state.secondPlanKind === "classification") {
+            const classification = analysis["classification"] as Json;
+            classification["status"] = "unclassified";
+            classification["available"] = false;
+          } else {
+            const metadata = analysis["metadata"] as Json;
+            metadata["status"] = "need_confirm";
+            metadata["available"] = true;
+          }
+        }
+        if (
+          state.secondPlanKind !== "ready" &&
+          state.secondPlanKind !== "skip" &&
+          state.secondPlanKind !== "sibling"
+        ) {
+          value["executionCandidateItemIds"] = (
+            (value["executionCandidateItemIds"] as string[]) ?? []
+          ).filter((itemId) => itemId !== "item-1");
+          const selection = value["selection"] as Json;
+          selection["selectedItemIds"] = (
+            selection["selectedItemIds"] as string[]
+          ).filter((itemId) => itemId !== "item-1");
+          selection["unselectedItemIds"] = ["item-1"];
+        }
+      }
+    }
     if (!state.previewCurrent) {
       value["current"] = false;
       value["status"] = "stale";
@@ -524,6 +643,9 @@ function makeBackend() {
         (item) => item["itemId"] === "item-1",
       );
       if (problem !== undefined) {
+        problem["status"] = "blocked";
+        problem["executionState"] = "not_available_in_this_task";
+        problem["stage"] = "metadata";
         problem["failure"] = {
           category: "metadata_failure",
           message:
@@ -1005,6 +1127,7 @@ function makeBackend() {
           return jsonResponse({ error: { code: "unavailable" } }, 503);
         }
         state.recoveryAnalysisQueued = true;
+        if (state.flipPreviewOnAnalyze) state.previewId = "preview-2";
         return jsonResponse({
           sideEffects: "none",
           next_action: "wait for the Worker and inspect its linked result",
@@ -1340,11 +1463,31 @@ async function openCorrection(
   if (details !== null && !details.open) await user.click(summary);
 }
 
+/**
+ * Enter the Files owned overview and open its first exact file, which is the
+ * ordinary per-file review the Slice53 journeys used to reach directly.
+ */
+async function enterFirstOverviewFile(
+  user: ReturnType<typeof userEvent.setup>,
+  expectedHeading: RegExp = /第 1 \/ 10 个/,
+): Promise<void> {
+  const overview = await screen.findByRole(
+    "region",
+    { name: "本次整理概览" },
+    { timeout: 5_000 },
+  );
+  const first = within(overview).getAllByRole("button", { name: /^查看 / })[0];
+  if (first === undefined) throw new Error("overview exposed no readable file");
+  await user.click(first);
+  await screen.findByRole("heading", { name: expectedHeading });
+}
+
 /** Mount the real Files page and open the real batch entry. */
 async function openDialog(
   user: ReturnType<typeof userEvent.setup>,
   configure?: (backend: Backend) => void,
   selection?: readonly string[],
+  entry: "file" | "preparation" | "overview" = "file",
 ): Promise<
   Backend & { readonly router: ReturnType<typeof renderApp>["router"] }
 > {
@@ -1363,7 +1506,27 @@ async function openDialog(
   }
   await user.click(screen.getByRole("button", { name: "批量整理" }));
   await screen.findByRole("dialog", { name: "整理所选文件" });
+  if (entry === "file") {
+    await enterFirstOverviewFile(
+      user,
+      new RegExp(`第 1 \\/ ${selection?.length ?? FILE_COUNT} 个`),
+    );
+  }
+  if (entry === "overview") {
+    await screen.findByRole("region", { name: "本次整理概览" });
+  }
   return Object.assign(backend, { router });
+}
+
+/** Keep the real preparation screen instead of entering its plan. */
+async function openPreparationDialog(
+  user: ReturnType<typeof userEvent.setup>,
+  configure?: (backend: Backend) => void,
+  selection?: readonly string[],
+): Promise<
+  Backend & { readonly router: ReturnType<typeof renderApp>["router"] }
+> {
+  return openDialog(user, configure, selection, "preparation");
 }
 
 describe("ManualOrganizeDialog", () => {
@@ -2087,12 +2250,16 @@ describe("ManualOrganizeDialog", () => {
     expect(region).toHaveTextContent(/将整理\s*10\s*项/);
 
     // Browse-only steps are still zero-execute even on the confirm step.
-    await user.click(screen.getByRole("button", { name: "返回逐项复核" }));
-    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     expect(backend.calls.executePosts).toHaveLength(0);
 
     // Excluding one file is an honest selection state, not a persistent
     // ignore: the confirmation counts exactly the remaining subset.
+    await user.click(
+      screen.getByRole("button", { name: `查看 ${filename(0)}` }),
+    );
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
     await user.click(
       screen.getByRole("checkbox", { name: "纳入 Movie.01.mkv" }),
     );
@@ -2107,10 +2274,15 @@ describe("ManualOrganizeDialog", () => {
     // Deselect the remaining files one page at a time; the count follows the
     // exact subset and drops to an explicit, disabled 0 state.
     for (let index = 1; index < FILE_COUNT; index += 1) {
-      await user.click(screen.getByRole("button", { name: "返回逐项复核" }));
-      // Each pass resumes on the previously visited file; one step forward
-      // lands on exactly the file this pass excludes.
-      await user.click(screen.getByRole("button", { name: "下一项" }));
+      await user.click(screen.getByRole("button", { name: "返回概览" }));
+      await screen.findByRole("region", { name: "本次整理概览" });
+      // Each pass opens exactly the file this pass excludes.
+      await user.click(
+        screen.getByRole("button", { name: `查看 ${filename(index)}` }),
+      );
+      await screen.findByRole("heading", {
+        name: new RegExp(`第 ${index + 1} \\/ 10 个`),
+      });
       await user.click(
         screen.getByRole("checkbox", { name: `纳入 ${filename(index)}` }),
       );
@@ -2134,7 +2306,7 @@ describe("ManualOrganizeDialog", () => {
 
   it("shows the compact first-plan preparation with only the source, admitted scope and close", async () => {
     const user = userEvent.setup();
-    await openDialog(
+    await openPreparationDialog(
       user,
       (value) => {
         value.state.queuedReads = 10;
@@ -2246,7 +2418,7 @@ describe("ManualOrganizeDialog", () => {
     const user = userEvent.setup();
     const refusedName = filename(0);
     const admittedName = filename(1);
-    const backend = await openDialog(
+    const backend = await openPreparationDialog(
       user,
       (value) => {
         value.state.queuedReads = 1;
@@ -2287,11 +2459,7 @@ describe("ManualOrganizeDialog", () => {
     expect(scopeDetails).toHaveTextContent("已属于未结束的整理工作");
     expect(screen.queryByText(/未受理的所选条目/)).toBeNull();
 
-    await screen.findByRole(
-      "heading",
-      { name: /第 1 \/ 1 个/ },
-      { timeout: 5_000 },
-    );
+    await enterFirstOverviewFile(user, /第 1 \/ 1 个/);
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const region = await screen.findByRole("region", { name: "整批复核" });
     const summary = region.querySelector(
@@ -2380,7 +2548,7 @@ describe("ManualOrganizeDialog", () => {
 
   it("keeps polling an unchanged waiting preparation until the exact plan links", async () => {
     const user = userEvent.setup();
-    await openDialog(user, (value) => {
+    await openPreparationDialog(user, (value) => {
       value.state.waitingReads = 3;
     });
 
@@ -2391,11 +2559,7 @@ describe("ManualOrganizeDialog", () => {
     expect(await screen.findByText("整理进度")).toBeVisible();
     expect(screen.getByText("已找到 10 个主文件")).toBeVisible();
     expect(card()).not.toHaveTextContent("%");
-    await screen.findByRole(
-      "heading",
-      { name: /第 1 \/ 10 个/ },
-      { timeout: 12_000 },
-    );
+    await enterFirstOverviewFile(user, /第 1 \/ 10 个/);
     expect(within(card()).getAllByText("Movie.01.mkv").length).toBeGreaterThan(
       0,
     );
@@ -2403,7 +2567,7 @@ describe("ManualOrganizeDialog", () => {
 
   it("keeps the same preparation open from the completed walk until its linked plan arrives", async () => {
     const user = userEvent.setup();
-    const backend = await openDialog(user, (value) => {
+    const backend = await openPreparationDialog(user, (value) => {
       // The real Worker publishes the completed walk first, then freezes and
       // enters analysis.  Neither intermediate state is the whole preparation.
       value.state.walkOnlyReads = 1;
@@ -2428,11 +2592,7 @@ describe("ManualOrganizeDialog", () => {
     expect(
       screen.queryByRole("button", { name: "运行分析并生成计划摘要" }),
     ).toBeNull();
-    await screen.findByRole(
-      "heading",
-      { name: /第 1 \/ 10 个/ },
-      { timeout: 10_000 },
-    );
+    await enterFirstOverviewFile(user, /第 1 \/ 10 个/);
     expect(backend.state.discoveryReads).toBeGreaterThanOrEqual(3);
     expect(backend.calls.analyzePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
@@ -2440,7 +2600,7 @@ describe("ManualOrganizeDialog", () => {
 
   it("keeps the source and admitted scope while the first summary read fails, then retries that same summary", async () => {
     const user = userEvent.setup();
-    const backend = await openDialog(user, (value) => {
+    const backend = await openPreparationDialog(user, (value) => {
       value.state.failFirstPreviewRead = true;
     });
 
@@ -2454,18 +2614,14 @@ describe("ManualOrganizeDialog", () => {
     expect(screen.getByText(/已保存的准备与选择保持不变/)).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "重新读取计划摘要" }));
-    await screen.findByRole(
-      "heading",
-      { name: /第 1 \/ 10 个/ },
-      { timeout: 5_000 },
-    );
+    await enterFirstOverviewFile(user, /第 1 \/ 10 个/);
     expect(backend.calls.analyzePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 20_000);
 
   it("ends the first-plan wait with the real exclusions when the folder has no primary file", async () => {
     const user = userEvent.setup();
-    const backend = await openDialog(
+    const backend = await openPreparationDialog(
       user,
       (value) => {
         value.state.zeroPrimary = true;
@@ -2501,7 +2657,7 @@ describe("ManualOrganizeDialog", () => {
 
   it("keeps the completed zero-primary result when the Worker heartbeat has expired", async () => {
     const user = userEvent.setup();
-    const backend = await openDialog(
+    const backend = await openPreparationDialog(
       user,
       (value) => {
         value.state.zeroPrimary = true;
@@ -2542,7 +2698,7 @@ describe("ManualOrganizeDialog", () => {
 
   it("replaces the spinner with the saved-request Worker notice and recovers by polling the same preparation", async () => {
     const user = userEvent.setup();
-    const backend = await openDialog(user, (value) => {
+    const backend = await openPreparationDialog(user, (value) => {
       value.state.workerUnavailableReads = 1;
     });
 
@@ -2558,11 +2714,7 @@ describe("ManualOrganizeDialog", () => {
 
     // The same exact preparation is re-read in place; the plan then opens the
     // ordinary per-file review without another admission.
-    await screen.findByRole(
-      "heading",
-      { name: /第 1 \/ 10 个/ },
-      { timeout: 12_000 },
-    );
+    await enterFirstOverviewFile(user, /第 1 \/ 10 个/);
     expect(backend.calls.discoveryPosts).toHaveLength(1);
     expect(backend.calls.analyzePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
@@ -2570,7 +2722,7 @@ describe("ManualOrganizeDialog", () => {
 
   it("reports a rejected preparation analysis nearby and re-reads the same updated preparation", async () => {
     const user = userEvent.setup();
-    const backend = await openDialog(user, (value) => {
+    const backend = await openPreparationDialog(user, (value) => {
       // The Task has already settled into its human-waiting recovery boundary,
       // but the stale preparation read still shows the frozen walk while its
       // real plan is already linked in durable state.
@@ -2592,11 +2744,7 @@ describe("ManualOrganizeDialog", () => {
     // same preparation is then re-read instead of asking for a second submit.
     await screen.findByText(/分析请求未获受理\(discovery_conflict\)/);
     await screen.findByText(/没有执行任何整理/);
-    await screen.findByRole(
-      "heading",
-      { name: /第 1 \/ 10 个/ },
-      { timeout: 10_000 },
-    );
+    await enterFirstOverviewFile(user, /第 1 \/ 10 个/);
     expect(backend.calls.analyzePosts).toHaveLength(1);
     expect(backend.calls.choicePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
@@ -2604,7 +2752,7 @@ describe("ManualOrganizeDialog", () => {
 
   it("shows the preparation analysis request as accepted while the same preparation links its plan", async () => {
     const user = userEvent.setup();
-    const backend = await openDialog(user, (value) => {
+    const backend = await openPreparationDialog(user, (value) => {
       value.state.frozenOnlyReads = 100;
       value.state.manualAnalysisRecovery = true;
       value.state.analyzeShowsAnalyzing = true;
@@ -2620,17 +2768,13 @@ describe("ManualOrganizeDialog", () => {
     await screen.findByText(/零变更分析正在运行/);
     expect(backend.calls.analyzePosts).toHaveLength(1);
 
-    await screen.findByRole(
-      "heading",
-      { name: /第 1 \/ 10 个/ },
-      { timeout: 10_000 },
-    );
+    await enterFirstOverviewFile(user, /第 1 \/ 10 个/);
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 20_000);
 
   it("keeps an ended flow as a read-only original summary with no confirmation", async () => {
     const user = userEvent.setup();
-    const backend = await openDialog(user, (value) => {
+    const backend = await openPreparationDialog(user, (value) => {
       value.state.endedFlow = true;
     });
 
@@ -2653,7 +2797,7 @@ describe("ManualOrganizeDialog", () => {
 
   it("shows the bounded primary-limit message for a truncated ended flow", async () => {
     const user = userEvent.setup();
-    const backend = await openDialog(user, (value) => {
+    const backend = await openPreparationDialog(user, (value) => {
       value.state.endedFlow = true;
       value.state.primaryLimit = true;
     });
@@ -2677,7 +2821,7 @@ describe("ManualOrganizeDialog", () => {
 
   it("keeps polling a primary-limit preparation until its Task settles", async () => {
     const user = userEvent.setup();
-    const backend = await openDialog(user, (value) => {
+    const backend = await openPreparationDialog(user, (value) => {
       value.state.primaryLimit = true;
       value.state.primaryLimitSettlementReads = 3;
     });
@@ -2709,7 +2853,7 @@ describe("ManualOrganizeDialog", () => {
 
   it("renders the linked plan as read-only history when an ended flow kept it", async () => {
     const user = userEvent.setup();
-    await openDialog(user, (value) => {
+    await openPreparationDialog(user, (value) => {
       value.state.endedFlow = true;
       value.state.endedFlowKeepsPreview = true;
     });
@@ -2864,7 +3008,11 @@ describe("ManualOrganizeDialog", () => {
 
     // The untouched sibling is corrected (RecognitionType C) and re-analyzed:
     // a newer exact summary appears while the original request stays unknown.
-    await user.click(screen.getByRole("button", { name: "返回逐项复核" }));
+    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
+    await user.click(
+      screen.getByRole("button", { name: `查看 ${filename(1)}` }),
+    );
     await screen.findByRole("heading", { name: /第 2 \/ 2 个/ });
     await user.selectOptions(
       screen.getByLabelText(`识别类型 ${filename(1)}`),
@@ -2931,6 +3079,234 @@ describe("ManualOrganizeDialog", () => {
         (read) => read.previewId === "preview-2",
       ),
     ).toBe(false);
+  }, 30_000);
+
+  it("Task59.1 Files prepares through the same dialog overview, opens one exact file and returns with focus", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.previewAttachmentCount = 2;
+      },
+      [filename(0)],
+      "overview",
+    );
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    expect(
+      within(overview).getByRole("heading", { name: "本次整理概览" }),
+    ).toBeVisible();
+    const count = (term: string): string => {
+      const row = within(overview)
+        .getByText(term, { selector: "dt" })
+        .closest("div") as HTMLElement;
+      return row.querySelector("dd")?.textContent ?? "";
+    };
+    expect(count("待处理")).toBe("0");
+    expect(count("可确认")).toBe("0");
+    expect(count("已纳入")).toBe("1");
+    expect(count("已有记录")).toBe("0");
+    expect(overview).toHaveTextContent(`source:Movies/${filename(0)}`);
+
+    await user.click(
+      within(overview).getByRole("button", { name: `查看 ${filename(0)}` }),
+    );
+    await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(
+      screen.getByRole("checkbox", { name: `纳入 ${filename(0)}` }),
+    );
+    await user.click(screen.getByRole("button", { name: "返回概览" }));
+
+    const returned = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    const fileButton = within(returned).getByRole("button", {
+      name: `查看 ${filename(0)}`,
+    });
+    await waitFor(() => expect(document.activeElement).toBe(fileButton));
+    const returnedCount = (term: string): string => {
+      const row = within(returned)
+        .getByText(term, { selector: "dt" })
+        .closest("div") as HTMLElement;
+      return row.querySelector("dd")?.textContent ?? "";
+    };
+    expect(returnedCount("待处理")).toBe("0");
+    expect(returnedCount("可确认")).toBe("1");
+    expect(returnedCount("已纳入")).toBe("0");
+
+    // The exact batch review names the source, destination, operation and
+    // attachments; entering it is still zero-mutation, zero-execute.
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    const confirm = await screen.findByRole("region", { name: "整批复核" });
+    expect(confirm).toHaveTextContent(/将整理\s*0\s*项/);
+    expect(screen.queryByRole("button", { name: /确认整理 [1-9]/ })).toBeNull();
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
+    await user.click(
+      screen.getByRole("button", { name: `查看 ${filename(0)}` }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: `纳入 ${filename(0)}` }),
+    );
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    const listed = await screen.findByRole("region", {
+      name: "本次确认的文件",
+    });
+    expect(listed).toHaveTextContent(`来源 source:Movies/${filename(0)}`);
+    expect(listed).toHaveTextContent("附件 2 个");
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 returns to the overview only after this item's new ready plan is read back", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.flipPreviewOnAnalyze = true;
+      value.state.secondPlanKind = "ready";
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    await openCorrection(user);
+    const identity = screen.getByLabelText(`元数据身份 ${filename(0)}`);
+    const alternate = within(identity)
+      .getAllByRole("option")
+      .at(2)
+      ?.getAttribute("value");
+    await user.selectOptions(identity, alternate as string);
+    await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
+    await waitFor(() => expect(backend.calls.choicePosts).toHaveLength(1));
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    expect(overview).toHaveTextContent(
+      `「${filename(0)}」已重新分析，现在可以纳入本次整理。`,
+    );
+    expect(overview).toHaveTextContent("Resolved Movie");
+    expect(backend.calls.choicePosts).toHaveLength(1);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 keeps the same file and inputs when re-analysis still needs the same metadata correction", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.metadataProblem = true;
+      value.state.flipPreviewOnAnalyze = true;
+      value.state.secondPlanKind = "metadata";
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    const title = screen.getByLabelText("搜索标题");
+    await user.clear(title);
+    await user.type(title, "DialogRename");
+    await user.click(screen.getByRole("button", { name: "搜索作品" }));
+    await user.click(
+      await screen.findByRole("radio", { name: /DialogRename/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
+    await waitFor(() =>
+      expect(backend.calls.recoveryContinuePosts.length).toBeGreaterThanOrEqual(
+        1,
+      ),
+    );
+    // The newer summary really arrived (the list reordered to put item-1 at
+    // position 10), yet the same problem family keeps this exact form in place.
+    await screen.findByRole("heading", { name: /第 10 \/ 10 个/ });
+
+    expect(
+      await screen.findByText(/仍需处理元数据候选；输入和位置已保留/),
+    ).toBeVisible();
+    expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
+    expect(within(card()).getAllByText(filename(0)).length).toBeGreaterThan(0);
+    expect(backend.calls.choicePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 returns to the overview when re-analysis explicitly skips the file operation", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.flipPreviewOnAnalyze = true;
+      value.state.secondPlanKind = "skip";
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    await openCorrection(user);
+    const identity = screen.getByLabelText(`元数据身份 ${filename(0)}`);
+    const alternate = within(identity)
+      .getAllByRole("option")
+      .at(2)
+      ?.getAttribute("value");
+    await user.selectOptions(identity, alternate as string);
+    await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    expect(overview).toHaveTextContent("明确跳过文件操作");
+    expect(overview).toHaveTextContent("不执行文件操作，来源保留");
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 returns to the overview when re-analysis produces a new conflict blocker", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.flipPreviewOnAnalyze = true;
+      value.state.secondPlanKind = "conflict";
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    await openCorrection(user);
+    const identity = screen.getByLabelText(`元数据身份 ${filename(0)}`);
+    const alternate = within(identity)
+      .getAllByRole("option")
+      .at(2)
+      ?.getAttribute("value");
+    await user.selectOptions(identity, alternate as string);
+    await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    expect(overview).toHaveTextContent(
+      `「${filename(0)}」已重新分析，当前出现新的待处理问题：目标冲突。`,
+    );
+    const row = within(overview)
+      .getByRole("button", { name: `查看 ${filename(0)}` })
+      .closest("li") as HTMLElement;
+    expect(row).toHaveTextContent("待处理");
+    expect(row).toHaveTextContent("需要处理目标冲突");
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 keeps the current file, focus and options when only a sibling summary changed", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.flipPreviewOnAnalyze = true;
+      value.state.secondPlanKind = "sibling";
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    await openCorrection(user);
+    const identity = screen.getByLabelText(`元数据身份 ${filename(0)}`);
+    const alternate = within(identity)
+      .getAllByRole("option")
+      .at(2)
+      ?.getAttribute("value");
+    await user.selectOptions(identity, alternate as string);
+    await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
+
+    // The newer summary reorders the list but item-1's own readable result is
+    // unchanged; the card stays on that exact file and never moves to the
+    // overview or a sibling.
+    await screen.findByRole("heading", { name: /第 10 \/ 10 个/ });
+    expect(within(card()).getAllByText(filename(0)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
+    expect(
+      screen.getByLabelText(`元数据身份 ${filename(0)}`),
+    ).toBeInTheDocument();
+    expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
   it("shows one pending line before the original POST commits, then converges automatically", async () => {

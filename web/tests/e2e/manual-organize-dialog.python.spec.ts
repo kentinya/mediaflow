@@ -119,6 +119,22 @@ async function driveDiscovery(
   return null;
 }
 
+/** Enter the Files same-dialog overview, then open its first exact file. */
+async function openOverviewFile(
+  card: Locator,
+  expected: RegExp = /第 1 \/ 1 个/,
+): Promise<void> {
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  await overview
+    .getByRole("button", { name: /^查看 / })
+    .first()
+    .click();
+  await expect(card.getByRole("heading", { name: expected })).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
 async function driveDiscoveryFor(
   page: Page,
   request: APIRequestContext,
@@ -336,7 +352,7 @@ async function expectBatchSelected(
   await expect(row.locator("dd")).toHaveText(`${selected} 项`);
 }
 
-test("ten per-file candidate decisions lead to one exact ten-item Task handoff", async ({
+test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task handoff", async ({
   page,
   request,
 }) => {
@@ -355,9 +371,7 @@ test("ten per-file candidate decisions lead to one exact ten-item Task handoff",
   await expect(page).toHaveURL(/organizeDiscovery=/);
   const prepareId = await driveDiscovery(request, true);
   expect(prepareId).not.toBeNull();
-  await expect(
-    card.getByRole("heading", { name: /第 1 \/ 10 个/ }),
-  ).toBeVisible({ timeout: 30_000 });
+  await openOverviewFile(card, /第 1 \/ 10 个/);
 
   const decisionBodies: Record<string, unknown>[] = [];
   const decisionItemIds: string[] = [];
@@ -428,44 +442,19 @@ test("ten per-file candidate decisions lead to one exact ten-item Task handoff",
     }
 
     await driveDiscovery(request, true);
-    await expect(card.getByText("纳入本次整理").first()).toBeVisible({
-      timeout: 30_000,
-    });
-    if (index === 1) {
-      // The actual current-file change restarts the one local stage fade on
-      // the same mounted stage; the decision form and drafts are not remounted.
-      const stage = card.locator(".mf-organize-stage");
-      const stageNode = await stage.elementHandle();
-      await page.evaluate(() => {
-        const element = document.querySelector(".mf-organize-stage");
-        if (element === null) throw new Error("the organizer stage is missing");
-        const counts = { fades: 0 };
-        (
-          window as unknown as { __organizeStageFades: typeof counts }
-        ).__organizeStageFades = counts;
-        element.addEventListener("animationstart", (event) => {
-          if (
-            (event as AnimationEvent).animationName === "mf-organize-stage-in"
-          ) {
-            counts.fades += 1;
-          }
-        });
-      });
-      await card.getByRole("button", { name: "下一项" }).click();
+    const overview = card.getByRole("region", { name: "本次整理概览" });
+    await expect(overview).toBeVisible({ timeout: 30_000 });
+    // The exact file's new summary is read back before the card returns here;
+    // its filename and current state stay visible in the overview.
+    await expect(overview).toContainText(filename);
+    if (index < 10) {
+      const nextName = DIALOG_FILE(index + 1);
+      await overview.getByRole("button", { name: `查看 ${nextName}` }).click();
       await expect(
-        card.getByRole("heading", { name: /第 2 \/ 10 个/ }),
-      ).toBeVisible();
-      await page.waitForFunction(
-        () =>
-          (
-            window as unknown as {
-              __organizeStageFades: { fades: number };
-            }
-          ).__organizeStageFades.fades > 0,
-      );
-      expect(await stageNode?.evaluate((node) => node.isConnected)).toBe(true);
-    } else if (index < 10) {
-      await card.getByRole("button", { name: "下一项" }).click();
+        card.getByRole("heading", {
+          name: new RegExp(`第 ${index + 1} / 10 个`),
+        }),
+      ).toBeVisible({ timeout: 30_000 });
     }
   }
 
@@ -524,7 +513,7 @@ test("ten per-file candidate decisions lead to one exact ten-item Task handoff",
   });
 });
 
-test("an unknown Execute response is reconciled into the exact Task without a replay", async ({
+test("Task59.1 an unknown Execute response is reconciled into the exact Task without a replay", async ({
   page,
   request,
 }) => {
@@ -539,9 +528,7 @@ test("an unknown Execute response is reconciled into the exact Task without a re
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(/organizeDiscovery=/);
   await driveDiscovery(request, true);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
   await expect(card.getByText("纳入本次整理").first()).toBeVisible({
     timeout: 30_000,
   });
@@ -604,7 +591,7 @@ test("an unknown Execute response is reconciled into the exact Task without a re
   });
 });
 
-test("a Task reopened after a lost Execute reconciles its original accepted submission", async ({
+test("Task59.1 a Task reopened after a lost Execute reconciles its original accepted submission", async ({
   page,
   request,
 }) => {
@@ -620,9 +607,7 @@ test("a Task reopened after a lost Execute reconciles its original accepted subm
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(/organizeDiscovery=/);
   await driveDiscovery(request, true);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
   await expect(card.getByText("纳入本次整理").first()).toBeVisible({
     timeout: 30_000,
   });
@@ -744,7 +729,7 @@ test("a Task reopened after a lost Execute reconciles its original accepted subm
   ).toEqual([]);
 });
 
-test("a second confirmation on the same Task is reconciled from its own durable record", async ({
+test("Task59.1 a second confirmation on the same Task is reconciled from its own durable record", async ({
   page,
   request,
 }) => {
@@ -779,9 +764,7 @@ test("a second confirmation on the same Task is reconciled from its own durable 
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
   await driveDiscovery(request, true);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 2 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card, /第 1 \/ 2 个/);
   await card.getByRole("button", { name: "下一项" }).click();
   await expect(
     card.getByRole("heading", { name: /第 2 \/ 2 个/ }),
@@ -980,7 +963,7 @@ test("a second confirmation on the same Task is reconciled from its own durable 
   ).toEqual([]);
 });
 
-test("manual organize readability: a pending owned file beside a new sibling is counted on both review screens", async ({
+test("Task59.1 manual organize readability: a pending owned file beside a new sibling is counted on both review screens", async ({
   page,
   request,
 }) => {
@@ -1016,9 +999,7 @@ test("manual organize readability: a pending owned file beside a new sibling is 
   );
   expect(firstDiscoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, firstDiscoveryId as string);
-  await expect(
-    firstCard.getByRole("heading", { name: /第 1 \/ 1 个/ }),
-  ).toBeVisible({ timeout: 30_000 });
+  await openOverviewFile(firstCard);
   await firstCard.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(firstCard).toHaveCount(0);
   expect(executeOrAnalyzePosts(commands)).toHaveLength(0);
@@ -1047,9 +1028,7 @@ test("manual organize readability: a pending owned file beside a new sibling is 
   await expect(card).toContainText("未受理 1 项");
 
   await driveDiscoveryFor(page, request, discoveryId as string);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
 
   // The batch's first screen accounts for both selected outcomes: one planned
   // item and the refused sibling, without a silent drop.
@@ -1073,7 +1052,7 @@ test("manual organize readability: a pending owned file beside a new sibling is 
   expect(executeOrAnalyzePosts(commands)).toHaveLength(0);
 });
 
-test("a real destination conflict is decided, re-analyzed and confirmed on the current file", async ({
+test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed on the current file", async ({
   page,
   request,
 }) => {
@@ -1105,9 +1084,7 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   let card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible();
   await driveDiscovery(request, true);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
 
   await card.getByText("修正识别或作品", { exact: true }).click();
   await card
@@ -1118,6 +1095,11 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
     card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
   ).toBeVisible({ timeout: 30_000 });
   await driveDiscovery(request, true);
+  const firstOverview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(firstOverview).toBeVisible({ timeout: 30_000 });
+  await firstOverview
+    .getByRole("button", { name: `查看 ${conflictFile}` })
+    .click();
   await expect(card.getByText("纳入本次整理").first()).toBeVisible({
     timeout: 30_000,
   });
@@ -1163,9 +1145,7 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   );
   expect(secondDiscoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, secondDiscoveryId as string);
-  await expect(
-    card.getByRole("heading", { name: /第 [12] \/ 2 个/ }),
-  ).toBeVisible({ timeout: 30_000 });
+  await openOverviewFile(card, /第 1 \/ 2 个/);
   if (
     !(await card
       .getByText(conflictFile)
@@ -1194,20 +1174,17 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   expect(executePosts()).toHaveLength(1);
 
   await driveDiscoveryFor(page, request, secondDiscoveryId as string);
-  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
-    timeout: 30_000,
-  });
+  const secondOverview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(secondOverview).toBeVisible({ timeout: 30_000 });
   // Leave the healthy sibling out of the single execution confirmation.
+  await secondOverview
+    .getByRole("button", { name: `查看 ${siblingFile}` })
+    .click();
   const siblingInclusion = card.getByRole("checkbox", {
     name: `纳入 ${siblingFile}`,
   });
-  if (!(await siblingInclusion.isVisible().catch(() => false))) {
-    await card.getByRole("button", { name: "下一项" }).click();
-  }
   await expect(siblingInclusion).toBeVisible();
   if (await siblingInclusion.isChecked()) await siblingInclusion.uncheck();
-  await card.getByRole("button", { name: "上一项" }).click();
-  await expect(card.getByText(conflictFile).first()).toBeVisible();
   const decisionPosts = commands.filter(
     (command) =>
       command.method === "POST" &&
@@ -1257,7 +1234,7 @@ test("a real destination conflict is decided, re-analyzed and confirmed on the c
   });
 });
 
-test("follows the completed walk into the same preparation's linked plan without a second submission", async ({
+test("Task59.1 follows the completed walk into the same preparation's linked plan without a second submission", async ({
   page,
   request,
 }) => {
@@ -1360,9 +1337,7 @@ test("follows the completed walk into the same preparation's linked plan without
   expect(released.ok()).toBe(true);
   await workerPass;
   await driveDiscoveryFor(page, request, discoveryId as string);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
   await expect(card.getByText(handoffFile).first()).toBeVisible();
   expect(analyzePosts()).toHaveLength(0);
   expect(executePosts()).toHaveLength(0);
@@ -1456,13 +1431,11 @@ test("keeps the compact first-plan preparation while the linked summary response
   } finally {
     release();
   }
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
   await expect(card.getByText(actionFile).first()).toBeVisible();
 });
 
-test("keeps the same preparation and re-reads its exact summary after a failed read", async ({
+test("Task59.1 keeps the same preparation and re-reads its exact summary after a failed read", async ({
   page,
   request,
 }) => {
@@ -1522,9 +1495,7 @@ test("keeps the same preparation and re-reads its exact summary after a failed r
   ).toHaveLength(1);
 
   await card.getByRole("button", { name: "重新读取计划摘要" }).click();
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
   await expect(card.getByText(retryFile).first()).toBeVisible();
   expect(
     commands.filter(
@@ -1713,7 +1684,7 @@ test("ends the first-plan preparation when the selected folder has no primary fi
   await expect(page.getByRole("table")).toBeVisible();
 });
 
-test("accepts the advertised manual analysis from the human-waiting frozen preparation", async ({
+test("Task59.1 accepts the advertised manual analysis from the human-waiting frozen preparation", async ({
   page,
   request,
 }) => {
@@ -1818,9 +1789,7 @@ test("accepts the advertised manual analysis from the human-waiting frozen prepa
   });
   expect(analyzePosts()).toHaveLength(1);
   await driveDiscoveryFor(page, request, discoveryId);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
   await expect(card.getByText(recoveryFile).first()).toBeVisible();
   expect(analyzePosts()).toHaveLength(1);
   expect(
@@ -1832,7 +1801,7 @@ test("accepts the advertised manual analysis from the human-waiting frozen prepa
   ).toHaveLength(0);
 });
 
-test("a missing metadata candidate is corrected on the current file and confirmed into the exact Task", async ({
+test("Task59.1 a missing metadata candidate is corrected on the current file and confirmed into the exact Task", async ({
   page,
   request,
 }) => {
@@ -1885,9 +1854,7 @@ test("a missing metadata candidate is corrected on the current file and confirme
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, discoveryId as string);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
   await expect(card.getByRole("heading", { name: "当前状态" })).toBeVisible();
   // The renamed file no longer matches a RecognitionRule, so the operator
   // first selects one recognition type on this same file.
@@ -1896,6 +1863,10 @@ test("a missing metadata candidate is corrected on the current file and confirme
   await saveNativeDecision(page, card);
   await expect(card.getByText("确认识别类型")).toHaveCount(0);
   await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(card.getByRole("region", { name: "本次整理概览" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await card.getByRole("button", { name: `查看 ${renamedFile}` }).click();
 
   // The real Worker then reports that this exact title has no Provider
   // candidate; the current file now offers its metadata correction.
@@ -1972,6 +1943,10 @@ test("a missing metadata candidate is corrected on the current file and confirme
   // The real Worker publishes the corrected exact summary; only then can the
   // current file be included and the single precise confirmation be offered.
   await driveDiscoveryFor(page, request, discoveryId as string);
+  await expect(card.getByRole("region", { name: "本次整理概览" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await card.getByRole("button", { name: `查看 ${renamedFile}` }).click();
   await expect(card.getByText("纳入本次整理").first()).toBeVisible({
     timeout: 30_000,
   });
@@ -2007,7 +1982,7 @@ test("a missing metadata candidate is corrected on the current file and confirme
   expect(finalTargets[0]).toContain("DialogRename (2024)");
 });
 
-test("keeps the exact admitted preparation across a cancelled browser Back and a normal refresh", async ({
+test("Task59.1 keeps the exact admitted preparation across a cancelled browser Back and a normal refresh", async ({
   page,
   request,
 }) => {
@@ -2037,9 +2012,7 @@ test("keeps the exact admitted preparation across a cancelled browser Back and a
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, discoveryId as string);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
   await expect(card.getByText("选择正确的作品")).toBeVisible({
     timeout: 30_000,
   });
@@ -2081,9 +2054,7 @@ test("keeps the exact admitted preparation across a cancelled browser Back and a
     .poll(() => new URL(page.url()).searchParams.get("organizeDiscovery"))
     .toBe(discoveryId);
   expect(new URL(page.url()).pathname).toBe("/resourcelib/files");
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
   await expect(card.getByText(backFile).first()).toBeVisible();
   await expect(card.getByText("选择正确的作品")).toBeVisible({
     timeout: 30_000,
@@ -2110,7 +2081,7 @@ test("keeps the exact admitted preparation across a cancelled browser Back and a
   expect(executions()).toHaveLength(0);
 });
 
-test("an unknown original submission is reconciled under a newer sibling summary without a second Execute", async ({
+test("Task59.1 an unknown original submission is reconciled under a newer sibling summary without a second Execute", async ({
   page,
   request,
 }) => {
@@ -2145,9 +2116,7 @@ test("an unknown original submission is reconciled under a newer sibling summary
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, discoveryId as string);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 2 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card, /第 1 \/ 2 个/);
 
   // Only runFile is confirmed; the sibling stays outside this submission.
   const siblingInclusion = card.getByRole("checkbox", {
@@ -2264,7 +2233,11 @@ test("an unknown original submission is reconciled under a newer sibling summary
 
   // Only now the untouched sibling gets its legal correction: RecognitionType
   // C, one explicit save, then its own zero-mutation re-analysis.
-  await card.getByRole("button", { name: "返回逐项复核" }).click();
+  await card.getByRole("button", { name: "返回概览" }).click();
+  await expect(
+    card.getByRole("region", { name: "本次整理概览" }),
+  ).toBeVisible();
+  await card.getByRole("button", { name: `查看 ${siblingFile}` }).click();
   await expect(card.getByText(siblingFile).first()).toBeVisible();
   await card.getByText("修正识别或作品", { exact: true }).click();
   await card.getByLabel(`识别类型 ${siblingFile}`).selectOption({
@@ -2366,7 +2339,89 @@ test("an unknown original submission is reconciled under a newer sibling summary
   });
 });
 
-test("manual organize readability: one file separates source and target", async ({
+test("Task59.1 Files opens the same preparation dialog as an overview, enters one file and returns with focus", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+  const { card } = await openReadabilityBatch(page, request, {
+    directory: READABILITY_ONE_DIRECTORY,
+    files: [READABILITY_ONE_FILE],
+  });
+
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  await expect(
+    overview.getByRole("heading", { name: "本次整理概览" }),
+  ).toBeVisible();
+  const fact = async (term: string): Promise<string> => {
+    const row = overview
+      .locator(".mf-organize-overview-counts > div")
+      .filter({ hasText: term });
+    return (await row.locator("dd").textContent()) ?? "";
+  };
+  expect(await fact("待处理")).toBe("0");
+  expect(await fact("可确认")).toBe("0");
+  expect(await fact("已纳入")).toBe("1");
+  expect(await fact("已有记录")).toBe("0");
+  const row = overview
+    .getByRole("button", { name: `查看 ${READABILITY_ONE_FILE}` })
+    .locator("xpath=ancestor::li[1]");
+  await expect(row).toContainText("已纳入");
+  await expect(row).toContainText(
+    `source-storage:${READABILITY_ONE_DIRECTORY}/${READABILITY_ONE_FILE}`,
+  );
+  await expect(row).toContainText("移动 · 来源不保留");
+
+  await overview
+    .getByRole("button", { name: `查看 ${READABILITY_ONE_FILE}` })
+    .click();
+  await expect(
+    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
+  ).toBeVisible();
+  const source = card.locator(".mf-organize-source-fact dd");
+  const target = card.locator(".mf-organize-target-fact dd");
+  await expect(source).toContainText(
+    `source-storage:${READABILITY_ONE_DIRECTORY}/${READABILITY_ONE_FILE}`,
+  );
+  await expect(target).toContainText("media-target:");
+
+  await card.getByRole("button", { name: "返回概览" }).click();
+  await expect(overview).toBeVisible();
+  const returnedRow = overview.getByRole("button", {
+    name: `查看 ${READABILITY_ONE_FILE}`,
+  });
+  await expect(returnedRow).toBeFocused();
+
+  // The batch confirmation names the exact source and destination before the
+  // single explicit execution; nothing has been submitted or mutated.
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(card.getByRole("region", { name: "整批复核" })).toBeVisible();
+  const listed = card.getByRole("region", { name: "本次确认的文件" });
+  await expect(listed).toContainText(
+    `来源 source-storage:${READABILITY_ONE_DIRECTORY}/${READABILITY_ONE_FILE}`,
+  );
+  await expect(listed).toContainText("target:");
+  await expect(listed).toContainText("无关联附件");
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+
+  await card.getByRole("button", { name: "返回概览" }).click();
+  await expect(overview).toBeVisible();
+  await expect(
+    overview.getByRole("button", { name: `查看 ${READABILITY_ONE_FILE}` }),
+  ).toBeVisible();
+});
+
+test("Task59.1 manual organize readability: one file separates source and target", async ({
   page,
   request,
 }) => {
@@ -2377,9 +2432,7 @@ test("manual organize readability: one file separates source and target", async 
     directory: READABILITY_ONE_DIRECTORY,
     files: [READABILITY_ONE_FILE],
   });
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openOverviewFile(card);
 
   const source = card.locator(".mf-organize-source-fact");
   const target = card.locator(".mf-organize-target-fact");
@@ -2401,7 +2454,7 @@ test("manual organize readability: one file separates source and target", async 
   await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
 });
 
-test("manual organize readability: ten files keep an aligned batch summary", async ({
+test("Task59.1 manual organize readability: ten files keep an aligned batch summary", async ({
   page,
   request,
 }) => {
@@ -2416,9 +2469,7 @@ test("manual organize readability: ten files keep an aligned batch summary", asy
     directory: READABILITY_TEN_DIRECTORY,
     files,
   });
-  await expect(
-    card.getByRole("heading", { name: /第 1 \/ 10 个/ }),
-  ).toBeVisible({ timeout: 30_000 });
+  await openOverviewFile(card, /第 1 \/ 10 个/);
 
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expectReadableBatch(page, card, { selected: 10, skipped: 0 });
@@ -2449,7 +2500,7 @@ test("manual organize readability: ten files keep an aligned batch summary", asy
   await expectReadableBatch(page, card, { selected: 10, skipped: 0 });
 });
 
-test("manual organize readability: a 100-file batch shows 90 selected, 10 unselected and long paths", async ({
+test("Task59.1 manual organize readability: a 100-file batch shows 90 selected, 10 unselected and long paths", async ({
   page,
   request,
 }) => {
@@ -2459,9 +2510,7 @@ test("manual organize readability: a 100-file batch shows 90 selected, 10 unsele
   await connect(page);
   const commands = recordCommands(page);
   const { card } = await openReadabilityBatch(page, request, "directory");
-  await expect(
-    card.getByRole("heading", { name: /第 1 \/ 100 个/ }),
-  ).toBeVisible({ timeout: 60_000 });
+  await openOverviewFile(card, /第 1 \/ 100 个/);
 
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByRole("region", { name: "整批复核" })).toBeVisible();
@@ -2576,7 +2625,7 @@ test("manual organize readability: a 100-file batch shows 90 selected, 10 unsele
   ).toHaveLength(0);
 });
 
-test("a 101-file directory settles as a failed preparation and the same source re-enters a small batch", async ({
+test("Task59.1 a 101-file directory settles as a failed preparation and the same source re-enters a small batch", async ({
   page,
   request,
 }) => {
@@ -2765,9 +2814,7 @@ test("a 101-file directory settles as a failed preparation and the same source r
   await expect(freshCard).toBeVisible();
   await expect(page).toHaveURL(/organizeDiscovery=/);
   await driveDiscovery(request, true);
-  await expect(
-    freshCard.getByRole("heading", { name: /第 1 \/ 1 个/ }),
-  ).toBeVisible({ timeout: 30_000 });
+  await openOverviewFile(freshCard);
   await expect(freshCard.getByText("纳入本次整理").first()).toBeVisible();
   await freshCard.getByRole("button", { name: /整批复核/ }).click();
   await expectBatchSelected(card, 1);

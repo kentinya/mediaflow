@@ -4460,6 +4460,7 @@ export function StorageFilesPage() {
       )}
       {organizeSession !== null && (
         <ManualOrganizeDialog
+          host="files"
           session={organizeSession}
           onClose={closeOrganizeDialog}
           onHandoff={handoffToTaskCenter}
