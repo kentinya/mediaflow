@@ -1,16 +1,15 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: B REVIEWS TASK 58.2 FIXES
+Next Action: DEVELOPER COMPLETES THE BROWSER TEST ENTRY CUTOVER
 
-用户已授权激活 Task 58.2。Developer 提交了 `b0190338`，B 已完成首轮复核并给出 FIX REQUIRED；
-Developer 已修复并提交 `f162cf0e`，交 B 复审。
+用户已授权激活 Task 58.2。Developer 提交的首轮修正为 `f162cf0e`，B 已复审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Difficulty: High
 Test Level: T4
@@ -18,56 +17,57 @@ Planner / Reviewer: B
 Implementation Authorization: AUTHORIZED BY USER FOR TASK 58.2
 ```
 
-## B 复核 — FIX REQUIRED
+## B 复审 — FIX REQUIRED
 
 ```text
 Reviewed Base: 307eaaf8b006527a11fa2514de839a5528e6c202
-Reviewed Head: 0f37d8e94d03426d55da94e9987ed803282bd3ed
+Reviewed Head: 1daad11a500aaab876f465f142f8164681d8bdf2
 Decision: FIX REQUIRED
 Slice Outcomes / Surfaces complete: NO
 ```
 
-1. **旧库的恢复指引仍指向已退役命令（P1，AC-03/04）。** 部署者使用原数据目录启动，
-   看到 schema 11 与 12 不符，停机后按发布指引校验旧备份。实际结果为 `Integrity: OK` 和
-   `Usable by this version: NO`。部署、配置、文档导航和发布指引仍承诺可以完成切换；
-   配置指南直接给出候选制品里已经不存在的命令。运行提示可引导用新目录启动，
-   需要找回旧数据的操作者还需要看到保留原文件并使用原版本处理的去向。
-2. **旧文件列表的专属实现仍随 wheel 交付（P1，AC-04）。** 管理员登录后可从两种库页浏览文件，
-   现行 API 通过配置服务读 Active 和游标密钥。Base 的唯一调用者是原 CLI 的
-   `files list`，候选 wheel 仍包含其两套专属 SQLite 读取模块。
-3. **转接的整理回归从已退役的票据任务起步（P1，AC-05 的现行旅程覆盖）。** 管理员从资源库
-   文件页发起整理，遇到识别或元数据问题时在原 Task 作决定，复核摘要后继续；发生部分写入时，
-   需要从原 Task 读回原效果并处理仍可继续的条目。迁移后的若干测试直接写入
-   `remote-organize` 任务，再验证已退出受理的远程票据路径。这些结果无法证明上述当前旅程。
+**P1 / RO-4：仍可执行的浏览器验收脚本没有完成入口切换。** 维护者构建 Web 后，按仓库
+现有入口运行 `.venv/bin/python scripts/files_toolbar_browser_proof.py`，目的是在真实 API
+上打开资源库、浏览长路径并检查工具栏。脚本创建临时库后在 API 启动阶段退出。预检指出
+历史文件和媒体根与部署配置不符，浏览器尚未打开。脚本还保留旧 `mediaflow` 的导入、
+验证和激活调用。真实 Rules 识别验收脚本也在启动阶段退出，源码核对共发现六个仍执行
+旧命令的脚本。Task Base 已带有未切换的设置代码，58.2 删除了它们仍引用的通用命令。
 
-候选复核覆盖完整 Task Base..Head。源码外 wheel 冒烟通过，旧 console script 与旧主模块缺席，
-样例配置和当前库备份恢复通过。四服务的容器／源码启动入口、探针、主机发码和离线维护以现有
-schema 11 夹具实测。原库和备份 SHA-256 一致，备份与恢复目标均未发布。备份、恢复、两种库
-列表相关测试和策略身份共 29 项通过，包含 C 复用 A/A 后仍为 C。
-
-Slice 重评以 58.1 已验收的 RO-1、RO-2 和离线恢复运行能力为基线。本轮核对了新入口对旧库的
-拒绝、空目标保护及当前库 wheel 冒烟；RO-3 的恢复文档和 RO-4 的退役与当前任务接续仍需验收。
-B 保留修正后候选的 T4 全量、真实 Compose／浏览器和固定 Slice Base 的 AC-05 接续门禁。
-原始日志及 wheel 清单位于
-`.git/validation-evidence/0f37d8e94d03426d55da94e9987ed803282bd3ed/b-review/`。
+首轮三项修正已复验。旧库校验和发布指引给出原版本或新目录的去向。两个专属文件列表模块
+已从候选 wheel 移除。整理、来源历史和元数据回归从 Files、Run once 等现行入口受理。
+首轮细节见 `03464d11:TASK.md`。
 
 ### 本轮返工开发指导
 
-1. 从 README 可达的文档索引、配置、部署、发布和用户操作说明统一旧库处理。删除当前版本的
-   切换步骤与失效链接；核对 `verify` 的两种输出及对应行动。现有适用性拒绝说明保留原库，
-   并给出使用原版本处理旧数据或在新目录初始化本版本的选择。沿用现有主机操作和备份保护。
-   A 终审负责同步稳定需求、架构和关闭记录。
-2. 删除旧 CLI 文件列表独用的 `infrastructure/read_only_active_configuration.py` 与
-   `infrastructure/internal_key_store.py`。保留现行配置仓储的 Active 读取、持久游标密钥和
-   两种库共同使用的浏览逻辑。用现有 wheel 冒烟和库文件 API 核对文件清单、分页及零效果。
-3. 从现有 Files 整理受理 API、Automation 到期或 Run once 建立仍适用的测试任务，复用
-   现有 Worker 与同 Task 决定、分析和确认夹具。优先复用 `tests/test_manual_task_engine.py`
-   已覆盖的逐项失败与续作；把仍缺的部分效果、取消和来源历史断言放到同一真实旅程。
-   核对 `test_automation_entrance_recovery`、`test_organize_source_history` 和
-   `test_task_item_metadata_search` 中从旧 CLI 转接的案例。删除为替代旧 CLI 覆盖而新增的
-   远程票据专属失败处理，保留既有历史读回和共享 Worker 路径。
-4. Developer 运行改动覆盖的恢复、列表和整理测试，以及现有 wheel 冒烟、治理和
-   `git diff --check`。每段测试集中覆盖受影响入口。B 负责全量和固定 Base 接续复验。
+1. 核对 `scripts/` 下的 `files_toolbar_browser_proof.py`、
+   `storage_settings_browser_proof.py`、`classification_destination_browser_proof.py`、
+   `rules_identity_browser_proof.py`、`rules_object_analysis_browser_proof.py` 和
+   `rules_workspace_browser_proof.py`。现行自动化已覆盖的场景直接清除重复脚本，历史证据从
+   原 Git 检查点取得。先对照 `live-files.python.spec.ts`、`files-interactions.spec.ts`、
+   `storage-dialog.python.spec.ts`、`rules-identity.spec.ts` 与
+   `tests/test_v2_rules_object_analysis.py`，把仍缺的合同断言接到已有测试。
+2. 保留的验收从最小 bootstrap、真实管理员会话和 Settings／正式配置 API 的 checked
+   publication 起步。复用现有隔离夹具，保留两种库的精确浏览和零效果、Storage 只读检查、
+   Rules 分析与 C 使用 A/A 策略后仍为 C 的断言。沿用现行服务启动入口。
+3. 在修正后的工作区核对旧命令的可执行调用已清除。用现有测试从启动、登录或配置发布走到
+   至少一个受影响的浏览器任务结果。运行相关场景、`python3 scripts/check_governance.py`
+   和 `git diff --check`。全量验收和固定 Slice Base 接续仍由 B 负责。
+
+### 本轮验证与 Slice 重评
+
+- Python 全量 2326 项，2319 通过、7 跳过。定向 80 项通过。治理、Ruff、编译、依赖、
+  样例和禁用依赖检查通过。Web 静态检查、1642 单测及 289 常规浏览器用例通过。
+- 源码外 wheel 冒烟通过。独立的安装后恢复脚本首跑缺 `tests/account_fixtures.py`，在
+  测试清单临时补入现有夹具后，同一 wheel 的两个恢复用例通过，仓库脚本未改动。
+- 正式 Compose 空库、媒体挂载、重启故障和发布安全冒烟通过。Colima 首跑无法访问系统临时目录，
+  使用 Docker 可访问的临时目录后重跑。启动、账号和离线恢复继承 58.1 已验收的范围，本轮也
+  核对了更新后的旧库恢复指引及当前库的 wheel 备份恢复。
+- 原生合跑记录 44 项通过、3 个 Task Center 用例失败、1 项中止、40 项未运行。
+  其中运行列表和整理计划历史两项分别在 Task Base 与候选的独立夹具中通过。合跑结果保留，
+  后续由 B 复验。RO-4 的浏览器脚手架和固定 Slice Base 接续尚待验收。
+
+日志、浏览器产物和制品标识在
+`.git/validation-evidence/1daad11a500aaab876f465f142f8164681d8bdf2/b-review/`。
 
 ## 目标与当前缺口
 
@@ -76,10 +76,8 @@ B 保留修正后候选的 T4 全量、真实 Compose／浏览器和固定 Slice
 集成仍用既有 `/api/*` 和原权限令牌。重开当前受支持库后，原任务、结果、审计、快照和原请求仍可核对。
 当前版本发现旧配置 schema 11 时，启动、探针和主机维护在写入前拒绝并给出原版本处理或新数据目录初始化的去向。
 
-Task 58.1 已切换部署和主机维护。当前 wheel 仍安装由 `pyproject.toml` 注册的 `mediaflow`，
-`mediaflow/cli.py` 转交 `final_cli.py`。Worker 仍识别 `direct-organize`，浏览器夹具仍从
-`/__harness__/cli-files-list` 执行旧文件列表。当前 CI 与 wheel 检查运行 `config validate`；
-schema 11 仍由 `configuration_data_switch.py`、配置仓储及调用者维持切换路径。
+Task 58.1 已切换部署和主机维护。Task Base 仍包含通用 console script、CLI 专属 Worker 路径、
+旧列表夹具及 schema 11 切换逻辑。候选已移除这些入口及实现，剩余可执行验收脚本见本轮复审。
 
 ## 实施范围与开发指导
 
