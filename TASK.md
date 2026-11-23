@@ -1,11 +1,11 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 59.1 — 文件入口的手动整理弹窗与整批确认
 
-[Slice 59](SLICE.md) 已激活。下方为用户授权 A 代 B 规划的首个 Task 草案。
-角色例外限计划编写，B 独立复核实现候选。Task 获得实施授权后，以同一 ID、Base 和范围激活。
+Next Action: DEVELOPER STARTS TASK 59.1 IMPLEMENTATION
 
-Next Action: USER AUTHORIZES TASK 59.1 IMPLEMENTATION
-
-## Task 59.1 — 文件入口的手动整理弹窗与整批确认
+用户已授权激活 Task 59.1。Developer 开始实施时将状态从 `PLANNED` 转为
+`IN PROGRESS`。原 Task ID、Base、范围和验收条件沿用。A 代 B 的授权限于本 Task 的规划，
+B 独立复核实施候选，A 负责 Slice 终审。
+[Slice 59](SLICE.md) · [开发工作流](docs/development-workflow.md)
 
 ```text
 Task ID: 59.1
@@ -16,6 +16,7 @@ Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
 Difficulty: High
 Test Level: T3
 Planner / Reviewer: A plans once under explicit user authorization / independent B reviews
+Implementation Authorization: AUTHORIZED BY USER FOR TASK 59.1
 ```
 
 ### Goal

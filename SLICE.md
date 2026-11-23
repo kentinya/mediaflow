@@ -8,10 +8,10 @@ Status: ACTIVE
 Base SHA: 212acdef5d97c14a01353b22c103d44b911d6147
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: SLICE ACTIVE; FIRST TASK PLANNING AUTHORIZED
+Development Authorization: TASK 59.1 IMPLEMENTATION AUTHORIZED
 Risk: Medium
 Target Test Level: T3
-Next Action: USER AUTHORIZES TASK 59.1 IMPLEMENTATION
+Next Action: SEE TASK.md
 ```
 
 ## 授权、基线与设计依据
@@ -19,7 +19,8 @@ Next Action: USER AUTHORIZES TASK 59.1 IMPLEMENTATION
 用户认可离线原型中手动整理流程与任务详情正文的方向，要求保留正式页面的现有顶栏标题，
 范围限于从文件页进入后的手动整理流程和任务中心的任务详情弹窗正文。用户于 2026-11-24
 认可按现有界面制作的新版预览，明确授权激活 Slice 59，并授权 A 代 B 规划第一个 Task。
-该角色例外仅适用于首个 Task 的规划，实施须另获授权，B 独立审查实施候选，A 负责最终验收。
+该角色例外仅适用于首个 Task 的规划。用户随后明确授权激活 Task 59.1，Developer 按已规划范围
+实施，B 独立审查实施候选，A 负责最终验收。
 规划前 `main` 位于上述 Base，工作区和暂存区干净，工作区及 Git 可写，治理检查通过。
 激活前 main 位于规划提交 640ee01808ce33303e9f46a1a9e05b73ccd1e966，治理检查通过，
 工作区和暂存区干净。Slice Base 仍为原接受基线。
