@@ -3579,14 +3579,15 @@ class ConfigurationObjectService:
 
         This is the *complete* graph, so a whole-runtime load is exactly what the
         complete-flow entry must perform; the independent object analysis never
-        calls it.
+        calls it.  The check consumes an already published Active snapshot, so it
+        uses the same published-snapshot boundary as every other runtime consumer:
+        after an explicit offline restore the immutable snapshot may still carry
+        the pre-restore locator, while the effective runtime always opens the
+        database the bootstrap selected.  New candidate input remains on the
+        strict managed loader used by publication.
         """
 
-        return load_managed_runtime_configuration(
-            revision.document,
-            bootstrap_database_path=self._managed.bootstrap_database_path
-            or self._repository.database_path,
-        )
+        return self._managed.load_published_runtime(revision.document)
 
     @classmethod
     def _naming_policy(cls, value: Mapping[str, object]) -> NamingPolicy:

@@ -393,6 +393,43 @@ class RestoredDeploymentConsumptionTests(unittest.TestCase):
         body = b"".join(api(environ, lambda status, headers: statuses.append(status)))
         return int(statuses[0].split()[0]), json.loads(body)
 
+    @staticmethod
+    def _post(api, path: str, document: object):
+        payload = json.dumps(document, ensure_ascii=False).encode("utf-8")
+        statuses: list[str] = []
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": path,
+            "QUERY_STRING": "",
+            "CONTENT_LENGTH": str(len(payload)),
+            "CONTENT_TYPE": "application/json",
+            "wsgi.input": io.BytesIO(payload),
+            "REMOTE_ADDR": "127.0.0.1",
+            "HTTP_AUTHORIZATION": "Bearer admin-token",
+        }
+        body = b"".join(api(environ, lambda status, headers: statuses.append(status)))
+        return int(statuses[0].split()[0]), json.loads(body)
+
+    @classmethod
+    def _complete_flow(cls, api, active):
+        return cls._post(
+            api,
+            "/api/operations/rules/complete-flow",
+            {
+                "expectedRevisionId": active.revision_id,
+                "expectedVersion": active.revision_sequence or active.version,
+                "expectedDigest": active.digest,
+                "resourceLibraryId": "source",
+                "syntheticPath": "电影/Example.Movie.2024.mkv",
+                "liveMetadata": False,
+                "syntheticIdentity": {
+                    "title": "Example Movie",
+                    "mediaType": "movie",
+                    "year": 2024,
+                },
+            },
+        )
+
     def test_host_restore_relocates_without_rewriting_published_pins(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -400,6 +437,19 @@ class RestoredDeploymentConsumptionTests(unittest.TestCase):
             restored = root / "restored.sqlite3"
             backup = root / "runtime-backup.sqlite3"
             document = self._document(root, source)
+            incoming = root / "incoming"
+            organized = root / "organized"
+
+            def media_snapshot():
+                return tuple(
+                    (
+                        path.relative_to(root).as_posix(),
+                        path.read_bytes() if path.is_file() else None,
+                    )
+                    for base in (incoming, organized)
+                    for path in sorted(base.rglob("*"))
+                )
+
             with (
                 SQLiteConfigurationRepository(source) as configuration_repository,
                 SQLiteTaskRepository(source) as runtime_repository,
@@ -443,6 +493,22 @@ class RestoredDeploymentConsumptionTests(unittest.TestCase):
                         configuration_snapshot_digest=first.digest,
                     )
                 )
+                source_api = MediaFlowApi(
+                    runtime_repository,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                    ),
+                    configuration_service=service,
+                    bootstrap_document={
+                        "version": 1,
+                        "persistence": {"databasePath": str(source)},
+                    },
+                    storage_browser_cursor_secret="restore-test-secret",
+                )
+                before_flow = media_snapshot()
+                initial_status, initial_flow = self._complete_flow(source_api, second)
+                self.assertEqual(initial_status, 200, initial_flow)
+                self.assertEqual(media_snapshot(), before_flow)
             source_config = root / "source-config.json"
             self._write_bootstrap(source_config, source)
             source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -503,6 +569,7 @@ class RestoredDeploymentConsumptionTests(unittest.TestCase):
                 api = MediaFlowApi(
                     runtime_repository,
                     principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
                         ResolvedApiPrincipal(
                             "viewer", "viewer-token", frozenset({ApiPermission.READ})
                         ),
@@ -515,6 +582,28 @@ class RestoredDeploymentConsumptionTests(unittest.TestCase):
                 self.assertEqual(status, 200, files)
                 self.assertEqual(files["configuration"]["revisionId"], second.revision_id)
                 self.assertEqual([entry["name"] for entry in files["entries"]], ["Movie.2001.mkv"])
+
+                # The same published Active and offline sample run through the
+                # formal Rules API again after the host restore.  The published
+                # snapshot keeps its ID/digest and sample while the deployment
+                # locator now opens the restored database; the complete plan and
+                # the read-only result must stay identical with zero media effect.
+                restored_status, restored_flow = self._complete_flow(api, managed.active())
+                self.assertEqual(restored_status, 200, restored_flow)
+                self.assertEqual(media_snapshot(), before_flow)
+                self.assertEqual(
+                    {key: value for key, value in initial_flow.items() if key != "testedAt"},
+                    {key: value for key, value in restored_flow.items() if key != "testedAt"},
+                )
+                for flow in (initial_flow, restored_flow):
+                    self.assertEqual(flow["entry"], "complete_flow_check")
+                    self.assertEqual(flow["readiness"], "complete_plan_ready", flow)
+                    self.assertEqual(flow["revisionId"], second.revision_id)
+                    self.assertEqual(flow["revisionDigest"], second.digest)
+                    self.assertEqual(flow["executionAuthorityGranted"], "none")
+                    self.assertEqual(flow["storageReads"], 0)
+                    self.assertEqual(flow["sideEffects"], "none")
+                    self.assertEqual(flow["providerCalls"], 0)
 
                 # New input carrying the pre-restore locator is still refused.
                 wrong = json.loads(json.dumps(managed.active().document))
