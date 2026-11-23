@@ -170,8 +170,8 @@ progress and four business recovery types; Automation owns saved-definition sche
 - 动作／成功：沿用精确保存、启停、复制停用副本、单次运行的独立反馈及原列表返回。
   旧定义详情和后继草稿编辑旅程退出，历史页返回合法列表／记录，不留下悬空链接。
 - 失败／恢复：旧 definition／editor 地址普通未找到，无别名／跳转／说明页兼容；有效
-  卡片的权限／校验／冲突／未知发布及请求核对不变。执行记录、配置／运行历史和共享
-  API／CLI不被删除，退出页面不自动提交、取消或重放工作。
+  卡片的权限、校验、冲突处理及未知请求核对继续适用。执行记录、配置与运行历史通过
+  现行 Web 和 API 读取，退出页面不会提交、取消或重放工作。
 
 ## CURRENT — V2 Explore homepage (Slice51 PASS / CLOSED)
 

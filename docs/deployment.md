@@ -444,23 +444,13 @@ paths, credentials, Storage or Providers.
 
 ## Backup and same-version recovery
 
-Current support covers fresh initialization and same-version reopen/restart. Startup accepts only
-an empty database or one created by this version, including a configuration-only store written by
-this version's first setup. A database from an earlier MediaFlow version is refused before
-the repository creates or rewrites any table; the file remains unchanged, even when it only holds
-configuration at the current schema number or reports a schema 11 configuration marker. Keep an
-intact old file for diagnosis or recovery with the version that created it, then use a new empty
-data directory for this version. General cross-version upgrade and rollback, mixed-version writers
-and old Task/Job migrations are deferred. See
-[Current validation boundary](release.md#current-v2-validation-boundary).
-
-This version accepts only an empty database or one it created: configuration schema 12 and runtime
-schema 60. A configuration schema 11 file is refused by startup, the container probe, code issuance
-and restore before any table, marker or account row is written, and the refusal names the version
-found and the version expected. There is no in-place switch, downgrade path or CLI to run. Keep an
-intact old file for the version that created it when you still need its data, or start this version
-with a new empty data directory. Other cross-version transitions remain outside current support.
-See the [configuration guide](configuration.md#managed-lifecycle).
+Same-version maintenance uses configuration schema 12 and runtime schema 60. Startup, the
+container probe, host code issuance and restore refuse a configuration schema 11 file before
+writing any table, marker or account row. Keep an intact previous-version store for diagnosis
+or recovery with the version that created it, then use a new empty data directory for this version.
+Configuration-only stores also require the current store origin marker. Run all services at
+the same version.
+[Current validation boundary](release.md#current-v2-validation-boundary)
 
 Stop the stack and retain a verified backup under `/data` before maintenance. The `host` argument is
 the fixed container-entrypoint maintenance mode; a direct source installation runs the same

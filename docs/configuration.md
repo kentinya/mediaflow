@@ -285,13 +285,13 @@ checked publication; the historical API/key names do not make these Automation-o
 
 | Field | Selected meaning |
 |---|---|
-| `automation.maximumActiveJobs` | Integer 1–10000; shared organizing Task capacity across Files/direct CLI/API/remote, due/Run once and same-Task machine-work re-entry, not thread/file parallelism. Ordinary asynchronous copy/move/delete keep their existing admission rules. |
+| `automation.maximumActiveJobs` | Integer 1–10000. Shared organizing Task capacity covers Files and its API, due/Run once and same-Task machine-work re-entry. Ordinary asynchronous copy/move/delete keep their own admission rules. |
 | `automation.workerPollSeconds` | Finite positive seconds; shared Worker's idle checks for organizing and both library kinds' ordinary asynchronous file work. |
 | `automation.schedulerPollSeconds` | Finite positive seconds; checks for due Automation definitions only, not manual/Run once submission, definition Cron/interval/timezone or notifications. |
 
 One Save publishes only these three fields from the exact observed Active, preserving unrelated
 settings, runtime preparation, atomic activation, submission reconciliation and truthful actual
-adoption/override evidence. Capacity-full preserves existing work/choices/authority; release
+adoption evidence. Capacity-full preserves existing work/choices/authority; release
 allows an explicit retry or the next due check. Save itself starts no media operation.
 
 Delete `automation.staleJobAgeSeconds` from editable/effective/default settings and runtime arguments.
@@ -323,10 +323,10 @@ out-of-range values are rejected before a candidate exists. The wider field set 
 publication through `常规设置`; there is no separate Draft validate/activate journey.
 
 Publication and adoption are reported as separate outcomes. Each live resident instance publishes
-its own adopted values, the publication identity it adopted, freshness and any explicit
-CLI/deployment override. Unreported, stale, stopped, mixed-version and overridden instances never
-form a collective "deployed" claim, and the shared-capacity field carries an API-local basis
-instead of being attributed to a resident process.
+the value and publication identity it adopted, along with the report's freshness. Current resident
+cadences come from managed settings. Collective adoption requires a current report from every
+eligible live instance. Shared capacity is read at admission and re-entry.
+[Service cadence and adoption](deployment.md#engine-poll-cadence-adoption-slice43-pass--closed)
 
 A healthy consumer whose value did not change re-writes its own report on the bounded refresh, so a
 live-but-idle process is not reported as stale merely because nothing changed; a failed report write
@@ -477,7 +477,7 @@ The guided checked path requires current evidence for the exact candidate:
 Before publishing, the server rechecks the Active baseline, applicable candidate evidence and
 dependency validity. The new snapshot and publication audit are committed atomically.
 
-## Web, API and CLI surfaces
+## Web and API surfaces
 
 Authenticated surfaces share application behavior/RBAC/audit: exact Active/successor lifecycle,
 objects/reference impact, versioned secret-free configuration/result exchange, Settings and Rules,
@@ -486,8 +486,8 @@ Worker readiness, Automation execution intent/occurrences and Webhook delivery r
 [Product Experience](product-experience.md) owns complete ordinary journeys; [Architecture](architecture.md)
 owns execution and [Deployment](deployment.md) runtime administration. Configuration reads/tests/
 publication create no media work. Notification retry/requeue changes only that delivery, not media.
-FileIndex is removed. CLI/Files/MediaLibrary share live Storage browsing; exact source and plan
-evidence remains scoped to explicit work. No independent Scan or Preview product remains.
+Both library pages and their APIs share live Storage browsing. Exact source and plan evidence
+remains scoped to explicit work. FileIndex and standalone Scan and Preview are retired.
 
 Scripts that need the same API outside a browser session use a scoped token from
 **系统设置 → API 令牌**. The default is read-only for 90 days; the analysis option adds
@@ -587,10 +587,10 @@ acceptance, actual artifact evidence and validation limits; no production deploy
 | Setting | Current code / accepted baseline meaning |
 |---|---|
 | `workflowRetry` | `enabled` defaults false; `baseDelaySeconds`/`maxDelaySeconds` bound backoff. Read-only retry covers normalized timeout/connection/rate-limit/temporary-provider failures before planning/execution. `maxAttempts` 1–10, `maxDelaySeconds` ≤300, `jitterRatio` 0–1; never retries mutation/uncertain effects or grants execute authority. |
-| `automation.maximumActiveJobs` | Default 100, range 1–10000; one atomic shared organizing Task allowance, not worker parallelism. Files, current API and CLI admissions, due/Run once and same-Task machine-work re-entry share it. Ordinary asynchronous copy/move/delete use their own admission rules. Terminal or wholly human-waiting work releases its slot. Lowering it blocks new excess admissions and preserves already admitted work. Published through the three-field System Settings Save; admission/re-entry reads the current Active. |
+| `automation.maximumActiveJobs` | Default 100, range 1–10000. Files, its API, due/Run once and same-Task machine-work re-entry share this atomic organizing capacity. Ordinary asynchronous copy/move/delete use their own admission rules. Terminal or wholly human-waiting work releases its slot. Lowering capacity blocks new excess admissions and preserves admitted work. Admission and re-entry read the current value published from System Settings. |
 | `automation.staleJobAgeSeconds` | Retired: not editable, validated, effective or generated in new defaults. An existing immutable document may retain the key and remain readable with the value ignored; field edits to it are refused with zero publication. Current heartbeat, lease/renewal and Provider/Storage call timeouts remain unchanged. |
-| `automation.workerPollSeconds` | Finite positive seconds; the real resident Worker loop cadence, independent of heartbeat/lease and of any Task's media pin. A running Worker adopts a new value at its next safe loop boundary without a restart. Configuration/heartbeat/report wakes are bounded to at most 5s so a previously long value cannot defer adoption, while the business claim cadence itself stays at the selected value — a recheck never claims early. `--poll-seconds`/deployment overrides keep precedence and are reported as overrides. |
-| `automation.schedulerPollSeconds` | Finite positive seconds; the real resident Scheduler due-check cadence. It never changes any definition's interval, Cron expression or timezone, and adopts without restart under the same boundary/recheck rules and override precedence. Bounded configuration wakes do not tick the interval/due check early. |
+| `automation.workerPollSeconds` | Finite positive seconds. Sets the resident Worker's idle cadence independently of heartbeat, lease and a Task's media pin. The Worker adopts the published value at the next safe boundary. Configuration, heartbeat and report wakes are bounded to 5s and preserve the claim deadline. |
+| `automation.schedulerPollSeconds` | Finite positive seconds. Sets the resident Scheduler's due-check cadence, independently of each definition's interval, Cron expression and timezone. The Scheduler adopts the published value under the same safe-boundary rules and preserves the due-check deadline across rechecks. |
 | Focused engine-settings Save | One checked Save publishes only these three fields from the observed Active, after whole-candidate validation and runtime preparation. A no-op Save publishes nothing. While the Save is outstanding the three inputs are read-only; a value that still races the response is retained and re-based onto the just-published identity. An unknown outcome blocks further saves until its own durable evidence resolves it; a submission that terminates without publishing (a three-field input refusal, a stale/no-op refusal or a persist/validate/prepare/activate fault) records a bounded terminal outcome, so reconciliation ends in a correctable state with the typed input kept. Recovery merges **only the fields the operator changed** into the latest published values, so another writer's change to an untouched field is preserved; a genuine same-field overlap shows both values with units and needs an explicit "use current" / "keep mine" choice before Save is enabled. The next Save is always checked against the latest published identity. An input refusal (for example `3.5` for an integer field) keeps its invalid text correctable and is proven from a bounded content fingerprint rather than by re-validating an unpublishable payload. |
 | Organizing Cron schedules | Validated five numeric fields with IANA timezone; `*`, lists, inclusive ranges and positive steps, no seconds/names/macros/shell/catch-up backlog. Missing DST wall times skip; ambiguous wall time fires once. Managed Automation Task Definitions are the only scheduled input: checked Enabled publication supplies scoped scheduled intent under V2-AUTO-010; live permissions and full plans/checks still precede effects. The retired `automation.schedules` product accepts no schedule definition: a system-generated empty slot in a normal V2 document stays readable with no scheduling semantics, and any schedule definition rejects through normal validation. Run once is a separate explicit command and never advances due state. Independent Preview schedules are unsupported. |
 | Organize Hash/attachments | Hash defaults NONE with zero reads; FAST is bounded prefix evidence, FULL is bounded streaming. Failed/unknown comparison adds a conflict and never authorizes overwrite/delete. Opt-in attachments are matched only in the primary directory; unknown files are not included/cleaned. |

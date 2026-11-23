@@ -15,8 +15,8 @@ workflow authority. Closure rules live only in
 The general CLI and configuration schema 11 switch are retired. Four fixed services and a
 dedicated host entry cover startup, account codes and offline SQLite recovery. A independently
 verified that a restored deployment consumes the original Active and safely continues work under
-the original Task pin. The final B packet is at `ac7d9be28cc0848723c21e34e465e3a04b1cb80d:TASK.md`.
-[A Final Review](../SLICE.md#a-final-review--pass--closed)
+the original Task pin.
+[Fixed A Final Review](https://github.com/kentinya/mediaflow/blob/3d01bbbdb088d5e3fc65c1599c5c8bee0790312f/SLICE.md#a-final-review--pass--closed) · [B Closure Packet](https://github.com/kentinya/mediaflow/blob/ac7d9be28cc0848723c21e34e465e3a04b1cb80d/TASK.md#b-复核与-slice-58-交接)
 
 ## Prior accepted closure — Slice57
 

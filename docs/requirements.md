@@ -638,19 +638,15 @@ Candidate
   原子发布和脱敏 Before/After 审计；检查候选只在一次命令内短暂存在，失败即清理。
 - 系统设置与受鉴权 API 提供配置状态、初始化、检查、直接发布和完整替换。主机端使用专用
   入口进行 SQLite 备份、校验及恢复。
-- 新建 Task/Automation Job 记录其 configuration snapshot ID/digest；发布不启动扫描、Provider、
+- 新受理的 Task 记录其 configuration snapshot ID/digest；发布不启动扫描、Provider、
   Storage 或 Organizer，旧在途工作继续使用原快照。
-- 运行时缺失/损坏场景会拒绝工作且不回退 JSON；F1 在完整 runtime 校验成功前不发布 identity，
-  runtime-invalid Active 的重复 API 请求持续返回结构化 503 且不创建 Job。
-- Active 缺失、损坏或运行时不兼容时，配置状态、整文档完整替换、校验和显式恢复发布可从
-  不可信工作流 JSON 中隔离；API 错误显示 last-known identity、持久状态、副作用、重试安全性和
-  下一动作。F2 实现使每个新 API 请求只使用一个完整 old/new binding，新激活的上限与
-  execute gate 与 Job pin 一致；这些行为已由当前代码和对应测试覆盖。
+- Active 缺失、损坏或运行时不兼容时，依赖该配置的业务请求返回结构化 503，已有持久状态
+  保持。配置状态、校验和显式完整替换仍可用。API 错误显示上次已知快照身份、持久状态、
+  副作用、重试安全性及下一动作。每个新请求使用一份完整的运行时绑定，已受理 Task 保留原 pin。
 - `persistence.databasePath` 等 bootstrap 定位字段在 managed activation 中不可变；校验摘要在激活
   边界重新计算，导入/校验/编辑/激活状态与脱敏审计在同一事务中提交或回滚。
-- 常驻 Scheduler 每次发出新 Job 时从同一 runtime revision 原子取得 schedule 内容、准入设置和
-  identity；加载失败不发出 Job、不推进 due 状态。已持久化但未 pin 的旧工作在 managed authority
-  建立后会拒绝继续。
+- 常驻 Scheduler 每次受理到期任务时从同一 runtime revision 取得计划、准入设置和快照身份。
+  加载失败时保留原 due 状态并拒绝新增任务。缺少合法 pin 的工作在执行前停止。
 - 当前 API/Web 已将配置状态、对象编辑、引用保护、精确 revision 预览、provider-neutral 目标只读预检、
   checked publication 和 immutable runtime binding 连接到同一 Application 行为；配置对象删除仅在
   仍有引用时安全阻止，合法未引用对象可删除。
@@ -674,8 +670,8 @@ ResourceLibrary 合并、完整配置校验、适用的 checked publication 和�
 设置页负责空配置初始化、显式发布、只读配置 JSON、完整配置与脱敏包导入以及脱敏导出，以及
 其他页面未覆盖且后端明确支持的高级配置，不要求用户在首次设置中填写媒体业务表单。
 
-- 部署只提供应用配置文件、持久化位置和管理员 API 凭据。进入 V2 系统设置后，由管理员明确
-  将空配置初始化并发布；进入、刷新、重连和返回只读取当前 Active 与历史已发布快照。
+- 部署使用最小 bootstrap 和持久化位置。管理员使用主机签发的设置码完成建号，再进入系统设置
+  初始化并发布空配置。进入、刷新、重连和返回只读取当前 Active 与历史已发布快照。
 - Draft/Active 的 Storage、ResourceLibrary、MediaLibrary、RecognitionType、规则、类型策略绑定、
   Metadata/Naming/Classification/Organize 策略、Automation 和 Webhook 可以全部没有业务对象。
   空业务图是合法配置状态，不是格式错误的文档，不填入开发示例或合成业务默认值。
@@ -731,9 +727,9 @@ MediaLibrary 加安全相对路径的分类输出，以及整理操作、冲突�
 现有 TMDB 抽象执行。所有测试/预览零 Storage mutation、无执行授权；Save 和读/导航均不启动
 媒体 Task、Job、自动化或通知。Settings 显示同一 Active 的规则族就绪信息并明确返回来源规则族。
 
-当前旅程不要求原始整文档 JSON 或 V1 UI。V1 `/ui` 与既有 API/CLI 保留；Provider switching、
-Review/Recovery 改造、Rules 页面媒体执行、批量导入/diff/rollback 和其他原 Contract 延后项均未
-交付，不作为隐藏依赖。稳定 V1 产品需求及已发布基线不因上述 CURRENT 记录而改变。
+日常编辑使用类型化表单。现行 Rules 页面与 API 沿用独立测试和发布流程。Provider switching、
+Review/Recovery 改造、Rules 页面媒体执行、批量导入/diff/rollback 和其他原 Contract 延后项
+保留在该次验收范围记录中。
 
 #### **V2 操作与任务工作区（CURRENT；Slice 42 PASS / CLOSED）**
 
@@ -793,12 +789,12 @@ Scan 产品按 2026-10-18 首次部署修订视为从未存在：独立入口及
 发现/过滤/真实稳定性/计划保留，原流程自行完成观察，不再要求先运行 Scan。
 不建设旧 Scan/V1 parity、停止/接管、迁移或专用历史兼容；其他受支持工作的
 历史意图、结果和审计保持。此修订不授权清空媒体或运行数据。用户随后将 FileIndex 完全退出
-加入同一 Slice：CLI/两种库页共用只读 live Storage 列表，取消目录索引、专用接口/仓储/schema/
+加入同一 Slice。现行两种库页及其 API 共用只读 live Storage 列表，取消目录索引、专用接口/仓储/schema/
 同步修复及全部运行依赖，见 V2-FILES-005/006 与退役设计；不建设旧索引生产兼容。
 用户又将独立 Preview 产品完整退役纳入同一 Slice（V2-OPS-013/RO-8），方式与 Scan 相同：
 独立 Web/API/CLI/Job/调度/执行/续跑、专用持久化和退役兼容层均按首次部署不存在处理。
 旧输入普通报错，不自动转为整理；不建设旧 Preview/V1 parity、停止/接管、迁移或专用历史兼容。
-整理内分析/固定计划/同页摘要、CLI organize 不执行模式及 Rules/配置/授权校验继续复用共享能力；
+整理内分析、固定计划、同页摘要及 Rules、配置与授权校验继续复用共享能力；
 仅分析不制造正式执行待办或权限。范围见 [Preview 退役设计](preview-retirement-spec.md)。
 零变更分析/DryRun 能力、Rules 测试与冻结 Slice43 的自动化业务工作区重设计不在删除范围。
 这些明确授权的产品修订已通过整 Slice 验收；上方 Slice42 原始接受事实和下方冻结 V1 定义
