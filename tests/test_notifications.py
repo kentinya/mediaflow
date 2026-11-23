@@ -24,7 +24,6 @@ from mediaflow.domain.notification import (
     NotificationEventType,
     WebhookDefinition,
 )
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -332,16 +331,6 @@ class NotificationTests(unittest.TestCase):
                 api_item = json.loads(body)["items"][0]
                 self.assertIn("updatedAt", api_item)
                 self.assertEqual(api_item["attempts"], 0)
-            output, error = io.StringIO(), io.StringIO()
-            code = final_main(
-                ["--config", str(config), "notifications", "list"],
-                stdout=output,
-                stderr=error,
-            )
-            self.assertEqual(code, 0, error.getvalue())
-            self.assertNotIn("千与千寻", output.getvalue())
-            self.assertNotIn("secret", output.getvalue())
-            self.assertIn("updated=", output.getvalue())
 
     def test_scheduler_emission_enters_outbox_for_the_admitted_task(self) -> None:
         """A real due occurrence publishes its schedule event for one Task."""
@@ -592,21 +581,14 @@ class TerminalTaskNotificationTests(_DiscoveryFixture):
     def test_queued_cancellation_publishes_one_event_without_media_effect(self) -> None:
         self.media("Movies/One.2001.mkv")
         document = self._document()
-        config = self._write_config(document)
         with self._journey(document) as value:
             self.publish_policy(value, document=document)
             status, admitted = self._admit(value, "Movies/One.2001.mkv")
             self.assertEqual(202, status, admitted)
             task_id = admitted["organizeTaskId"]
 
-            output, errors = io.StringIO(), io.StringIO()
-            code = final_main(
-                ["--config", str(config), "tasks", "cancel", task_id],
-                stdout=output,
-                stderr=errors,
-            )
-            self.assertEqual(0, code, errors.getvalue())
-            self.assertIn("cancelled", output.getvalue())
+            status, cancelled = self.request(value, f"/api/tasks/{task_id}/cancel", "POST")
+            self.assertEqual(200, status, cancelled)
             task = value.repository.get_task(task_id)
             self.assertEqual("cancelled", task.status.value)
             self.assertTrue((self.source_root / "Movies/One.2001.mkv").exists())
@@ -618,14 +600,10 @@ class TerminalTaskNotificationTests(_DiscoveryFixture):
                 {"taskId": task_id, "status": "cancelled", "command": "manual_organize"},
             )
 
-            # The idempotent repeat is the same durable intent, not a second
-            # outbox row.
-            code = final_main(
-                ["--config", str(config), "tasks", "cancel", task_id],
-                stdout=io.StringIO(),
-                stderr=io.StringIO(),
-            )
-            self.assertEqual(0, code)
+            # The idempotent repeat is refused at the same boundary (already
+            # cancelled) and must not create a second outbox row.
+            status, repeat = self.request(value, f"/api/tasks/{task_id}/cancel", "POST")
+            self.assertEqual(409, status, repeat)
             self.assertEqual(1, len(self._deliveries()))
             with SQLiteTaskRepository(self.database) as reopened:
                 self.assertEqual("cancelled", reopened.get_task(task_id).status.value)

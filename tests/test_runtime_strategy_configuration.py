@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import io
 import json
 import tempfile
 import unittest
@@ -23,7 +22,6 @@ from mediaflow.domain.naming import NamingContext
 from mediaflow.domain.notification import NotificationEventType
 from mediaflow.domain.organizer import OrganizeOperationType
 from mediaflow.domain.parser import ParseResult
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.openlist_storage import OpenListStorage
 from mediaflow.infrastructure.runtime_configuration import (
     load_managed_runtime_configuration,
@@ -197,20 +195,31 @@ class RuntimeStrategyConfigurationTests(unittest.TestCase):
                 document["organizePolicies"][0]["rollback"] = invalid
                 load_runtime_configuration(document)
 
-    def test_validation_command_performs_no_storage_mutation(self) -> None:
+    def test_sample_configuration_loads_through_the_current_entry(self) -> None:
+        """The repository sample stays valid through the current loading entry.
+
+        This is the source gate that replaced the retired ``config validate"
+        command: the exact loader every service uses judges the shipped sample,
+        and validation performs no Storage mutation and creates no file.
+        """
+
+        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "mediaflow.json")
-            path.write_text(json.dumps(self.document, ensure_ascii=False), encoding="utf-8")
+            path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
             before = sorted(item.name for item in Path(directory).iterdir())
-            stdout, stderr = io.StringIO(), io.StringIO()
-            code = final_main(
-                ["--config", str(path), "config", "validate"],
-                stdout=stdout,
-                stderr=stderr,
+            runtime = load_runtime_configuration(document)
+            strategy = runtime.strategy
+            self.assertGreater(len(strategy.recognition_rules), 0)
+            self.assertGreater(len(strategy.recognition_type_policies), 0)
+            self.assertGreater(len(strategy.metadata_policies), 0)
+            self.assertGreater(len(strategy.naming_policies), 0)
+            self.assertGreater(len(strategy.classification_policies), 0)
+            self.assertGreater(len(strategy.organize_policies), 0)
+            self.assertEqual(
+                sorted(item.name for item in Path(directory).iterdir()),
+                before,
             )
-            self.assertEqual(code, 0, stderr.getvalue())
-            self.assertIn("Configuration valid", stdout.getvalue())
-            self.assertEqual(sorted(item.name for item in Path(directory).iterdir()), before)
 
     def test_malformed_configuration_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "JSON object"):

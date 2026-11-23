@@ -40,11 +40,11 @@ _UNCERTAIN_EFFECTS = frozenset({EffectCertainty.ATTEMPTED_UNVERIFIED, EffectCert
 
 #: Origin kinds a manual *organizing* admission persists beside its Task.  A
 #: Files manual Task owns a linked discovery and never reaches the kernel
-#: continuation below; a direct CLI or remote-ticket organize Task owns no
+#: continuation below; a historical remote-ticket organize Task owns no
 #: discovery, so its saved decision continues its own admitted scope through
 #: the same kernel.  Any other manual Task without a proved organizing origin
 #: keeps the bounded refusal instead of being granted a continuation.
-_MANUAL_ORGANIZE_ORIGINS = frozenset({"direct-organize", "remote-organize"})
+_MANUAL_ORGANIZE_ORIGINS = frozenset({"remote-organize"})
 
 
 class ManualTaskContinuationError(ValueError):
@@ -75,7 +75,7 @@ class NativeTaskContinuation:
     preparation and that preparation's new analysis version so the operator can
     read the answer back after a reload.
 
-    A Scheduler due, Run once, direct CLI or remote-ticket admitted Task owns
+    A Scheduler due, Run once or historical remote-ticket admitted Task owns
     no Files discovery.  Its continuation re-enters the *same* Task's own
     zero-mutation analysis through the scheduling kernel, so ``source`` is
     ``"automatic"`` — the kernel-owned, discovery-free work context — and the

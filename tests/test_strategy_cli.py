@@ -1,10 +1,10 @@
-"""Shared strategy engine and renderer tests.
+"""Shared strategy engine tests.
 
-The standalone ``strategy-test`` console was retired.  These tests keep the
-current engine/renderer assertions that used to be reached through that
-console: offline analysis, the C -> A naming/classification identity, the
-read-only guard and the case runner.  The installed ``mediaflow`` command is
-covered by the application CLI tests.
+The standalone ``strategy-test`` console and the general CLI renderer are
+retired.  These tests keep the current engine assertions that used to be
+reached through those consoles: offline analysis on the result object, the
+C -> A naming/classification identity, the read-only guard and the case
+runner.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from mediaflow.application.strategy_test import (
     SyntheticMetadataProvider,
     strategy_runner_from_configuration,
 )
-from mediaflow.cli import render_strategy_result
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.storage import StorageCapabilities
 from mediaflow.infrastructure.strategy_configuration import (
@@ -48,31 +47,28 @@ class DummyStorage:
 
 
 class StrategyEngineTests(unittest.TestCase):
-    def test_offline_pipeline_renders_all_stages_and_c_to_a_mapping(self) -> None:
+    def test_offline_pipeline_reports_all_stages_and_c_to_a_mapping(self) -> None:
         runner = strategy_runner_from_configuration(development_strategy_configuration())
         result = runner.run_path(
             "/C/The.Matrix.1999.2160p.WEB-DL.x265.mkv",
             live_metadata=False,
             resource_library_id="special",
         )
-        value = render_strategy_result(result)
-        for heading in (
-            "PARSER",
-            "RECOGNITION",
-            "RECOGNITION TYPE POLICY",
-            "METADATA",
-            "CANDIDATES",
-            "MATCH RESULT",
-            "FINAL",
-        ):
-            self.assertIn(heading, value)
-        self.assertIn("RecognitionType: C", value)
-        self.assertIn("MetadataPolicy: C", value)
-        self.assertIn("NamingPolicy: A", value)
-        self.assertIn("ClassificationPolicy: A", value)
-        self.assertIn("OrganizePolicy: A", value)
-        self.assertIn("RecognitionType preserved: YES", value)
-        self.assertIn("Storage mutations: 0", value)
+        # The full planning pipeline ran with every stage answered on the
+        # result object: parse, recognition, policy, metadata, naming,
+        # classification and the organize plan.
+        self.assertIsNotNone(result.parsed)
+        self.assertIsNotNone(result.recognition)
+        self.assertIsNotNone(result.policy)
+        self.assertEqual(result.recognition.recognition_type_id, "C")
+        self.assertEqual(result.policy.metadata_policy_id, "C")
+        self.assertEqual(result.policy.naming_policy_id, "A")
+        self.assertEqual(result.policy.classification_policy_id, "A")
+        self.assertEqual(result.policy.organize_policy_id, "A")
+        self.assertTrue(result.recognition_type_preserved)
+        # The strategy test is a zero-mutation analysis: read-only Storage
+        # guards reject every mutation, so no execution result exists.
+        self.assertIsNone(result.execution)
 
     def test_offline_mode_never_calls_metadata_provider(self) -> None:
         provider = SyntheticMetadataProvider(

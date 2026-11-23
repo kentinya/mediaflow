@@ -21,36 +21,11 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
 
-from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.manual_organize import (
-    ManualOrganizeIntentService,
-    ManualSourceIdentity,
-)
-from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
-from mediaflow.application.metadata import MetadataProviderRegistry
-from mediaflow.application.strategy_test import SyntheticMetadataProvider
-from mediaflow.domain.manual_organize_preview import ManualPreviewItemStatus
-from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.domain.source_evidence import (
-    OccurrenceState,
-    occurrence_id_for,
-    source_fingerprint,
-)
-from mediaflow.domain.storage import StorageEntryType
-from mediaflow.domain.task_persistence import TaskItemStatus
-from mediaflow.final_cli import final_main
-from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.runtime_configuration import (
     load_runtime_configuration,
-    with_managed_snapshot,
-)
-from mediaflow.infrastructure.sqlite_configuration_management import (
-    SQLiteConfigurationRepository,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -64,6 +39,9 @@ RETIRED_MODULES = (
     "mediaflow.application.preview_analysis",
     "mediaflow.application.automation_task_definition_preview",
     "mediaflow.domain.automation_task_definition_preview",
+    # Task 58.2 retired the whole general CLI with its dispatch layer.
+    "mediaflow.cli",
+    "mediaflow.final_cli",
 )
 
 #: The independent Preview-only schema a fresh runtime must never create.
@@ -90,43 +68,12 @@ def _request(api, method, path, *, token="admin-token", body=None, query=""):
     return int(statuses[0].split()[0]), json.loads(payload)
 
 
-def _cli(argv):
-    out, err = io.StringIO(), io.StringIO()
-    with redirect_stdout(out), redirect_stderr(err):
-        code = final_main(argv, stdout=out, stderr=err)
-    return code, out.getvalue(), err.getvalue()
-
-
 class RetiredPreviewModuleTests(unittest.TestCase):
     def test_retired_modules_cannot_be_imported(self):
         for module in RETIRED_MODULES:
             with self.subTest(module=module):
                 with self.assertRaises(ModuleNotFoundError):
                     __import__(module)
-
-
-class RetiredPreviewCliTests(unittest.TestCase):
-    def test_old_cli_preview_commands_are_ordinary_usage_errors(self):
-        for argv in (
-            ["preview"],
-            ["batch", "preview"],
-            ["jobs", "submit", "preview"],
-        ):
-            with self.subTest(argv=argv):
-                out, err = io.StringIO(), io.StringIO()
-                with redirect_stdout(out), redirect_stderr(err):
-                    with self.assertRaises(SystemExit) as raised:
-                        final_main(argv, stdout=out, stderr=err)
-                self.assertEqual(2, raised.exception.code)
-                self.assertIn("invalid choice", err.getvalue())
-
-    def test_cli_help_does_not_advertise_the_retired_product(self):
-        out = io.StringIO()
-        with redirect_stdout(out), self.assertRaises(SystemExit):
-            final_main(["--help"], stdout=io.StringIO(), stderr=io.StringIO())
-        rendered = out.getvalue()
-        self.assertNotIn("preview", rendered)
-        self.assertIn("organize", rendered)
 
 
 class RetiredPreviewApiTests(unittest.TestCase):
@@ -378,7 +325,6 @@ class RetiredPreviewScheduleTests(unittest.TestCase):
         self.assertNotIn("preview", {item.value for item in AutomationCommand})
 
     def test_old_schedule_document_value_is_rejected_not_defaulted(self):
-        from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 
         document = json.loads(EXAMPLES.read_text(encoding="utf-8"))
         document["automation"] = {
@@ -388,7 +334,6 @@ class RetiredPreviewScheduleTests(unittest.TestCase):
             load_runtime_configuration(document)
 
     def test_empty_schedules_slot_stays_a_normal_v2_document(self):
-        from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 
         document = json.loads(EXAMPLES.read_text(encoding="utf-8"))
         document["automation"]["schedules"] = []
@@ -396,11 +341,6 @@ class RetiredPreviewScheduleTests(unittest.TestCase):
         self.assertEqual(loaded.automation_task_definitions, ())
 
 
-SNAPSHOT = ("revision-1", "a" * 64)
-
-
-#: Every durable table that could carry an execution right.  An analysis must
-#: leave all of them empty: it has no single-shot or unattended authority.
 _AUTHORITY_TABLES = (
     "manual_executions",
     "manual_execution_authorizations",
@@ -429,395 +369,5 @@ def _authority_rows(repository) -> dict[str, int]:
     return counts
 
 
-class _AnalysisEnvironment:
-    """One temporary local ResourceLibrary/MediaLibrary with a real config file."""
-
-    def __init__(
-        self,
-        directory: str,
-        *,
-        subdir: str = "电影",
-        filename: str = "Film.1999.mkv",
-        attachments: bool = True,
-        document_patch=None,
-        existing_target: bool = False,
-    ) -> None:
-        root = Path(directory)
-        self.root = root
-        self.media = root / "HDD" / "Media" / subdir
-        self.media.mkdir(parents=True)
-        self.source_file = self.media / filename
-        self.source_file.write_bytes(b"source-bytes")
-        self.sidecar = self.media / f"{self.source_file.stem}.zh.srt"
-        self.sidecar.write_bytes(b"subtitle-bytes")
-        self.target_root = root / "HDD" / "Organized"
-        self.target_root.mkdir(parents=True)
-        self.target_file = (
-            self.target_root
-            / "Movies"
-            / "Movies"
-            / "其他电影"
-            / "Film (1999) [tmdbid-603]"
-            / "Film (1999).mkv"
-        )
-        if existing_target:
-            self.target_file.parent.mkdir(parents=True)
-            self.target_file.write_bytes(b"existing-target")
-        self.database = root / "runtime.sqlite3"
-        document = json.loads(EXAMPLES.read_text(encoding="utf-8"))
-        document["storages"][0]["rootPath"] = str(root / "HDD")
-        document["storages"][1]["rootPath"] = str(self.target_root)
-        document["resourceLibraries"][0]["displayRootPath"] = str(root / "HDD" / "Media")
-        for policy in document["organizePolicies"]:
-            policy["attachments"]["enabled"] = attachments
-        if document_patch is not None:
-            document_patch(document)
-        document["historyPath"] = str(root / "history.jsonl")
-        document["persistence"] = {"databasePath": str(self.database)}
-        self.document = document
-        self.config = root / "config.json"
-        self.config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-        with SQLiteConfigurationRepository(self.database) as repository:
-            service = ManagedConfigurationService(
-                repository,
-                bootstrap_database_path=str(self.database),
-                bootstrap_document=document,
-            )
-            draft = service.import_draft(document, actor="tester")
-            validated = service.validate(draft.revision_id, actor="tester")
-            if validated.status.value != "validated":
-                raise AssertionError(validated.validation_errors)
-            service.activate(
-                validated.revision_id,
-                expected_version=validated.version,
-                actor="tester",
-            )
-
-    def tree(self, root: Path) -> tuple[tuple[str, bytes | None], ...]:
-        values = []
-        for path in sorted(root.rglob("*")):
-            relative = path.relative_to(root).as_posix()
-            values.append((relative, None if path.is_dir() else path.read_bytes()))
-        return tuple(values)
-
-    def runtime_configuration(self):
-        return with_managed_snapshot(
-            load_runtime_configuration(json.loads(json.dumps(self.document))),
-            snapshot_id=SNAPSHOT[0],
-            digest=SNAPSHOT[1],
-        )
-
-
-def _candidates(*titles: str) -> tuple[MediaCandidate, ...]:
-    return tuple(
-        MediaCandidate("tmdb", str(602 + position), MediaType.MOVIE, title, None, 1999)
-        for position, title in enumerate(titles, start=1)
-    )
-
-
-def _run_analysis_cli(environment: _AnalysisEnvironment, provider) -> tuple[int, str, str]:
-    out, err = io.StringIO(), io.StringIO()
-    with patch(
-        "mediaflow.final_cli.metadata_provider_registry_from_environment",
-        return_value=MetadataProviderRegistry((provider,)),
-    ):
-        code = final_main(
-            ["--config", str(environment.config), "organize", str(environment.media)],
-            stdout=out,
-            stderr=err,
-        )
-    return code, out.getvalue(), err.getvalue()
-
-
-class SharedAnalysisCliTests(unittest.TestCase):
-    """The public ``organize`` analysis records findings, never execution backlog.
-
-    Every assertion runs the real CLI entry against a temporary local
-    ResourceLibrary/MediaLibrary and a fake Provider, then reads the durable
-    runtime: the analysis item, its persisted Result/evidence, the confirmation
-    and review tables and the media bytes on both sides.
-    """
-
-    def test_conflict_analysis_records_the_full_plan_without_execution_backlog(self):
-        with tempfile.TemporaryDirectory() as directory:
-            environment = _AnalysisEnvironment(directory, existing_target=True)
-            source_before = environment.tree(environment.media)
-            target_before = environment.tree(environment.target_root)
-            code, out, err = _run_analysis_cli(
-                environment, SyntheticMetadataProvider(_candidates("Film"))
-            )
-            self.assertEqual(0, code, f"{err}\n{out}")
-            self.assertIn("ANALYSIS", out)
-            self.assertNotIn("NEED_CONFIRM", out)
-
-            with SQLiteTaskRepository(environment.database) as repository:
-                tasks = repository.list_tasks()
-                self.assertEqual(1, len(tasks))
-                task = tasks[0]
-                # Analysis carries no execution authority of any kind.
-                self.assertFalse(task.execute_authorized)
-                items = repository.list_items(task.task_id)
-                self.assertEqual(1, len(items))
-                self.assertEqual(TaskItemStatus.DRY_RUN, items[0].status)
-                self.assertEqual("completed", items[0].stage)
-                # No formal execution backlog item was created anywhere.
-                self.assertEqual((), repository.list_confirmations())
-                self.assertEqual((), repository.list_metadata_reviews())
-                self.assertEqual((), repository.list_classification_reviews())
-                self.assertEqual((), repository.list_recognition_reviews())
-                self.assertEqual({}, _authority_rows(repository))
-                # The complete fixed plan evidence is retained.
-                results = repository.list_results(task.task_id)
-                self.assertEqual(1, len(results))
-                result = results[0]
-                self.assertEqual("dry_run", result.status)
-                self.assertEqual(TaskItemStatus.DRY_RUN.value, result.status)
-                self.assertEqual("MOVE", result.operation)
-                self.assertEqual(
-                    "Movies/Movies/其他电影/Film (1999) [tmdbid-603]/Film (1999).mkv",
-                    result.destination_path,
-                )
-                self.assertEqual(1, result.attachment_count)
-                evidence = repository.list_evidence_for_item(items[0].item_id)
-                self.assertEqual(1, len(evidence))
-                plan = evidence[0].section("plan")
-                self.assertTrue(plan.available)
-                self.assertEqual(
-                    "Movies/Movies/其他电影/Film (1999) [tmdbid-603]/Film (1999).mkv",
-                    plan.value["target"],
-                )
-                self.assertEqual("conflict", plan.value["status"])
-                self.assertEqual(
-                    ["DESTINATION_EXISTS"],
-                    [value["type"] for value in plan.value["conflicts"]],
-                )
-                self.assertEqual(1, len(plan.value["attachments"]))
-                self.assertEqual("subtitle", plan.value["attachments"][0]["type"])
-                self.assertTrue(plan.value["nextAction"])
-                # A conflict finding is analysis evidence, not a decision item.
-                self.assertNotIn("waiting_confirm", out)
-            self.assertEqual(source_before, environment.tree(environment.media))
-            self.assertEqual(target_before, environment.tree(environment.target_root))
-
-    def test_each_unready_branch_records_a_finding_and_no_execution_backlog(self):
-        cases = (
-            (
-                "recognition",
-                {"subdir": "Unknown"},
-                (),
-                "waiting_recognition",
-            ),
-            (
-                "metadata-selection",
-                {"subdir": "电影", "filename": "Double.1999.mkv"},
-                _candidates("Double", "Double"),
-                "waiting_metadata",
-            ),
-            (
-                "metadata-correction",
-                {"subdir": "电影", "filename": "Missing.1999.mkv"},
-                (),
-                "waiting_metadata_correction",
-            ),
-            (
-                "classification",
-                {"subdir": "电影", "filename": "Unfiled.1999.mkv"},
-                _candidates("Unfiled"),
-                "waiting_classification",
-            ),
-        )
-
-        def tv_only(document) -> None:
-            document["classificationPolicies"][0]["rules"] = [
-                {
-                    "id": "tv-only",
-                    "priority": 100,
-                    "conditions": {"mediaType": ["tv"]},
-                    "result": {"mediaLibraryId": "tv", "path": ["TV"]},
-                }
-            ]
-
-        for name, options, candidates, expected_outcome in cases:
-            with self.subTest(branch=name), tempfile.TemporaryDirectory() as directory:
-                if name == "classification":
-                    options = {**options, "document_patch": tv_only}
-                environment = _AnalysisEnvironment(directory, **options)
-                source_before = environment.tree(environment.media)
-                target_before = environment.tree(environment.target_root)
-                code, out, err = _run_analysis_cli(
-                    environment, SyntheticMetadataProvider(candidates)
-                )
-                self.assertEqual(0, code, f"{err}\n{out}")
-                self.assertIn(f"outcome={expected_outcome}", out)
-                with SQLiteTaskRepository(environment.database) as repository:
-                    task = repository.list_tasks()[0]
-                    items = repository.list_items(task.task_id)
-                    self.assertEqual(1, len(items))
-                    self.assertEqual(TaskItemStatus.DRY_RUN, items[0].status)
-                    self.assertEqual((), repository.list_confirmations())
-                    self.assertEqual((), repository.list_metadata_reviews())
-                    self.assertEqual((), repository.list_metadata_corrections())
-                    self.assertEqual((), repository.list_classification_reviews())
-                    self.assertEqual((), repository.list_recognition_reviews())
-                    evidence = repository.list_evidence_for_item(items[0].item_id)
-                    self.assertEqual(1, len(evidence))
-                    self.assertEqual(expected_outcome, evidence[0].outcome)
-                    # The finding carries the exact correction the operator can
-                    # make before an explicit re-analysis.
-                    unavailable = evidence[0].section("plan").unavailable_reason
-                    self.assertIn("next action:", unavailable)
-                self.assertEqual(source_before, environment.tree(environment.media))
-                self.assertEqual(target_before, environment.tree(environment.target_root))
-
-    def test_analysis_cannot_be_promoted_to_execution_without_new_authority(self):
-        with tempfile.TemporaryDirectory() as directory:
-            environment = _AnalysisEnvironment(directory, existing_target=True)
-            _run_analysis_cli(environment, SyntheticMetadataProvider(_candidates("Film")))
-            with SQLiteTaskRepository(environment.database) as repository:
-                task = repository.list_tasks()[0]
-            out_buffer, err_buffer = io.StringIO(), io.StringIO()
-            with redirect_stderr(err_buffer):
-                # Slice 47 RO-6 retired the independent retry-failed entrance:
-                # an analysis Task is not promotable by any surviving command,
-                # and the old command is an ordinary parse error with zero
-                # effects (no Storage, no Provider, no new authority).
-                with self.assertRaises(SystemExit) as exited:
-                    final_main(
-                        [
-                            "--config",
-                            str(environment.config),
-                            "tasks",
-                            "retry-failed",
-                            task.task_id,
-                            "--execute",
-                        ],
-                        stdout=out_buffer,
-                        stderr=err_buffer,
-                    )
-            self.assertEqual(2, exited.exception.code)
-            self.assertIn("invalid choice", err_buffer.getvalue())
-            self.assertEqual("", out_buffer.getvalue())
-            with SQLiteTaskRepository(environment.database) as repository:
-                self.assertEqual(1, len(repository.list_tasks()))
-                self.assertEqual((), repository.list_confirmations())
-
-    def test_shared_analysis_matches_web_preparation_for_the_same_source(self):
-        """One source, one pin, one policy set: both entries agree exactly.
-
-        The public CLI analysis and the Web preparation chain (the durable
-        intent + fixed plan the Files/create pages render) are driven over the
-        same temporary source and the same pinned strategy. Their target,
-        operation, attachment set and conflict finding must be equivalent; only
-        volatile identities may differ.
-        """
-        with tempfile.TemporaryDirectory() as directory:
-            environment = _AnalysisEnvironment(directory, existing_target=True)
-            provider = SyntheticMetadataProvider(_candidates("Film"))
-            code, out, err = _run_analysis_cli(environment, provider)
-            self.assertEqual(0, code, f"{err}\n{out}")
-            with SQLiteTaskRepository(environment.database) as repository:
-                task = repository.list_tasks()[0]
-                item = repository.list_items(task.task_id)[0]
-                evidence = repository.list_evidence_for_item(item.item_id)[0]
-                cli_plan = evidence.section("plan").value
-                cli_target = cli_plan["target"]
-                cli_operation = cli_plan["operation"]
-                cli_conflicts = sorted(
-                    (value["type"], value["destination"]) for value in cli_plan["conflicts"]
-                )
-                cli_attachments = sorted(
-                    (value["type"], value["operation"], value["suffix"])
-                    for value in cli_plan["attachments"]
-                )
-                cli_result = repository.list_results(task.task_id)[0]
-                cli_policies = {
-                    "recognitionType": cli_result.recognition_type,
-                    "metadataPolicyId": cli_result.metadata_policy_id,
-                    "namingPolicyId": cli_result.naming_policy_id,
-                    "classificationPolicyId": cli_result.classification_policy_id,
-                    "organizePolicyId": cli_result.organize_policy_id,
-                }
-                runtime = environment.runtime_configuration()
-                intent_service = ManualOrganizeIntentService(
-                    repository,
-                    configuration_resolver=lambda: runtime,
-                    runtime_resolver=lambda *_: runtime,
-                    storage_factory=lambda configuration, ids: configuration.create_storages(
-                        storage_ids=ids
-                    ),
-                )
-                # Exactly the Files path: observe the live Storage entry and
-                # derive the immutable source identity from that observation.
-                source_storage = LocalStorage("source-storage", environment.root / "HDD")
-                storage_path = f"Media/电影/{environment.source_file.name}"
-                entry = source_storage.stat(storage_path)
-                self.assertIs(StorageEntryType.FILE, entry.entry_type)
-                observed = source_fingerprint("source-storage", "source", entry)
-                self.assertIs(OccurrenceState.VERIFIED, observed.state)
-                occurrence = occurrence_id_for(
-                    "source-storage", "source", entry.path, observed.value
-                )
-                identity = ManualSourceIdentity(
-                    source_id=occurrence,
-                    storage_id="source-storage",
-                    resource_library_id="source",
-                    path=entry.path,
-                    filename=entry.name,
-                    extension=entry.name.rsplit(".", 1)[-1].lower(),
-                    size=entry.size,
-                    modified_at=entry.modified_at,
-                    observed_at=entry.modified_at,
-                    stable_since=None,
-                    occurrence_id=occurrence,
-                    fingerprint=observed.value,
-                    fingerprint_algorithm=observed.algorithm,
-                    fingerprint_evidence=observed.evidence,
-                    occurrence_state=observed.state.value,
-                )
-                intent = intent_service.create_from_sources((identity,), actor="operator")
-                preview_service = ManualOrganizePreviewService(
-                    repository,
-                    intent_service,
-                    runtime_resolver=lambda *_: runtime,
-                    providers=MetadataProviderRegistry((provider,)),
-                    storage_factory=lambda configuration, ids: configuration.create_storages(
-                        storage_ids=ids
-                    ),
-                )
-                preview = preview_service.create(
-                    intent.intent_id,
-                    actor="operator",
-                    expected_version=intent.version,
-                )
-                self.assertEqual(ManualPreviewItemStatus.BLOCKED, preview.items[0].status)
-                web_plan = preview.items[0].plan
-                self.assertEqual(cli_target, web_plan["destination"]["path"])
-                self.assertEqual(cli_operation, web_plan["operation"])
-                self.assertEqual(
-                    cli_conflicts,
-                    sorted(
-                        (value["type"], value["destination"]) for value in web_plan["conflicts"]
-                    ),
-                )
-                self.assertEqual(
-                    cli_attachments,
-                    sorted(
-                        (value["type"], value["operation"], value["suffix"])
-                        for value in web_plan["attachments"]
-                    ),
-                )
-                self.assertEqual(cli_policies["recognitionType"], web_plan["recognitionType"])
-                for name in (
-                    "metadataPolicyId",
-                    "namingPolicyId",
-                    "classificationPolicyId",
-                    "organizePolicyId",
-                ):
-                    self.assertEqual(cli_policies[name], web_plan["policies"][name])
-                # The Web preparation is also analysis only: durable plan
-                # evidence, no execution backlog and no authority.
-                self.assertEqual((), repository.list_confirmations())
-                self.assertEqual({}, _authority_rows(repository))
-                self.assertTrue(web_plan["zeroMutation"])
-                # Both entries saw the same one primary file and one sidecar.
-                self.assertEqual(1, len(web_plan["attachments"]))
+if __name__ == "__main__":
+    unittest.main()

@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sqlite3
 import stat
 import tempfile
@@ -148,25 +149,31 @@ class SQLiteRestoreTests(unittest.TestCase):
             with SQLiteConfigurationRepository(destination):
                 pass
 
-    def test_pending_switch_backup_is_refused_before_any_destination_appears(self) -> None:
-        """A store this version refuses to start is not published to an empty target."""
+    def test_previous_schema_backup_is_refused_before_any_destination_appears(self) -> None:
+        """A backup this version refuses to start is not published to an empty target."""
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "mediaflow.sqlite3"
             document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
             document["persistence"] = {"databasePath": str(source)}
-            _, unpublished = seed_configuration_schema_11_store(document)
-            backup = root / "pre-switch.sqlite3"
-            SQLiteBackupService(source).backup(backup)
+            seed_configuration_schema_11_store(document)
+            with self.assertRaisesRegex(ValueError, "not usable by this MediaFlow version"):
+                SQLiteBackupService(source).backup(root / "unused.sqlite3")
+            backup = root / "previous-build.sqlite3"
+            backup.write_bytes(source.read_bytes())
             before = (backup.stat().st_mtime_ns, hashlib.sha256(backup.read_bytes()).hexdigest())
             destination = root / "restored.sqlite3"
             with self.assertRaisesRegex(
-                ValueError, "cannot be published to an empty destination"
+                ValueError,
+                re.compile(
+                    r"not usable by this MediaFlow version.*configuration schema was created by "
+                    r"a previous MediaFlow version",
+                    re.DOTALL,
+                ),
             ) as refused:
                 SQLiteRestoreService(backup, destination).restore(confirmed_empty_destination=True)
-            self.assertIn("configuration data switch is pending", str(refused.exception))
-            self.assertIn(unpublished.revision_id, str(refused.exception))
+            self.assertIn("found 11, expected 12", str(refused.exception))
             self.assertFalse(destination.exists())
             self.assertEqual(list(root.glob(".mediaflow-restore-*")), [])
             self.assertEqual(

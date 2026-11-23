@@ -186,10 +186,6 @@ def container_preflight_errors(
                 )
             else:
                 try:
-                    from mediaflow.infrastructure.configuration_data_switch import (
-                        ConfigurationDataSwitchRequired,
-                        reject_pending_configuration_switch,
-                    )
                     from mediaflow.infrastructure.sqlite_applicability import (
                         DatabaseApplicabilityError,
                         assert_supported_database,
@@ -204,14 +200,7 @@ def container_preflight_errors(
                         current_runtime_version=SCHEMA_VERSION,
                         current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
                     )
-                    if service is not None:
-                        # A previous configuration schema 11 store can still
-                        # contain draft-era rows.  Ordinary service start must
-                        # stop before the runtime repository creates tables or
-                        # an origin marker; the operator reviews it with
-                        # ``config status`` and applies the explicit switch.
-                        reject_pending_configuration_switch(path)
-                except (DatabaseApplicabilityError, ConfigurationDataSwitchRequired) as error:
+                except DatabaseApplicabilityError as error:
                     errors.append(str(error))
                 except (OSError, ValueError, RuntimeError) as error:
                     errors.append(f"persistence.databasePath could not be checked: {error}")

@@ -39,7 +39,7 @@ jobs:
       - name: Dependency consistency
         run: python -m pip check
       - name: Configuration example
-        run: mediaflow --config config/strategy.example.json config validate
+        run: python -c "import json; from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration; runtime = load_runtime_configuration(json.load(open('config/strategy.example.json', encoding='utf-8'))); strategy = runtime.strategy; assert len(strategy.recognition_rules) > 0 and len(strategy.recognition_type_policies) > 0; print('sample configuration validated')"
       - name: Forbidden runtime dependency audit
         run: test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"
 

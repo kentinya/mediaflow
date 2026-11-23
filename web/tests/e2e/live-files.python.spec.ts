@@ -2,19 +2,21 @@ import { expect, test, type Page } from "@playwright/test";
 import { accountForToken, submitSignIn } from "./auth";
 
 /**
- * Real-Python/CLI/Web parity proof for Task45.5 (RO-7).
+ * Real-Python API/Web parity proof for Task45.5 (RO-7), kept through Task 58.2.
  *
  * Runs against `playwright.python.config.ts`, which starts
  * `scripts/operations_inventory_harness.py`: one Python process serving the
- * built V2 artifact, the real `MediaFlowApi` and the real `mediaflow files
- * list` CLI over one temporary checked Active SQLite store. The same isolated
- * fixture therefore backs both surfaces, so a parity assertion compares two
- * real product paths rather than two independently faked servers.
+ * built V2 artifact and the real `MediaFlowApi` over one temporary checked
+ * Active SQLite store.  The retired general CLI was the second surface in the
+ * original proof; its two library-file reads are the current
+ * `GET /api/resource-libraries/{id}/files` and
+ * `GET /api/media-libraries/{id}/files` routes the Web pages themselves call,
+ * so the same isolated fixture still backs both compared paths.
  *
  * Proven journeys on one mixed directory (media + non-media + directory +
  * Unicode + long name + boundary whitespace + many pages):
- *   - the Web ResourceLibrary Files page and the CLI agree entry-for-entry;
- *   - the Web MediaLibrary Files page and the CLI agree entry-for-entry;
+ *   - the Web ResourceLibrary Files page and the API agree entry-for-entry;
+ *   - the Web MediaLibrary Files page and the API agree entry-for-entry;
  *   - cursor pagination binds library kind/id/root and reaches every entry;
  *   - the read is strictly read-only (no directory/observation/Task write and
  *     no mutation request reaches the API);
@@ -33,9 +35,14 @@ const UNICODE_NAME = "长片名.2020.mkv";
 const LONG_NAME = `${"L".repeat(120)}.mkv`;
 const PADDED_NAME = " padded .mkv";
 
-type CliResult = { ok: boolean; code: number; output: string };
+type FilesPage = {
+  entries: Array<{ name: string; type: string; size: number }>;
+  nextCursor: string | null;
+  hasNext: boolean;
+};
 
-async function cliFilesList(
+/** Read one live library directory through the exact route the page uses. */
+async function libraryFiles(
   page: Page,
   options: {
     kind: "resource" | "media";
@@ -44,31 +51,31 @@ async function cliFilesList(
     limit?: number;
     cursor?: string;
   },
-): Promise<CliResult> {
-  const params = new URLSearchParams({
-    kind: options.kind,
-    library: options.library,
-  });
+): Promise<{ status: number; document: FilesPage }> {
+  const params = new URLSearchParams();
   if (options.path !== undefined) params.set("path", options.path);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor !== undefined) params.set("cursor", options.cursor);
-  const response = await page.request.get(
-    `/__harness__/cli-files-list?${params.toString()}`,
-  );
-  expect(response.ok()).toBe(true);
-  return (await response.json()) as CliResult;
+  const url =
+    options.kind === "resource"
+      ? `/api/resource-libraries/${options.library}/files?${params.toString()}`
+      : `/api/media-libraries/${options.library}/files?${params.toString()}`;
+  const response = await page.request.get(url, {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
+  return {
+    status: response.status(),
+    document: (await response.json()) as FilesPage,
+  };
 }
 
-/** Parse the CLI's `NAME | TYPE | SIZE | MODIFIED` rows into ordered tuples. */
-function cliRows(output: string): Array<[string, string, string]> {
-  const rows: Array<[string, string, string]> = [];
-  for (const line of output.split("\n")) {
-    const match = line.match(/^(.*) \| (file|directory) \| (\d+) \| /);
-    if (match !== null && match[1] !== "NAME") {
-      rows.push([match[1], match[2], match[3]]);
-    }
-  }
-  return rows;
+/** The ordered (name, type, size) tuples of one library page. */
+function pageRows(document: FilesPage): Array<[string, string, string]> {
+  return document.entries.map((entry) => [
+    entry.name,
+    entry.type,
+    String(entry.size),
+  ]);
 }
 
 async function apiRows(
@@ -113,16 +120,16 @@ async function openWebFiles(
   await expect(page.getByRole("table")).toBeVisible();
 }
 
-test("CLI and the Web ResourceLibrary page list the same live directory", async ({
+test("the API and the Web ResourceLibrary page list the same live directory", async ({
   page,
 }) => {
-  const cli = await cliFilesList(page, {
+  const api = await libraryFiles(page, {
     kind: "resource",
     library: "source",
     path: LIVE_PATH,
   });
-  expect(cli.code).toBe(0);
-  const rows = cliRows(cli.output);
+  expect(api.status).toBe(200);
+  const rows = pageRows(api.document);
   const names = rows.map(([name]) => name);
   expect(names).toContain("Alpha.2001.mkv");
   expect(names).toContain("Beta.txt");
@@ -131,17 +138,13 @@ test("CLI and the Web ResourceLibrary page list the same live directory", async 
   expect(names).toContain(LONG_NAME);
   // Boundary whitespace is preserved exactly, not trimmed away.
   expect(names).toContain(PADDED_NAME);
-  expect(cli.output).toContain("Total: unknown");
-  expect(cli.output).not.toContain("file_id");
+  // The page publishes no total for a single bounded directory read.
+  expect(api.document.hasNext).toBe(false);
 
   const entries = await apiRows(page, "resource", "source", LIVE_PATH);
-  const apiTuples = entries.map(
-    (entry) => [entry.name, entry.type, String(entry.size)] as const,
-  );
-  // The CLI applies no Organize/media filter: it publishes every entry the API
-  // publishes, in the same order, with the same type and size.
-  expect(rows.map((row) => [row[0], row[1], row[2]])).toEqual(
-    apiTuples.map((row) => [row[0], row[1], row[2]]),
+  // The page and the API agree entry-for-entry: same order, type and size.
+  expect(rows).toEqual(
+    entries.map((entry) => [entry.name, entry.type, String(entry.size)]),
   );
 
   await openWebFiles(page, "resource", "source", LIVE_PATH);
@@ -158,20 +161,20 @@ test("CLI and the Web ResourceLibrary page list the same live directory", async 
   }
 });
 
-test("CLI and the Web MediaLibrary page list the same live directory", async ({
+test("the API and the Web MediaLibrary page list the same live directory", async ({
   page,
 }) => {
-  const cli = await cliFilesList(page, {
+  const api = await libraryFiles(page, {
     kind: "media",
     library: "movies",
     path: LIVE_PATH,
   });
-  expect(cli.code).toBe(0);
-  const rows = cliRows(cli.output);
+  expect(api.status).toBe(200);
+  const rows = pageRows(api.document);
   expect(rows.map(([name]) => name)).toContain("Alpha.2001.mkv");
 
   const entries = await apiRows(page, "media", "movies", LIVE_PATH);
-  expect(rows.map((row) => [row[0], row[1], row[2]])).toEqual(
+  expect(rows).toEqual(
     entries.map((entry) => [entry.name, entry.type, String(entry.size)]),
   );
 
@@ -185,85 +188,83 @@ test("cursor pagination binds library kind/id/root and reaches every entry", asy
   page,
 }) => {
   // The full fixture directory is fixed, so paging through every bounded page
-  // must reconstruct it entry-for-entry.  A CLI cursor failure still exits 0,
-  // so the assertions must prove real, non-empty, non-overlapping pages rather
-  // than only checking the exit code.
-  const full = await cliFilesList(page, {
+  // must reconstruct it entry-for-entry with real, non-empty, non-overlapping
+  // pages — never a silently repeated or truncated listing.
+  const full = await libraryFiles(page, {
     kind: "resource",
     library: "source",
     path: LIVE_PATH,
     limit: 100,
   });
-  expect(full.code).toBe(0);
-  const expected = cliRows(full.output).map(([name]) => name);
+  expect(full.status).toBe(200);
+  const expected = pageRows(full.document).map(([name]) => name);
   expect(expected.length).toBeGreaterThan(5);
 
-  const first = await cliFilesList(page, {
+  const first = await libraryFiles(page, {
     kind: "resource",
     library: "source",
     path: LIVE_PATH,
     limit: 5,
   });
-  expect(first.code).toBe(0);
-  expect(first.output).toContain("More available: yes");
-  expect(first.output).not.toContain("storage_browser_cursor_invalid");
-  const cursor = first.output.match(/Next cursor: (.+)/)?.[1]?.trim();
+  expect(first.status).toBe(200);
+  expect(first.document.hasNext).toBe(true);
+  const cursor = first.document.nextCursor;
   expect(cursor).toBeTruthy();
-  expect(cursor).not.toBe("-");
 
-  const second = await cliFilesList(page, {
+  const second = await libraryFiles(page, {
     kind: "resource",
     library: "source",
     path: LIVE_PATH,
     limit: 5,
     cursor: cursor as string,
   });
-  expect(second.code).toBe(0);
-  // The second page must actually load: a cursor error would otherwise be
-  // invisible behind the CLI's exit code.
-  expect(second.output).not.toContain("storage_browser_cursor_invalid");
-  const secondNames = cliRows(second.output).map(([name]) => name);
+  expect(second.status).toBe(200);
+  const firstNames = pageRows(first.document).map(([name]) => name);
+  const secondNames = pageRows(second.document).map(([name]) => name);
   expect(secondNames.length).toBeGreaterThan(0);
-  const firstNames = cliRows(first.output).map(([name]) => name);
   expect(secondNames).not.toEqual(firstNames);
   expect(secondNames.some((name) => firstNames.includes(name))).toBe(false);
 
   // Continue to the last page and prove the union equals the full listing.
   const collected = [...firstNames, ...secondNames];
-  let next: string | undefined = second.output
-    .match(/Next cursor: (.+)/)?.[1]
-    ?.trim();
-  while (next && next !== "-") {
-    const pageResult = await cliFilesList(page, {
+  let next: string | null = second.document.nextCursor;
+  while (next) {
+    const pageResult = await libraryFiles(page, {
       kind: "resource",
       library: "source",
       path: LIVE_PATH,
       limit: 5,
       cursor: next,
     });
-    expect(pageResult.code).toBe(0);
-    expect(pageResult.output).not.toContain("storage_browser_cursor_invalid");
-    collected.push(...cliRows(pageResult.output).map(([name]) => name));
-    next = pageResult.output.match(/Next cursor: (.+)/)?.[1]?.trim();
+    expect(pageResult.status).toBe(200);
+    collected.push(...pageRows(pageResult.document).map(([name]) => name));
+    next = pageResult.document.nextCursor;
   }
   expect([...collected].sort()).toEqual([...expected].sort());
 
   // The same cursor is rejected across a different library kind and root: a
   // cursor is bound to library kind, ID, root, configuration and directory.
-  const crossed = await cliFilesList(page, {
+  const crossed = await libraryFiles(page, {
     kind: "media",
     library: "movies",
     path: LIVE_PATH,
     limit: 5,
     cursor: cursor as string,
   });
-  expect(crossed.output).toContain("storage_browser_cursor_invalid");
+  expect(crossed.status).toBe(400);
+  expect(JSON.stringify(crossed.document)).toContain(
+    "storage_browser_cursor_invalid",
+  );
 });
 
 test("the live read is strictly read-only on the server", async ({ page }) => {
   const mutations: string[] = [];
   page.on("request", (request) => {
     const method = request.method();
+    // Signing in is authentication, not a listing effect: the session POST is
+    // the browser establishing identity, so it is excluded from the
+    // "the read mutates nothing" evidence.
+    if (request.url().includes("/api/auth/")) return;
     if (
       method !== "GET" &&
       method !== "HEAD" &&
@@ -280,11 +281,12 @@ test("the live read is strictly read-only on the server", async ({ page }) => {
   await openWebFiles(page, "resource", "source", LIVE_PATH);
   await page.getByRole("button", { name: "刷新" }).click();
   await expect(page.getByRole("table")).toBeVisible();
-  await cliFilesList(page, {
+  const read = await libraryFiles(page, {
     kind: "resource",
     library: "source",
     path: LIVE_PATH,
   });
+  expect(read.status).toBe(200);
 
   const after = await page.request.get("/__harness__/retirement-state");
   const afterCounts = (
@@ -358,31 +360,33 @@ test("sorted and selected live folders open the same real entry on both pages", 
 test("unknown library and missing directory answer honestly and recover", async ({
   page,
 }) => {
-  const unknown = await cliFilesList(page, {
+  const unknown = await libraryFiles(page, {
     kind: "resource",
     library: "does-not-exist",
     path: LIVE_PATH,
   });
-  expect(unknown.output).toContain(
-    "storage_browser_resource_library_not_found",
-  );
-  expect(unknown.output).toMatch(/Next action:/);
+  expect(unknown.status).toBeGreaterThanOrEqual(400);
+  const unknownBody = JSON.stringify(unknown.document);
+  expect(unknownBody).toContain("storage_browser_resource_library_not_found");
+  expect(unknownBody).toContain("nextAction");
 
-  const missing = await cliFilesList(page, {
+  const missing = await libraryFiles(page, {
     kind: "resource",
     library: "source",
     path: "No-Such-Directory",
   });
-  expect(missing.output).toContain("storage_browser_not_found");
-  expect(missing.output).toMatch(/Next action:/);
+  expect(missing.status).toBeGreaterThanOrEqual(400);
+  const missingBody = JSON.stringify(missing.document);
+  expect(missingBody).toContain("storage_browser_not_found");
+  expect(missingBody).toContain("nextAction");
 
   // The failure is recoverable: reading the real directory immediately after
   // succeeds and never falls back to a JSON snapshot or an index.
-  const recovered = await cliFilesList(page, {
+  const recovered = await libraryFiles(page, {
     kind: "resource",
     library: "source",
     path: LIVE_PATH,
   });
-  expect(recovered.code).toBe(0);
-  expect(cliRows(recovered.output).length).toBeGreaterThan(0);
+  expect(recovered.status).toBe(200);
+  expect(pageRows(recovered.document).length).toBeGreaterThan(0);
 });

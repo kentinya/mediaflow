@@ -36,7 +36,6 @@ from mediaflow.domain.metadata import (
     MetadataError,
     MetadataErrorCode,
 )
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 from tests.test_automation_entrance_recovery import (
     ADMIN_TOKEN,
@@ -207,18 +206,23 @@ class MetadataSearchYearTests(unittest.TestCase):
         utime(path, (stamp, stamp))
         return path
 
-    def _run_cli(self, value, *arguments: str) -> None:
-        output, errors = io.StringIO(), io.StringIO()
-        with patch(
-            "mediaflow.final_cli.metadata_provider_registry_from_environment",
-            return_value=value.provider_registry,
-        ):
-            code = final_main(
-                ["--config", str(value.config), *arguments],
-                stdout=output,
-                stderr=errors,
-            )
-        self.assertEqual(0, code, errors.getvalue())
+    def _admit(self, value, *, limit: int) -> None:
+        """Admit one organizing Task through the current scheduling kernel.
+
+        The general CLI that used to admit and drive a direct organize run is
+        retired; the same admitted Task is now driven by the resident Worker
+        passes below, which is the production path every organizing entrance
+        (Files, Automation, Run once) shares.
+        """
+
+        from tests.task_engine_test_helpers import admit_organize_task
+
+        admit_organize_task(
+            value.repository,
+            snapshot_id=value.revision.revision_id,
+            snapshot_digest=value.revision.digest,
+            limit=limit,
+        )
 
     def _resident_pass(self, value, *, prefix: str):
         from mediaflow.application.manual_organize_execution import (
@@ -281,8 +285,11 @@ class MetadataSearchYearTests(unittest.TestCase):
             viewer_token=VIEWER_TOKEN,
         ) as value:
             self._write_media(value, media)
-            self._run_cli(value, "organize", "--execute", "--limit", "5")
+            self._admit(value, limit=5)
             (task,) = value.repository.list_tasks()
+            # The first Worker pass runs the admitted analysis and publishes
+            # the Task's items; a settled item is then read back durably.
+            self._resident_pass(value, prefix="metadata-search")
             (item,) = value.repository.list_items(task.task_id)
             for _ in range(8):
                 if item.status.value == "waiting_metadata_correction":
@@ -683,8 +690,9 @@ class MetadataSearchYearTests(unittest.TestCase):
             for number in range(1, 9):
                 self._write_media(value, f"黑袍纠察队.2024.S04E{number:02d}.mkv")
             self._write_media(value, "未知剧.2024.S04E01.mkv")
-            self._run_cli(value, "organize", "--execute", "--limit", "20")
+            self._admit(value, limit=20)
             (task,) = value.repository.list_tasks()
+            self._resident_pass(value, prefix="the-boys-s04")
             items = value.repository.list_items(task.task_id)
             for _ in range(20):
                 settled = {
@@ -831,8 +839,11 @@ class MetadataSearchYearTests(unittest.TestCase):
             viewer_token=VIEWER_TOKEN,
         ) as value:
             self._write_media(value, TV_MEDIA)
-            self._run_cli(value, "organize", "--execute", "--limit", "5")
+            self._admit(value, limit=5)
             (task,) = value.repository.list_tasks()
+            # The first Worker pass runs the admitted analysis and publishes
+            # the Task's items; a settled item is then read back durably.
+            self._resident_pass(value, prefix="metadata-search")
             (item,) = value.repository.list_items(task.task_id)
             for _ in range(8):
                 if item.status.value in {
@@ -928,8 +939,11 @@ class MetadataSearchYearTests(unittest.TestCase):
             max_provider_requests=2,
         ) as value:
             self._write_media(value, TV_MEDIA)
-            self._run_cli(value, "organize", "--execute", "--limit", "5")
+            self._admit(value, limit=5)
             (task,) = value.repository.list_tasks()
+            # The first Worker pass runs the admitted analysis and publishes
+            # the Task's items; a settled item is then read back durably.
+            self._resident_pass(value, prefix="metadata-search")
             (item,) = value.repository.list_items(task.task_id)
             for _ in range(8):
                 if item.status.value == "waiting_metadata":

@@ -188,7 +188,7 @@ its affected checks. Task/Slice add risk-specific commands instead of duplicatin
 | Area | Commands / required behavior |
 |---|---|
 | Python quality | `.venv/bin/python scripts/check_governance.py`; `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`; `.venv/bin/python -m unittest discover -s tests`; `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check` |
-| Example / forbidden dependencies | `.venv/bin/mediaflow --config config/strategy.example.json config validate`. The dependency audit `rg -n -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` must have no match (exit 1). |
+| Example / forbidden dependencies | The shipped sample is judged by the same loader the services use: `.venv/bin/python -c "import json; from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration; load_runtime_configuration(json.load(open('config/strategy.example.json', encoding='utf-8')))"`. The dependency audit `rg -n -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` must have no match (exit 1). |
 | Web (cwd `web/`) | `npm run typecheck`; `npm run lint`; `npm run format:check`; `npm run test -- run`; `npm run build`; `npm run test:e2e` |
 | Real application / visual | Slice-specific real Python/API/SQLite/Worker browser journeys against production assets; inspect actual desktop/narrow screenshots and interaction where required |
 | Packaging / production | `.venv/bin/python -m pip wheel . --no-deps -w dist`; `.venv/bin/python scripts/wheel_smoke_test.py <exact-wheel>`; installed consumers outside source; applicable Docker/restart proofs; `.venv/bin/python scripts/docker_release_security_smoke_test.py --image <candidate-image>` |

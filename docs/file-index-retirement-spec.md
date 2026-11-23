@@ -11,7 +11,7 @@
 | 环节 | 必需结果 |
 |---|---|
 | 目标 | 查看所选资源库/媒体库此刻真实存在的目录和文件，不维护另一份文件目录数据库 |
-| 入口 | CLI `mediaflow files list`；V2 文件页；V2 媒体库页；对应库级实时浏览 API |
+| 入口 | V2 文件页；V2 媒体库页；对应库级实时浏览 API（通用 CLI 已随 Slice 58 退役） |
 | 可见状态 | 明确的库种类/名称、相对目录、真实文件名/类型/大小/修改时间、有界分页与可用状态 |
 | 动作 | 选择一个库、打开目录、翻页、刷新；浏览动作不准备整理或保存文件观察 |
 | 成功 | 三种入口对同一库和目录使用同一应用浏览行为，显示相同 Storage 条目与边界 |
@@ -28,8 +28,8 @@
 
 ## 2. 三入口的共享应用行为
 
-复用现有 `RuntimeFilesBrowserService` 的库级实时浏览，CLI 直接调用同一应用行为；
-不复制一套 CLI 遍历器，不通过 shell/浏览器绕行，不以 FileIndex/Result 决定条目是否存在。
+复用现有 `RuntimeFilesBrowserService` 的库级实时浏览，两个库文件 API 与页面调用同一应用行为；
+不以 FileIndex/Result 决定条目是否存在。
 
 统一输入为库种类、稳定库 ID、库根下相对目录及现有有界分页参数。
 应用解析精确 Active 的 Storage/root，所有 list/stat 均通过 Storage 接口。
@@ -46,13 +46,16 @@ ResourceLibrary 与 MediaLibrary 的同名 ID、同 Storage/root 仍是不同作
 有界结果、截断、下一页及未知总量真实表达；Storage 故障不显示为零。
 实时目录变化可能使后续分页失效，不承诺未建立快照的跨请求完整快照一致性。
 
-## 3. CLI 的 CURRENT 使用方式
+## 3. CURRENT 使用方式
 
-```bash
-mediaflow files list --resource-library SOURCE_ID --path "relative/directory" --limit 100
-mediaflow files list --media-library MEDIA_ID --path "relative/directory" --limit 100
-mediaflow files list --resource-library SOURCE_ID --path "relative/directory" --limit 100 --cursor CURSOR
+```text
+GET /api/resource-libraries/{SOURCE_ID}/files?path=relative/directory&limit=100
+GET /api/media-libraries/{MEDIA_ID}/files?path=relative/directory&limit=100
+GET /api/resource-libraries/{SOURCE_ID}/files?path=relative/directory&limit=100&cursor=CURSOR
 ```
+
+通用 CLI 与其 `files list` 已随 Slice 58 退役；同一部署内的页面与 API 进程共享持久化的
+内部游标密钥，因此一页发出的游标可在另一进程继续。
 
 两种库选择互斥且必须明确；路径默认库根，使用库相对路径。缺少/冲突选择给出可操作用法，
 不默认为全部库递归、不把 `--storage` 加任意路径作为库约束绕过。CLI 与 Web 解析同一 Managed

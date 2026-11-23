@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 from mediaflow.application.accounts import AccountService, hash_password
 from mediaflow.domain.accounts import Account
+from mediaflow.domain.configuration_input import reject_retired_configuration_input
 from mediaflow.domain.security import ApiPermission, ApiRole, ResolvedApiPrincipal
-from mediaflow.final_cli import final_main
 from mediaflow.host_operations import main as host_main
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -82,12 +82,12 @@ def run_service(config: Path, service: str):
 
 
 class ApiCredentialTests(unittest.TestCase):
-    def test_retired_bearer_generator_and_credential_commands_are_unknown(self) -> None:
-        for argv in (["api", "token", "generate"], ["api", "credentials", "check"]):
-            with self.subTest(argv=argv):
-                with self.assertRaises(SystemExit) as raised:
-                    final_main(argv, stdout=io.StringIO(), stderr=io.StringIO())
-                self.assertEqual(2, raised.exception.code)
+    def test_retired_bearer_generator_and_credential_modules_are_absent(self) -> None:
+        # The general CLI that used to carry these commands is retired.
+        for module in ("mediaflow.cli", "mediaflow.final_cli"):
+            with self.subTest(module=module):
+                with self.assertRaises(ModuleNotFoundError):
+                    __import__(module)
 
     def test_account_setup_code_and_reset_are_host_local_and_secret_free(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -157,17 +157,13 @@ class ApiCredentialTests(unittest.TestCase):
             }
             config.write_text(json.dumps(document), encoding="utf-8")
 
-            for argv, expected in ((["config", "validate"], "api.principals is retired"),):
-                with self.subTest(argv=argv):
-                    error = io.StringIO()
-                    status = final_main(
-                        ["--config", str(config), *argv],
-                        stdout=io.StringIO(),
-                        stderr=error,
-                    )
-                    self.assertEqual(2, status)
-                    self.assertIn(expected, error.getvalue())
-                    self.assertIn("remove it", error.getvalue())
+            # The retired principal input is rejected by the shared loader that
+            # every current entrance uses, before any service can start.
+            with self.subTest(rejection="api.principals"):
+                with self.assertRaises(ValueError) as refused:
+                    reject_retired_configuration_input(document)
+                self.assertIn("api.principals is retired", str(refused.exception))
+                self.assertIn("remove it", str(refused.exception))
             status, output, error = run_service(config, "api")
             self.assertEqual(2, status)
             self.assertEqual("", output)
@@ -175,14 +171,10 @@ class ApiCredentialTests(unittest.TestCase):
 
             document["api"] = {"tokenEnv": "MEDIAFLOW_API_TOKEN"}
             config.write_text(json.dumps(document), encoding="utf-8")
-            error = io.StringIO()
-            status = final_main(
-                ["--config", str(config), "config", "validate"],
-                stdout=io.StringIO(),
-                stderr=error,
-            )
-            self.assertEqual(2, status)
-            self.assertIn("api.tokenEnv is retired", error.getvalue())
+            with self.subTest(rejection="api.tokenEnv"):
+                with self.assertRaises(ValueError) as refused:
+                    reject_retired_configuration_input(document)
+                self.assertIn("api.tokenEnv is retired", str(refused.exception))
 
     def test_accounts_command_leaves_a_foreign_database_untouched(self) -> None:
         import hashlib

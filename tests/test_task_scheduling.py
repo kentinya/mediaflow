@@ -1355,7 +1355,6 @@ class TransitionBoundaryTests(unittest.TestCase):
             # The current execution authority reads one admitted Task's
             # scheduling row for its Run once admission principal.
             "application/automation_execution_authority.py",
-            "final_cli.py",
             "resident_entry.py",
             "interfaces/service_api.py",
             "domain/task_scheduling.py",

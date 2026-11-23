@@ -13,8 +13,8 @@ The two B blockers this round fixes:
 
 Both journeys run the real production composition end to end: one SQLite file
 holds the managed configuration revisions *and* the runtime work exactly like a
-deployment, the real CLI parser/dispatch and the real API routes admit the Task,
-the real ``final_cli._automatic_task_runner`` (the resident Worker's automatic
+deployment, the real API routes admit the Task, the real
+``resident_entry._automatic_task_runner`` (the resident Worker's automatic
 branch) advances it, and the real ``ManualTaskEngineWorker`` consumer settles
 the confirmed execution.  No synthetic route, no second engine, no user media.
 """
@@ -27,7 +27,7 @@ import json
 import os
 import tempfile
 import unittest
-from contextlib import contextmanager, redirect_stderr
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,6 +37,7 @@ from mediaflow.application.configuration_snapshot import ManagedConfigurationSer
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.failure import decode_failure_explanation
 from mediaflow.domain.metadata import MediaCandidate, MediaType
@@ -44,7 +45,6 @@ from mediaflow.domain.processing_checkpoint import CheckpointConfiguration, Effe
 from mediaflow.domain.security import ApiRole
 from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.domain.task_scheduling import TaskControl
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -295,26 +295,116 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         os.utime(path, (stamp, stamp))
         return path
 
-    def _run_cli(
+    def _run_organize(
         self,
         value,
-        *arguments: str,
-        cancellation_check=None,
-    ) -> tuple[int, str, str]:
-        """Run the real production CLI with the journey's fake Provider only."""
+        *,
+        scope: str | None = None,
+        limit: int | None = None,
+        executor_patch=None,
+        on_disk_full=None,
+        max_passes: int = 12,
+    ):
+        """Admit and drive one organizing Task through the resident Worker.
 
-        output, errors = io.StringIO(), io.StringIO()
-        with patch(
-            "mediaflow.final_cli.metadata_provider_registry_from_environment",
-            return_value=value.provider_registry,
-        ):
-            code = final_main(
-                ["--config", str(value.config), *arguments],
-                stdout=output,
-                stderr=errors,
-                cancellation_check=cancellation_check,
-            )
-        return code, output.getvalue(), errors.getvalue()
+        The retired general CLI was the only caller of the synchronous direct
+        organize driver.  The admitted Task and the shared pipeline it ran are
+        now driven by the production Worker (``_automatic_task_runner`` and the
+        manual Task engine) — the same path Files, Automation and Run once
+        admissions use — so every assertion below reads the durable Task,
+        items, results and scheduling facts those surfaces publish.
+        """
+
+        from mediaflow.application.manual_organize_execution import (
+            ManualOrganizeExecutionService,
+        )
+        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+        from mediaflow.application.task_scheduling import (
+            TaskSchedulingService,
+            build_scheduled_task_admission,
+        )
+        from mediaflow.domain.task_persistence import RunDisplayContext
+        from mediaflow.domain.task_scheduling import TaskControl, TaskTrigger
+        from mediaflow.infrastructure.local_storage import LocalStorage
+        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+        from mediaflow.resident_entry import _automatic_task_runner
+
+        scheduling = TaskSchedulingService(value.repository, capacity=100)
+        task, state = build_scheduled_task_admission(
+            "organize",
+            execute_authorized=True,
+            trigger=TaskTrigger.MANUAL,
+            principal="operator",
+            scope_path=scope,
+            item_limit=limit,
+            configuration_snapshot_id=value.revision.revision_id,
+            configuration_snapshot_digest=value.revision.digest,
+            require_configuration_snapshot=True,
+            now=value.clock.now,
+        )
+        value.repository.admit_scheduled_task(
+            task,
+            state,
+            capacity=100,
+            display=RunDisplayContext(source_scope=scope, origin_kind="remote-organize"),
+        )
+        runner = _automatic_task_runner(value.repository, str(value.config), scheduling)
+        execution = ManualOrganizeExecutionService(
+            value.repository,
+            value.previews,
+            value.intents,
+            configuration=value.runtime,
+            storages={
+                "source": LocalStorage("source", value.source_root),
+                "target": LocalStorage("target", value.target_root),
+            },
+            clock=value.clock,
+        )
+        worker_id = f"organize-{task.task_id}"
+        value.repository.register_worker(
+            worker_id,
+            worker_id,
+            300.0,
+            ("organize",),
+            None,
+            None,
+            SCHEMA_VERSION,
+            value.clock.now,
+        )
+        engine = ManualTaskEngineWorker(
+            value.repository,
+            scheduling,
+            None,
+            execution,
+            worker_id=worker_id,
+            clock=value.clock,
+            automatic_runner=runner,
+        )
+        if on_disk_full is not None:
+            on_disk_full(lambda: scheduling.request_control(task.task_id, TaskControl.CANCEL))
+        try:
+            with (
+                patch(
+                    "mediaflow.resident_entry.metadata_provider_registry_from_environment",
+                    return_value=value.provider_registry,
+                ),
+                patch(
+                    "mediaflow.application.automation_definition_execution.OrganizerExecutor",
+                    executor_patch or OrganizerExecutor,
+                ),
+            ):
+                for _ in range(max_passes):
+                    current = value.repository.get_task(task.task_id)
+                    if current is not None and current.status.value in {
+                        "completed",
+                        "failed",
+                        "cancelled",
+                    }:
+                        break
+                    engine.run_next()
+        finally:
+            value.repository.stop_worker(worker_id, value.clock.now)
+        return value.repository.get_task(task.task_id)
 
     def _target_disk_full(
         self, target_root: Path, *, contains: str | None = None, on_disk_full=None
@@ -415,10 +505,6 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 "mediaflow.resident_entry.metadata_provider_registry_from_environment",
                 return_value=value.provider_registry,
             ),
-            patch(
-                "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                return_value=value.provider_registry,
-            ),
         ):
             settled = worker.run_next()
         value.repository.stop_worker(worker_id, value.clock.now)
@@ -480,28 +566,19 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         )
         return status, confirmed, preparation, ready
 
-    def test_direct_cli_decision_completes_summary_confirm_execution_on_one_task(self):
-        """The direct CLI Task's saved decision finishes on the same Task."""
+    def test_admitted_organize_decision_completes_summary_confirm_execution_on_one_task(self):
+        """An admitted organizing Task's saved decision finishes on the same Task."""
 
         self.media("One.2001.mkv")
         with entrance_journey(self) as value:
-            output, errors = io.StringIO(), io.StringIO()
-            with patch(
-                "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                return_value=value.provider_registry,
-            ):
-                code = final_main(
-                    ["--config", str(value.config), "organize", "--execute", "--limit", "5"],
-                    stdout=output,
-                    stderr=errors,
-                )
-            self.assertEqual(0, code, errors.getvalue())
+            settled = self._run_organize(value, limit=5)
+            self.assertIsNotNone(settled)
             (task,) = value.repository.list_tasks()
             state = value.repository.get_task_scheduling(task.task_id)
             self.assertEqual("manual", state.admission_trigger.value)
-            self.assertEqual("cli", state.admission_principal)
+            self.assertEqual("operator", state.admission_principal)
             display = value.repository.get_run_display_context(task.task_id)
-            self.assertEqual("direct-organize", display.origin_kind)
+            self.assertEqual("remote-organize", display.origin_kind)
             (item,) = value.repository.list_items(task.task_id)
             self.assertEqual("waiting_recognition", item.status.value)
             self.assertEqual(1, len(value.repository.list_tasks()))
@@ -552,9 +629,9 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             preparation = detail["manualRecoveryPreparation"]
             self.assertIsNotNone(preparation, detail)
             # The summary belongs to the authenticated operator who continued
-            # the analysis; the CLI admission principal stays separate provenance.
+            # the analysis; the admission principal stays separate provenance.
             self.assertEqual("admin", preparation["actor"])
-            self.assertEqual("cli", state.admission_principal)
+            self.assertEqual("operator", state.admission_principal)
             self.assertTrue(detail["manualRecoveryAvailable"])
 
             status, preview = self.request(
@@ -635,12 +712,9 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 return original_list(storage, path)
 
             with patch.object(LocalStorage, "list", denied):
-                code, output, errors = self._run_cli(
-                    value, "organize", str(value.source_root), "--execute"
-                )
+                settled = self._run_organize(value, scope=str(value.source_root))
 
-            self.assertEqual(1, code, errors)
-            self.assertIn("Failed: 1", output)
+            self.assertEqual("failed", settled.status.value, settled.error)
             (task,) = value.repository.list_tasks()
             self.assertEqual("failed", task.status.value, task.error)
             self.assertEqual((0, 0, 0), (task.total_items, task.completed_items, task.failed_items))
@@ -675,12 +749,9 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 return original_list(storage, path)
 
             with patch.object(LocalStorage, "list", denied):
-                code, output, errors = self._run_cli(
-                    value, "organize", str(value.source_root), "--execute"
-                )
+                settled = self._run_organize(value, scope=str(value.source_root))
 
-            self.assertEqual(1, code, errors)
-            self.assertIn("Failed: 1", output)
+            self.assertEqual("failed", settled.status.value, settled.error)
             (task,) = value.repository.list_tasks()
             self.assertEqual("failed", task.status.value, task.error)
             self.assertEqual((0, 0, 0), (task.total_items, task.completed_items, task.failed_items))
@@ -698,12 +769,9 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         """A genuinely empty readable scope keeps its completed no-work meaning."""
 
         with entrance_journey(self, movie_rule=True) as value:
-            code, output, errors = self._run_cli(
-                value, "organize", str(value.source_root), "--execute"
-            )
+            settled = self._run_organize(value, scope=str(value.source_root))
 
-            self.assertEqual(0, code, errors)
-            self.assertIn("Failed: 0", output)
+            self.assertEqual("completed", settled.status.value, settled.error)
             (task,) = value.repository.list_tasks()
             self.assertEqual("completed", task.status.value, task.error)
             self.assertEqual((0, 0, 0), (task.total_items, task.completed_items, task.failed_items))
@@ -728,20 +796,12 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             candidates=candidates,
         ) as value:
             with patch.object(Path, "open", self._target_disk_full(value.target_root)):
-                code, output, errors = self._run_cli(
-                    value, "organize", str(first), "--execute", "--limit", "1"
-                )
+                settled = self._run_organize(value, scope=str(first), limit=1)
 
-            # The real target write failed, but the process finished cleanly:
-            # the CLI reports the durable Task and its business failure instead
-            # of a settlement exception.
-            self.assertEqual(1, code, errors)
-            self.assertEqual("", errors, errors)
-            self.assertIn("Task ID:", output)
-            self.assertIn("SUMMARY", output)
-            self.assertIn("PARTIAL", output)
-            self.assertIn("Failed: 1", output)
-            self.assertIn("No space left on device", output)
+            # The real target write failed, but the Worker pass finished
+            # cleanly: the durable Task carries its business failure and the
+            # uncertain effect instead of a settlement exception.
+            self.assertEqual("completed", settled.status.value, settled.error)
 
             (first_task,) = value.repository.list_tasks()
             (first_item,) = value.repository.list_items(first_task.task_id)
@@ -766,13 +826,11 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             )
 
             # Removing the fault lets a genuinely different file through the
-            # same CLI and shared capacity; it is a new Task, not a replay of A.
+            # same Worker and shared capacity; it is a new Task, not a replay
+            # of A.
             second = self.media("Two.2002.mkv")
-            code, output, errors = self._run_cli(
-                value, "organize", str(second), "--execute", "--limit", "1"
-            )
-            self.assertEqual(0, code, errors)
-            self.assertIn("Task ID:", output)
+            second_settled = self._run_organize(value, scope=str(second), limit=1)
+            self.assertEqual("completed", second_settled.status.value, second_settled.error)
             tasks = value.repository.list_tasks()
             self.assertEqual(2, len(tasks))
             second_task = next(task for task in tasks if task.task_id != first_task.task_id)
@@ -819,15 +877,9 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 "open",
                 self._target_disk_full(value.target_root, contains="Two (2002)"),
             ):
-                code, output, errors = self._run_cli(
-                    value, "organize", str(value.source_root), "--execute", "--limit", "5"
-                )
+                settled = self._run_organize(value, scope=str(value.source_root), limit=5)
 
-            self.assertEqual(1, code, errors)
-            self.assertEqual("", errors, errors)
-            self.assertIn("Task ID:", output)
-            self.assertIn("PARTIAL", output)
-            self.assertIn("SUCCESS", output)
+            self.assertEqual("completed", settled.status.value, settled.error)
             (task,) = value.repository.list_tasks()
             self.assertEqual("completed", task.status.value, task.error)
             items = {
@@ -885,16 +937,10 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 "open",
                 self._target_disk_full(value.target_root, contains="Two (2002)"),
             ):
-                code, output, errors = self._run_cli(
-                    value, "batch", "organize", "--execute", "--limit", "5"
-                )
+                settled = self._run_organize(value, limit=5)
 
-            self.assertEqual(1, code, errors)
-            self.assertEqual("", errors, errors)
+            self.assertEqual("completed", settled.status.value, settled.error)
             self.assertEqual(["One", "Two"], provider.queries)
-            self.assertIn("Task ID:", output)
-            self.assertIn("PARTIAL", output)
-            self.assertIn("SUCCESS", output)
             (task,) = value.repository.list_tasks()
             self.assertEqual("completed", task.status.value, task.error)
             items = {
@@ -962,14 +1008,10 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         ) as value:
             provider = _RecordingProvider()
             value.provider_registry = MetadataProviderRegistry((provider,))
-            code, output, errors = self._run_cli(
-                value, "batch", "organize", "--execute", "--limit", "5"
-            )
+            settled = self._run_organize(value, limit=5)
 
-            self.assertEqual(0, code, errors)
-            self.assertEqual("", errors, errors)
+            self.assertEqual("completed", settled.status.value, settled.error)
             self.assertEqual(["With: Colon"], provider.queries)
-            self.assertIn("SUCCESS", output)
             (task,) = value.repository.list_tasks()
             (item,) = value.repository.list_items(task.task_id)
             self.assertEqual("success", item.status.value, item.error)
@@ -984,8 +1026,8 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 1, len(list((value.target_root / "Organized" / "Movies").rglob("*.mkv")))
             )
 
-    def test_cli_finished_pass_with_human_waiting_sibling_releases_the_slot(self):
-        """A completed CLI pass waits for its operator without keeping a queue slot."""
+    def test_finished_pass_with_human_waiting_sibling_releases_the_slot(self):
+        """A completed Worker pass waits for its operator without keeping a queue slot."""
 
         self.media("One.2001.mkv")
         self.media("Two.2002.mkv")
@@ -1001,13 +1043,9 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 "open",
                 self._target_disk_full(value.target_root, contains="One (2001)"),
             ):
-                code, output, errors = self._run_cli(
-                    value, "organize", str(value.source_root), "--execute", "--limit", "5"
-                )
+                settled = self._run_organize(value, scope=str(value.source_root), limit=5)
 
-            self.assertEqual(1, code, errors)
-            self.assertEqual("", errors, errors)
-            self.assertIn("Task ID:", output)
+            self.assertIsNotNone(settled)
             (task,) = value.repository.list_tasks()
             items = {
                 Path(item.source_path).name: item
@@ -1035,7 +1073,7 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 {worker.status.value for worker in value.repository.list_workers()},
             )
 
-    def test_cli_cancel_after_disk_failure_settles_without_rewriting_partial(self):
+    def test_cancel_after_disk_failure_settles_without_rewriting_partial(self):
         """A cancel at the returned pass boundary keeps the recorded partial Result."""
 
         source = self.media("One.2001.mkv")
@@ -1047,23 +1085,31 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             capacity=1,
             candidates=(MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),),
         ) as value:
-            disk_full = self._target_disk_full(
-                value.target_root, on_disk_full=lambda: cancel.update(requested=True)
-            )
-            with patch.object(Path, "open", disk_full):
-                code, output, errors = self._run_cli(
+            # The operator's accepted cancel arrives while the real target write
+            # is failing, so the pass returns at its own safe boundary with the
+            # partial Result already recorded.
+            cancel_request: dict[str, object] = {}
+
+            def fault_callback():
+                if not cancel["requested"]:
+                    cancel.update(requested=True)
+                    cancel_request["request"]()
+
+            with patch.object(
+                Path,
+                "open",
+                self._target_disk_full(value.target_root, on_disk_full=fault_callback),
+            ):
+                settled = self._run_organize(
                     value,
-                    "organize",
-                    str(source),
-                    "--execute",
-                    "--limit",
-                    "1",
-                    cancellation_check=lambda: cancel["requested"],
+                    scope=str(source),
+                    limit=1,
+                    on_disk_full=lambda request_cancel: cancel_request.update(
+                        request=request_cancel
+                    ),
                 )
 
-            self.assertEqual(130, code, errors)
-            self.assertEqual("", errors, errors)
-            self.assertIn("Task ID:", output)
+            self.assertIsNotNone(settled)
             (task,) = value.repository.list_tasks()
             (item,) = value.repository.list_items(task.task_id)
             (result,) = value.repository.list_results(task.task_id)
@@ -1084,15 +1130,13 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
                 {worker.status.value for worker in value.repository.list_workers()},
             )
 
-    def test_retired_retry_failed_entrance_is_an_ordinary_parse_error(self):
-        """The retired ``tasks retry-failed`` entrance stays retired, zero effects.
+    def test_retired_retry_failed_entrance_is_absent_with_zero_effects(self):
+        """The retired independent failure-retry entrance leaves no runtime path.
 
-        Slice 47 RO-6 removed the independent CLI failure-retry entrance: new
-        organizing starts from Files/``organize`` and an existing Task's own
-        four-type continuation.  The old command is an ordinary unrecognized
-        argument error reached before any runtime construction — no Task, no
-        lock release, no Provider, no Storage effect — and the original failed
-        work keeps every one of its durable facts.
+        Slice 47 RO-6 removed ``tasks retry-failed``; Task 58.2 retired the
+        general CLI that carried it.  A genuine failed file outcome therefore
+        stays exactly as recorded: there is no command, dispatch or module that
+        could re-drive it, and new work starts from Files or a new admission.
         """
 
         source = self.media("One.2001.mkv")
@@ -1101,7 +1145,6 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             movie_rule=True,
             candidates=(MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),),
         ) as value:
-            from mediaflow.application.organizer import OrganizerExecutor
 
             class _ExplodingExecutor(OrganizerExecutor):
                 def execute(self, plan, storages, **kwargs):
@@ -1109,28 +1152,10 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
 
             # One real admitted execution fails before any mutation at the real
             # OrganizerExecutor boundary, so a genuine failed Task exists.
-            output, errors = io.StringIO(), io.StringIO()
-            with (
-                patch(
-                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                    return_value=value.provider_registry,
-                ),
-                patch("mediaflow.final_cli.OrganizerExecutor", _ExplodingExecutor),
-            ):
-                code = final_main(
-                    [
-                        "--config",
-                        str(value.config),
-                        "organize",
-                        str(source),
-                        "--execute",
-                        "--limit",
-                        "5",
-                    ],
-                    stdout=output,
-                    stderr=errors,
-                )
-            self.assertEqual(1, code, errors.getvalue())
+            settled = self._run_organize(
+                value, scope=str(source), limit=5, executor_patch=_ExplodingExecutor
+            )
+            self.assertIsNotNone(settled)
             (failed_task,) = value.repository.list_tasks()
             (failed_item,) = value.repository.list_items(failed_task.task_id)
             self.assertEqual("failed", failed_item.status.value, failed_item)
@@ -1138,28 +1163,14 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             (failed_result,) = value.repository.list_results(failed_task.task_id)
             self.assertTrue(source.exists())
 
-            for extra in ([], ["--execute"]):
-                with self.subTest(extra=extra):
-                    out, err = io.StringIO(), io.StringIO()
-                    with redirect_stderr(err):
-                        with self.assertRaises(SystemExit) as exited:
-                            final_main(
-                                [
-                                    "--config",
-                                    str(value.config),
-                                    "tasks",
-                                    "retry-failed",
-                                    failed_task.task_id,
-                                    *extra,
-                                ],
-                                stdout=out,
-                                stderr=err,
-                            )
-                    self.assertEqual(2, exited.exception.code)
-                    self.assertIn("invalid choice", err.getvalue())
-                    self.assertEqual("", out.getvalue())
+            # The retired entrance has no runtime surface at all.
+            for module in ("mediaflow.cli", "mediaflow.final_cli"):
+                with self.subTest(module=module):
+                    with self.assertRaises(ModuleNotFoundError):
+                        __import__(module)
 
-            # The refusal happened at the parser: zero new work, zero effects.
+            # Nothing was re-driven: one Task, the same item and Result, and no
+            # borrowed capacity.
             self.assertEqual(1, len(value.repository.list_tasks()))
             self.assertEqual(
                 (failed_item,),

@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.operational_logging import SQLiteOperationalLogger
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
@@ -181,7 +180,7 @@ class OperationalLoggingTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as reopened:
                 self.assertEqual(reopened.list_operational_logs(limit=10)[0].log_id, "log-2")
 
-    def test_configuration_and_local_cli_are_bounded(self) -> None:
+    def test_configuration_and_local_read_boundaries_are_bounded(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         self.assertFalse(
             load_runtime_configuration(copy.deepcopy(document)).operational_logging_enabled
@@ -213,23 +212,16 @@ class OperationalLoggingTests(unittest.TestCase):
                 repository.append_operational_log(
                     OperationalLogRecord("safe-log", NOW, LogLevel.ERROR, "worker", "scan.failed")
                 )
-            output, error = io.StringIO(), io.StringIO()
-            self.assertEqual(
-                final_main(
-                    ["--config", str(config), "logs", "list", "--limit", "1"],
-                    stdout=output,
-                    stderr=error,
-                ),
-                0,
-                error.getvalue(),
-            )
-            self.assertIn("scan.failed", output.getvalue())
-            output = io.StringIO()
-            self.assertEqual(
-                final_main(["--config", str(config), "logs", "prune"], stdout=output, stderr=error),
-                0,
-            )
-            self.assertIn("rows removed", output.getvalue())
+                # The bounded local read is the repository query every operator
+                # surface (API log page) serves; the CLI renderer is retired.
+                values = repository.list_operational_logs(limit=1)
+                self.assertEqual(values[0].event, "scan.failed")
+                removed = repository.prune_operational_logs(
+                    before=NOW + timedelta(days=30),
+                    maximum_records=50,
+                )
+                self.assertGreaterEqual(removed, 1)
+                self.assertEqual((), repository.list_operational_logs(limit=10))
 
 
 if __name__ == "__main__":

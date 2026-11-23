@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import copy
-import io
 import json
 import sqlite3
 import tempfile
 import unittest
-from contextlib import redirect_stderr
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,7 +16,6 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     TaskItemStatus,
 )
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 
@@ -177,17 +174,9 @@ class PersistentTaskTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "nested", "runtime.sqlite3")
             document["persistence"] = {"databasePath": str(database)}
+            # The current loading entry validates the runtime document without
+            # touching the configured database path.
             load_runtime_configuration(copy.deepcopy(document))
-            self.assertFalse(database.exists())
-            config = Path(directory, "config.json")
-            config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-            output, errors = io.StringIO(), io.StringIO()
-            code = final_main(
-                ["--config", str(config), "config", "validate"],
-                stdout=output,
-                stderr=errors,
-            )
-            self.assertEqual(code, 0, errors.getvalue())
             self.assertFalse(database.exists())
 
     def test_active_task_is_discoverable_after_reopen(self) -> None:
@@ -223,20 +212,13 @@ class PersistentTaskTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "not running"):
                 coordinator.begin_item(task.task_id, "s", "r", "later.mkv", "later.mkv")
 
-    def test_unknown_scan_command_creates_no_persistent_task_or_file_index(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            config = root / "absent.json"
-            errors = io.StringIO()
-            with redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
-                final_main(
-                    ["--config", str(config), "scan"],
-                    stdout=io.StringIO(),
-                    stderr=errors,
-                )
-            self.assertEqual(2, raised.exception.code)
-            self.assertIn("invalid choice", errors.getvalue())
-            self.assertEqual([], list(root.iterdir()))
+    def test_retired_scan_command_has_no_runtime_surface(self) -> None:
+        # The general CLI that used to accept `scan` is retired; no scan
+        # command, dispatch or module exists anywhere in the runtime.
+        for module in ("mediaflow.cli", "mediaflow.final_cli"):
+            with self.subTest(module=module):
+                with self.assertRaises(ModuleNotFoundError):
+                    __import__(module)
 
 
 class DiscoveryAdmissionIdentityTests(unittest.TestCase):

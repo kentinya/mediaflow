@@ -13,7 +13,6 @@ tests keep the retirement honest through real entry points:
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
 import socket
@@ -27,13 +26,10 @@ import urllib.error
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 from mediaflow.application.accounts import hash_password
 from mediaflow.domain.accounts import Account, AccountSessionRecord
 from mediaflow.domain.security import ApiRole
-from mediaflow.final_cli import final_main
-from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from tests.managed_config_fixture import publish_managed_document
 
@@ -219,81 +215,6 @@ class DashboardApiRetirementTests(unittest.TestCase):
         finally:
             if process.stdout is not None:
                 process.stdout.close()
-
-
-class DashboardCliRetirementTests(unittest.TestCase):
-    def test_help_command_and_argument_are_rejected_at_parse_stage(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            config = _write_configuration(root, (root / "source", root / "target"))
-
-            help_output, help_errors = io.StringIO(), io.StringIO()
-            try:
-                # argparse writes to the live process streams, so both are
-                # redirected to keep the captured help text assertable.
-                with patch("sys.stdout", help_output), patch("sys.stderr", help_errors):
-                    code = final_main(["--help"], stdout=help_output, stderr=help_errors)
-            except SystemExit as error:  # argparse --help exits after printing
-                code = error.code
-            self.assertEqual(code, 0)
-            rendered = help_output.getvalue() + help_errors.getvalue()
-            self.assertIn("tasks", rendered)
-            self.assertNotIn("dashboard", rendered.lower())
-
-            rejected, missing = io.StringIO(), io.StringIO()
-            with patch("sys.stderr", rejected):
-                with self.assertRaises(SystemExit) as raised:
-                    final_main(
-                        ["--config", str(config), "dashboard", "--recent-limit", "5"],
-                        stdout=missing,
-                        stderr=io.StringIO(),
-                    )
-            self.assertEqual(raised.exception.code, 2)
-            self.assertIn("invalid choice: 'dashboard'", rejected.getvalue())
-
-            # The rejection is a parse-stage unknown command: a configuration
-            # that cannot even be read produces the very same failure, so a
-            # configuration or permission error is never the retirement proof.
-            broken = io.StringIO()
-            with patch("sys.stderr", broken):
-                with self.assertRaises(SystemExit) as raised_broken:
-                    final_main(
-                        [
-                            "--config",
-                            str(root / "missing.json"),
-                            "dashboard",
-                            "--recent-limit",
-                            "5",
-                        ],
-                        stdout=io.StringIO(),
-                        stderr=io.StringIO(),
-                    )
-            self.assertEqual(raised_broken.exception.code, 2)
-            self.assertEqual(
-                _without_resource_warnings(rejected.getvalue()),
-                _without_resource_warnings(broken.getvalue()),
-            )
-
-            # The same temporary configuration still serves a normal bounded
-            # read: the retirement did not disturb supported CLI work.
-            listed = io.StringIO()
-            errors = io.StringIO()
-            # A normal bounded read never constructs a media Storage: the
-            # retirement proof cannot rest on configuration or permission
-            # failures.
-            with patch.object(
-                RuntimeConfiguration,
-                "create_storages",
-                side_effect=AssertionError("tasks list constructed a Storage"),
-            ):
-                code = final_main(
-                    ["--config", str(config), "tasks", "list"],
-                    stdout=listed,
-                    stderr=errors,
-                )
-            self.assertEqual(code, 0, errors.getvalue())
-            self.assertIn("TASKS", listed.getvalue())
-            self.assertIn("Total:", listed.getvalue())
 
 
 if __name__ == "__main__":

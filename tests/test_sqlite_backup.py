@@ -156,14 +156,13 @@ class SQLiteBackupTests(unittest.TestCase):
             self.assertTrue(verified.usable)
             self.assertEqual(verified.schema_kind, "configuration")
 
-    def test_pending_switch_store_is_backupable_but_verify_reports_startup_step(self) -> None:
-        """File integrity, version support and service startup are separate answers.
+    def test_previous_schema_store_backup_is_refused_before_any_destination(self) -> None:
+        """A configuration schema 11 store is not usable by this version.
 
-        A supported configuration schema 11 store is exactly what an operator
-        keeps a verified backup of before applying the explicit switch, so the
-        snapshot itself must stay possible.  The formal service start refuses
-        that store until the switch is applied, so ``verify`` reports the same
-        bounded startup step and the exact current handling path.
+        The schema 11 switch is retired, so such a store is no longer the
+        supported pre-switch snapshot: host backup refuses it before writing
+        any destination file, and ``verify`` reports the exact version refusal
+        while leaving the source store unchanged.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -171,30 +170,33 @@ class SQLiteBackupTests(unittest.TestCase):
             database = root / "mediaflow.sqlite3"
             document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
             document["persistence"] = {"databasePath": str(database)}
-            _, unpublished = seed_configuration_schema_11_store(document)
+            seed_configuration_schema_11_store(document)
             config = root / "config.json"
             config.write_text(
                 json.dumps({"version": 1, "persistence": document["persistence"]}),
                 encoding="utf-8",
             )
-            backup = root / "pre-switch.sqlite3"
+            backup = root / "unused.sqlite3"
 
             code, output, error = run_host(config, "backup", "--output", str(backup))
-            self.assertEqual(code, 0, error)
-            self.assertIn("Usable by this version: YES", output)
-            self.assertIn("Cannot start yet:", output)
-            self.assertIn(unpublished.revision_id, output)
-            self.assertIn("retire-unpublished --confirm", output)
+            self.assertEqual(code, 2, output)
+            self.assertIn("not usable by this MediaFlow version", error)
+            self.assertIn("configuration schema was created by a previous MediaFlow version", error)
+            self.assertIn("found 11, expected 12", error)
+            self.assertFalse(backup.exists())
+            self.assertEqual(list(root.glob(".mediaflow-backup-*")), [])
 
-            verified = SQLiteBackupService(database).verify(backup)
-            self.assertTrue(verified.usable)
-            self.assertIsNone(verified.applicability_reason)
-            self.assertIn("configuration data switch is pending", verified.startup_blocked_reason)
-            code, output, error = run_host(config, "verify", str(backup))
+            verified = SQLiteBackupService(database).verify(database)
+            self.assertFalse(verified.usable)
+            self.assertIn(
+                "configuration schema was created by a previous MediaFlow version",
+                verified.applicability_reason,
+            )
+            code, output, error = run_host(config, "verify", str(database))
             self.assertEqual(code, 0, error)
-            self.assertIn("Integrity: OK", output)
-            self.assertIn("Cannot start yet:", output)
-            self.assertIn("config status", output)
+            self.assertIn("Usable by this version: NO", output)
+            self.assertIn("found 11, expected 12", output)
+            self.assertIn("Reason: the configured database is not usable", output)
 
     def test_target_validation_and_cli(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -20,7 +20,8 @@ class ReleaseValidationTests(unittest.TestCase):
             "python -m unittest discover -s tests",
             "python -m compileall -q mediaflow tests scripts",
             "python -m pip check",
-            "config/strategy.example.json config validate",
+            "config/strategy.example.json",
+            "load_runtime_configuration",
             "scripts/wheel_smoke_test.py",
         ):
             self.assertIn(command, workflow)
@@ -34,20 +35,19 @@ class ReleaseValidationTests(unittest.TestCase):
             document = tomllib.load(stream)
         project = document["project"]
         self.assertEqual(project["requires-python"], ">=3.11,<3.14")
-        self.assertEqual(project["scripts"]["mediaflow"], "mediaflow.cli:main")
-        self.assertNotIn("strategy-test", project["scripts"])
+        # The general CLI is retired: no console script is registered and the
+        # four services start from the fixed resident entry.
+        self.assertNotIn("scripts", project)
         self.assertEqual(
             document["tool"]["setuptools"]["packages"]["find"]["include"], ["mediaflow*"]
         )
 
-    def test_wheel_inspection_rejects_user_and_runtime_files(self) -> None:
+    def test_wheel_inspection_rejects_retired_cli_and_user_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             valid = root / "valid.whl"
             with zipfile.ZipFile(valid, "w") as archive:
                 for name in (
-                    "mediaflow/cli.py",
-                    "mediaflow/final_cli.py",
                     "mediaflow/resident_entry.py",
                     "mediaflow/host_operations.py",
                     "mediaflow/runtime_support.py",
@@ -57,12 +57,25 @@ class ReleaseValidationTests(unittest.TestCase):
                 ):
                     archive.writestr(name, "")
             inspect_wheel(valid)
+            for retired in ("mediaflow/cli.py", "mediaflow/final_cli.py"):
+                candidate = root / f"{Path(retired).name}.whl"
+                with zipfile.ZipFile(candidate, "w") as archive:
+                    for name in (
+                        retired,
+                        "mediaflow/resident_entry.py",
+                        "mediaflow/host_operations.py",
+                        "mediaflow/runtime_support.py",
+                        "mediaflow/infrastructure/sqlite_backup.py",
+                        "mediaflow/infrastructure/sqlite_restore.py",
+                        "mediaflow/infrastructure/runtime_lease.py",
+                    ):
+                        archive.writestr(name, "")
+                with self.subTest(retired=retired), self.assertRaisesRegex(ValueError, "retired"):
+                    inspect_wheel(candidate)
             for unsafe in ("config/alist.json", "runtime.sqlite3", "tests/test_secret.py"):
                 candidate = root / f"{Path(unsafe).name}.whl"
                 with zipfile.ZipFile(candidate, "w") as archive:
                     for name in (
-                        "mediaflow/cli.py",
-                        "mediaflow/final_cli.py",
                         "mediaflow/resident_entry.py",
                         "mediaflow/host_operations.py",
                         "mediaflow/runtime_support.py",

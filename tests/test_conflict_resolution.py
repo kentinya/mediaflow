@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import tempfile
 import unittest
@@ -27,7 +26,6 @@ from mediaflow.domain.organizer import (
     StorageLocation,
 )
 from mediaflow.domain.task_persistence import ConfirmationStatus, TaskItemStatus
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_user_configuration import load_strategy_configuration
@@ -234,25 +232,10 @@ class ConflictResolutionTests(unittest.TestCase):
                     OrganizePolicy("A", OrganizeOperationType.MOVE, ConflictStrategy.MANUAL),
                 )
                 confirmation_id = repository.list_confirmations()[0].confirmation_id
-            for arguments in (
-                ["--config", str(config), "confirmations", "list"],
-                [
-                    "--config",
-                    str(config),
-                    "confirmations",
-                    "resolve",
-                    confirmation_id,
-                    "--strategy",
-                    "skip",
-                    "--actor",
-                    "tester",
-                ],
-            ):
-                with self.subTest(arguments=arguments):
-                    output, errors = io.StringIO(), io.StringIO()
-                    with self.assertRaises(SystemExit) as raised:
-                        final_main(arguments, stdout=output, stderr=errors)
-                    self.assertEqual(2, raised.exception.code)
+            # The retired CLI confirmation entrance is gone with the CLI; the
+            # durable confirmation stays pending for the real Web/API boundary.
+            with self.assertRaises(ModuleNotFoundError):
+                __import__("mediaflow.final_cli")
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
                 self.assertIs(
                     repository.get_item(item.item_id).status,

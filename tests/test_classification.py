@@ -12,7 +12,6 @@ from mediaflow.application.strategy_test import (
     SyntheticMetadataProvider,
     strategy_runner_from_configuration,
 )
-from mediaflow.cli import render_strategy_result
 from mediaflow.domain.classification import (
     ClassificationContext,
     ClassificationError,
@@ -236,15 +235,11 @@ class ClassificationEngineTests(unittest.TestCase):
             show_naming=True,
             show_classification=True,
         )
-        value = render_strategy_result(result)
-        self.assertIn("CLASSIFICATION PREVIEW", value)
-        self.assertIn("RecognitionType: C", value)
-        self.assertIn("ClassificationPolicy: A", value)
-        self.assertIn("Matched Rule: anime-movie", value)
-        self.assertIn("MediaLibrary: movies", value)
-        self.assertIn("Category: Anime", value)
-        self.assertIn("Classification execution calls: 1", value)
-        self.assertIn("Organizer execution calls: 0", value)
+        self.assertEqual(result.classification.policy_id, "A")
+        self.assertEqual(result.recognition.recognition_type_id, "C")
+        self.assertEqual(result.classification.matched_rule_id, "anime-movie")
+        self.assertEqual(result.classification.media_library_id, "movies")
+        self.assertEqual(result.classification.category, "Anime")
         self.assertTrue(all(count == 0 for count in guard.mutation_calls.values()))
 
 

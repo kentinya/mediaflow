@@ -204,7 +204,6 @@ from mediaflow.domain.task_persistence import (  # noqa: E402
     PersistentTaskStatus,
     TaskItemStatus,
 )
-from mediaflow.final_cli import final_main  # noqa: E402
 from mediaflow.infrastructure.configuration_snapshot import (  # noqa: E402
     build_configuration_snapshot,
 )
@@ -5442,9 +5441,9 @@ def run_automation_definition_worker_once(
     )
     worker_id = "harness-automation-definition-worker"
     # The resident Worker registers for the oldest queued Task's admitted pin
-    # (``final_cli``'s ``pending_snapshot``), not today's Active.  A definition
-    # disabled after admission must still be claimed under its original pin so
-    # the live authority check can stop it and record why.
+    # (the scheduling kernel's ``pending_snapshot``), not today's Active.  A
+    # definition disabled after admission must still be claimed under its
+    # original pin so the live authority check can stop it and record why.
     state.repository.register_worker(
         worker_id,
         worker_id,
@@ -6096,46 +6095,6 @@ def retirement_stability_state(state: AppState, *, change: bool = False):
     }
 
 
-def cli_files_list(
-    state: AppState,
-    *,
-    kind: str,
-    library_id: str,
-    path: str = "",
-    limit: str = "",
-    cursor: str = "",
-) -> dict[str, object]:
-    """Run the real ``mediaflow files list`` against this harness's Active store.
-
-    Task45.5 requires the CLI and the Web/API to read the same exact Active
-    library directory.  Driving the production ``final_main`` over this one
-    isolated fixture lets the browser journey compare the two real surfaces
-    instead of two independently faked servers.  The read is strictly
-    read-only: it resolves Active through a ``mode=ro`` connection and records
-    nothing.
-    """
-
-    if state.managed.config_path is None:
-        return {"ok": False, "reason": "the harness has no managed config path"}
-    argv = [
-        "--config",
-        str(state.managed.config_path),
-        "files",
-        "list",
-        "--media-library" if kind == "media" else "--resource-library",
-        library_id,
-    ]
-    if path:
-        argv.extend(["--path", path])
-    if limit:
-        argv.extend(["--limit", limit])
-    if cursor:
-        argv.extend(["--cursor", cursor])
-    output = io.StringIO()
-    code = final_main(argv, stdout=output, stderr=io.StringIO())
-    return {"ok": True, "code": code, "output": output.getvalue()}
-
-
 class _HarnessResidentConsumer:
     """A real resident loop running inside this harness process.
 
@@ -6299,17 +6258,7 @@ def application(environ, start_response):
     path = str(environ.get("PATH_INFO", ""))
     if path.startswith("/__harness__/") and STATE is not None:
         method = str(environ.get("REQUEST_METHOD", "GET")).upper()
-        if path == "/__harness__/cli-files-list" and method == "GET":
-            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
-            document = cli_files_list(
-                STATE,
-                kind=(query.get("kind") or ["resource"])[0],
-                library_id=(query.get("library") or ["source"])[0],
-                path=(query.get("path") or [""])[0],
-                limit=(query.get("limit") or [""])[0],
-                cursor=(query.get("cursor") or [""])[0],
-            )
-        elif path == "/__harness__/retirement-state" and method == "GET":
+        if path == "/__harness__/retirement-state" and method == "GET":
             document = retirement_stability_state(STATE)
         elif path == "/__harness__/retirement-change" and method == "POST":
             document = retirement_stability_state(STATE, change=True)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import io
 import json
 import tempfile
 import unittest
@@ -10,7 +9,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from mediaflow.domain.cron import CronExpression
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from tests.resident_entry_fixtures import run_resident_step
 
@@ -120,24 +118,6 @@ class SchedulerDefinitionBoundaryTests(unittest.TestCase):
             config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
             status, output = run_resident_step("scheduler", config)
             self.assertEqual(status, 0, output)
-
-    def test_scheduler_list_and_audit_are_not_registered(self) -> None:
-        import contextlib
-
-        with tempfile.TemporaryDirectory() as directory:
-            document = self._base_document()
-            document["persistence"] = {"databasePath": str(Path(directory, "runtime.sqlite3"))}
-            config = Path(directory, "config.json")
-            config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-            for arguments in (
-                ["--config", str(config), "scheduler", "list"],
-                ["--config", str(config), "scheduler", "audit", "cn-morning"],
-            ):
-                output, error = io.StringIO(), io.StringIO()
-                with contextlib.redirect_stderr(io.StringIO()) as parser_error:
-                    with self.assertRaises(SystemExit):
-                        final_main(arguments, stdout=output, stderr=error)
-                self.assertIn("invalid choice", parser_error.getvalue())
 
     def test_empty_schedules_slot_stays_readable_without_semantics(self) -> None:
         document = self._base_document()

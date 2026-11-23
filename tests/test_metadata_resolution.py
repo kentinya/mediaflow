@@ -7,7 +7,6 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.metadata_review import MetadataReviewService
@@ -25,8 +24,6 @@ from mediaflow.domain.metadata import (
 from mediaflow.domain.metadata_review import MetadataReviewStatus, MetadataSelection
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import TaskItemStatus
-from mediaflow.final_cli import final_main
-from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -241,29 +238,9 @@ class MetadataResolutionTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 _, _, item = create_processing_item(repository)
                 review = MetadataReviewService(repository).create(item, identification(), "C")
-            output, errors = io.StringIO(), io.StringIO()
-            with patch.object(
-                RuntimeConfiguration,
-                "create_storages",
-                side_effect=AssertionError("resolution constructed Storage"),
-            ):
-                with self.assertRaises(SystemExit) as raised:
-                    final_main(
-                        [
-                            "--config",
-                            str(config_path),
-                            "metadata-reviews",
-                            "resolve",
-                            review.review_id,
-                            "--candidate-rank",
-                            "1",
-                            "--actor",
-                            "local-operator",
-                        ],
-                        stdout=output,
-                        stderr=errors,
-                    )
-            self.assertEqual(2, raised.exception.code)
+            # The retired global CLI resolution surface is gone with the CLI.
+            with self.assertRaises(ModuleNotFoundError):
+                __import__("mediaflow.final_cli")
             with SQLiteTaskRepository(database) as repository:
                 principals = (
                     ResolvedApiPrincipal("viewer", "viewer", frozenset({ApiPermission.READ})),

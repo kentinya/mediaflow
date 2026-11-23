@@ -1,15 +1,14 @@
-"""Task45.5 RO-7 acceptance: FileIndex retirement and shared live lists.
+"""Task45.5 RO-7 acceptance, continued through Task 58.2: FileIndex retirement.
 
 These tests exercise the real application boundary for the retired FileIndex
-product:
+product through the two current library-file APIs the Web Files pages use:
 
-* ``mediaflow files list`` reads the same exact Active library directory the Web
-  Files/MediaLibrary pages read, through the shared application browser;
-* the old index identities, routes and modules are gone, and old inputs get an
-  ordinary unsupported/not-found answer rather than a compatibility engine;
-* listing is strictly read-only: no database is created or migrated, no
-  directory/observation/Task/Result/permission row is written and no media or
-  Provider is touched;
+* ``GET /api/resource-libraries/{id}/files`` and ``GET
+  /api/media-libraries/{id}/files`` read the exact Active library directory
+  through the shared application browser;
+* the old index identities, routes and modules are gone;
+* listing is strictly read-only: no directory/observation/Task/Result row is
+  written, no media or Provider is touched and the store is byte-identical;
 * a fresh runtime database has no FileIndex tables and no FileIndex is assembled
   anywhere in the composition.
 """
@@ -18,24 +17,21 @@ from __future__ import annotations
 
 import io
 import json
-import re
 import sqlite3
-import subprocess
-import sys
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 EXAMPLES = Path("config/strategy.example.json")
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 #: Every module that made up the retired FileIndex product.  Importing any of
 #: them must now fail: there is no repository, no lifecycle service and no
@@ -77,12 +73,6 @@ def _activate(database: Path, document: dict[str, object]):
         )
 
 
-def _cli(argv: list[str]) -> tuple[int, str]:
-    output = io.StringIO()
-    code = final_main(argv, stdout=output, stderr=io.StringIO())
-    return code, output.getvalue()
-
-
 class FileIndexRetirementTests(unittest.TestCase):
     def test_retired_file_index_modules_do_not_exist(self) -> None:
         for name in RETIRED_MODULES:
@@ -96,13 +86,12 @@ class FileIndexRetirementTests(unittest.TestCase):
             config, document = _bootstrap(root)
             database = root / "runtime.sqlite3"
             _activate(database, document)
-            # A full runtime command opens/initializes the database; the fresh
-            # schema must not include any FileIndex product table.  Slice 51
-            # retired the Dashboard command, so this uses the supported bounded
-            # task read as the opening command.
-            code, output = _cli(["--config", str(config), "tasks", "list"])
-            self.assertEqual(0, code)
-            self.assertIn("TASKS", output)
+            # The supported bounded task read opens/initializes the runtime
+            # schema exactly as the API process does at startup; the fresh
+            # schema must not include any FileIndex product table.
+            with _api(self, database, document) as api:
+                status, body = _request(api, "/api/operations/runs")
+            self.assertEqual(200, status)
             connection = sqlite3.connect(database)
             try:
                 tables = {
@@ -117,101 +106,58 @@ class FileIndexRetirementTests(unittest.TestCase):
             self.assertNotIn("file_index_occurrences", tables)
             self.assertNotIn("file_index_reprocess_requests", tables)
 
-    def test_files_list_requires_exactly_one_library_selector(self) -> None:
+    def test_files_list_without_active_answers_without_migrating_the_store(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            config, _ = _bootstrap(root)
-            with self.assertRaises(SystemExit):
-                _cli(["--config", str(config), "files", "list"])
-            with self.assertRaises(SystemExit):
-                _cli(
-                    [
-                        "--config",
-                        str(config),
-                        "files",
-                        "list",
-                        "--resource-library",
-                        "source",
-                        "--media-library",
-                        "movies",
-                    ]
-                )
-
-    def test_files_list_without_active_does_not_create_or_migrate_the_database(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            config, _ = _bootstrap(root)
+            config, document = _bootstrap(root)
             database = root / "runtime.sqlite3"
-            self.assertFalse(database.exists())
-            code, output = _cli(
-                ["--config", str(config), "files", "list", "--resource-library", "source"]
-            )
-            self.assertEqual(0, code)
-            self.assertIn("files_list_no_active", output)
-            self.assertIn("no configuration was created", output)
-            self.assertFalse(database.exists())
+            with _api(self, database, document) as api:
+                before = database.read_bytes()
+                status, body = _request(api, "/api/resource-libraries/source/files")
+                self.assertEqual(503, status)
+                self.assertEqual("configuration_unavailable", body["error"]["code"])
+                after = database.read_bytes()
+                status, body = _request(api, "/api/media-libraries/movies/files")
+                self.assertEqual(503, status)
+                self.assertEqual("configuration_unavailable", body["error"]["code"])
+            self.assertEqual(before, after)
+            connection = sqlite3.connect(database)
+            try:
+                markers = connection.execute(
+                    "SELECT component, version FROM schema_version ORDER BY component"
+                ).fetchall()
+            finally:
+                connection.close()
+            # The listing never migrates the store's markers.
+            self.assertNotIn(("configuration_management", 999), [tuple(row) for row in markers])
 
     def test_files_list_reads_real_entries_and_reports_unknown_total(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config, document = _bootstrap(root)
-            _activate(root / "runtime.sqlite3", document)
-            code, output = _cli(
-                [
-                    "--config",
-                    str(config),
-                    "files",
-                    "list",
-                    "--resource-library",
-                    "source",
-                    "--path",
-                    "Movies",
-                ]
-            )
-            self.assertEqual(0, code)
-            self.assertIn("Library kind: ResourceLibrary", output)
-            self.assertIn("One.2001.mkv | file | 3", output)
-            self.assertIn("notes.txt | file | 5", output)
-            self.assertIn("长 名 .mkv | file | 7", output)
-            self.assertIn("Nested | directory", output)
-            self.assertIn("Total: unknown", output)
+            database = root / "runtime.sqlite3"
+            _activate(database, document)
+            with _api(self, database, document) as api:
+                status, body = _request(
+                    api,
+                    "/api/resource-libraries/source/files",
+                    query={"path": "Movies"},
+                )
+            self.assertEqual(200, status)
+            entries = {entry["name"]: entry for entry in body["entries"]}
+            self.assertEqual("file", entries["One.2001.mkv"]["type"])
+            self.assertEqual(3, entries["One.2001.mkv"]["size"])
+            self.assertEqual("file", entries["notes.txt"]["type"])
+            self.assertEqual(5, entries["notes.txt"]["size"])
+            self.assertEqual("file", entries["长 名 .mkv"]["type"])
+            self.assertEqual(7, entries["长 名 .mkv"]["size"])
+            self.assertEqual("directory", entries["Nested"]["type"])
+            self.assertIsNone(body.get("total"))
+            self.assertFalse(body["hasNext"])
             # No organize filtering, index identity or status is published.
+            serialized = json.dumps(body)
             for forbidden in ("file_id", "scanStatus", "FileIndex", "occurrenceId"):
-                self.assertNotIn(forbidden, output)
-
-    def test_files_list_rejects_the_retired_index_arguments(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            config, _ = _bootstrap(root)
-            for retired in (
-                ["--scan-status", "ready"],
-                ["--cursor-file-id", "abc"],
-                ["--storage", "source-storage"],
-                ["--query", "One"],
-                ["--after", "2026-01-01T00:00:00+00:00"],
-            ):
-                with self.subTest(retired=retired):
-                    with self.assertRaises(SystemExit):
-                        _cli(
-                            [
-                                "--config",
-                                str(config),
-                                "files",
-                                "list",
-                                "--resource-library",
-                                "source",
-                                *retired,
-                            ]
-                        )
-
-    def test_files_show_and_stats_are_not_registered(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            config, _ = _bootstrap(root)
-            for retired in ("show", "stats"):
-                with self.subTest(command=retired):
-                    with self.assertRaises(SystemExit):
-                        _cli(["--config", str(config), "files", retired, "some-id"])
+                self.assertNotIn(forbidden, serialized)
 
     def test_files_list_rejects_a_tampered_active_payload(self) -> None:
         """A rewritten Active payload is refused before any Storage is followed.
@@ -240,24 +186,17 @@ class FileIndexRetirementTests(unittest.TestCase):
                     "UPDATE managed_configuration_revisions SET payload=? WHERE revision_id=?",
                     (json.dumps(payload), active.revision_id),
                 )
-            before = database.read_bytes()
-            code, output = _cli(
-                [
-                    "--config",
-                    str(config),
-                    "files",
-                    "list",
-                    "--resource-library",
-                    "source",
-                    "--path",
-                    "Movies",
-                ]
-            )
-            self.assertEqual(0, code)
-            self.assertIn("files_list_digest_corrupt", output)
-            self.assertIn("no configuration was created", output)
-            self.assertNotIn("unpublished.txt", output)
-            self.assertNotIn("One.2001.mkv", output)
+            with _api(self, database, document) as api:
+                before = database.read_bytes()
+                status, body = _request(
+                    api,
+                    "/api/resource-libraries/source/files",
+                    query={"path": "Movies"},
+                )
+            self.assertEqual(503, status)
+            self.assertIn("unavailable", json.dumps(body).lower())
+            self.assertNotIn("unpublished.txt", json.dumps(body))
+            self.assertNotIn("One.2001.mkv", json.dumps(body))
             self.assertEqual(before, database.read_bytes())
 
     def test_files_list_rejects_an_unsupported_active_document_schema(self) -> None:
@@ -272,23 +211,15 @@ class FileIndexRetirementTests(unittest.TestCase):
                     "WHERE revision_id=?",
                     (active.revision_id,),
                 )
-            before = database.read_bytes()
-            code, output = _cli(
-                [
-                    "--config",
-                    str(config),
-                    "files",
-                    "list",
-                    "--resource-library",
-                    "source",
-                    "--path",
-                    "Movies",
-                ]
-            )
-            self.assertEqual(0, code)
-            self.assertIn("files_list_schema_unsupported", output)
-            self.assertIn("no configuration was created", output)
-            self.assertNotIn("One.2001.mkv", output)
+            with _api(self, database, document) as api:
+                before = database.read_bytes()
+                status, body = _request(
+                    api,
+                    "/api/resource-libraries/source/files",
+                    query={"path": "Movies"},
+                )
+            self.assertEqual(503, status)
+            self.assertNotIn("One.2001.mkv", json.dumps(body))
             self.assertEqual(before, database.read_bytes())
 
     def test_api_has_no_file_index_product_routes(self) -> None:
@@ -297,15 +228,7 @@ class FileIndexRetirementTests(unittest.TestCase):
             config, document = _bootstrap(root)
             database = root / "runtime.sqlite3"
             _activate(database, document)
-            with SQLiteTaskRepositoryContext(database) as repository:
-                api = MediaFlowApi(
-                    repository,
-                    principals=(
-                        ResolvedApiPrincipal(
-                            "viewer", "viewer-token", frozenset({ApiPermission.READ})
-                        ),
-                    ),
-                )
+            with _api(self, database, document) as api:
                 for path in (
                     "/api/files",
                     "/api/file-index",
@@ -322,252 +245,138 @@ class FileIndexRetirementTests(unittest.TestCase):
             config, document = _bootstrap(root)
             database = root / "runtime.sqlite3"
             _activate(database, document)
-            with SQLiteTaskRepositoryContext(database) as repository:
+            with _api(self, database, document) as api:
                 for _ in range(3):
-                    code, _ = _cli(
-                        [
-                            "--config",
-                            str(config),
-                            "files",
-                            "list",
-                            "--resource-library",
-                            "source",
-                            "--path",
-                            "Movies",
-                        ]
+                    status, _ = _request(
+                        api,
+                        "/api/resource-libraries/source/files",
+                        query={"path": "Movies"},
                     )
-                    self.assertEqual(0, code)
+                    self.assertEqual(200, status)
+                repository = api._repository
                 self.assertEqual((), repository.list_tasks())
                 self.assertEqual((), repository.list_manual_intents())
                 self.assertEqual((), repository.list_manual_previews("does-not-exist"))
                 self.assertEqual((), repository.list_results("does-not-exist"))
 
 
-class CrossProcessCliPaginationTests(unittest.TestCase):
-    """RO-7 P1 regression: a cursor issued by one CLI process must page in the next.
+class CrossInstancePaginationTests(unittest.TestCase):
+    """RO-7 P1 regression, current surfaces: a cursor issued by one API instance
+    must page in the next.
 
-    The previous implementation built a fresh ``StorageBrowserService`` per CLI
-    invocation with a per-process random cursor key, so the ``Next cursor``
-    printed by one process was unverifiable by the next.  These tests drive two
-    independent ``mediaflow`` processes against one isolated Active store and
-    assert that real pages load, never overlap, reach the last page and
-    reconstruct the directory, and that scope/tamper/expiry are still refused.
+    Each instance owns its own repository connections and browser, exactly like
+    two independent API processes; the cursor-authentication key is the one
+    persisted in the managed store, so real pages load, never overlap, reach the
+    last page and reconstruct the directory, and scope/tamper are refused.
     """
 
-    def _run_cli(self, config: Path, *arguments: str) -> tuple[int, str]:
-        """Run ``mediaflow`` in a real, independent interpreter process."""
-
-        completed = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "import sys; from mediaflow.final_cli import final_main; "
-                    "sys.exit(final_main(sys.argv[1:], stdout=sys.stdout, stderr=sys.stderr))"
-                ),
-                "--config",
-                str(config),
-                "files",
-                "list",
-                *arguments,
-            ],
-            cwd=REPOSITORY_ROOT,
-            capture_output=True,
-            text=True,
-        )
-        return completed.returncode, completed.stdout
-
-    @staticmethod
-    def _names(output: str) -> list[str]:
-        names = []
-        for line in output.splitlines():
-            match = re.match(r"^(.*) \| (file|directory) \| \d+ \| ", line)
-            if match is not None and match.group(1) != "NAME":
-                names.append(match.group(1))
-        return names
-
-    @staticmethod
-    def _next_cursor(output: str) -> str | None:
-        for line in output.splitlines():
-            if line.startswith("Next cursor:"):
-                value = line.split(":", 1)[1].strip()
-                return value if value and value != "-" else None
-        return None
-
-    def _pageable_fixture(self, root: Path) -> tuple[Path, Path]:
+    def _pageable_fixture(self, root: Path) -> tuple[Path, dict, Path]:
         config, document = _bootstrap(root)
         movies = root / "source" / "Media" / "Movies"
         for index in range(7):
             (movies / f"Page-{index:02d}.mkv").write_bytes(b"x")
         database = root / "runtime.sqlite3"
         _activate(database, document)
-        return config, database
+        return config, document, database
 
-    def test_two_independent_processes_page_through_every_entry(self) -> None:
+    def _list(self, api, query: dict[str, str]):
+        return _request(api, "/api/resource-libraries/source/files", query=query)
+
+    def test_two_independent_instances_page_through_every_entry(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            config, _ = self._pageable_fixture(root)
-            full_code, full_output = self._run_cli(
-                config, "--resource-library", "source", "--path", "Movies", "--limit", "100"
-            )
-            self.assertEqual(0, full_code)
-            expected = self._names(full_output)
-            self.assertGreater(len(expected), 3)
+            config, document, database = self._pageable_fixture(root)
+            with _api(self, database, document) as first_api:
+                status, full = self._list(first_api, {"path": "Movies", "limit": "100"})
+                self.assertEqual(200, status)
+                expected = [entry["name"] for entry in full["entries"]]
+                self.assertGreater(len(expected), 3)
 
-            first_code, first_output = self._run_cli(
-                config, "--resource-library", "source", "--path", "Movies", "--limit", "3"
-            )
-            self.assertEqual(0, first_code)
-            self.assertIn("More available: yes", first_output)
-            first_names = self._names(first_output)
-            self.assertEqual(3, len(first_names))
+                status, page_one = self._list(first_api, {"path": "Movies", "limit": "3"})
+                self.assertEqual(200, status)
+                self.assertTrue(page_one["hasNext"])
+                first_names = [entry["name"] for entry in page_one["entries"]]
+                self.assertEqual(3, len(first_names))
+                cursor = page_one["nextCursor"]
+                self.assertTrue(cursor)
 
-            cursor = self._next_cursor(first_output)
-            self.assertIsNotNone(cursor)
-            # A second, independent process must accept the first page's cursor.
-            second_code, second_output = self._run_cli(
-                config,
-                "--resource-library",
-                "source",
-                "--path",
-                "Movies",
-                "--limit",
-                "3",
-                "--cursor",
-                cursor,
-            )
-            self.assertEqual(0, second_code)
-            self.assertNotIn("storage_browser_cursor_invalid", second_output)
-            second_names = self._names(second_output)
-            self.assertEqual(3, len(second_names))
-            self.assertEqual([], sorted(set(first_names) & set(second_names)))
-
-            collected = first_names + second_names
-            cursor = self._next_cursor(second_output)
-            while cursor is not None:
-                code, output = self._run_cli(
-                    config,
-                    "--resource-library",
-                    "source",
-                    "--path",
-                    "Movies",
-                    "--limit",
-                    "3",
-                    "--cursor",
-                    cursor,
+            # A second, independent instance must accept the first page's cursor.
+            with _api(self, database, document) as second_api:
+                status, page_two = self._list(
+                    second_api, {"path": "Movies", "limit": "3", "cursor": cursor}
                 )
-                self.assertEqual(0, code)
-                self.assertNotIn("storage_browser_cursor_invalid", output)
-                collected.extend(self._names(output))
-                cursor = self._next_cursor(output)
-            self.assertEqual(sorted(expected), sorted(collected))
+                self.assertEqual(200, status)
+                second_names = [entry["name"] for entry in page_two["entries"]]
+                self.assertEqual(3, len(second_names))
+                self.assertEqual([], sorted(set(first_names) & set(second_names)))
+
+                collected = first_names + second_names
+                cursor = page_two.get("nextCursor")
+                while cursor:
+                    status, page = self._list(
+                        second_api, {"path": "Movies", "limit": "3", "cursor": cursor}
+                    )
+                    self.assertEqual(200, status)
+                    collected.extend(entry["name"] for entry in page["entries"])
+                    cursor = page.get("nextCursor")
+                self.assertEqual(sorted(expected), sorted(collected))
 
     def test_cursor_is_rejected_across_kind_directory_and_tamper(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            config, _ = self._pageable_fixture(root)
-            _, first_output = self._run_cli(
-                config, "--resource-library", "source", "--path", "Movies", "--limit", "3"
-            )
-            cursor = self._next_cursor(first_output)
-            self.assertIsNotNone(cursor)
+            config, document, database = self._pageable_fixture(root)
+            with _api(self, database, document) as api:
+                status, page = self._list(api, {"path": "Movies", "limit": "3"})
+                cursor = page["nextCursor"]
 
-            # Same cursor, different library kind: kind/root binding refuses it.
-            _, media_output = self._run_cli(
-                config,
-                "--media-library",
-                "movies",
-                "--path",
-                "Movies",
-                "--limit",
-                "3",
-                "--cursor",
-                cursor,
-            )
-            self.assertIn("storage_browser_cursor_invalid", media_output)
+                # Same cursor, different library kind: kind/root binding refuses it.
+                status, body = _request(
+                    api,
+                    "/api/media-libraries/movies/files",
+                    query={"path": "Movies", "limit": "3", "cursor": cursor},
+                )
+                self.assertEqual(400, status)
+                self.assertEqual("storage_browser_cursor_invalid", body["error"]["code"])
 
-            # Same cursor, different directory: directory binding refuses it.
-            _, directory_output = self._run_cli(
-                config,
-                "--resource-library",
-                "source",
-                "--path",
-                "",
-                "--limit",
-                "3",
-                "--cursor",
-                cursor,
-            )
-            self.assertIn("storage_browser_cursor_invalid", directory_output)
+                # Same cursor, different directory: directory binding refuses it.
+                status, body = self._list(api, {"path": "", "limit": "3", "cursor": cursor})
+                self.assertEqual(400, status)
+                self.assertEqual("storage_browser_cursor_invalid", body["error"]["code"])
 
-            # A tampered cursor is refused rather than silently re-read.
-            tampered = cursor[:-1] + ("A" if cursor[-1] != "A" else "B")
-            _, tampered_output = self._run_cli(
-                config,
-                "--resource-library",
-                "source",
-                "--path",
-                "Movies",
-                "--limit",
-                "3",
-                "--cursor",
-                tampered,
-            )
-            self.assertIn("storage_browser_cursor_invalid", tampered_output)
+                # A tampered cursor is refused rather than silently re-read.
+                tampered = cursor[:-1] + ("A" if cursor[-1] != "A" else "B")
+                status, body = self._list(api, {"path": "Movies", "limit": "3", "cursor": tampered})
+                self.assertEqual(400, status)
+                self.assertEqual("storage_browser_cursor_invalid", body["error"]["code"])
 
     def test_paging_is_read_only_and_key_is_created_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            config, database = self._pageable_fixture(root)
+            config, document, database = self._pageable_fixture(root)
             with sqlite3.connect(database) as connection:
                 first_key = connection.execute(
                     "SELECT key_material FROM managed_internal_keys "
                     "WHERE key_name='storage_browser_cursor'"
                 ).fetchone()[0]
-            before = database.read_bytes()
-            _, first_output = self._run_cli(
-                config, "--resource-library", "source", "--path", "Movies", "--limit", "3"
-            )
-            cursor = self._next_cursor(first_output)
-            self._run_cli(
-                config,
-                "--resource-library",
-                "source",
-                "--path",
-                "Movies",
-                "--limit",
-                "3",
-                "--cursor",
-                cursor,
-            )
-            # Listing and paging never rewrite the store; the internal key is
-            # created once by the supported initialization, not by a read.
-            self.assertEqual(before, database.read_bytes())
+            with _api(self, database, document) as api:
+                before = database.read_bytes()
+                status, page = self._list(api, {"path": "Movies", "limit": "3"})
+                self.assertEqual(200, status)
+                cursor = page["nextCursor"]
+                status, _ = self._list(api, {"path": "Movies", "limit": "3", "cursor": cursor})
+                self.assertEqual(200, status)
+                # Listing and paging never rewrite the store; the internal key
+                # is created once by the supported initialization, not by a read.
+                self.assertEqual(before, database.read_bytes())
             with sqlite3.connect(database) as connection:
                 second_key = connection.execute(
                     "SELECT key_material FROM managed_internal_keys "
                     "WHERE key_name='storage_browser_cursor'"
                 ).fetchone()[0]
             self.assertEqual(first_key, second_key)
-            with SQLiteTaskRepositoryContext(database) as repository:
+            with SQLiteTaskRepository(database) as repository:
                 self.assertEqual((), repository.list_tasks())
                 self.assertEqual((), repository.list_results("does-not-exist"))
-
-    def test_listing_without_initialized_key_is_refused_read_only(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            config, database = self._pageable_fixture(root)
-            # Remove the internal key to model a store whose supported
-            # initialization never ran the key creation.
-            with sqlite3.connect(database) as connection:
-                connection.execute("DELETE FROM managed_internal_keys")
-            before = database.read_bytes()
-            code, output = self._run_cli(config, "--resource-library", "source", "--path", "Movies")
-            self.assertEqual(0, code)
-            self.assertIn("files_list_internal_key_unavailable", output)
-            self.assertIn("no configuration was created", output)
-            # A read never mints a one-off key or writes the store.
-            self.assertEqual(before, database.read_bytes())
 
     def test_internal_key_survives_reopen_and_reuses_persisted_value(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -590,28 +399,62 @@ class CrossProcessCliPaginationTests(unittest.TestCase):
                 self.assertNotEqual(first, other.internal_key(STORAGE_BROWSER_CURSOR_KEY_NAME))
 
 
-class SQLiteTaskRepositoryContext:
-    """A thin context manager so the API test owns exactly one repository."""
+def _api(test: unittest.TestCase, database: Path, document: dict[str, object]):
+    """One real API process shape over one isolated combined store.
 
-    def __init__(self, database: Path) -> None:
-        from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+    The API owns a configuration repository (managed Active authority) and a
+    runtime repository over the same deployment database, exactly like the
+    resident API process.  The Files browser resolves the persisted internal
+    cursor key from the store, never a per-instance random key.
+    """
 
-        self._repository = SQLiteTaskRepository(database)
+    configuration_repository = SQLiteConfigurationRepository(database)
+    test.addCleanup(configuration_repository.close)
+    service = ManagedConfigurationService(
+        configuration_repository,
+        bootstrap_database_path=str(database),
+    )
+    runtime_repository = SQLiteTaskRepository(database)
+    test.addCleanup(runtime_repository.close)
+    return _ApiContext(
+        MediaFlowApi(
+            runtime_repository,
+            principals=(
+                ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
+            ),
+            configuration_service=service,
+            bootstrap_document=document,
+        )
+    )
 
-    def __enter__(self):
-        return self._repository
+
+class _ApiContext:
+    """Context wrapper so ``with _api(...)`` closes nothing twice."""
+
+    def __init__(self, api: MediaFlowApi) -> None:
+        self._api = api
+
+    def __enter__(self) -> MediaFlowApi:
+        return self._api
 
     def __exit__(self, *_):
-        self._repository.close()
         return False
 
 
-def _request(api, path: str, *, method: str = "GET", token: str = "viewer-token"):
+def _request(
+    api,
+    path: str,
+    *,
+    method: str = "GET",
+    token: str = "admin-token",
+    query: dict[str, str] | None = None,
+):
     statuses: list[str] = []
     environ = {
         "REQUEST_METHOD": method,
         "PATH_INFO": path,
-        "QUERY_STRING": "",
+        "QUERY_STRING": urllib.parse.urlencode(query or {}),
         "CONTENT_LENGTH": "0",
         "wsgi.input": io.BytesIO(),
         "REMOTE_ADDR": "127.0.0.1",

@@ -33,8 +33,6 @@ def inspect_wheel(wheel: Path) -> None:
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
     required = {
-        "mediaflow/cli.py",
-        "mediaflow/final_cli.py",
         "mediaflow/resident_entry.py",
         "mediaflow/host_operations.py",
         "mediaflow/runtime_support.py",
@@ -45,6 +43,15 @@ def inspect_wheel(wheel: Path) -> None:
     missing = sorted(required - names)
     if missing:
         raise ValueError(f"wheel is missing required modules: {', '.join(missing)}")
+    retired = sorted(
+        name
+        for name in names
+        if name in {"mediaflow/cli.py", "mediaflow/final_cli.py"}
+        or name.startswith("mediaflow/cli/")
+        or name.startswith("mediaflow/final_cli/")
+    )
+    if retired:
+        raise ValueError(f"wheel still ships the retired general CLI: {', '.join(retired)}")
     forbidden = tuple(
         name
         for name in names
@@ -75,22 +82,42 @@ def smoke(wheel: Path, project: Path) -> None:
         venv.EnvBuilder(with_pip=True, clear=True).create(virtual_environment)
         scripts = virtual_environment / ("Scripts" if os.name == "nt" else "bin")
         python = scripts / ("python.exe" if os.name == "nt" else "python")
-        mediaflow = scripts / ("mediaflow.exe" if os.name == "nt" else "mediaflow")
         run(
             [str(python), "-m", "pip", "install", "--no-deps", str(wheel.resolve())],
             cwd=root,
             environment=environment,
         )
-        run([str(mediaflow), "--help"], cwd=root, environment=environment)
-        help_result = capture([str(mediaflow), "--help"], cwd=root, environment=environment)
-        if help_result.returncode or "scan" in help_result.stdout.lower():
-            raise RuntimeError("installed-wheel CLI help exposes Scan or failed")
-        for command in (["scan"], ["jobs", "submit", "scan"]):
-            rejected = capture([str(mediaflow), *command], cwd=root, environment=environment)
-            if rejected.returncode != 2 or "invalid choice" not in rejected.stderr:
-                raise RuntimeError(
-                    f"installed-wheel CLI did not use the ordinary argparse boundary: {command}"
-                )
+        # The general CLI is retired: no console script is installed and the
+        # old modules cannot even be imported from site-packages.
+        console_scripts = sorted(
+            item.name for item in scripts.iterdir() if item.name.startswith("mediaflow")
+        )
+        if console_scripts:
+            raise RuntimeError(
+                "installed wheel still registers a mediaflow console script: "
+                + ", ".join(console_scripts)
+            )
+        retired_import = capture(
+            [
+                str(python),
+                "-c",
+                "import importlib\n"
+                "for name in ('mediaflow.cli', 'mediaflow.final_cli'):\n"
+                "    try:\n"
+                "        importlib.import_module(name)\n"
+                "    except ModuleNotFoundError:\n"
+                "        continue\n"
+                "    raise SystemExit(name + ' is importable')\n"
+                "print('retired modules absent')",
+            ],
+            cwd=root,
+            environment=environment,
+        )
+        if retired_import.returncode:
+            raise RuntimeError(
+                "installed wheel still ships an importable retired CLI module: "
+                + retired_import.stderr.strip()
+            )
         mode_check = capture(
             [
                 str(python),
@@ -152,11 +179,32 @@ def smoke(wheel: Path, project: Path) -> None:
         example = project / "config" / "strategy.example.json"
         configuration = root / example.name
         configured_copy(example, configuration, database)
-        run(
-            [str(mediaflow), "--config", str(configuration), "config", "validate"],
+        # The sample configuration must pass the same loading/validation logic
+        # the resident services use, run outside the source tree.
+        sample_check = capture(
+            [
+                str(python),
+                "-c",
+                "import json, sys;"
+                "from mediaflow.infrastructure.runtime_configuration import "
+                "load_runtime_configuration;"
+                "document = json.load(open(sys.argv[1], encoding='utf-8'));"
+                "runtime = load_runtime_configuration(document);"
+                "strategy = runtime.strategy;"
+                "assert len(strategy.recognition_rules) > 0;"
+                "assert len(strategy.recognition_type_policies) > 0;"
+                "print('sample configuration validated')",
+                str(configuration),
+            ],
             cwd=root,
             environment=environment,
         )
+        if sample_check.returncode:
+            raise RuntimeError(
+                "installed wheel failed to validate the sample configuration: "
+                + sample_check.stderr.strip()
+            )
+        print(sample_check.stdout.strip())
         environment["MEDIAFLOW_DATA_DIR"] = str(root)
         backup = root / "backup.sqlite3"
         run(

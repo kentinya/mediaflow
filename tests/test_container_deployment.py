@@ -24,7 +24,7 @@ from mediaflow.container_entrypoint import (
     load_environment_file,
 )
 from mediaflow.container_entrypoint import main as entrypoint_main
-from mediaflow.final_cli import final_main
+from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.runtime_configuration import (
     is_minimal_management_bootstrap,
     load_minimal_management_bootstrap,
@@ -36,6 +36,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_configuration_schema import CONFIGURATION_SCHEMA_VERSION
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.interfaces.service_api import MediaFlowApi
 from mediaflow.resident_entry import main as resident_main
 from scripts.make_deployment_config import (
     make_deployment_configuration,
@@ -324,18 +325,19 @@ class ContainerEntrypointTests(unittest.TestCase):
             ],
         )
 
-    def test_general_cli_no_longer_dispatches_service_account_or_database_commands(self) -> None:
-        for command in (
-            ["api", "serve"],
-            ["worker", "run"],
-            ["scheduler", "tick"],
-            ["notification-worker", "run"],
-            ["accounts", "issue-setup-code"],
-            ["database", "backup", "--output", "/tmp/backup.sqlite3"],
-        ):
-            with self.subTest(command=command), self.assertRaises(SystemExit) as raised:
-                final_main(command, stdout=io.StringIO(), stderr=io.StringIO())
-            self.assertEqual(2, raised.exception.code)
+    def test_general_cli_modules_are_absent_from_the_runtime(self) -> None:
+        """RO-4: the general CLI is retired with its dispatches.
+
+        Service, account and database commands have their own fixed entrances
+        (resident entry and host operations), so the old general CLI must not
+        even be importable — there is no dispatch layer left to reject a
+        command at.
+        """
+
+        for module in ("mediaflow.cli", "mediaflow.final_cli"):
+            with self.subTest(module=module):
+                with self.assertRaises(ModuleNotFoundError):
+                    __import__(module)
 
 
 class ContainerPreflightTests(unittest.TestCase):
@@ -638,13 +640,19 @@ class ContainerPreflightTests(unittest.TestCase):
                 json.dumps(make_management_bootstrap(database_path=str(database))),
                 encoding="utf-8",
             )
-            output, error = io.StringIO(), io.StringIO()
-            code = final_main(
-                ["--config", str(bootstrap), "config", "initialize"],
-                stdout=output,
-                stderr=error,
-            )
-            self.assertEqual(0, code, error.getvalue())
+            bootstrap_document = json.loads(bootstrap.read_text(encoding="utf-8"))
+            with SQLiteConfigurationRepository(database) as repository:
+                service = ManagedConfigurationService(
+                    repository,
+                    bootstrap_database_path=str(database),
+                    bootstrap_document=bootstrap_document,
+                )
+                service.publish_document(
+                    build_first_setup_starter_document(
+                        load_minimal_management_bootstrap(bootstrap_document)
+                    ),
+                    actor="tester",
+                )
             # The previous build wrote the same configuration tables and marker
             # but never the current build's creation record.
             with closing(sqlite3.connect(database)) as connection:
@@ -678,17 +686,6 @@ class ContainerPreflightTests(unittest.TestCase):
             self.assertTrue(any("new empty data directory" in error for error in errors), errors)
             self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
 
-            for arguments in (("config", "status"), ("config", "publish")):
-                command_error = io.StringIO()
-                status = final_main(
-                    ["--config", str(bootstrap), *arguments],
-                    stdout=io.StringIO(),
-                    stderr=command_error,
-                )
-                self.assertEqual(2, status, arguments)
-                self.assertIn("configuration-only database", command_error.getvalue())
-                self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
-
             with self.assertRaises(DatabaseApplicabilityError) as refused:
                 SQLiteTaskRepository(database)
             self.assertIn("configuration-only database", str(refused.exception))
@@ -716,14 +713,15 @@ class ContainerPreflightTests(unittest.TestCase):
                     ).fetchall(),
                 )
 
-    def test_pending_configuration_data_switch_is_refused_before_services_start(self) -> None:
-        """A draft-era store is not adopted by an ordinary service start.
+    def test_previous_configuration_schema_store_is_refused_before_services_start(self) -> None:
+        """A previous build's schema 11 store is not adopted by a service start.
 
-        A previous build's ``config draft-import`` left configuration schema 11
-        with unpublished rows and no current store origin marker.  The four
-        service commands must stop in preflight, before the runtime repository
-        can add a runtime schema/origin marker, while ``config status`` and the
-        explicit confirmed switch remain their own read-only/mutating entrances.
+        A previous build left a configuration schema 11 store with unpublished
+        rows and no current store origin marker.  The schema 11 switch is
+        retired, so the four service commands stop in preflight before the
+        runtime repository can add a runtime schema/origin marker; the bounded
+        refusal names the versions and the supported next steps.  The original
+        bytes stay unchanged.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -735,7 +733,7 @@ class ContainerPreflightTests(unittest.TestCase):
                 (ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8")
             )
             document["persistence"] = {"databasePath": str(database)}
-            active, unpublished = seed_configuration_schema_11_store(document)
+            seed_configuration_schema_11_store(document)
             bootstrap = root / "mediaflow.json"
             bootstrap.write_text(
                 json.dumps(make_management_bootstrap(database_path=str(database))),
@@ -765,10 +763,11 @@ class ContainerPreflightTests(unittest.TestCase):
                         service=command,
                     )
                     joined = "\n".join(errors)
-                    self.assertIn("configuration data switch is pending", joined)
-                    self.assertIn(unpublished.revision_id, joined)
-                    self.assertIn("config status", joined)
-                    self.assertIn("retire-unpublished --confirm", joined)
+                    self.assertIn(
+                        "configuration schema was created by a previous MediaFlow version", joined
+                    )
+                    self.assertIn("found 11, expected 12", joined)
+                    self.assertIn("new empty data directory", joined)
                     self.assertEqual(
                         before_hash, hashlib.sha256(database.read_bytes()).hexdigest(), command
                     )
@@ -780,83 +779,20 @@ class ContainerPreflightTests(unittest.TestCase):
                             ).fetchall(),
                         )
 
-            # The configuration-management entrances keep their own authority:
-            # preflight does not turn the read-only review or the confirmed
-            # switch into a startup refusal.
+            # The host maintenance entrances make the same refusal before any
+            # write: an offline backup of a store this version cannot use stays
+            # impossible, and the operator's file is preserved.
+            errors = container_preflight_errors(
+                str(bootstrap),
+                str(data),
+                environ={},
+                service=None,
+            )
             self.assertEqual(
-                [],
-                container_preflight_errors(
-                    str(bootstrap),
-                    str(data),
-                    environ={},
-                    service=None,
-                ),
+                1,
+                len(errors),
+                errors,
             )
-            output, error = io.StringIO(), io.StringIO()
-            status = final_main(
-                ["--config", str(bootstrap), "config", "status"],
-                stdout=output,
-                stderr=error,
-            )
-            self.assertEqual(0, status, error.getvalue())
-            self.assertEqual("DATA_SWITCH_REQUIRED", json.loads(output.getvalue())["health"])
-            self.assertEqual(before_hash, hashlib.sha256(database.read_bytes()).hexdigest())
-
-            # Apply the documented switch to an isolated copy, then prove an
-            # ordinary service start accepts the rewritten store and reads the
-            # published Active that was preserved.
-            switch_data = root / "switch-data"
-            shutil.copytree(data, switch_data)
-            switch_database = switch_data / "mediaflow.sqlite3"
-            switch_bootstrap = root / "switch-mediaflow.json"
-            switch_bootstrap.write_text(
-                json.dumps(make_management_bootstrap(database_path=str(switch_database))),
-                encoding="utf-8",
-            )
-            output, error = io.StringIO(), io.StringIO()
-            status = final_main(
-                [
-                    "--config",
-                    str(switch_bootstrap),
-                    "config",
-                    "retire-unpublished",
-                    "--confirm",
-                ],
-                stdout=output,
-                stderr=error,
-            )
-            self.assertEqual(0, status, error.getvalue())
-            switched = json.loads(output.getvalue())
-            self.assertTrue(switched["switched"])
-            self.assertEqual(CONFIGURATION_SCHEMA_VERSION, switched["configurationSchemaVersion"])
-            self.assertEqual(active.revision_id, switched["active"]["revisionId"])
-            self.assertEqual("active", switched["active"]["status"])
-            for command in (
-                "api",
-                "worker",
-                "scheduler",
-                "notification-worker",
-            ):
-                with self.subTest(switched_command=command):
-                    self.assertEqual(
-                        [],
-                        container_preflight_errors(
-                            str(switch_bootstrap),
-                            str(switch_data),
-                            environ={},
-                            service=command,
-                        ),
-                    )
-            output, error = io.StringIO(), io.StringIO()
-            status = final_main(
-                ["--config", str(switch_bootstrap), "config", "status"],
-                stdout=output,
-                stderr=error,
-            )
-            self.assertEqual(0, status, error.getvalue())
-            status_document = json.loads(output.getvalue())
-            self.assertEqual(active.revision_id, status_document["active"]["revisionId"])
-            self.assertEqual(active.digest, status_document["active"]["digest"])
 
     def test_current_configuration_only_store_reads_active_before_accounts_survive_restart(
         self,
@@ -885,14 +821,21 @@ class ContainerPreflightTests(unittest.TestCase):
                 json.dumps(make_management_bootstrap(database_path=str(database))),
                 encoding="utf-8",
             )
-            output, error = io.StringIO(), io.StringIO()
-            code = final_main(
-                ["--config", str(bootstrap), "config", "initialize"],
-                stdout=output,
-                stderr=error,
-            )
-            self.assertEqual(0, code, error.getvalue())
-            initialized = json.loads(output.getvalue())
+            bootstrap_document = json.loads(bootstrap.read_text(encoding="utf-8"))
+            with SQLiteConfigurationRepository(database) as repository:
+                service = ManagedConfigurationService(
+                    repository,
+                    bootstrap_database_path=str(database),
+                    bootstrap_document=bootstrap_document,
+                    management_only=is_minimal_management_bootstrap(bootstrap_document),
+                )
+                revision = service.publish_document(
+                    build_first_setup_starter_document(
+                        load_minimal_management_bootstrap(bootstrap_document)
+                    ),
+                    actor="tester",
+                )
+                initialized = revision.summary()
             with closing(sqlite3.connect(database)) as connection:
                 self.assertEqual(
                     [
@@ -1023,6 +966,63 @@ class ContainerPreflightTests(unittest.TestCase):
             self.assertEqual(values["EMPTY"], "")
 
 
+def _deployment_api(database: str, bootstrap: dict):
+    """One real API process shape over the generated deployment bootstrap."""
+
+    from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+
+    configuration_repository = SQLiteConfigurationRepository(database)
+    runtime_repository = SQLiteTaskRepository(database)
+    service = ManagedConfigurationService(
+        configuration_repository,
+        bootstrap_database_path=str(database),
+        bootstrap_document=bootstrap,
+    )
+    api = MediaFlowApi(
+        runtime_repository,
+        principals=(ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),),
+        configuration_service=service,
+        bootstrap_document=bootstrap,
+    )
+
+    class _Context:
+        def __enter__(self):
+            return api
+
+        def __exit__(self, *_):
+            configuration_repository.close()
+            runtime_repository.close()
+            return False
+
+    return _Context()
+
+
+def _api_json(
+    api,
+    path: str,
+    *,
+    method: str = "GET",
+    body: dict | None = None,
+    token: str = "admin-token",
+) -> tuple[int, dict]:
+    import urllib.parse
+
+    statuses: list[str] = []
+    payload = json.dumps(body).encode("utf-8") if body is not None else b""
+    environ = {
+        "REQUEST_METHOD": method,
+        "PATH_INFO": path,
+        "QUERY_STRING": urllib.parse.urlencode({}),
+        "CONTENT_LENGTH": str(len(payload)),
+        "CONTENT_TYPE": "application/json",
+        "wsgi.input": io.BytesIO(payload),
+        "REMOTE_ADDR": "127.0.0.1",
+        "HTTP_AUTHORIZATION": f"Bearer {token}",
+    }
+    raw = b"".join(api(environ, lambda value, headers: statuses.append(value)))
+    return int(statuses[0].split()[0]), json.loads(raw)
+
+
 class ContainerArtifactTests(unittest.TestCase):
     def test_dockerfile_build_context_is_bounded_and_non_root(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
@@ -1143,22 +1143,16 @@ class ContainerArtifactTests(unittest.TestCase):
                 json.dumps(configuration, ensure_ascii=False), encoding="utf-8"
             )
 
-            stdout, stderr = io.StringIO(), io.StringIO()
-            code = final_main(
-                [
-                    "--config",
-                    str(bootstrap_path),
-                    "config",
-                    "publish",
-                    "--file",
-                    str(configuration_path),
-                ],
-                stdout=stdout,
-                stderr=stderr,
-            )
-            self.assertEqual(code, 0, stderr.getvalue())
-            published = json.loads(stdout.getvalue())
+            with _deployment_api(database, bootstrap) as api:
+                status, published = _api_json(
+                    api,
+                    "/api/configuration/publish",
+                    method="POST",
+                    body={"document": configuration},
+                )
+            self.assertEqual(status, 200, published)
             self.assertEqual(published["status"], "active")
+            self.assertTrue(published["published"])
 
     def test_openlist_example_imports_through_documented_first_setup(self) -> None:
         """The shipped OpenList object can be imported with the generated input.
@@ -1207,52 +1201,54 @@ class ContainerArtifactTests(unittest.TestCase):
                 json.dumps(deployment, ensure_ascii=False), encoding="utf-8"
             )
 
-            def candidate_with(storage: dict) -> Path:
+            def candidate_with(storage: dict) -> dict:
                 document = json.loads(configuration_path.read_text(encoding="utf-8"))
                 document["storages"] = [*document["storages"], storage]
-                path = root / "with-openlist.json"
-                path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-                return path
+                return document
 
-            def run(command: list[str]) -> tuple[int, str, str]:
-                stdout, stderr = io.StringIO(), io.StringIO()
-                code = final_main(
-                    ["--config", str(bootstrap_path), *command],
-                    stdout=stdout,
-                    stderr=stderr,
+            with _deployment_api(database, bootstrap) as api:
+                # The retired spelling must fail closed with the exact correction.
+                retired = dict(example)
+                retired.update(retired.pop("options"))
+                code, error = _api_json(
+                    api,
+                    "/api/configuration/publish",
+                    method="POST",
+                    body={"document": candidate_with(retired)},
                 )
-                return code, stdout.getvalue(), stderr.getvalue()
+                self.assertEqual(code, 400, error)
+                self.assertIn(
+                    "storages[openlist-example].baseUrl is retired",
+                    error["error"]["message"],
+                )
+                self.assertIn("Storage.options", error["error"]["message"])
+                code, failed = _api_json(api, "/api/configuration")
+                self.assertEqual(code, 200, failed)
+                self.assertTrue(failed["setupRequired"])
+                self.assertIsNone(failed["active"])
+                self.assertEqual(failed["revisions"], [])
 
-            def status() -> dict:
-                code, stdout, stderr = run(["config", "status"])
-                assert code == 0, stderr
-                return json.loads(stdout)
+                # The corrected shipped shape continues on the same instance.
+                code, imported = _api_json(
+                    api,
+                    "/api/configuration/publish",
+                    method="POST",
+                    body={"document": candidate_with(example)},
+                )
+                self.assertEqual(code, 200, imported)
+                self.assertEqual(imported["status"], "active")
+                code, staged = _api_json(api, "/api/configuration")
+                self.assertEqual(code, 200, staged)
+                self.assertFalse(staged["setupRequired"])
+                self.assertEqual(staged["active"]["revisionId"], imported["revisionId"])
+                self.assertEqual(
+                    [item["revisionId"] for item in staged["revisions"]],
+                    [imported["revisionId"]],
+                )
+                self.assertEqual(staged["revisions"][0]["status"], "active")
 
-            # The retired spelling must fail closed with the exact correction.
-            retired = dict(example)
-            retired.update(retired.pop("options"))
-            code, _, error = run(["config", "publish", "--file", str(candidate_with(retired))])
-            self.assertEqual(code, 2)
-            self.assertIn("storages[openlist-example].baseUrl is retired", error)
-            self.assertIn("Storage.options", error)
-            failed = status()
-            self.assertTrue(failed["setupRequired"])
-            self.assertIsNone(failed["active"])
-            self.assertEqual(failed["revisions"], [])
-
-            # The corrected shipped shape continues on the same instance.
-            code, stdout, error = run(["config", "publish", "--file", str(candidate_with(example))])
-            self.assertEqual(code, 0, error)
-            imported = json.loads(stdout)
-            self.assertEqual(imported["status"], "active")
-            staged = status()
-            self.assertFalse(staged["setupRequired"])
-            self.assertEqual(staged["active"]["revisionId"], imported["revisionId"])
-            self.assertEqual(
-                [item["revisionId"] for item in staged["revisions"]],
-                [imported["revisionId"]],
-            )
-            self.assertEqual(staged["revisions"][0]["status"], "active")
+                # The direct publication is the current runtime authority.
+                self.assertEqual(staged["active"]["revisionId"], imported["revisionId"])
 
             # The persisted Draft keeps the example's own values verbatim.
             connection = sqlite3.connect(database)
@@ -1278,11 +1274,6 @@ class ContainerArtifactTests(unittest.TestCase):
             self.assertEqual(storages[2]["rootPath"], "/Media")
             self.assertIs(storages[2]["readOnly"], True)
             self.assertEqual(storages[2]["options"]["tokenEnv"], "OPENLIST_TOKEN")
-
-            # The direct publication is the current runtime authority.
-            code, stdout, error = run(["config", "status"])
-            self.assertEqual(code, 0, error)
-            self.assertEqual(json.loads(stdout)["active"]["revisionId"], imported["revisionId"])
 
     def test_management_bootstrap_helper_needs_no_media_mount_and_no_secret(self) -> None:
         """The default deployment bootstrap is usable with durable data alone.

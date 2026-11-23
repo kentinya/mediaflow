@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import io
 import json
 import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
 
 from mediaflow.application.media_organizer import MediaOrganizerService
 from mediaflow.application.metadata import MetadataProviderRegistry
@@ -38,9 +36,7 @@ from mediaflow.domain.recognition import (
     ResolvedRecognitionPolicy,
 )
 from mediaflow.domain.task_persistence import TaskItemStatus
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
-from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from tests.managed_config_fixture import publish_managed_document
@@ -274,37 +270,13 @@ class MetadataCorrectionTests(unittest.TestCase):
                     self.policy_a,
                     ParseResult("Wrong", year=2025),
                 )
-            output, error = io.StringIO(), io.StringIO()
-            with patch.object(
-                RuntimeConfiguration,
-                "create_storages",
-                side_effect=AssertionError("retired correction CLI constructed Storage"),
-            ):
-                with self.assertRaises(SystemExit) as raised:
-                    final_main(
-                        [
-                            "--config",
-                            str(config_path),
-                            "metadata-corrections",
-                            "resolve",
-                            review.review_id,
-                            "--query",
-                            "Hamnet",
-                            "--year",
-                            "2025",
-                            "--media-type",
-                            "movie",
-                            "--actor",
-                            "operator",
-                        ],
-                        stdout=output,
-                        stderr=error,
-                    )
-            self.assertEqual(2, raised.exception.code)
+            # The retired CLI correction entrance is gone with the CLI; the
+            # durable pending correction is untouched by any other surface.
+            with self.assertRaises(ModuleNotFoundError):
+                __import__("mediaflow.final_cli")
             with SQLiteTaskRepository(database) as repository:
                 stored = repository.get_metadata_correction(review.review_id)
                 self.assertEqual(stored.status.value, "pending")
-                self.assertNotIn("authorization", output.getvalue().casefold())
 
 
 def mismatch_identification(reason: str = "Season 4 is not available for 'Show' (2024)"):

@@ -24,11 +24,12 @@ from mediaflow.container_entrypoint import (
     load_environment_file,
 )
 from mediaflow.domain.configuration_input import reject_retired_configuration_input
-from mediaflow.infrastructure.configuration_data_switch import reject_pending_configuration_switch
 from mediaflow.infrastructure.runtime_lease import RuntimeDatabaseLease, RuntimeLeaseMode
+from mediaflow.infrastructure.sqlite_applicability import assert_supported_database
 from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
+from mediaflow.infrastructure.sqlite_configuration_schema import CONFIGURATION_SCHEMA_VERSION
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.runtime_support import bootstrap_database_path, configuration_document
 
 OPERATIONS = ("issue-setup-code", "issue-reset-code", "backup", "verify", "restore")
@@ -60,8 +61,6 @@ def render_backup(value, operation: str) -> str:
     ]
     if value.applicability_reason:
         lines.append(f"Reason: {value.applicability_reason}")
-    if value.startup_blocked_reason:
-        lines.append(f"Cannot start yet: {value.startup_blocked_reason}")
     lines.append("")
     return "\n".join(lines)
 
@@ -180,7 +179,11 @@ def _database_operation(
         if not arguments.confirm_empty_destination:
             raise ValueError("restore requires --confirm-empty-destination")
         with RuntimeDatabaseLease(database_path, RuntimeLeaseMode.EXCLUSIVE):
-            reject_pending_configuration_switch(database_path)
+            assert_supported_database(
+                database_path,
+                current_runtime_version=SCHEMA_VERSION,
+                current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
+            )
             result = SQLiteRestoreService(arguments.backup, database_path).restore(
                 confirmed_empty_destination=True
             )
@@ -188,10 +191,6 @@ def _database_operation(
         return 0
     with _shared_lease(database_path):
         if arguments.operation == "backup":
-            # A supported store that still waits for the explicit configuration
-            # data switch is exactly the store an operator snapshots before
-            # applying it, so the snapshot itself stays possible.  ``verify``
-            # reports the pending startup step on the produced backup.
             result = SQLiteBackupService(database_path).backup(arguments.output)
         else:
             result = SQLiteBackupService(database_path).verify(arguments.path)
@@ -225,7 +224,11 @@ def main(
             check_database=arguments.operation != "verify",
         )
         if arguments.operation in {"issue-setup-code", "issue-reset-code"}:
-            reject_pending_configuration_switch(database_path)
+            assert_supported_database(
+                database_path,
+                current_runtime_version=SCHEMA_VERSION,
+                current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
+            )
             return _issue_account_code(arguments, database_path, stdout=output)
         return _database_operation(arguments, database_path, stdout=output)
     except (OSError, ValueError, LookupError, RuntimeError) as error:

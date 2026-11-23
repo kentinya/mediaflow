@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import io
 import json
 import tempfile
 import unittest
@@ -10,7 +9,6 @@ from unittest.mock import patch
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.storage import StorageCapabilities, StorageError, StorageErrorCode
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     load_runtime_configuration,
@@ -194,22 +192,10 @@ class RuntimeStorageConfigurationTests(unittest.TestCase):
                 "passwordEnv": "ABSENT_SMB_PASSWORD",
             },
         }
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory, "config.json")
-            path.write_text(json.dumps(document), encoding="utf-8")
-            output, errors = io.StringIO(), io.StringIO()
-            with patch.object(
-                RuntimeConfiguration,
-                "create_storages",
-                side_effect=AssertionError("validation must not construct adapters"),
-            ):
-                code = final_main(
-                    ["--config", str(path), "config", "validate"],
-                    stdout=output,
-                    stderr=errors,
-                )
-            self.assertEqual(code, 0, errors.getvalue())
-            self.assertIn("Configuration valid", output.getvalue())
+        # The current loading entry validates the remote Storage reference
+        # without environment secret values and without constructing adapters.
+        runtime = load_runtime_configuration(copy.deepcopy(document))
+        self.assertEqual(runtime.storage_definitions[0].storage_type, "smb")
 
     def test_invalid_remote_storage_configuration_fails_fast(self) -> None:
         cases = [
@@ -253,58 +239,18 @@ class RuntimeStorageConfigurationTests(unittest.TestCase):
             with self.subTest(case=case), self.assertRaises(ValueError):
                 self._replace_source(value)
 
-    def test_storage_list_does_not_construct_or_connect(self) -> None:
+    def test_storage_definitions_load_without_constructing_or_connecting(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "config.json")
             self._activate(copy.deepcopy(self.document), path)
-            output, errors = io.StringIO(), io.StringIO()
             with patch.object(
                 RuntimeConfiguration,
                 "create_storages",
                 side_effect=AssertionError("must not construct"),
             ):
-                code = final_main(
-                    ["--config", str(path), "storage", "list"],
-                    stdout=output,
-                    stderr=errors,
-                )
-            self.assertEqual(code, 0, errors.getvalue())
-            self.assertIn("source-storage | local", output.getvalue())
-
-    def test_storage_check_is_read_only_and_isolates_failures(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory, "config.json")
-            self._activate(copy.deepcopy(self.document), path)
-            healthy = ReadOnlyPreflightStorage("source-storage")
-            failed = ReadOnlyPreflightStorage("media-target", fail=True)
-
-            def create(_self, external=None, storage_ids=None):
-                values = {"source-storage": healthy, "media-target": failed}
-                return {key: values[key] for key in storage_ids or values}
-
-            output, errors = io.StringIO(), io.StringIO()
-            with patch.object(RuntimeConfiguration, "create_storages", create):
-                code = final_main(
-                    ["--config", str(path), "storage", "check"],
-                    stdout=output,
-                    stderr=errors,
-                )
-            self.assertEqual(code, 1)
-            self.assertIn("PASS | source-storage", output.getvalue())
-            self.assertIn("FAIL | media-target | authentication_failed", output.getvalue())
-            self.assertEqual(healthy.mutations + failed.mutations, 0)
-            self.assertEqual(healthy.lists, 1)
-            self.assertEqual(failed.lists, 1)
-
-    def test_storage_check_rejects_unknown_id(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory, "config.json")
-            self._activate(copy.deepcopy(self.document), path)
-            output, errors = io.StringIO(), io.StringIO()
-            code = final_main(
-                ["--config", str(path), "storage", "check", "missing"],
-                stdout=output,
-                stderr=errors,
+                runtime = load_runtime_configuration(copy.deepcopy(self.document))
+            listed = {(item.storage_id, item.storage_type) for item in runtime.storage_definitions}
+            self.assertEqual(
+                listed,
+                {("source-storage", "local"), ("media-target", "local")},
             )
-            self.assertEqual(code, 2)
-            self.assertIn("unknown Storage", errors.getvalue())

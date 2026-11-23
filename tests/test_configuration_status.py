@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
@@ -388,510 +389,154 @@ class ConcurrentFirstInitializationTests(unittest.TestCase):
                 pass
 
 
-class ConfigurationDraftRetirementTests(unittest.TestCase):
-    def _seed_store(self, database: Path):
-        import sqlite3
+class ConfigurationPublicationTests(unittest.TestCase):
+    """The current publication entrance keeps every configuration rule."""
+
+    def _api(self, database: Path, bootstrap: dict):
+        """One real API process shape over the deployment bootstrap."""
 
         from mediaflow.application.configuration_snapshot import ManagedConfigurationService
         from mediaflow.infrastructure.sqlite_configuration_management import (
             SQLiteConfigurationRepository,
         )
+        from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 
-        document = example_document()
-        document["persistence"]["databasePath"] = str(database)
+        configuration_repository = SQLiteConfigurationRepository(database)
+        runtime_repository = SQLiteTaskRepository(database)
         service = ManagedConfigurationService(
-            SQLiteConfigurationRepository(database),
+            configuration_repository,
             bootstrap_database_path=str(database),
+            bootstrap_document=bootstrap,
         )
-        draft = service.import_draft(document, actor="tester")
-        validated = service.validate(draft.revision_id, actor="tester")
-        active = service.activate(
-            validated.revision_id, expected_version=validated.version, actor="tester"
-        )
-        unpublished = service.import_draft(document, actor="tester")
-        with sqlite3.connect(database) as connection:
-            for revision in (active, unpublished):
-                connection.execute(
-                    "INSERT INTO managed_local_setup_checks "
-                    "(revision_id, revision_version, revision_digest, status, checked_at, actor, "
-                    "storage_ids, operations, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        revision.revision_id,
-                        revision.version,
-                        revision.digest,
-                        "passed",
-                        "2026-11-20T00:00:00+00:00",
-                        "tester",
-                        "[]",
-                        "[]",
-                        1,
-                    ),
-                )
-            connection.execute(
-                "UPDATE schema_version SET version=11 WHERE component='configuration_management'"
-            )
-            # The seeded store was written by this build; a real previous build
-            # at configuration schema 11 had no store origin marker.
-            connection.execute("DELETE FROM schema_version WHERE component='store_origin'")
-            connection.commit()
-        service.repository.close()
-        return active, unpublished
-
-    def _bootstrap(self, root: Path, database: Path) -> Path:
-        bootstrap = root / "bootstrap.json"
-        bootstrap.write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "persistence": {"databasePath": str(database)},
-                    "api": {"principals": []},
-                }
-            ),
-            encoding="utf-8",
-        )
-        return bootstrap
-
-    def _run(self, bootstrap: Path, *arguments: str) -> tuple[int, str, str]:
-        from mediaflow.final_cli import final_main
-
-        stdout, stderr = io.StringIO(), io.StringIO()
-        code = final_main(["--config", str(bootstrap), *arguments], stdout=stdout, stderr=stderr)
-        return code, stdout.getvalue(), stderr.getvalue()
-
-    def _schema_version(self, database: Path) -> int:
-        import sqlite3
-
-        with sqlite3.connect(database) as connection:
-            return int(
-                connection.execute(
-                    "SELECT version FROM schema_version WHERE component='configuration_management'"
-                ).fetchone()[0]
-            )
-
-    def test_status_lists_switch_scope_without_modifying_the_previous_store(self) -> None:
-        import sqlite3
-
-        from mediaflow.infrastructure.configuration_data_switch import (
-            ConfigurationDataSwitchRequired,
-        )
-        from mediaflow.infrastructure.sqlite_configuration_management import (
-            SQLiteConfigurationRepository,
+        api = MediaFlowApi(
+            runtime_repository,
+            principals=(ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),),
+            configuration_service=service,
+            bootstrap_document=bootstrap,
         )
 
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            database = root / "configuration.sqlite3"
-            active, unpublished = self._seed_store(database)
-            bootstrap = self._bootstrap(root, database)
-            code, output, errors = self._run(bootstrap, "config", "status")
-            self.assertEqual(code, 0, errors)
-            status = json.loads(output)
-            self.assertEqual(status["health"], "DATA_SWITCH_REQUIRED")
-            self.assertFalse(status["managementReady"])
-            switch = status["dataSwitch"]
-            self.assertEqual(switch["state"], "PENDING")
-            self.assertEqual(switch["configurationSchemaVersion"], 11)
-            self.assertEqual(switch["targetConfigurationSchemaVersion"], 12)
-            self.assertEqual(
-                [item["revisionId"] for item in switch["affectedRevisions"]],
-                [unpublished.revision_id],
-            )
-            self.assertEqual(switch["affectedRevisions"][0]["status"], "draft")
-            self.assertIn(
-                {"table": "managed_local_setup_checks", "rows": 1},
-                switch["affectedRevisions"][0]["evidence"],
-            )
-            self.assertGreater(switch["auditRows"], 0)
-            self.assertIn("retire-unpublished --confirm", switch["confirmation"])
-            # Opening the normal repository must fail closed with the same
-            # scope instead of silently switching the file.
-            with self.assertRaises(ConfigurationDataSwitchRequired) as raised:
-                SQLiteConfigurationRepository(database)
-            self.assertIn(unpublished.revision_id, str(raised.exception))
-            self.assertIn("was not modified", str(raised.exception))
-            self.assertEqual(self._schema_version(database), 11)
-            with sqlite3.connect(database) as connection:
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT status FROM managed_configuration_revisions WHERE revision_id=?",
-                        (unpublished.revision_id,),
-                    ).fetchone()[0],
-                    "draft",
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM managed_local_setup_checks WHERE revision_id=?",
-                        (unpublished.revision_id,),
-                    ).fetchone()[0],
-                    1,
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM configuration_change_audits WHERE object_id=?",
-                        (unpublished.revision_id,),
-                    ).fetchone()[0],
-                    int(switch["auditRows"]),
-                )
+        class _Context:
+            def __enter__(self):
+                return api
 
-    def test_confirmed_switch_retires_unpublished_rows_and_preserves_published_history(
-        self,
-    ) -> None:
-        import sqlite3
+            def __exit__(self, *_):
+                configuration_repository.close()
+                runtime_repository.close()
+                return False
 
-        from mediaflow.infrastructure.sqlite_configuration_management import (
-            SQLiteConfigurationRepository,
-        )
+        return _Context()
 
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            database = root / "configuration.sqlite3"
-            active, unpublished = self._seed_store(database)
-            bootstrap = self._bootstrap(root, database)
-            with sqlite3.connect(database) as connection:
-                connection.execute(
-                    "CREATE TABLE tasks (task_id TEXT PRIMARY KEY, status TEXT NOT NULL, "
-                    "created_at TEXT NOT NULL, configuration_snapshot_id TEXT)"
-                )
-                connection.execute(
-                    "INSERT INTO tasks VALUES (?, ?, ?, ?)",
-                    (
-                        "task-published",
-                        "running",
-                        "2026-11-20T00:00:00+00:00",
-                        active.revision_id,
-                    ),
-                )
-                connection.commit()
-            code, output, errors = self._run(bootstrap, "config", "retire-unpublished", "--confirm")
-            self.assertEqual(code, 0, errors)
-            result = json.loads(output)
-            self.assertTrue(result["switched"])
-            self.assertEqual(result["configurationSchemaVersion"], 12)
-            self.assertEqual(
-                [item["revisionId"] for item in result["removedRevisions"]],
-                [unpublished.revision_id],
-            )
-            self.assertEqual(result["active"]["revisionId"], active.revision_id)
-            self.assertEqual(result["active"]["digest"], active.digest)
-            self.assertEqual(self._schema_version(database), 12)
-            with sqlite3.connect(database) as connection:
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT version FROM schema_version WHERE component='store_origin'"
-                    ).fetchone()[0],
-                    SCHEMA_VERSION,
-                )
-                self.assertIsNone(
-                    connection.execute(
-                        "SELECT revision_id FROM managed_configuration_revisions "
-                        "WHERE revision_id=?",
-                        (unpublished.revision_id,),
-                    ).fetchone()
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM managed_local_setup_checks WHERE revision_id=?",
-                        (unpublished.revision_id,),
-                    ).fetchone()[0],
-                    0,
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM configuration_change_audits WHERE object_id=?",
-                        (unpublished.revision_id,),
-                    ).fetchone()[0],
-                    0,
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM configuration_change_audits WHERE object_id=?",
-                        (active.revision_id,),
-                    ).fetchone()[0]
-                    > 0,
-                    True,
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM managed_local_setup_checks WHERE revision_id=?",
-                        (active.revision_id,),
-                    ).fetchone()[0],
-                    1,
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT configuration_snapshot_id FROM tasks WHERE task_id=?",
-                        ("task-published",),
-                    ).fetchone()[0],
-                    active.revision_id,
-                )
-            # The same store now opens normally and reports only published
-            # revisions, with the Active identity unchanged.
-            with SQLiteConfigurationRepository(database) as repository:
-                self.assertEqual(
-                    [
-                        (revision.revision_id, revision.status.value)
-                        for revision in repository.list_revisions(limit=100)
-                    ],
-                    [(active.revision_id, "active")],
-                )
-                self.assertEqual(repository.get_active_revision().digest, active.digest)
-                self.assertFalse(repository.list_revision_audits(active.revision_id) == ())
-            code, output, errors = self._run(bootstrap, "config", "retire-unpublished", "--confirm")
-            self.assertEqual(code, 0, errors)
-            self.assertFalse(json.loads(output)["switched"])
+    def _request(self, api, method: str, path: str, body: dict | None = None):
+        raw = b"" if body is None else json.dumps(body).encode("utf-8")
+        statuses: list[str] = []
+        environ = {
+            "REQUEST_METHOD": method,
+            "PATH_INFO": path,
+            "QUERY_STRING": "",
+            "CONTENT_LENGTH": str(len(raw)),
+            "CONTENT_TYPE": "application/json",
+            "wsgi.input": io.BytesIO(raw),
+            "REMOTE_ADDR": "127.0.0.1",
+            "HTTP_AUTHORIZATION": "Bearer admin-token",
+        }
+        payload = b"".join(api(environ, lambda value, headers: statuses.append(value)))
+        return int(statuses[0].split()[0]), json.loads(payload)
 
-    def test_switch_is_blocked_and_status_locates_a_pinned_admitted_task(self) -> None:
-        import sqlite3
+    def test_initialize_publish_checks_and_explicit_replacement(self) -> None:
+        """The current configuration entrance keeps every publication rule.
 
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            database = root / "configuration.sqlite3"
-            active, unpublished = self._seed_store(database)
-            bootstrap = self._bootstrap(root, database)
-            with sqlite3.connect(database) as connection:
-                connection.execute(
-                    "CREATE TABLE tasks (task_id TEXT PRIMARY KEY, status TEXT NOT NULL, "
-                    "created_at TEXT NOT NULL, configuration_snapshot_id TEXT)"
-                )
-                connection.execute(
-                    "INSERT INTO tasks VALUES (?, ?, ?, ?)",
-                    (
-                        "task-pinned",
-                        "running",
-                        "2026-11-20T00:00:00+00:00",
-                        unpublished.revision_id,
-                    ),
-                )
-                connection.commit()
-            code, output, errors = self._run(bootstrap, "config", "status")
-            self.assertEqual(code, 0, errors)
-            switch = json.loads(output)["dataSwitch"]
-            self.assertEqual(switch["state"], "BLOCKED")
-            self.assertEqual(
-                [(item["taskId"], item["revisionId"]) for item in switch["pinnedTasks"]],
-                [("task-pinned", unpublished.revision_id)],
-            )
-            code, output, errors = self._run(bootstrap, "config", "retire-unpublished", "--confirm")
-            self.assertEqual(code, 2)
-            self.assertIn("task-pinned", errors)
-            self.assertEqual(json.loads(output)["switched"], False)
-            self.assertEqual(self._schema_version(database), 11)
-            with sqlite3.connect(database) as connection:
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT status FROM managed_configuration_revisions WHERE revision_id=?",
-                        (unpublished.revision_id,),
-                    ).fetchone()[0],
-                    "draft",
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT revision_id FROM managed_configuration_revisions "
-                        "WHERE status='active'"
-                    ).fetchone()[0],
-                    active.revision_id,
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM managed_local_setup_checks WHERE revision_id=?",
-                        (unpublished.revision_id,),
-                    ).fetchone()[0],
-                    1,
-                )
+        The retired CLI ``config initialize/publish`` pair is replaced by the
+        System Settings/API publication surface the Web uses: an empty
+        initialization, a checked publication that refuses missing Storage
+        roots, an explicit replacement of an unavailable Active, and the store
+        origin the first publication records.
+        """
 
-    def test_switch_failure_rolls_back_to_the_previous_store(self) -> None:
-        import sqlite3
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            database = root / "configuration.sqlite3"
-            active, unpublished = self._seed_store(database)
-            bootstrap = self._bootstrap(root, database)
-            with sqlite3.connect(database) as connection:
-                connection.execute(
-                    "CREATE TRIGGER reject_switch_evidence_delete "
-                    "BEFORE DELETE ON managed_local_setup_checks "
-                    "BEGIN SELECT RAISE(ABORT, 'simulated evidence delete failure'); END"
-                )
-                connection.commit()
-            code, _, errors = self._run(bootstrap, "config", "retire-unpublished", "--confirm")
-            self.assertEqual(code, 2)
-            self.assertIn("simulated evidence delete failure", errors)
-            self.assertEqual(self._schema_version(database), 11)
-            with sqlite3.connect(database) as connection:
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT status FROM managed_configuration_revisions WHERE revision_id=?",
-                        (unpublished.revision_id,),
-                    ).fetchone()[0],
-                    "draft",
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM managed_local_setup_checks WHERE revision_id=?",
-                        (unpublished.revision_id,),
-                    ).fetchone()[0],
-                    1,
-                )
-                connection.execute("DROP TRIGGER reject_switch_evidence_delete")
-                connection.commit()
-            code, output, errors = self._run(bootstrap, "config", "retire-unpublished", "--confirm")
-            self.assertEqual(code, 0, errors)
-            self.assertTrue(json.loads(output)["switched"])
-            self.assertEqual(self._schema_version(database), 12)
-            with sqlite3.connect(database) as connection:
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT status FROM managed_configuration_revisions WHERE revision_id=?",
-                        (unpublished.revision_id,),
-                    ).fetchone(),
-                    None,
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT revision_id FROM managed_configuration_revisions "
-                        "WHERE status='active'"
-                    ).fetchone()[0],
-                    active.revision_id,
-                )
-
-    def test_cli_initialize_publish_checks_and_explicit_replacement(self) -> None:
-        from mediaflow.final_cli import final_main
         from scripts.make_deployment_config import make_deployment_configuration
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "configuration.sqlite3"
-            bootstrap = root / "bootstrap.json"
-            bootstrap.write_text(
-                json.dumps(
-                    {
-                        "version": 1,
-                        "persistence": {"databasePath": str(database)},
-                        "api": {"principals": []},
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            def run(*arguments: str) -> tuple[int, str, str]:
-                stdout, stderr = io.StringIO(), io.StringIO()
-                code = final_main(
-                    ["--config", str(bootstrap), *arguments],
-                    stdout=stdout,
-                    stderr=stderr,
-                )
-                return code, stdout.getvalue(), stderr.getvalue()
-
-            def status() -> dict:
-                code, output, errors = run("config", "status")
-                self.assertEqual(code, 0, errors)
-                return json.loads(output)
-
-            code, output, errors = run("config", "initialize")
-            self.assertEqual(code, 0, errors)
-            self.assertTrue(json.loads(output)["initialized"])
-            self.assertIsNotNone(status()["active"])
+            bootstrap = {
+                "version": 1,
+                "persistence": {"databasePath": str(database)},
+            }
+            with self._api(database, bootstrap) as api:
+                status, initialized = self._request(api, "POST", "/api/configuration/initialize")
+                self.assertEqual(201, status, initialized)
+                self.assertTrue(initialized["initialized"])
+                status, current = self._request(api, "GET", "/api/configuration")
+                self.assertEqual(200, status, current)
+                self.assertIsNotNone(current["active"])
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "configuration.sqlite3"
-            bootstrap = root / "bootstrap.json"
-            bootstrap.write_text(
-                json.dumps(
-                    {
-                        "version": 1,
-                        "persistence": {"databasePath": str(database)},
-                        "api": {"principals": []},
-                    }
-                ),
-                encoding="utf-8",
-            )
-            activation = root / "activation.json"
+            bootstrap = {
+                "version": 1,
+                "persistence": {"databasePath": str(database)},
+            }
             document = make_deployment_configuration()
             document["storages"][0]["rootPath"] = str(root / "incoming")
             document["storages"][1]["rootPath"] = str(root / "organized")
-            activation.write_text(json.dumps(document), encoding="utf-8")
-
-            def run(*arguments: str) -> tuple[int, str, str]:
-                stdout, stderr = io.StringIO(), io.StringIO()
-                code = final_main(
-                    ["--config", str(bootstrap), *arguments],
-                    stdout=stdout,
-                    stderr=stderr,
+            with self._api(database, bootstrap) as api:
+                # Missing target roots are a real check failure, not a publication.
+                status, failed = self._request(
+                    api, "POST", "/api/configuration/publish", {"document": document}
                 )
-                return code, stdout.getvalue(), stderr.getvalue()
+                self.assertGreaterEqual(status, 400, failed)
+                status, current = self._request(api, "GET", "/api/configuration")
+                self.assertIsNone(current["active"])
 
-            def status() -> dict:
-                code, output, errors = run("config", "status")
-                self.assertEqual(code, 0, errors)
-                return json.loads(output)
+                (root / "incoming").mkdir()
+                (root / "organized" / "Movies").mkdir(parents=True)
+                (root / "organized" / "TV Shows").mkdir()
+                status, published = self._request(
+                    api, "POST", "/api/configuration/publish", {"document": document}
+                )
+                self.assertEqual(200, status, published)
+                self.assertTrue(published["published"])
+                status, current = self._request(api, "GET", "/api/configuration")
+                self.assertEqual(current["active"]["revisionId"], published["revisionId"])
 
-            # Missing target roots are a real check failure, not a publication.
-            code, _, errors = run("config", "publish", "--file", str(activation))
-            self.assertNotEqual(code, 0)
-            self.assertIn("read-only Storage check did not pass", errors)
-            self.assertIsNone(status()["active"])
+                # The first publication created the file and recorded this
+                # build's origin; the runtime repository the API process owns
+                # also recorded its own current schema marker.
+                with sqlite3.connect(database) as connection:
+                    markers = dict(
+                        connection.execute(
+                            "SELECT component, version FROM schema_version"
+                        ).fetchall()
+                    )
+                self.assertEqual(markers["configuration_management"], CONFIGURATION_SCHEMA_VERSION)
+                self.assertEqual(markers["store_origin"], SCHEMA_VERSION)
+                self.assertEqual(markers.get("runtime"), SCHEMA_VERSION)
 
-            (root / "incoming").mkdir()
-            (root / "organized" / "Movies").mkdir(parents=True)
-            (root / "organized" / "TV Shows").mkdir()
-            code, output, errors = run("config", "publish", "--file", str(activation))
-            self.assertEqual(code, 0, errors)
-            published = json.loads(output)
-            self.assertTrue(published["published"])
-            self.assertEqual(status()["active"]["revisionId"], published["revisionId"])
-            # The first publication created the file and recorded this build's origin.
-            import sqlite3
-
-            with sqlite3.connect(database) as connection:
-                self.assertEqual(
-                    [
-                        ("configuration_management", CONFIGURATION_SCHEMA_VERSION),
-                        ("store_origin", SCHEMA_VERSION),
-                    ],
+                # A corrupt/missing Active requires the explicit replacement flag.
+                with sqlite3.connect(database) as connection:
                     connection.execute(
-                        "SELECT component, version FROM schema_version ORDER BY component"
-                    ).fetchall(),
+                        "DELETE FROM managed_configuration_revisions WHERE status='active'"
+                    )
+                status, refused = self._request(
+                    api, "POST", "/api/configuration/publish", {"document": document}
                 )
-
-            # A corrupt/missing Active requires the explicit replacement flag.
-            import sqlite3
-
-            with sqlite3.connect(database) as connection:
-                connection.execute(
-                    "DELETE FROM managed_configuration_revisions WHERE status='active'"
+                self.assertGreaterEqual(status, 400, refused)
+                status, current = self._request(api, "GET", "/api/configuration")
+                self.assertIsNone(current["active"])
+                status, replacement = self._request(
+                    api,
+                    "POST",
+                    "/api/configuration/publish",
+                    {"document": document, "replaceActive": True},
                 )
-            code, _, errors = run("config", "publish", "--file", str(activation))
-            self.assertNotEqual(code, 0)
-            self.assertIn("explicit replacement", errors)
-            self.assertIsNone(status()["active"])
-            code, output, errors = run(
-                "config", "publish", "--file", str(activation), "--replace-active"
-            )
-            self.assertEqual(code, 0, errors)
-            replacement = json.loads(output)
-            self.assertEqual(status()["active"]["revisionId"], replacement["revisionId"])
+                self.assertEqual(200, status, replacement)
+                status, current = self._request(api, "GET", "/api/configuration")
+                self.assertEqual(current["active"]["revisionId"], replacement["revisionId"])
 
-    def test_cli_retired_draft_commands_are_unknown_and_rejected(self) -> None:
-        from mediaflow.final_cli import final_main
+    def test_retired_draft_commands_have_no_runtime_surface(self) -> None:
+        """The retired Draft lifecycle commands and the CLI that carried them are gone."""
 
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "bootstrap.json"
-            config.write_text(json.dumps(example_document()), encoding="utf-8")
-            for command in (
-                ["--config", str(config), "config", "draft-import", "--file", str(config)],
-                ["--config", str(config), "config", "draft-validate", "revision-1"],
-                [
-                    "--config",
-                    str(config),
-                    "config",
-                    "activate",
-                    "revision-1",
-                    "--expected-version",
-                    "1",
-                ],
-            ):
-                with self.assertRaises(SystemExit) as raised:
-                    final_main(command, stdout=io.StringIO(), stderr=io.StringIO())
-                self.assertEqual(raised.exception.code, 2)
+        for module in ("mediaflow.cli", "mediaflow.final_cli"):
+            with self.subTest(module=module):
+                with self.assertRaises(ModuleNotFoundError):
+                    __import__(module)

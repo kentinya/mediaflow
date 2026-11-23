@@ -769,7 +769,7 @@ class ManualTaskEngineWorker:
 
         The branch is only reached when the Task owns neither a live manual
         execution nor a linked Files discovery.  Every kernel-admitted Task in
-        that shape — Scheduler due, Run once, a remote-ticket or direct CLI
+        that shape — Scheduler due, Run once or a historical remote-ticket
         organize admission — runs the one shared organizing pipeline; the
         admission trigger is display/search evidence, never the router.  A
         Task without a scheduling row keeps its original non-kernel path.

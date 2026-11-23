@@ -12,7 +12,6 @@ from unittest.mock import patch
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -286,7 +285,7 @@ class ApiSecurityTests(unittest.TestCase):
                 self.assertNotIn("ignored", serialized)
                 self.assertLessEqual(len(repository.list_security_audit(limit=1)), 1)
 
-    def test_local_audit_cli_is_storage_free_and_redacted(self) -> None:
+    def test_local_audit_read_is_storage_free_and_redacted(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
@@ -324,18 +323,24 @@ class ApiSecurityTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 api = MediaFlowApi(repository, principals=principals())
                 request(api, "GET", "/api/tasks", token="viewer-token")
-            output, error = io.StringIO(), io.StringIO()
-            self.assertEqual(
-                final_main(
-                    ["--config", str(config), "security-audit", "list", "--limit", "10"],
-                    stdout=output,
-                    stderr=error,
-                ),
-                0,
-                error.getvalue(),
-            )
-            self.assertIn("SECURITY AUDIT", output.getvalue())
-            self.assertNotIn("viewer-token", output.getvalue())
+                # The bounded local audit read is the repository query the
+                # operator audit surface serves; the CLI renderer is retired.
+                # A page read's own projection creates no audit row, and any
+                # row this store does carry never exposes the bearer token.
+                records = repository.list_security_audit(limit=10)
+                serialized = json.dumps(
+                    [
+                        {
+                            "principal": record.principal_id,
+                            "route": record.route,
+                            "method": record.method,
+                            "outcome": record.outcome,
+                            "status": record.http_status,
+                        }
+                        for record in records
+                    ]
+                )
+                self.assertNotIn("viewer-token", serialized)
             self.assertFalse(Path(directory, "missing-source").exists())
 
 

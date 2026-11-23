@@ -69,14 +69,20 @@ with `暂不可用` while the destination Storage root itself is not created or 
 Create the directories the candidate names or repair the corresponding mount, then apply again.
 After publication the page reports the new Active revision, version and digest.
 
-Validate without scanning, contacting a Metadata Provider or mutating Storage:
+Validating a document runs the same loader every service uses and never scans, contacts a Metadata
+Provider or mutates Storage:
 
 ```bash
-export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
-mediaflow config validate
-mediaflow storage list
-mediaflow storage check [STORAGE_ID]
+python -c "import json; from mediaflow.infrastructure.runtime_configuration import \
+load_runtime_configuration; load_runtime_configuration(json.load(open( \
+'config/strategy.example.json', encoding='utf-8'))); print('Configuration valid')"
 ```
+
+The read-only Storage check is the Storage page's `运行只读检查`
+(`POST /api/operations/storage-management/storage/{id}/check`), which reports each selected
+Storage's result and isolates failures per Storage without creating directories or touching media.
+The general `mediaflow` command that carried `config validate`, `storage list` and `storage check`
+is retired; there is no console script, `mediaflow.cli` or `mediaflow.final_cli` module.
 
 Credentials are never placed in this JSON. Storage passwords/tokens/access keys and TMDB credentials
 are referenced by environment-variable names and resolved only at the infrastructure boundary.
@@ -114,20 +120,16 @@ migrates/moves/deletes media; admitted work keeps its old pin. Removal is refere
 
 Ordinary configuration publication and recovery are Web paths: `系统设置` → `配置工具` for import
 and `核对并应用`, and the recovery banner's `应用完整替换` when Settings reports that the current
-Active needs recovery. The remaining host/CLI inspection commands for the explicit schema 11 store
-switch are:
+Active needs recovery. The same publication is available to scoped integrations through
+`POST /api/configuration/publish` and `POST /api/configuration/packages`.
 
-```bash
-mediaflow config status
-mediaflow config retire-unpublished
-mediaflow config retire-unpublished --confirm
-```
-
-Each command selects the deployment bootstrap with `--config PATH` or `MEDIAFLOW_CONFIG`; the
-example above relies on the `export` in the preceding section. `config status` is read-only and
-lists the exact pending switch scope. `config retire-unpublished --confirm` applies that one
-explicit switch. The retired `draft-import`,
-`draft-validate` and `activate` commands, aliases and parameters are unknown command-line inputs.
+The configuration schema 11 store and its `config status` / `config retire-unpublished` switch are
+retired with the general CLI. This version opens only an empty database or one it created
+(configuration schema 12, runtime schema 60): a schema 11 file is refused before any table, marker
+or account row is written, and the message names the versions found and expected. Keep that file
+for the version that created it, or start a fresh deployment with a new empty data directory. The
+retired `draft-import`, `draft-validate`, `activate` and `retire-unpublished` commands, aliases and
+parameters have no runtime surface at all.
 
 ### Previous-store data switch
 
@@ -535,13 +537,11 @@ above are the current identity boundary.
 
 ## Runtime behavior and operational commands
 
-The production CLI workflow remains explicit and DryRun-first:
-
-```bash
-mediaflow config validate
-mediaflow organize --limit 20
-mediaflow organize --execute --limit 20
-```
+The production workflow remains explicit and DryRun-first, and it runs from the Web/API surfaces:
+`/api/resource-libraries/{id}/files` browses a live directory, the Files page's preparation produces
+a zero-mutation analysis with its exact plan, and a confirmed execution admits one Task that the
+resident Worker advances. Automation definitions, Run once and ordinary file transfers use the same
+Task kernel.
 
 Parsing, recognition, metadata lookup, naming, classification, planning and Organize DryRun do not mutate
 media. Only an explicit execute boundary can reach `OrganizerExecutor`, and conflict,
@@ -551,11 +551,12 @@ Configuration edits, validation, test evidence and activation do not start a sca
 work. Runtime database persistence, backups, restore and migration are separate operational
 boundaries documented in [`release.md`](release.md).
 
-`storage list` prints configured definitions and declared capabilities without constructing or
-connecting an adapter. `storage check` performs a bounded read-only preflight for each selected
-Storage, isolates failures per Storage and never creates directories, writes, moves, copies or
-deletes media. A successful preflight is evidence of that read-only check only; it is not an execute
-authority and does not replace checked activation evidence.
+The Storage inventory (`GET /api/operations/storage-management/inventory`) prints configured
+definitions and declared capabilities without constructing or connecting an adapter. The read-only
+check performs a bounded preflight for each selected Storage, isolates failures per Storage and never
+creates directories, writes, moves, copies or deletes media. A successful preflight is evidence of
+that read-only check only; it is not an execute authority and does not replace checked activation
+evidence.
 
 ## Schema and compatibility markers
 

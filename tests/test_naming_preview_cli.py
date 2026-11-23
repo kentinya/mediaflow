@@ -14,7 +14,6 @@ from mediaflow.application.strategy_test import (
     SyntheticMetadataProvider,
     strategy_runner_from_configuration,
 )
-from mediaflow.cli import render_strategy_result
 from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.naming import MissingVariableStrategy
@@ -67,15 +66,10 @@ class NamingPreviewTests(unittest.TestCase):
             guard=guard,
         )
         result = runner.run_path("/C/哈姆奈特.2025.mkv", live_metadata=True, show_naming=True)
-        value = render_strategy_result(result)
-        self.assertIn("NAMING PREVIEW", value)
-        self.assertIn("RecognitionType: C", value)
-        self.assertIn("NamingPolicy: A", value)
-        self.assertIn("哈姆奈特 (2025) [tmdbid-858024]", value)
-        self.assertIn("RecognitionType preserved: YES", value)
-        self.assertIn("Classification execution calls: 0", value)
-        self.assertIn("Organizer execution calls: 0", value)
-        self.assertIn("Storage mutations: 0", value)
+        self.assertEqual(result.naming.policy_id, "A")
+        self.assertEqual(result.recognition.recognition_type_id, "C")
+        self.assertIn("哈姆奈特 (2025) [tmdbid-858024]", result.naming.directory)
+        self.assertTrue(result.recognition_type_preserved)
         self.assertTrue(all(count == 0 for count in guard.mutation_calls.values()))
 
     def test_tv_and_multi_episode_previews(self) -> None:
@@ -87,9 +81,8 @@ class NamingPreviewTests(unittest.TestCase):
             with self.subTest(path=path):
                 runner, _ = self.runner((candidate,), episodes=episodes)
                 result = runner.run_path(path, live_metadata=True, show_naming=True)
-                value = render_strategy_result(result)
                 self.assertEqual(result.naming.directory_segments, ("Show (2024)", "Season 01"))
-                self.assertIn(expected, value)
+                self.assertIn(expected, result.naming.filename)
 
     def test_sanitization_and_missing_variable_warning_and_error(self) -> None:
         configuration = smoke_strategy_configuration()
@@ -104,9 +97,11 @@ class NamingPreviewTests(unittest.TestCase):
         warning = warning_runner.run_path(
             "/A/Mission.Impossible.1996.mkv", live_metadata=True, show_naming=True
         )
-        value = render_strategy_result(warning)
-        self.assertIn("Mission - Impossible (1996)", value)
-        self.assertIn("missing_variable:original_title", value)
+        self.assertIn("Mission - Impossible (1996)", warning.naming.directory)
+        self.assertIn(
+            "missing_variable:original_title",
+            " ".join(warning.naming.warnings + warning.naming.sanitization_changes),
+        )
 
         error_policy = replace(
             warning_policy, missing_variable_strategy=MissingVariableStrategy.ERROR
@@ -116,16 +111,16 @@ class NamingPreviewTests(unittest.TestCase):
             "/A/Mission.Impossible.1996.mkv", live_metadata=True, show_naming=True
         )
         self.assertIn(
-            "error: required naming variable 'original_title' is missing",
-            render_strategy_result(error),
+            "required naming variable 'original_title' is missing",
+            error.naming_error,
         )
 
     def test_offline_show_naming_does_not_invent_identity(self) -> None:
         runner = strategy_runner_from_configuration(smoke_strategy_configuration())
         result = runner.run_path("/A/The.Matrix.1999.mkv", live_metadata=False, show_naming=True)
-        value = render_strategy_result(result)
-        self.assertIn("Status: unavailable: MediaIdentity required", value)
-        self.assertIn("MediaIdentity unavailable; naming was not executed", value)
+        self.assertTrue(result.naming_requested)
+        self.assertIsNone(result.naming)
+        self.assertIsNone(result.naming_error)
 
     def test_directory_naming_preview_limit_and_zero_mutation(self) -> None:
         candidate = MediaCandidate("tmdb", "603", MediaType.MOVIE, "The Matrix", year=1999)

@@ -61,9 +61,6 @@ from mediaflow.domain.task_persistence import (
     FILES_TRANSFER_TASK_COMMAND,
     direct_command_task_command,
 )
-from mediaflow.infrastructure.configuration_data_switch import (
-    reject_pending_configuration_switch,
-)
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.metadata_provider_bootstrap import (
     LazyMetadataProviderRegistryFactory,
@@ -374,7 +371,7 @@ def _automatic_task_runner(repository, configured_path, scheduling_service):
                     heartbeat=heartbeat,
                 )
             return
-        if display is not None and display.origin_kind in {"remote-organize", "direct-organize"}:
+        if display is not None and display.origin_kind == "remote-organize":
             configuration = _pinned_task_configuration(configured_path, task)
 
             def direct_cancelled() -> bool:
@@ -1517,7 +1514,30 @@ def main(
         error_output.write(f"mediaflow service error: {error}\n")
         return 2
     try:
-        reject_pending_configuration_switch(database_path)
+        from mediaflow.infrastructure.sqlite_applicability import (
+            DatabaseApplicabilityError,
+            assert_supported_database,
+        )
+        from mediaflow.infrastructure.sqlite_configuration_schema import (
+            CONFIGURATION_SCHEMA_VERSION,
+        )
+
+        # The same read-only applicability decision every repository repeats on
+        # its own connection, run before any runtime store is opened so an
+        # unsupported previous store (for example configuration schema 11 from
+        # an earlier build) is refused without creating tables or markers.
+        assert_supported_database(
+            database_path,
+            current_runtime_version=SCHEMA_VERSION,
+            current_configuration_version=CONFIGURATION_SCHEMA_VERSION,
+        )
+    except DatabaseApplicabilityError as error:
+        error_output.write(f"mediaflow service error: {error}\n")
+        return 2
+    except (OSError, ValueError, RuntimeError) as error:
+        error_output.write(f"mediaflow service error: {error}\n")
+        return 2
+    try:
         if arguments.service == "api":
             try:
                 configuration = _configuration(configured_path)

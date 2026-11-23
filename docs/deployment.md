@@ -452,18 +452,14 @@ that created it, then use a new empty data directory for this version. General c
 upgrade and rollback, mixed-version writers and old Task/Job migrations are deferred. See
 [Current validation boundary](release.md#current-v2-validation-boundary).
 
-The configuration switch from schema 11 to 12 applies to stores with an absent or current
-runtime schema that pass the applicability check and report `DATA_SWITCH_REQUIRED`.
-Stop the services and keep a verified backup. Run `mediaflow config status` and review the
-listed unpublished revisions, evidence and Task pins, then run
-`mediaflow config retire-unpublished --confirm`. The switch is atomic. An
-admitted Task pinning an unpublished revision or a database failure blocks it without changing the
-file. Start the services after it succeeds; the switch also records this build's store origin marker
-because it rewrites the supported previous store into the current layout. Other cross-version
-transitions remain outside current support. A database that already contains a runtime schema from
-another MediaFlow version is refused at startup before this switch can run. Exact scope and
-recovery behavior are in the
-[configuration guide](configuration.md#previous-store-data-switch).
+The configuration schema 11 store and its one-time switch are retired with the general CLI. This
+version accepts only an empty database or one it created: configuration schema 12 and runtime schema
+60. A schema 11 file is refused by startup, the container probe, code issuance and restore before any
+table, marker or account row is written, and the message names the version found and the version
+expected. Keep that file for the version that created it, or start this version with a new empty data
+directory; there is no in-place switch, downgrade path or CLI to run. Other cross-version transitions
+remain outside current support. See the
+[configuration guide](configuration.md#managed-lifecycle).
 
 Stop the stack and retain a verified backup under `/data` before maintenance. The `host` argument is
 the fixed container-entrypoint maintenance mode; a direct source installation runs the same
@@ -655,13 +651,12 @@ pinned context; those are distinct signals, not hidden failures.
   matches this version. The original file is left unchanged; keep it for
   diagnosis or recovery with the version that created it. Do not edit the schema
   marker or delete the file.
-- **Pending configuration data switch.** For an eligible configuration schema 11
-  store, container preflight and local resident services stop before any runtime
-  table or marker is written.
-  Review the exact scope with `mediaflow config status`, then apply
-  `mediaflow config retire-unpublished --confirm`; the switch is atomic and
-  preserves the published Active, Task pins and results. The original file is
-  unchanged until that explicit command commits.
+- **Previous configuration schema (11).** Container preflight, the probe, host
+  code issuance and restore stop before any runtime table, marker or account row
+  is written, and the message reports the schema found and the schema expected.
+  The schema 11 switch and its CLI are retired, so there is nothing to apply in
+  place: keep the file for the version that created it, or start this version
+  with a new empty data directory. The original file stays unchanged.
 - **Inaccessible published media root:** the API container stays healthy and
   `/health` keeps answering. The Storage page's `运行只读检查` (or the
   authenticated storage-management check endpoint) reports `status: failed`

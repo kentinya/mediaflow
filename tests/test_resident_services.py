@@ -97,20 +97,6 @@ class ResidentDeploymentFixture(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         self.addCleanup(self._temporary.cleanup)
 
-    def cli(self, *arguments: str) -> tuple[int, str, str]:
-        """Run one real CLI command against this deployment."""
-
-        from mediaflow.cli import main as cli_main
-
-        out, err = io.StringIO(), io.StringIO()
-        try:
-            code = cli_main(["--config", str(self.config), *arguments], stdout=out, stderr=err)
-        except SystemExit as exit_error:  # pragma: no cover - argparse exits
-            code = int(exit_error.code or 0)
-        except Exception as error:  # noqa: BLE001 - surface the real failure
-            return -1, "", f"{type(error).__name__}: {error}"
-        return code, out.getvalue(), err.getvalue()
-
     def service(self, service: str) -> tuple[int, str, str]:
         """Start the real fixed service entry once against this deployment."""
 
@@ -223,16 +209,18 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
                 self.assertIn("remove it", err)
                 self.assertFalse(Path(self.database).exists(), msg=err)
 
-    def test_pending_configuration_switch_is_refused_before_resident_services_open_the_database(
+    def test_previous_configuration_schema_store_is_refused_before_services_open_it(
         self,
     ) -> None:
-        """A draft-era store stops every local resident entrance read-only.
+        """A previous build's configuration schema 11 store stops every local
+        resident entrance read-only.
 
-        The previous build's ``config draft-import`` left configuration schema
-        11 with unpublished rows and no current store origin marker.  Worker,
-        Scheduler and Notification Worker must not create the runtime schema or
-        an origin marker before the operator reviews and applies the explicit
-        switch.  The original bytes stay unchanged.
+        The schema 11 switch and its dedicated command are retired: this build
+        opens only an empty database or one it created.  Worker, Scheduler and
+        Notification Worker must not create the runtime schema or an origin
+        marker on such a file; the bounded refusal names the versions found and
+        expected and the two supported next steps.  The original bytes stay
+        unchanged.
         """
 
         import hashlib
@@ -244,7 +232,7 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
             )
         )
         document["persistence"] = {"databasePath": self.database}
-        _, unpublished = seed_configuration_schema_11_store(document)
+        seed_configuration_schema_11_store(document)
         before_hash = hashlib.sha256(Path(self.database).read_bytes()).hexdigest()
         with sqlite3.connect(self.database) as connection:
             before_markers = connection.execute(
@@ -263,10 +251,11 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
                 code, out, err = self.service(service)
                 self.assertEqual(code, 1, msg=err)
                 self.assertEqual("", out)
-                self.assertIn("configuration data switch is pending", err)
-                self.assertIn(unpublished.revision_id, err)
-                self.assertIn("config status", err)
-                self.assertIn("retire-unpublished --confirm", err)
+                self.assertIn(
+                    "configuration schema was created by a previous MediaFlow version", err
+                )
+                self.assertIn("found 11, expected 12", err)
+                self.assertIn("new empty data directory", err)
                 self.assertEqual(
                     before_hash, hashlib.sha256(Path(self.database).read_bytes()).hexdigest()
                 )
@@ -289,7 +278,8 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
 
     def test_scheduler_step_starts_without_active(self) -> None:
         """With a valid management-only bootstrap, one Scheduler step runs and
-        emits nothing; retired one-shot list/audit arguments are rejected."""
+        emits nothing; the fixed service entry rejects retired one-shot
+        arguments at its own parse boundary."""
 
         code, output = run_resident_step("scheduler", self.config)
         self.assertEqual(code, 0, msg=output)
@@ -299,10 +289,13 @@ class ManagementOnlyStartupTests(ResidentDeploymentFixture):
             with self.subTest(arguments=arguments):
                 import contextlib
 
+                from mediaflow.resident_entry import main as service_main
+
                 with contextlib.redirect_stderr(io.StringIO()) as parser_error:
-                    code, out, err = self.cli(*arguments)
-                self.assertEqual(code, 2, msg=f"{arguments}: {err}")
-                self.assertIn("invalid choice", parser_error.getvalue())
+                    with self.assertRaises(SystemExit) as raised:
+                        service_main(arguments)
+                self.assertEqual(2, raised.exception.code)
+                self.assertIn("error:", parser_error.getvalue())
 
     def test_notification_worker_waits_instead_of_crashing_without_active(self) -> None:
         """Reproduction of the reviewed defect.

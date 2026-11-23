@@ -38,7 +38,7 @@
 
 ## 3. 保留并统一的能力
 
-`mediaflow organize` 不带 `--execute` 仍提供零媒体变更的完整分析/计划结果。
+Files 页的整理准备仍提供零媒体变更的完整分析/计划结果（通用 CLI 的 `organize` 已随 Slice 58 退役）。
 Web Files 整理/四类恢复的摘要明确复用 Organize DryRun 的共享应用层分析/计划链，
 与 CLI 不执行模式共用应用行为，并保留各入口实际来源范围、固定配置与策略选择。
 API 直接调用该应用服务，不启动 CLI 命令，不另建分析引擎或保留独立 Preview 服务生命周期。

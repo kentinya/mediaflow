@@ -11,7 +11,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mediaflow.final_cli import final_main
 from mediaflow.host_operations import main as host_main
 from mediaflow.infrastructure.runtime_lease import (
     RuntimeDatabaseLease,
@@ -149,19 +148,21 @@ class RuntimeLeaseTests(unittest.TestCase):
                 )
             self.assertEqual(code, 0, error)
 
-    def test_exempt_commands_and_missing_confirmation_create_no_lock(self) -> None:
+    def test_host_operations_and_missing_confirmation_create_or_skip_the_lock(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "runtime.sqlite3"
             config = self._configuration(root, database)
             lock_path = RuntimeDatabaseLease(database, RuntimeLeaseMode.SHARED).path
-            for arguments in (
-                ["--config", str(config), "config", "validate"],
-                ["--config", str(config), "storage", "list"],
-            ):
-                with self.subTest(arguments=arguments):
-                    final_main(arguments, stdout=io.StringIO(), stderr=io.StringIO())
-                    self.assertFalse(lock_path.exists())
+            # The host maintenance entry holds the shared lease for backup and
+            # verify, so a read-only inspection does lock the same file.
+            code, _, error = run_host(config, "verify", str(database))
+            self.assertEqual(code, 2, error)
+            self.assertIn("must be an existing regular non-symlink file", error)
+            self.assertTrue(lock_path.exists())
+            lock_path.unlink()
+            # A restore without the explicit confirmation refuses at its own
+            # boundary before any lease is taken.
             code, _, error = run_host(config, "restore", str(root / "backup.sqlite3"))
             self.assertEqual(code, 2)
             self.assertIn("confirm-empty-destination", error)

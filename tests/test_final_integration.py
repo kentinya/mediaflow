@@ -14,7 +14,6 @@ from mediaflow.application.strategy_test import (
     strategy_runner_from_configuration,
 )
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
-from mediaflow.cli import render_strategy_result
 from mediaflow.domain.duplicates import DuplicateStatus, HashMode, HashPolicy
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.metadata import MediaCandidate, MediaType
@@ -148,9 +147,10 @@ class FinalIntegrationTests(unittest.TestCase):
                 storage_id="source",
                 storage_path=source.name,
             )
-            output = render_strategy_result(result)
-            self.assertIn("PARSER", output)
-            self.assertIn("Storage mutations: 0", output)
+            # Zero-mutation analysis: the pipeline parsed the source without
+            # any execution, and the source file is untouched.
+            self.assertIsNotNone(result.parsed)
+            self.assertIsNone(result.execution)
             self.assertTrue(source.exists())
 
     def test_complete_batch_dryrun_execute_history_and_failure_isolation(self) -> None:

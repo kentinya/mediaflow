@@ -80,12 +80,6 @@ def _require_startable(verified) -> None:
         raise ValueError(
             f"backup is not usable by this MediaFlow version: {verified.applicability_reason}"
         )
-    if verified.startup_blocked_reason:
-        raise ValueError(
-            "backup cannot be published to an empty destination: "
-            f"{verified.startup_blocked_reason} Apply it to the source store, create a new "
-            "backup and restore that; the backup and the destination were not modified"
-        )
 
 
 def _require_source_unchanged(backup: Path, expected_sha256: str) -> None:

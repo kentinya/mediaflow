@@ -319,7 +319,7 @@ Metadata 候选/标题/年份/类型修正、合法分类目标、冲突跳过/�
 
 ## 7. FileIndex 完全退役与列表统一（Slice45 CURRENT）
 
-CLI `mediaflow files list`、Files 和 MediaLibrary 共用库级 live Storage 浏览；列表/分页/刷新
+两个库文件 API、Files 和 MediaLibrary 共用库级 live Storage 浏览；列表/分页/刷新
 不保存目录记录、扫描观察或工作，不调用 Provider/Hash，不产生执行权限或媒体变更。
 FileIndex 产品、运行依赖、全局目录仓储/schema、同步/修复及死代码已退出；工作内稳定性、
 来源、Task/Result/checkpoint 安全证据仍保留。完整三入口、共享依赖及无旧迁移边界见

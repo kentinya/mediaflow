@@ -974,8 +974,8 @@ arbitrary media edit. Source Files retains its separate organization and return 
 
 ## CURRENT — Live lists without FileIndex
 
-CLI `mediaflow files list`, ResourceLibrary Files and MediaLibrary share the same bounded live
-Storage browse. Select exactly one library kind/ID and relative directory; preserve exact names,
+ResourceLibrary Files and MediaLibrary share the same bounded live Storage browse through
+`GET /api/resource-libraries/{id}/files` and `GET /api/media-libraries/{id}/files`. Select exactly one library kind/ID and relative directory; preserve exact names,
 kind-bound pagination and unknown totals. Missing Active/library, confinement, stale cursor,
 permission and Storage failures explain the next safe read/configuration action, never an empty
 index fallback. Listing creates no catalog/observation/work/result/authority or Provider/Hash/media

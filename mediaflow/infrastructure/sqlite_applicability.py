@@ -33,17 +33,10 @@ from pathlib import Path
 #: MediaFlow version and is refused by the exact-version check below.
 MIN_RUNTIME_SCHEMA_VERSION = 58
 
-#: The immediately previous managed-configuration schema.  It contains the same
-#: current tables plus unpublished draft revisions that this build retires
-#: only through the explicit operator-confirmed data switch.  Any older marker
-#: remains unsupported.
-MIN_CONFIGURATION_SCHEMA_VERSION = 11
-
-#: The marker a build writes when it first creates a database file, or when the
-#: explicit configuration data switch rewrites a supported previous store into
-#: the current layout.  Its value is the creating build's runtime schema.
-#: Configuration-only stores from earlier builds have no such marker even when
-#: their configuration marker already equals the current number.
+#: The marker a build writes when it first creates a database file.
+#: Its value is the creating build's runtime schema.  Configuration-only
+#: stores from earlier builds have no such marker even when their
+#: configuration marker already equals the current number.
 STORE_ORIGIN_COMPONENT = "store_origin"
 
 #: Tables that prove a pre-V2 database even when its runtime marker is absent.
@@ -211,9 +204,12 @@ def evaluate_database_applicability(
             raise DatabaseApplicabilityError(
                 "its configuration schema is newer than this MediaFlow version"
             )
-        if markers.configuration_version < MIN_CONFIGURATION_SCHEMA_VERSION:
+        if markers.configuration_version < current_configuration_version:
             raise DatabaseApplicabilityError(
-                "its configuration schema predates the current supported V2 configuration"
+                "its configuration schema was created by a previous MediaFlow version "
+                f"(found {markers.configuration_version}, expected "
+                f"{current_configuration_version}); this version only opens an empty "
+                "database or one it created"
             )
     elif tables & CONFIGURATION_TABLES:
         raise DatabaseApplicabilityError(

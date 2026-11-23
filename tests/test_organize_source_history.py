@@ -42,6 +42,7 @@ from mediaflow.application.automation_run_once import AutomationRunOnceService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.organize_source_history import (
     latest_applicable_outcome,
@@ -68,7 +69,6 @@ from mediaflow.domain.task_scheduling import (
     TaskQueueState,
     TaskSchedulingError,
 )
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -803,26 +803,85 @@ class _SourceHistoryJourneyTests(unittest.TestCase):
         self.assertIsNotNone(finished)
         return value.repository.get_task(finished.task_id)
 
-    def cli_organize_execute(self, value, path: Path) -> tuple[int, str, str]:
-        output, errors = io.StringIO(), io.StringIO()
-        with patch(
-            "mediaflow.final_cli.metadata_provider_registry_from_environment",
-            return_value=value.provider_registry,
-        ):
-            code = final_main(
-                [
-                    "--config",
-                    str(value.config),
-                    "organize",
-                    str(path),
-                    "--execute",
-                    "--limit",
-                    "5",
-                ],
-                stdout=output,
-                stderr=errors,
-            )
-        return code, output.getvalue(), errors.getvalue()
+    def organize_execute(self, value, path: Path):
+        """Admit and drive one organizing Task through the resident Worker.
+
+        The retired general CLI was the only caller of the synchronous direct
+        organize driver; the same admitted Task is now advanced by the
+        production Worker's automatic runner, which is the path every surviving
+        entrance shares.  Returns the settled Task so the caller reads the
+        durable result instead of CLI text.
+        """
+
+        from mediaflow.application.task_scheduling import (
+            TaskSchedulingService,
+            build_scheduled_task_admission,
+        )
+        from mediaflow.domain.task_persistence import RunDisplayContext
+        from mediaflow.domain.task_scheduling import TaskTrigger
+        from mediaflow.resident_entry import _automatic_task_runner
+
+        # Each admission is a distinct attempt in the shared source history; the
+        # journey's clock is frozen, so advance it to keep the durable attempt
+        # order unambiguous instead of tying on one admission timestamp.
+        value.clock.advance(60)
+        scheduling = TaskSchedulingService(value.repository, capacity=10)
+        task, state = build_scheduled_task_admission(
+            "organize",
+            execute_authorized=True,
+            trigger=TaskTrigger.MANUAL,
+            principal="operator",
+            scope_path=str(path),
+            item_limit=5,
+            configuration_snapshot_id=value.revision.revision_id,
+            configuration_snapshot_digest=value.revision.digest,
+            require_configuration_snapshot=True,
+            now=self.clock.now,
+        )
+        value.repository.admit_scheduled_task(
+            task,
+            state,
+            capacity=10,
+            display=RunDisplayContext(source_scope=str(path), origin_kind="remote-organize"),
+        )
+        runner = _automatic_task_runner(value.repository, str(value.config), scheduling)
+        worker_id = f"organize-{task.task_id}"
+        value.repository.register_worker(
+            worker_id,
+            worker_id,
+            60.0,
+            ("organize",),
+            None,
+            None,
+            SCHEMA_VERSION,
+            self.clock.now,
+        )
+        engine = ManualTaskEngineWorker(
+            value.repository,
+            scheduling,
+            None,
+            None,
+            worker_id=worker_id,
+            clock=self.clock,
+            automatic_runner=runner,
+        )
+        try:
+            with patch(
+                "mediaflow.resident_entry.metadata_provider_registry_from_environment",
+                return_value=value.provider_registry,
+            ):
+                for _ in range(8):
+                    current = value.repository.get_task(task.task_id)
+                    if current is not None and current.status.value in {
+                        "completed",
+                        "failed",
+                        "cancelled",
+                    }:
+                        break
+                    engine.run_next()
+        finally:
+            value.repository.stop_worker(worker_id, self.clock.now)
+        return value.repository.get_task(task.task_id)
 
 
 class RunOnceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
@@ -906,10 +965,10 @@ class RunOnceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
             # exclusion, so this alone is a proven no-work completion.
             self.assertEqual(1, excluded_metrics["currentNoWork"], excluded_metrics)
 
-            # 3. A deliberate manual CLI organize is never excluded by that
+            # 3. A deliberate manual organize is never excluded by that
             #    history: the same file organizes normally under a new pin.
-            code, output, errors = self.cli_organize_execute(value, one)
-            self.assertEqual(0, code, errors + output)
+            manual = self.organize_execute(value, one)
+            self.assertEqual("completed", manual.status.value, manual.error)
             self.assertTrue(one.exists(), "COPY keeps the source in place")
             copied = [path for path in value.target_root.rglob("*.mkv")]
             self.assertEqual(1, len(copied), copied)
@@ -1112,9 +1171,12 @@ class ManualHistoryWarningJourneyTests(_SourceHistoryJourneyTests):
                 def execute(self, plan, storages, **kwargs):
                     raise RuntimeError("injected executor failure before any mutation")
 
-            with patch("mediaflow.final_cli.OrganizerExecutor", _ExplodingExecutor):
-                code, _output, _errors = self.cli_organize_execute(value, one)
-            self.assertEqual(1, code)
+            with patch(
+                "mediaflow.application.automation_definition_execution.OrganizerExecutor",
+                _ExplodingExecutor,
+            ):
+                failed = self.organize_execute(value, one)
+            self.assertEqual("completed", failed.status.value, failed.error)
             (failed_task,) = value.repository.list_tasks()
             (failed_item,) = value.repository.list_items(failed_task.task_id)
             self.assertEqual(TaskItemStatus.FAILED, failed_item.status)
@@ -1194,8 +1256,8 @@ class ManualHistoryWarningJourneyTests(_SourceHistoryJourneyTests):
 
             # The manual request is not vetoed by the failed history: the same
             # file executes normally under its new exact plan.
-            code, output, errors = self.cli_organize_execute(value, one)
-            self.assertEqual(0, code, errors + output)
+            manual = self.organize_execute(value, one)
+            self.assertEqual("completed", manual.status.value, manual.error)
             # The old record keeps its exact facts; the new work records its own.
             self.assertEqual(
                 (failed_result,),

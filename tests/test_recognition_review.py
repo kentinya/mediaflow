@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import sqlite3
 import tempfile
@@ -8,7 +7,6 @@ import threading
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
 
 from mediaflow.application.media_organizer import MediaOrganizerService
 from mediaflow.application.metadata import MetadataProviderRegistry
@@ -30,10 +28,8 @@ from mediaflow.domain.recognition import (
 )
 from mediaflow.domain.recognition_review import RecognitionReviewStatus, RecognitionSelection
 from mediaflow.domain.task_persistence import TaskItemStatus
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from tests.managed_config_fixture import publish_managed_document
@@ -195,13 +191,11 @@ class RecognitionReviewTests(unittest.TestCase):
         self.assertEqual(result.metadata.recognition_type_id, "C")
         self.assertTrue(result.recognition_type_preserved)
 
-    def test_retired_cli_review_command_is_an_ordinary_parser_error(self) -> None:
+    def test_retired_cli_review_command_leaves_the_waiting_item_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
             document["persistence"]["databasePath"] = str(database)
-            config_path = Path(directory, "strategy.json")
-            config_path.write_text(json.dumps(document), encoding="utf-8")
             publish_managed_document(document)
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
@@ -212,24 +206,11 @@ class RecognitionReviewTests(unittest.TestCase):
                 RecognitionReviewService(
                     repository, development_strategy_configuration().recognition_types
                 ).create(item, RecognitionResult(status=RecognitionStatus.UNRECOGNIZED))
-            output, error = io.StringIO(), io.StringIO()
-            with self.assertRaises(SystemExit) as raised:
-                final_main(
-                    [
-                        "--config",
-                        str(config_path),
-                        "recognition-reviews",
-                        "resolve",
-                        "review-id",
-                        "--recognition-type",
-                        "A",
-                        "--actor",
-                        "operator",
-                    ],
-                    stdout=output,
-                    stderr=error,
-                )
-            self.assertEqual(2, raised.exception.code)
+            # The old global CLI review entrance is retired with the CLI; the
+            # bounded four-type decision continues through the real Task/API
+            # continuation boundary.
+            with self.assertRaises(ModuleNotFoundError):
+                __import__("mediaflow.final_cli")
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
                 self.assertIs(
@@ -316,8 +297,6 @@ class RecognitionReviewTests(unittest.TestCase):
             database = Path(directory, "runtime.sqlite3")
             document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
             document["persistence"]["databasePath"] = str(database)
-            config_path = Path(directory, "strategy.json")
-            config_path.write_text(json.dumps(document), encoding="utf-8")
             publish_managed_document(document)
             with SQLiteTaskRepository(database) as repository:
                 service = RecognitionReviewService(
@@ -326,28 +305,10 @@ class RecognitionReviewTests(unittest.TestCase):
                 self.assertFalse(hasattr(service, "resolve_pending"))
                 self.assertFalse(hasattr(repository, "list_pending_recognition_reviews"))
                 self.assertFalse(hasattr(repository, "resolve_recognition_reviews_batch"))
-            output, error = io.StringIO(), io.StringIO()
-            with patch.object(
-                RuntimeConfiguration,
-                "create_storages",
-                side_effect=AssertionError("retired batch CLI constructed Storage"),
-            ):
-                with self.assertRaises(SystemExit) as raised:
-                    final_main(
-                        [
-                            "--config",
-                            str(config_path),
-                            "recognition-reviews",
-                            "resolve-pending",
-                            "--recognition-type",
-                            "C",
-                            "--actor",
-                            "operator",
-                        ],
-                        stdout=output,
-                        stderr=error,
-                    )
-            self.assertEqual(2, raised.exception.code)
+            # The retired batch CLI transport is gone with the general CLI; no
+            # batch resolve path exists anywhere in the runtime.
+            with self.assertRaises(ModuleNotFoundError):
+                __import__("mediaflow.final_cli")
 
 
 if __name__ == "__main__":

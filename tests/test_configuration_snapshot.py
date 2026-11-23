@@ -43,11 +43,11 @@ from mediaflow.domain.metadata import (
 )
 from mediaflow.domain.security import ApiPermission, ApiRole, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
-from mediaflow.final_cli import _configuration
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 from mediaflow.resident_entry import _ConfiguredPermissionAuthority
+from mediaflow.runtime_support import resolve_configuration as _configuration
 from mediaflow.runtime_support import task_snapshot_identity as _task_snapshot_identity
 from tests.resident_entry_fixtures import run_resident_step
 
@@ -2431,7 +2431,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                             configuration_snapshot_digest=first.digest,
                             require_configuration_snapshot=True,
                             display=RunDisplayContext(
-                                source_scope="Media", origin_kind="direct-organize"
+                                source_scope="Media", origin_kind="remote-organize"
                             ),
                         )
                         .task

@@ -9,7 +9,7 @@ Next Action: DEVELOPER STARTS TASK 58.2 IMPLEMENTATION
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Difficulty: High
 Test Level: T4
@@ -69,7 +69,7 @@ schema 11 仍由 `configuration_data_switch.py`、配置仓储及调用者维持
 
 ## 测试分工
 
-### Developer 受影响测试
+### Developer — affected tests
 
 从仓库根目录运行下列范围。测试随入口迁移改名时，在交接中记录对应测试和实际命令。
 
@@ -91,7 +91,7 @@ npm run build
 npm run test:e2e -- --config=playwright.python.config.ts --output=test-results/task58.2-live-files tests/e2e/live-files.python.spec.ts
 ```
 
-### B 验收与全量回归
+### B — acceptance and full regression
 
 - 按 [T4 共享门禁](docs/development-workflow.md#6-test-levels) 执行 Python、Web、源码外安装、
   wheel 和候选 release-security。对有正式配置的隔离候选核对旧入口拒绝、schema 11 拒绝及零效果。

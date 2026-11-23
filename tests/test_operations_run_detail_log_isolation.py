@@ -286,7 +286,7 @@ class RealPipelineSharedPlanIsolationTests(unittest.TestCase):
             self.media_libraries,
             self.configuration.recognition_type_policies,
             JsonLinesOperationHistoryRepository(Path(self.temporary.name, f"history-{rank}.jsonl")),
-            # final_cli wires the same operational logger into the executor
+            # The shared workflow wires the same operational logger into the executor
             # that logs a DryRun; its rows carry the plan ID but no run linkage.
             executor=OrganizerExecutor(logger) if executor_logging else None,
             source_display_roots={"movies": str(self.source_root)},
@@ -401,7 +401,7 @@ class RealPipelineSharedPlanIsolationTests(unittest.TestCase):
     def test_plan_linked_logs_without_run_linkage_are_claimed_by_neither_run(
         self,
     ) -> None:
-        # executor_logging=True mirrors final_cli: the shared OrganizerExecutor
+        # executor_logging=True mirrors the shared workflow: the OrganizerExecutor
         # emits "organize execution result" with the plan ID but no Task.
         first = self._preview_pass(rank=0, executor_logging=True)
         second = self._preview_pass(rank=1, executor_logging=True)

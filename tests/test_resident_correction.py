@@ -1,11 +1,8 @@
-"""Task 40.3 correction: real processes, durable pins and read-only probes."""
+"""Task 40.3 correction: durable pins and read-only probes."""
 
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
-import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -17,60 +14,6 @@ from tests.test_resident_services import ResidentDeploymentFixture
 
 
 class ResidentCorrectionTests(ResidentDeploymentFixture):
-    def wait_for(self, predicate, timeout=20):
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if predicate():
-                return
-            time.sleep(0.1)
-        self.fail("resident state did not converge")
-
-    def start(self, service):
-        log = self.root / f"{service}.log"
-        stream = log.open("w+")
-        self.addCleanup(stream.close)
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                "from mediaflow.cli import main; raise SystemExit(main())",
-                "--config",
-                str(self.config),
-                service,
-                "run",
-                "--poll-seconds",
-                "0.1",
-            ],
-            stdout=stream,
-            stderr=stream,
-        )
-
-        def stop():
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-
-        self.addCleanup(stop)
-
-        def registered():
-            self.assertIsNone(process.poll(), log.read_text())
-            with SQLiteTaskRepository(self.database, read_only=True) as repo:
-                return any(
-                    row.service == service
-                    and repo.get_resident_service_wait_state(
-                        service, row.instance_id
-                    ).waiting_reason
-                    in {"unconfigured", "configuration_unavailable"}
-                    for row in repo.list_resident_services()
-                )
-
-        self.wait_for(registered)
-        return process
-
     def test_changed_recipient_does_not_claim_pending_or_retry_after_restart(self):
         now = datetime.now(UTC)
         original = webhook()

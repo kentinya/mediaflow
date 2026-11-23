@@ -7,7 +7,6 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from mediaflow.application.classification_review import ClassificationReviewService
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
@@ -45,9 +44,7 @@ from mediaflow.domain.recognition import (
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
-from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -405,29 +402,9 @@ class ClassificationReviewTests(unittest.TestCase):
                 review = ClassificationReviewService(repository).create(
                     item, unclassified(), policy(), identity()
                 )
-            output, errors = io.StringIO(), io.StringIO()
-            with patch.object(
-                RuntimeConfiguration,
-                "create_storages",
-                side_effect=AssertionError("retired classification review CLI constructed Storage"),
-            ):
-                with self.assertRaises(SystemExit) as raised:
-                    final_main(
-                        [
-                            "--config",
-                            str(config_path),
-                            "classification-reviews",
-                            "resolve",
-                            review.review_id,
-                            "--choice-rank",
-                            "1",
-                            "--actor",
-                            "local",
-                        ],
-                        stdout=output,
-                        stderr=errors,
-                    )
-            self.assertEqual(2, raised.exception.code)
+            # The retired global CLI review surface is gone with the CLI.
+            with self.assertRaises(ModuleNotFoundError):
+                __import__("mediaflow.final_cli")
             with SQLiteTaskRepository(database) as repository:
                 principals = (
                     ResolvedApiPrincipal("viewer", "viewer", frozenset({ApiPermission.READ})),

@@ -4,10 +4,8 @@ import io
 import posixpath
 import tempfile
 import unittest
-from contextlib import redirect_stderr
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
 
 from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
 from mediaflow.application.media_organizer import MediaOrganizerService
@@ -22,7 +20,6 @@ from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.organizer import ExecutionStatus
 from mediaflow.domain.storage import StorageCapabilities, StorageEntry, StorageEntryType
-from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 
@@ -123,14 +120,6 @@ class MemoryStorage:
 
 
 class ResourceLibraryPipelineTests(unittest.TestCase):
-    def test_scan_cli_is_an_unknown_command_before_configuration_or_metadata(self) -> None:
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with patch("mediaflow.final_cli._configuration", side_effect=AssertionError):
-            with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
-                final_main(["scan"], stdout=stdout, stderr=stderr)
-        self.assertEqual(2, raised.exception.code)
-        self.assertIn("invalid choice", stderr.getvalue())
-
     def test_scans_local_and_mock_openlist_without_mutation(self) -> None:
         local = MemoryStorage("local", {"Movies/Local.2024.mkv": b"local"})
         openlist = MemoryStorage("openlist", {"TV/Show.S01E01.mkv": b"remote"})
