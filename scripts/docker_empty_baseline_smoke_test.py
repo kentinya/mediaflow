@@ -699,6 +699,16 @@ def read_durable_counts(stack: Stack) -> dict:
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
+def admit_json(stack: Stack, path: str, *, method: str, body: object, expected: int) -> dict:
+    """One real-API mutation request with an exact admission status assertion."""
+
+    payload = json.dumps(body).encode("utf-8")
+    status, raw = stack.api(path, method=method, body=payload)
+    if status != expected:
+        raise RuntimeError(f"{method} {path} returned HTTP {status}: {raw.decode()[:600]}")
+    return json.loads(raw)
+
+
 def assert_no_media_mount(stack: Stack) -> None:
     result = run(
         ["docker", "compose", "-f", str(ROOT / "compose.yaml"), "config", "--format", "json"],
@@ -827,6 +837,10 @@ def activate_empty_baseline_through_web(stack: Stack) -> dict:
             if (writes.length !== 1)
                 throw new Error('reload created another revision or submitted work');
 
+            // The diagnostics panel lives in the mounted-but-hidden 配置工具
+            // section, so the operator — and this acceptance — opens that
+            // section first, then expands the 诊断 details inside it.
+            await page.getByRole('button', {name:'配置工具'}).click();
             await page.getByText('诊断', {exact:true}).click();
             const identity = page.locator(
                 'section.mf-settings-diagnostic-block').filter({hasText:'配置身份'});
@@ -1103,19 +1117,6 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
             print(f"   keeping stack {stack.name} for inspection")
 
 
-def wait_task(stack: Stack, admitted: dict) -> None:
-    identifier = admitted["taskId"]
-
-    def complete():
-        current = stack.json_api(f"/api/tasks/{identifier}")
-        status = current["status"]
-        if status in {"failed", "cancelled"}:
-            raise RuntimeError(f"admitted {current.get('command')} failed: {current}")
-        return status == "completed"
-
-    wait_until(complete, timeout=120, description="resident Task completion")
-
-
 def complete_transfer(
     stack: Stack, kind: str, source: str, destination: str, path: str, destination_field: str
 ) -> None:
@@ -1282,44 +1283,126 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
             description="the resident Worker reporting transfer readiness",
         )
         print("   resident Worker reports ResourceLibrary transfer readiness")
-        # Legacy Scan/Preview job submission is retired.  The current direct
-        # CLI entrance runs the complete Task pipeline over the same Active.
-        print("   retired Scan/Preview probe omitted; using the current direct CLI organize")
+        # The organize journey runs through the production Files admission: the
+        # API pins the Active snapshot and admits one durable intent, the
+        # resident Worker runs the zero-mutation analysis and links the exact
+        # plan, and the operator's own explicit Execute authorizes the one
+        # COPY.  The retired container CLI organize no longer exists.
+        print("   admitting the bounded organize selection through the production API")
         if list(stack.target_root.rglob("*.mkv")):
-            raise RuntimeError("Scan/Preview mutated the isolated destination")
-        admitted_output = run(
-            [
-                *stack.compose,
-                "exec",
-                "-T",
-                "api",
-                "python",
-                "-m",
-                "mediaflow.container_entrypoint",
-                "organize",
-                "--execute",
-                "--limit",
-                "1",
-            ],
-            environment=stack.environment,
+            raise RuntimeError("the isolated destination is not empty before organizing")
+        source_bytes = source_file.read_bytes()
+        intent = admit_json(
+            stack,
+            "/api/resource-libraries/source/files/organize",
+            method="POST",
+            body={"paths": [source_file.relative_to(stack.source_root).as_posix()]},
+            expected=201,
         )
-        task_id = next(
-            line.removeprefix("Task ID: ")
-            for line in admitted_output.stdout.splitlines()
-            if line.startswith("Task ID: ")
+        intent_item = intent["items"][0]
+        intent = admit_json(
+            stack,
+            f"/api/operations/organize/intents/{intent['intentId']}"
+            f"/items/{intent_item['itemId']}/choice",
+            method="POST",
+            body={
+                "expectedVersion": intent["version"],
+                "expectedItemVersion": intent_item["version"],
+                "recognitionTypeId": "A",
+                "namingPolicyId": "A",
+                "classificationPolicyId": "A",
+                "organizePolicyId": "A",
+            },
+            expected=200,
         )
-        admitted = {"taskId": task_id}
-        wait_task(stack, admitted)
-        organized = list((stack.target_root / "Movies").rglob("*.mkv"))
-        if len(organized) != 1 or organized[0].read_bytes() != source_file.read_bytes():
+        if source_file.read_bytes() != source_bytes or list(stack.target_root.rglob("*.mkv")):
+            raise RuntimeError("admitting the organize intent changed Storage")
+        print("   admitted one intent and saved the pinned-rule choice; Storage untouched")
+        analysis = admit_json(
+            stack,
+            f"/api/operations/organize/intents/{intent['intentId']}/previews",
+            method="POST",
+            body={"expectedVersion": intent["version"]},
+            expected=201,
+        )
+        analysis_run = analysis.get("analysis") or {}
+        discovery_id = analysis_run.get("discoveryId")
+        if not discovery_id or analysis_run.get("phase") != "analyzing":
+            raise RuntimeError(f"organize analysis did not enter its durable stage: {analysis}")
+
+        def plan_linked() -> bool:
+            current = stack.json_api(f"/api/operations/organize/discoveries/{discovery_id}")
+            return current.get("previewId") is not None
+
+        wait_until(plan_linked, timeout=120.0, description="durable organize analysis")
+        analysis_run = stack.json_api(f"/api/operations/organize/discoveries/{discovery_id}")
+        analysis_task_id = analysis_run.get("organizeTaskId")
+        if not isinstance(analysis_task_id, str) or not analysis_task_id:
+            raise RuntimeError(f"organize analysis was not owned by a durable Task: {analysis_run}")
+        preview = stack.json_api(f"/api/operations/organize/previews/{analysis_run['previewId']}")
+        if not preview.get("zeroMutation"):
+            raise RuntimeError("organize Preview was not exact zero-mutation evidence")
+        preview_item = next(
+            (
+                value
+                for value in preview.get("items", [])
+                if value.get("itemId") == intent_item["itemId"]
+            ),
+            None,
+        )
+        if (
+            preview_item is None
+            or preview_item.get("status") != "previewed"
+            or not preview_item.get("plan")
+        ):
+            raise RuntimeError(f"organize Preview did not produce the exact plan: {preview_item}")
+        if source_file.read_bytes() != source_bytes or list(stack.target_root.rglob("*.mkv")):
+            raise RuntimeError("analysis or Preview mutated Storage before confirmation")
+        print("   durable analysis linked the exact plan with zero Storage mutation")
+        execution = admit_json(
+            stack,
+            f"/api/operations/organize/previews/{preview['previewId']}/execute",
+            method="POST",
+            body={
+                "confirmation": True,
+                "itemIds": [intent_item["itemId"]],
+                "expectedIntentVersion": intent["version"],
+            },
+            expected=202,
+        )
+        if execution.get("taskId") != analysis_task_id:
             raise RuntimeError(
-                "Organize did not produce exactly the authorized file copy: "
+                f"organize execution did not continue the admitted analysis Task: {execution}"
+            )
+
+        def execution_complete() -> bool:
+            current = stack.json_api(
+                f"/api/operations/organize/executions/{execution['executionId']}"
+            )
+            return current.get("status") in {"completed", "partial_success", "failed"}
+
+        wait_until(execution_complete, timeout=120.0, description="resident Worker organize copy")
+        completed = stack.json_api(
+            f"/api/operations/organize/executions/{execution['executionId']}"
+        )
+        if completed.get("status") != "completed" or completed.get("taskId") != analysis_task_id:
+            raise RuntimeError(f"organize execution did not complete successfully: {completed}")
+        completed_items = completed.get("items") or []
+        if len(completed_items) != 1 or completed_items[0].get("status") != "success":
+            raise RuntimeError(f"organize item did not complete successfully: {completed_items}")
+        organized = list((stack.target_root / "Movies").rglob("*.mkv"))
+        if len(organized) != 1 or organized[0].read_bytes() != source_bytes:
+            raise RuntimeError(
+                "Organize did not produce exactly the authorized original-byte COPY: "
                 + json.dumps(stack.json_api("/api/tasks"))
                 + " files="
                 + str(list(stack.target_root.rglob("*")))
             )
+        if not source_file.exists() or source_file.read_bytes() != source_bytes:
+            raise RuntimeError("the organize COPY did not preserve its source")
         if not proxy.requests:
             raise RuntimeError("production TMDB client did not reach the controlled TLS fixture")
+        print("   explicit Execute produced exactly one original-byte COPY through the same Task")
         complete_transfer(
             stack,
             "resource-libraries",

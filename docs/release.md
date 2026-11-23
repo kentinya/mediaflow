@@ -148,8 +148,15 @@ export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"
 
 3. 按第 3–4 步生成指向新目标的恢复 bootstrap 并执行恢复。目标文件名不得与原库或它的旁路
    文件相同。
-4. 重新计算第 1 步的原文件摘要，确认原库未被改动，再按第 5–7 步只启动 API、读回账号与
-   任务，并固定恢复 bootstrap 启用后台。
+4. 重新计算第 1 步的原文件摘要，确认原库未被改动。原库 `verify` 已知失败，不要重跑；
+   直接执行第 5 步的恢复库 API 启动命令（跳过该步开头的原库 `verify`），再按第 6–7 步
+   读回账号与任务，并固定恢复 bootstrap 启用后台：
+
+   ```bash
+   MEDIAFLOW_CONFIG="$PWD/config/mediaflow.restore.json" \
+   MEDIAFLOW_API_HOST=127.0.0.1 MEDIAFLOW_API_PORT=8787 \
+     .venv/bin/python -m mediaflow.resident_entry api
+   ```
 
 ### Compose 部署
 
@@ -225,12 +232,15 @@ docker compose stop
 原库已损坏或第 1 步 `verify` 失败时，跳过第 2 步，不要对原库再执行 `backup`，也不要删除、
 改写或重命名卷内原库及其旁路文件。从已保存且此前校验通过的备份接续：
 
-1. 把原库复制到主机并记录摘要，供恢复后核对原文件未变化（服务停止后 `compose cp` 仍可
-   读取卷内文件；macOS 用 `shasum -a 256`，Linux 用 `sha256sum`）：
+1. 把原库复制到主机上已被 Git 忽略的目录并记录摘要，供恢复后核对原文件未变化。不要把
+   数据库复制到项目根目录等会被 Git 跟踪的位置（服务停止后 `compose cp` 仍可读取卷内
+   文件；macOS 用 `shasum -a 256`，Linux 用 `sha256sum`）：
 
    ```bash
-   docker compose cp api:/data/mediaflow.sqlite3 "$PWD/mediaflow-original.sqlite3"
-   shasum -a 256 "$PWD/mediaflow-original.sqlite3"
+   mkdir -p .mediaflow
+   docker compose cp api:/data/mediaflow.sqlite3 \
+     "$PWD/.mediaflow/mediaflow-original.sqlite3"
+   shasum -a 256 "$PWD/.mediaflow/mediaflow-original.sqlite3"
    ```
 
 2. 校验已保存的备份；这份备份不可用时换用另一份此前校验通过的备份，两份都不可用就停止
@@ -243,8 +253,16 @@ docker compose stop
 3. 按第 3–4 步生成指向新目标的恢复 bootstrap 并执行恢复。目标文件名不得与原库或它的旁路
    文件相同。
 4. 重新计算第 1 步的原文件摘要，确认原库未被改动；再次校验备份并核对 `SHA-256` 与第 2 步
-   相同。之后按第 5–6 步仅启动 API、读回账号与任务，并固定 `MEDIAFLOW_CONFIG_FILE` 启用
-   其余服务。
+   相同。原库 `verify` 已知失败，不要重跑；直接执行第 5 步的 API 启动命令（跳过该步开头
+   的原库 `verify`）：
+
+   ```bash
+   MEDIAFLOW_CONFIG_FILE="$PWD/config/mediaflow.restore.json" \
+     docker compose up -d --no-deps api
+   docker compose ps api
+   ```
+
+   然后按第 6 步读回账号与任务，并固定 `MEDIAFLOW_CONFIG_FILE` 启用其余服务。
 
 POSIX 上，恢复命令必须取得独占租约。恢复后先检查原任务、逐项结果和源／目标状态，使用任务
 已有的安全续作入口处理剩余工作。[备份与重启](deployment.md#backup-and-same-version-recovery)

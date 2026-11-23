@@ -101,18 +101,55 @@ def setup_api(root: Path):
         raise
 
 
+def _env_reference_fields(value: object, path: str = "") -> set[str]:
+    """Every reference-shaped ``*Env`` field in a document, at its exact path."""
+
+    fields: set[str] = set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            field = f"{path}.{key}" if path else str(key)
+            if isinstance(key, str) and isinstance(child, str) and key.endswith("Env") and child:
+                fields.add(field)
+            fields |= _env_reference_fields(child, field)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            fields |= _env_reference_fields(child, f"{path}[{index}]")
+    return fields
+
+
 class PackageRedactionTests(unittest.TestCase):
     def test_environment_references_preserved_and_literal_secrets_redacted(self) -> None:
-        document = example_document(Path(tempfile.gettempdir()))
-        document["storages"][0]["options"] = {
-            "tokenEnv": "OPENLIST_TOKEN",
-            "baseUrl": "https://example.invalid",
+        # An explicit bounded input: the deployed sample document now carries
+        # `_examples` templates with their own `*Env` references (covered by
+        # the sample-wide test below), so the exact field-position assertions
+        # here use their own input instead of the moving sample.
+        document = {
+            "storages": [
+                {
+                    "id": "openlist-storage",
+                    "type": "openlist",
+                    "rootPath": "/media",
+                    "options": {
+                        "baseUrl": "https://openlist.example.invalid",
+                        "tokenEnv": "OPENLIST_TOKEN",
+                    },
+                }
+            ],
+            "webhooks": [
+                {
+                    "id": "operations-webhook",
+                    "url": "https://example.invalid/mediaflow/events",
+                    "secret": "literal-password",
+                    "secretEnv": "MEDIAFLOW_WEBHOOK_SECRET",
+                }
+            ],
+            "api": {
+                "principals": [
+                    {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"]}
+                ],
+                "fallbackToken": "literal-token",
+            },
         }
-        document["webhooks"][0]["secret"] = "literal-password"
-        document["api"]["principals"] = [
-            {"id": "admin", "tokenEnv": "MEDIAFLOW_API_TOKEN", "roles": ["admin"]}
-        ]
-        document["api"]["fallbackToken"] = "literal-token"
         safe, evidence = redact_configuration_document(document)
 
         references = [entry for entry in evidence if entry["kind"] == "environment_reference"]
@@ -130,6 +167,23 @@ class PackageRedactionTests(unittest.TestCase):
         self.assertIn("api.fallbackToken", {entry["field"] for entry in redacted})
         self.assertNotIn("literal-password", json.dumps(safe))
         self.assertNotIn("literal-token", json.dumps(safe))
+
+    def test_example_document_templates_keep_their_environment_references(self) -> None:
+        # Every `*Env` reference the deployed sample carries — including the
+        # merged `_examples` storage templates — stays an environment
+        # reference at its exact path, and each named variable survives in the
+        # export-safe document.
+        document = example_document(Path(tempfile.gettempdir()))
+        safe, evidence = redact_configuration_document(document)
+        references = {
+            entry["field"]: entry["environmentVariable"]
+            for entry in evidence
+            if entry["kind"] == "environment_reference"
+        }
+        self.assertEqual(_env_reference_fields(document), set(references))
+        self.assertTrue(references)
+        for variable in references.values():
+            self.assertIn(variable, json.dumps(safe))
 
 
 class PackageExchangeApiTests(unittest.TestCase):
