@@ -1,6 +1,6 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: DEVELOPER FIXES REPEAT RESTORE AND FINISHES THE RETAINED NOTIFICATION BROWSER ENTRY
+Next Action: B REVIEWS TASK 58.2 REPEAT RESTORE AND NOTIFICATION CHAIN FIXES
 
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -8,7 +8,7 @@ Next Action: DEVELOPER FIXES REPEAT RESTORE AND FINISHES THE RETAINED NOTIFICATI
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Reviewed Head: 1be61cff3e508af171093b23c55836a341564fd5
 Difficulty: High
@@ -16,6 +16,46 @@ Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: ORIGINAL TASK 58.2 CORRECTION SCOPE — A58-01
 ```
+
+## Developer 交接 — 重复恢复定位与通知死信正式链路
+
+```text
+Candidate: 5415534a
+Scope: SQLiteConfigurationRepository.record_deployment_location；通知死信重排的真实 Web 验收
+```
+
+- `record_deployment_location` 汇总既有历史与已发布快照的定位后，把本次恢复目标从历史位置取出并写为末项；
+  沿用原有历史格式和 `load_published_runtime_configuration` 读取入口。快照内容、ID、digest、历史写入格式和 Task pin 不变。
+- `tests/test_sqlite_restore.py` 的现有恢复旅程增加第二次恢复：从 A 恢复到 B 并读 Files 与完整流程，备份并校验 B，
+  归档 A，用新 bootstrap 恢复到已腾空的 A。只启 API 后核对原会话、Active ID 与 digest、Files 条目、旧 pin 和同一
+  离线样例的同一计划，并比较归档原库、源备份、现用库与媒体的前后摘要。
+- 保留的通知脚本只修登录后仍停在已退役的 `创建后继草稿` 等 Draft 流程，且其断言在
+  `web/tests/e2e/notifications.spec.ts` 与 `tests/test_v2_notification_operations.py` 已有等效覆盖，故移除。
+  仍缺的一条断言（浏览器对一条真实死信投递确认重排，再由正式 API 核对原投递 ID 与接收端）接到现有
+  `web/tests/e2e/operations-inventory.python.spec.ts` 的管理员会话与正式通知链路；harness 用生产
+  `NotificationPublisher` + `NotificationWorker` 制造死信，不手写通知状态行。
+
+本轮实际运行（仓库根目录）：
+
+- 修复前复现 `PYTHONPATH=tests .venv/bin/python -m unittest test_sqlite_restore.RestoredDeploymentConsumptionTests.test_host_restore_relocates_without_rewriting_published_pins`
+  → 失败，第二次恢复后历史仍为 `(original, restored)`，当前定位没有变成 `original`；修复后同一用例通过。
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_sqlite_restore test_configuration_snapshot test_v2_rules_object_analysis`
+  → 143 项通过；`test_sqlite_restore test_sqlite_backup test_runtime_lease test_configuration_snapshot test_resident_services test_container_deployment test_notification_delivery_management`
+  → 125 项通过；`test_notifications test_v2_notification_operations` → 52 项通过。
+- 保留脚本失败实际记录：修复前 `getByLabel('API token')` 30 秒超时；改为管理员会话后在同一运行中停在
+  `getByRole('button', { name: '创建后继草稿' })` 30 秒超时（当前 Web 已无该入口）。
+- `cd web && npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "a settled Task publishes one outbox delivery|dead-letter delivery the browser requeues"`
+  → 2 项通过（死信用例 0.7 秒）；`npx playwright test tests/e2e/notifications.spec.ts --grep "dead letters and the detail card requeues|unauthorized principals"`
+  → 2 项通过。
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` 无输出；改动文件 Ruff format/check、`compileall`、
+  `npx tsc --noEmit`、`npx eslint` 与 Prettier 通过。
+
+剩余风险与待 B 验收：
+
+- 本轮未启动 Docker/Compose、候选镜像或 wheel；第二次恢复到已腾空旧路径的正式 Compose 复跑、T4 全量和原
+  Task 的 Web/Worker 接续仍属 B 验收范围。
+- 新增死信用例位于 `operations-inventory.python.spec.ts` 末尾：它先用本地成功响应推进此前遗留的 pending 投递，
+  再把本条投递推进到死信；更早用例的断言已在其自身执行时完成，全文件顺序不变。
 
 ## B 复审 — FIX REQUIRED
 
