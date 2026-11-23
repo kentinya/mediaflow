@@ -761,17 +761,11 @@ class ManualOrganizeIntentService:
         revision = self._configuration_service.require(snapshot_id)
         self._configuration_service.verify_integrity(revision)
         from mediaflow.infrastructure.runtime_configuration import (
-            load_managed_runtime_configuration,
             with_managed_snapshot,
         )
 
-        database_path = self._configuration_service.bootstrap_database_path or str(
-            getattr(self._configuration_service.repository, "database_path", "")
-        )
         return with_managed_snapshot(
-            load_managed_runtime_configuration(
-                revision.document, bootstrap_database_path=database_path
-            ),
+            self._configuration_service.load_published_runtime(revision.document),
             snapshot_id=snapshot_id,
             digest=snapshot_digest,
         )
@@ -788,18 +782,8 @@ class ManualOrganizeIntentService:
                 self._configuration_service.validate_runtime_snapshot(
                     active.revision_id, active.digest
                 )
-                from mediaflow.infrastructure.runtime_configuration import (
-                    load_managed_runtime_configuration,
-                )
 
-                database_path = self._configuration_service.bootstrap_database_path
-                if not database_path:
-                    database_path = str(
-                        getattr(self._configuration_service.repository, "database_path", "")
-                    )
-                runtime = load_managed_runtime_configuration(
-                    active.document, bootstrap_database_path=database_path
-                )
+                runtime = self._configuration_service.load_published_runtime(active.document)
                 return self._snapshot_from_runtime(runtime, active.revision_id, active.digest)
             if self._configuration is not None:
                 return self._normalize_snapshot(self._configuration)
@@ -861,17 +845,7 @@ class ManualOrganizeIntentService:
         service.validate_runtime_snapshot(snapshot_id, digest)
         revision = service.require(snapshot_id)
         service.verify_integrity(revision)
-        from mediaflow.infrastructure.runtime_configuration import (
-            load_managed_runtime_configuration,
-        )
-
-        database_path = service.bootstrap_database_path
-        if not database_path:
-            database_path = str(getattr(service.repository, "database_path", ""))
-        runtime = load_managed_runtime_configuration(
-            revision.document,
-            bootstrap_database_path=database_path,
-        )
+        runtime = service.load_published_runtime(revision.document)
         return self._snapshot_from_runtime(runtime, snapshot_id, digest)
 
     @staticmethod

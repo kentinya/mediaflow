@@ -2070,17 +2070,11 @@ class ManualOrganizePreviewService:
                 revision = self._configuration_service.require(snapshot_id)
                 self._configuration_service.verify_integrity(revision)
                 from mediaflow.infrastructure.runtime_configuration import (
-                    load_managed_runtime_configuration,
                     with_managed_snapshot,
                 )
 
-                database_path = self._configuration_service.bootstrap_database_path or str(
-                    getattr(self._configuration_service.repository, "database_path", "")
-                )
                 runtime = with_managed_snapshot(
-                    load_managed_runtime_configuration(
-                        revision.document, bootstrap_database_path=database_path
-                    ),
+                    self._configuration_service.load_published_runtime(revision.document),
                     snapshot_id=snapshot_id,
                     digest=snapshot_digest,
                 )

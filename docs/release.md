@@ -91,7 +91,9 @@ export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"
      --database-path "$MEDIAFLOW_DATA_DIR/mediaflow-restored.sqlite3"
    ```
 
-4. 用新 bootstrap 执行恢复。恢复会再次校验原备份和暂存副本，并在发布前核对源摘要不变：
+4. 用新 bootstrap 执行恢复。恢复会再次校验原备份和暂存副本，并在发布前核对源摘要不变。
+   显式恢复会把新目标登记为该部署的当前定位；原 Active、任务 pin 的内容、ID 和 digest 保持
+   不变，之后必须继续用恢复 bootstrap 打开这个新文件：
 
    ```bash
    MEDIAFLOW_CONFIG="$PWD/config/mediaflow.restore.json" \
@@ -111,7 +113,11 @@ export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"
      .venv/bin/python -m mediaflow.resident_entry api
    ```
 
-6. 打开 `http://127.0.0.1:8787/`，用原管理员登录，核对账号、Active、任务、结果与审计。
+6. 打开 `http://127.0.0.1:8787/`，用原管理员登录，核对账号、Active、任务、结果与审计；再
+   打开原资源库 Files，确认读取的是原媒体根中的真实条目。若 Files 仍报配置不可用，保留原库
+   与备份，核对 `MEDIAFLOW_CONFIG` 是否指向恢复 bootstrap、该 bootstrap 的 `databasePath`
+   是否就是恢复目标，以及原 Local Storage 媒体根（源码部署中的绝对路径）是否仍可访问；
+   核对完成前保持后台服务停用。
 
 7. 核对通过后启用后台。本节开头 `export` 的 `MEDIAFLOW_CONFIG` 仍指向原 bootstrap，直接
    启动会让三个后台服务打开原库。先把部署变量固定到恢复 bootstrap（`MEDIAFLOW_DATA_DIR`
@@ -169,28 +175,40 @@ export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"
 ### Compose 部署
 
 在 Compose 项目目录执行。默认 bootstrap 是 `config/mediaflow.json`，容器内数据库是
-`/data/mediaflow.sqlite3`，停机和恢复都使用同一个 `mediaflow-data` 卷：
+`/data/mediaflow.sqlite3`，停机和恢复都使用同一个 `mediaflow-data` 卷。下面的维护命令必须
+沿用该部署启动时使用的 Compose 文件组合：没有媒体挂载的普通部署只用基础 Compose；配置了
+Local Storage 的部署还要带上 `compose.media-mounts.yaml`，并保留原来的
+`MEDIAFLOW_SOURCE_MEDIA_ROOT`、`MEDIAFLOW_TARGET_MEDIA_ROOT`（项目 `.env` 或当前终端）：
 
 ```bash
 cd /path/to/mediaflow
-docker compose stop
+
+# 普通部署（无媒体挂载）：
+mediaflow_compose=(docker compose -f compose.yaml)
+# 使用 media overlay 的部署改用下面这行：
+# mediaflow_compose=(docker compose -f compose.yaml -f compose.media-mounts.yaml)
+
+"${mediaflow_compose[@]}" stop
 ```
+
+之后每一步都使用同一个 `mediaflow_compose` 数组；使用 overlay 时重启 API 和后台服务都会
+重新获得原 `/media/incoming`（只读）与 `/media/organized`（读写）挂载。
 
 1. 记录原库摘要并确认当前版本能否启动它；原库已损坏时保持卷内文件原样，改走下面的
    [原库不可读时](#原库不可读时从已保存的备份接续-1)。`Usable by this version: NO` 的完好
    旧版本文件同样跳过恢复：保留原文件并用创建它的原版本处理，本版本改用新的空数据目录。
 
    ```bash
-   docker compose run --rm --no-deps api host verify /data/mediaflow.sqlite3
+   "${mediaflow_compose[@]}" run --rm --no-deps api host verify /data/mediaflow.sqlite3
    ```
 
 2. 生成并校验备份。备份已存在时不要覆盖，改用另一个新文件名；原库不可读时跳过这一步，
    直接走[原库不可读时](#原库不可读时从已保存的备份接续-1)：
 
    ```bash
-   docker compose run --rm --no-deps api \
+   "${mediaflow_compose[@]}" run --rm --no-deps api \
      host backup --output /data/runtime-backup.sqlite3
-   docker compose run --rm --no-deps api \
+   "${mediaflow_compose[@]}" run --rm --no-deps api \
      host verify /data/runtime-backup.sqlite3
    ```
 
@@ -204,37 +222,40 @@ docker compose stop
    ```
 
 4. 用 `MEDIAFLOW_CONFIG_FILE` 让恢复容器挂载新的 bootstrap。`mediaflow-data` 卷、原数据库和
-   原备份都保留：
+   原备份都保留。显式恢复会把新目标登记为该部署的当前定位；原 Active、任务 pin 的内容、
+   ID 和 digest 保持不变，服务必须用恢复 bootstrap 和原媒体挂载启动：
 
    ```bash
    MEDIAFLOW_CONFIG_FILE="$PWD/config/mediaflow.restore.json" \
-     docker compose run --rm --no-deps api \
+     "${mediaflow_compose[@]}" run --rm --no-deps api \
      host restore /data/runtime-backup.sqlite3 --confirm-empty-destination
    ```
 
 5. 核对原库摘要未变，然后仅启动 API。容器仍监听 8080，浏览器使用 Compose 项目配置的宿主端口：
 
    ```bash
-   docker compose run --rm --no-deps api host verify /data/mediaflow.sqlite3
+   "${mediaflow_compose[@]}" run --rm --no-deps api host verify /data/mediaflow.sqlite3
 
    MEDIAFLOW_CONFIG_FILE="$PWD/config/mediaflow.restore.json" \
-     docker compose up -d --no-deps api
-   docker compose ps api
+     "${mediaflow_compose[@]}" up -d --no-deps api
+   "${mediaflow_compose[@]}" ps api
    ```
 
 6. 打开 `http://127.0.0.1:${MEDIAFLOW_API_PORT:-8080}/`，用原管理员登录，核对账号、Active、
-   任务、结果与审计。核对通过后，让后续 Compose 命令固定使用恢复后的 bootstrap 再启用其余
-   服务：
+   任务、结果与审计；再打开原资源库 Files，确认读取的是真实媒体条目。使用媒体 overlay 时
+   两处原挂载必须仍由 `mediaflow_compose` 带入。核对通过后，让后续 Compose 命令固定使用恢复后
+   的 bootstrap 再启用其余服务：
 
    ```bash
    export MEDIAFLOW_CONFIG_FILE="$PWD/config/mediaflow.restore.json"
-   docker compose up -d
+   "${mediaflow_compose[@]}" up -d
    ```
 
    要把恢复后的库作为该项目今后的数据源，把
    `MEDIAFLOW_CONFIG_FILE=./config/mediaflow.restore.json` 写入项目 `.env`，或在每个维护终端
-   导出同一变量；否则普通的 `docker compose up -d` 会重新挂载原 bootstrap 并打开原库。启用后台
-   之前仍需核对备份时点之后的实际文件效果和待处理任务，无法确认时保持后台服务停用。
+   导出同一变量；否则不带该变量的 `up -d` 会重新挂载原 bootstrap 并打开原库。后台服务必须
+   继续使用同一个 `mediaflow_compose` 组合和原媒体根；启用之前仍需核对备份时点之后的实际
+   文件效果和待处理任务，无法确认时保持后台服务停用。
 
 #### 原库不可读时，从已保存的备份接续
 
@@ -248,7 +269,7 @@ docker compose stop
 
    ```bash
    mkdir -p .mediaflow
-   docker compose cp api:/data/mediaflow.sqlite3 \
+   "${mediaflow_compose[@]}" cp api:/data/mediaflow.sqlite3 \
      "$PWD/.mediaflow/mediaflow-original.sqlite3"
    shasum -a 256 "$PWD/.mediaflow/mediaflow-original.sqlite3"
    ```
@@ -257,7 +278,7 @@ docker compose stop
    这份备份不可用时换用另一份此前校验通过的备份，没有可用备份就停止并保留现场：
 
    ```bash
-   docker compose run --rm --no-deps api host verify /data/runtime-backup.sqlite3
+   "${mediaflow_compose[@]}" run --rm --no-deps api host verify /data/runtime-backup.sqlite3
    ```
 
 3. 按第 3–4 步生成指向新目标的恢复 bootstrap 并执行恢复。目标文件名不得与原库或它的旁路
@@ -268,11 +289,12 @@ docker compose stop
 
    ```bash
    MEDIAFLOW_CONFIG_FILE="$PWD/config/mediaflow.restore.json" \
-     docker compose up -d --no-deps api
-   docker compose ps api
+     "${mediaflow_compose[@]}" up -d --no-deps api
+   "${mediaflow_compose[@]}" ps api
    ```
 
-   然后按第 6 步读回账号与任务，并固定 `MEDIAFLOW_CONFIG_FILE` 启用其余服务。
+   然后按第 6 步读回账号与任务，并固定 `MEDIAFLOW_CONFIG_FILE`、同一个 `mediaflow_compose`
+   组合和原媒体根启用其余服务。
 
 POSIX 上，恢复命令必须取得独占租约。恢复后先检查原任务、逐项结果和源／目标状态，使用任务
 已有的安全续作入口处理剩余工作。[备份与重启](deployment.md#backup-and-same-version-recovery)

@@ -8199,24 +8199,11 @@ class MediaFlowApi:
         if active is not None:
             self._configuration_service.verify_integrity(active)
             from mediaflow.infrastructure.configuration_snapshot import build_configuration_snapshot
-            from mediaflow.infrastructure.runtime_configuration import (
-                load_managed_runtime_configuration,
-                with_managed_snapshot,
-            )
+            from mediaflow.infrastructure.runtime_configuration import with_managed_snapshot
 
             try:
                 runtime = with_managed_snapshot(
-                    load_managed_runtime_configuration(
-                        active.document,
-                        bootstrap_database_path=(
-                            self._configuration_service.bootstrap_database_path
-                            or getattr(
-                                getattr(self._configuration_service, "_repository", None),
-                                "database_path",
-                                "",
-                            )
-                        ),
-                    ),
+                    self._configuration_service.load_published_runtime(active.document),
                     snapshot_id=active.revision_id,
                     digest=active.digest,
                     version=active.version,

@@ -48,6 +48,16 @@ CONFIGURATION_STRATEGY_RESULT_LIMIT = 32 * 1024
 #: never projected to operators.
 STORAGE_BROWSER_CURSOR_KEY_NAME = "storage_browser_cursor"
 
+#: The deployment-internal record of database locators this store has legally
+#: occupied.  A normal fresh deployment has no such record and its published
+#: documents must match the bootstrap exactly.  A formal, explicit offline
+#: restore appends its new destination here after copying the verified source,
+#: so published snapshots and Task pins keep their original bytes, ID and digest
+#: while the runtime still opens the database the deployment now uses.  The last
+#: entry is the current locator and must equal the bootstrap path; earlier
+#: entries exist only to read already published snapshots and pins.
+DEPLOYMENT_LOCATION_KEY_NAME = "deployment_database_locations"
+
 #: Deployment-owned startup authority inside a managed configuration document:
 #: the durable database locator and the API principal/role/token identity live
 #: with the deployment bootstrap file and environment.  They are never managed

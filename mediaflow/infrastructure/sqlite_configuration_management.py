@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from mediaflow.domain.configuration_management import (
+    DEPLOYMENT_LOCATION_KEY_NAME,
     STORAGE_BROWSER_CURSOR_KEY_NAME,
     ClassificationPreviewEvidence,
     ConfigurationActivationConflict,
@@ -771,6 +772,104 @@ class SQLiteConfigurationRepository:
         if row is None:
             return None
         return bytes(row["key_material"])
+
+    def deployment_database_locations(self) -> tuple[str, ...]:
+        """Return the ordered locator history of this deployment store.
+
+        The last value is the current deployment locator.  An empty tuple means
+        this store has never been explicitly relocated by an offline restore and
+        every managed document must match the bootstrap path exactly.
+        """
+
+        raw = self.internal_key(DEPLOYMENT_LOCATION_KEY_NAME)
+        if raw is None:
+            return ()
+        try:
+            values = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as error:
+            raise ValueError("deployment database locations are unreadable") from error
+        if not isinstance(values, list):
+            raise ValueError("deployment database locations must be an array")
+        locations: list[str] = []
+        for value in values:
+            if not isinstance(value, str) or not value.strip() or "\x00" in value:
+                raise ValueError("deployment database location is invalid")
+            if value not in locations:
+                locations.append(value)
+        return tuple(locations)
+
+    def published_database_locations(self) -> tuple[str, ...]:
+        """Return the distinct locators recorded by already published snapshots.
+
+        This is restore-time seeding only: a store created before the locator
+        record existed still has intact published revisions carrying the path
+        they were published under, so the first explicit restore can accept
+        those historical pins without rewriting their payload or digest.
+        """
+
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT payload FROM managed_configuration_revisions WHERE status IN (?, ?)",
+                (
+                    ManagedConfigurationStatus.ACTIVE.value,
+                    ManagedConfigurationStatus.SUPERSEDED.value,
+                ),
+            ).fetchall()
+        locations: list[str] = []
+        for row in rows:
+            try:
+                document = json.loads(row["payload"])
+            except (TypeError, ValueError) as error:
+                raise ValueError("published configuration payload is unreadable") from error
+            if not isinstance(document, dict):
+                continue
+            persistence = document.get("persistence")
+            if not isinstance(persistence, dict):
+                continue
+            value = persistence.get("databasePath")
+            if isinstance(value, str) and value.strip() and "\x00" not in value:
+                if value not in locations:
+                    locations.append(value)
+        return tuple(locations)
+
+    def record_deployment_location(self, database_path: str) -> tuple[str, ...]:
+        """Record one explicit offline restore destination as current.
+
+        The already recorded history and every locator carried by a published
+        snapshot are preserved in order, then the destination becomes the last
+        (current) locator.  Only this internal metadata row changes; revision
+        payloads, IDs, digests, authorities, Tasks and Task pins stay untouched.
+        """
+
+        if (
+            not isinstance(database_path, str)
+            or not database_path.strip()
+            or "\x00" in database_path
+        ):
+            raise ValueError("restore destination locator is invalid")
+        with self._lock, self._connection:
+            locations: list[str] = []
+            for value in (
+                *self.deployment_database_locations(),
+                *self.published_database_locations(),
+                database_path,
+            ):
+                if value not in locations:
+                    locations.append(value)
+            payload = json.dumps(locations, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+            self._connection.execute(
+                "INSERT INTO managed_internal_keys (key_name, key_material, created_at) "
+                "VALUES (?, ?, ?) ON CONFLICT(key_name) DO UPDATE SET "
+                "key_material=excluded.key_material",
+                (
+                    DEPLOYMENT_LOCATION_KEY_NAME,
+                    payload,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+        return tuple(locations)
 
     def publish_revision_with_audit(
         self,

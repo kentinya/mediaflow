@@ -488,7 +488,12 @@ database.
 Same-version offline restore is an explicit, non-overwriting operation to a **new** database file in
 the same `mediaflow-data` volume. Create a bootstrap for that new locator with the same generator,
 then follow the [offline restore procedure](release.md#offline-restore-procedure) for the exact
-verify, restore, original-database check and API-only start commands:
+verify, restore, original-database check and API-only start commands. Every maintenance command
+must reuse the Compose file combination the deployment was started with: the base `compose.yaml`
+for a deployment without media mounts, or `-f compose.yaml -f compose.media-mounts.yaml` together
+with the original `MEDIAFLOW_SOURCE_MEDIA_ROOT`/`MEDIAFLOW_TARGET_MEDIA_ROOT` when Local Storage
+uses the overlay. The explicit restore records the new database as this deployment's current
+locator; published Active snapshots, Task pins, IDs and digests keep their original bytes.
 
 ```bash
 python3 scripts/make_deployment_config.py \
@@ -499,12 +504,13 @@ python3 scripts/make_deployment_config.py \
 The procedure uses `MEDIAFLOW_CONFIG_FILE` so the one-off restore container and the API-only start
 mount `config/mediaflow.restore.json`, while the original bootstrap, database, sidecars and backup
 stay untouched. Start only the API first and read back the restored accounts, Active, tasks,
-results and audit before enabling the other services. Keep the existing database and verified
-backup until restored authority is verified. When enabling the background services, keep the same
-`MEDIAFLOW_CONFIG_FILE` (or write it to the project `.env`) so they open the restored database
-rather than the original one. Restore/restart never grants new execution
-permission or proves an uncertain mutation did not occur; supported work retains pins/results/fences
-and only permitted safe remaining stages may continue.
+results and audit. With the media overlay, also verify the original Files entries through the two
+restored mounts. Keep the existing database and verified backup until restored authority is
+verified. When enabling the background services, keep the same `MEDIAFLOW_CONFIG_FILE` (or write it
+to the project `.env`) and the same Compose file combination so they open the restored database and
+keep the original media roots rather than the original database. Restore/restart never grants new
+execution permission or proves an uncertain mutation did not occur; supported work retains
+pins/results/fences and only permitted safe remaining stages may continue.
 
 ## Release security and artifact validation
 

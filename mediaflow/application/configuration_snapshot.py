@@ -32,9 +32,11 @@ from mediaflow.domain.notification import (
     webhook_url_items,
 )
 from mediaflow.infrastructure.runtime_configuration import (
+    RuntimeConfiguration,
     is_minimal_management_bootstrap,
     load_managed_runtime_configuration,
     load_minimal_management_bootstrap,
+    load_published_runtime_configuration,
     load_runtime_configuration,
     reject_retired_remote_execution_input,
     strip_retired_remote_execution,
@@ -246,7 +248,7 @@ class ManagedConfigurationService:
         if active is not None:
             try:
                 self.verify_integrity(active)
-                self._load_for_runtime(active.document)
+                self.load_published_runtime(active.document)
             except RuntimeSnapshotUnavailable as error:
                 health = "UNAVAILABLE"
                 unavailable_reason = str(error)
@@ -375,10 +377,69 @@ class ManagedConfigurationService:
         marker = getattr(self._repository, "last_known_active", None)
         return marker() if callable(marker) else None
 
-    def _load_for_runtime(self, document: object) -> object:
+    def deployment_database_locations(self) -> tuple[str, ...]:
+        """Return this store's explicit restore locator history, if any."""
+
+        reader = getattr(self._repository, "deployment_database_locations", None)
+        return tuple(reader()) if callable(reader) else ()
+
+    def load_published_runtime(self, document: object) -> RuntimeConfiguration:
+        """Load one immutable published snapshot for actual runtime consumption.
+
+        New candidate input still goes through the strict loader.  A published
+        snapshot may keep the locator it was published under when a formal
+        offline restore explicitly moved the same store; the effective runtime
+        path is always the bootstrap the service process actually opened.
+        """
+
         if self._bootstrap_database_path is None:
-            return document
-        return self._loader(copy.deepcopy(document))
+            return load_runtime_configuration(copy.deepcopy(document))
+        return load_published_runtime_configuration(
+            copy.deepcopy(document),
+            bootstrap_database_path=self._bootstrap_database_path,
+            deployment_database_locations=self.deployment_database_locations(),
+        )
+
+    def _carry_current_deployment_locator(self, document: dict[str, object]) -> None:
+        """Put the current locator into a successor built from an old Active.
+
+        An explicit offline restore keeps published snapshots byte-identical, so
+        the Active copied by a normal Save can still carry the pre-restore
+        locator.  The successor is new input and must carry the deployment
+        locator the services actually open, which also keeps the strict
+        publication boundary rejecting every other path.
+        """
+
+        if self._bootstrap_database_path is None:
+            return
+        persistence = document.get("persistence")
+        if not isinstance(persistence, dict):
+            persistence = {}
+            document["persistence"] = persistence
+        persistence["databasePath"] = self._bootstrap_database_path
+
+    def _carry_current_deployment_locator_if_inherited(
+        self, document: dict[str, object], active_document: object
+    ) -> None:
+        """Rebind a successor that still carries the Active it was composed from.
+
+        A direct Settings/Automation publication composes from the current
+        Active document rather than through one of the staging helpers.  After
+        an explicit offline restore that Active still records the pre-restore
+        locator.  Carrying the same locator forward is the normal successor
+        case; any different supplied locator is left for the strict loader to
+        refuse.
+        """
+
+        if not isinstance(active_document, dict):
+            return
+        active_persistence = active_document.get("persistence")
+        candidate_persistence = document.get("persistence")
+        if not isinstance(active_persistence, dict) or not isinstance(candidate_persistence, dict):
+            return
+        if candidate_persistence.get("databasePath") != active_persistence.get("databasePath"):
+            return
+        self._carry_current_deployment_locator(document)
 
     def _accepted_baseline(self, revision: ManagedConfigurationRevision) -> object:
         """The already accepted content a stored revision is checked against.
@@ -634,6 +695,7 @@ class ManagedConfigurationService:
         normalized = _canonical_document(
             strip_retired_remote_execution(copy.deepcopy(active.document))
         )
+        self._carry_current_deployment_locator(normalized)
         _reject_literal_secrets(normalized)
         now = self._clock()
         revision = ManagedConfigurationRevision(
@@ -723,6 +785,7 @@ class ManagedConfigurationService:
             self.verify_integrity(active)
             reject_retired_configuration_input(normalized, baseline=active.document)
             _reject_unsafe_webhook_urls(normalized, current=active.document)
+            self._carry_current_deployment_locator_if_inherited(normalized, active.document)
         else:
             # The first published document may carry the receiving bootstrap's
             # own historical deployment identity unchanged, but a newly
@@ -1015,6 +1078,7 @@ class ManagedConfigurationService:
         """Stage one candidate document that was composed from a readable source."""
 
         normalized = _canonical_document(copy.deepcopy(document))
+        self._carry_current_deployment_locator(normalized)
         _reject_literal_secrets(normalized)
         now = self._clock()
         revision = ManagedConfigurationRevision(
@@ -1155,6 +1219,7 @@ class ManagedConfigurationService:
         normalized = _canonical_document(
             strip_retired_remote_execution(copy.deepcopy(active.document))
         )
+        self._carry_current_deployment_locator(normalized)
         _reject_literal_secrets(normalized)
         now = self._clock()
         revision = ManagedConfigurationRevision(
@@ -1577,7 +1642,7 @@ class ManagedConfigurationService:
                 reason="snapshot_digest_mismatch",
             )
         try:
-            self._load_for_runtime(copy.deepcopy(revision.document))
+            self.load_published_runtime(copy.deepcopy(revision.document))
         except RuntimeSnapshotUnavailable:
             raise
         except Exception as error:

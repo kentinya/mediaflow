@@ -22,7 +22,7 @@ from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.infrastructure.runtime_configuration import (
     ManagementBootstrapConfiguration,
     RuntimeConfiguration,
-    load_managed_runtime_configuration,
+    load_published_runtime_configuration,
     load_runtime_configuration,
     with_managed_snapshot,
 )
@@ -57,6 +57,7 @@ def resolve_configuration(
     if not use_managed:
         return load_runtime_configuration(raw_document)
     database_path = bootstrap_database_path(raw_document)
+    deployment_locations: tuple[str, ...] = ()
     try:
         with SQLiteConfigurationRepository(database_path) as repository:
             active = (
@@ -64,6 +65,7 @@ def resolve_configuration(
                 if snapshot_id
                 else repository.get_active_revision()
             )
+            deployment_locations = repository.deployment_database_locations()
     except RuntimeSnapshotUnavailable:
         raise
     except Exception as error:
@@ -138,9 +140,10 @@ def resolve_configuration(
             reason="digest_corrupt",
         )
     try:
-        resolved = load_managed_runtime_configuration(
+        resolved = load_published_runtime_configuration(
             active.document,
             bootstrap_database_path=database_path,
+            deployment_database_locations=deployment_locations,
         )
     except Exception as error:
         raise RuntimeSnapshotUnavailable(
@@ -216,6 +219,7 @@ def managed_snapshot_identity(path: str | None) -> tuple[str, str] | None:
     database_path = bootstrap_database_path(document)
     with SQLiteConfigurationRepository(database_path) as repository:
         active = repository.get_active_revision()
+        deployment_locations = repository.deployment_database_locations()
         if active is None:
             if repository.has_managed_activation():
                 raise RuntimeSnapshotUnavailable(
@@ -251,9 +255,10 @@ def managed_snapshot_identity(path: str | None) -> tuple[str, str] | None:
                 reason="digest_corrupt",
             )
         try:
-            load_managed_runtime_configuration(
+            load_published_runtime_configuration(
                 active.document,
                 bootstrap_database_path=database_path,
+                deployment_database_locations=deployment_locations,
             )
         except Exception as error:
             raise RuntimeSnapshotUnavailable(

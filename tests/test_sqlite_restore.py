@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sqlite3
 import stat
 import tempfile
@@ -14,8 +15,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
-from mediaflow.domain.security import SecurityAuditRecord
+from mediaflow.domain.security import (
+    ApiPermission,
+    ResolvedApiPrincipal,
+    SecurityAuditRecord,
+)
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
     PersistentTask,
@@ -29,6 +36,8 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.interfaces.service_api import MediaFlowApi
+from mediaflow.runtime_support import resolve_configuration
 from tests.managed_config_fixture import seed_configuration_schema_11_store
 
 
@@ -330,6 +339,233 @@ class SQLiteRestoreTests(unittest.TestCase):
             self.assertTrue(destination.exists())
             self.assertIn("Status: RESTORED", output)
             self.assertNotIn("token", output.lower())
+
+
+class RestoredDeploymentConsumptionTests(unittest.TestCase):
+    """The explicit host restore must leave published authority consumable."""
+
+    def _document(self, root: Path, database: Path) -> dict:
+        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+        document.pop("_examples", None)
+        document["persistence"] = {"databasePath": str(database)}
+        document["historyPath"] = str(root / "history.jsonl")
+        incoming = root / "incoming"
+        organized = root / "organized"
+        incoming.mkdir()
+        (organized / "Movies").mkdir(parents=True)
+        (organized / "TV Shows").mkdir()
+        (incoming / "Movie.2001.mkv").write_bytes(b"media")
+        document["storages"][0]["rootPath"] = str(incoming)
+        document["storages"][0]["readOnly"] = True
+        document["storages"][1]["rootPath"] = str(organized)
+        document["storages"][1]["readOnly"] = False
+        document["resourceLibraries"][0]["storagePath"] = ""
+        document["resourceLibraries"][0]["displayRootPath"] = str(incoming)
+        return document
+
+    def _activate(self, service, document):
+        draft = service.import_draft(document, actor="tester")
+        validated = service.validate(draft.revision_id, actor="tester")
+        self.assertEqual(validated.status.value, "validated", validated.validation_errors)
+        return service.activate(
+            validated.revision_id, expected_version=validated.version, actor="tester"
+        )
+
+    @staticmethod
+    def _write_bootstrap(path: Path, database: Path) -> None:
+        path.write_text(
+            json.dumps({"version": 1, "persistence": {"databasePath": str(database)}}),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _get(api, path: str):
+        statuses: list[str] = []
+        environ = {
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": path,
+            "QUERY_STRING": "",
+            "CONTENT_LENGTH": "0",
+            "wsgi.input": io.BytesIO(),
+            "REMOTE_ADDR": "127.0.0.1",
+            "HTTP_AUTHORIZATION": "Bearer viewer-token",
+        }
+        body = b"".join(api(environ, lambda status, headers: statuses.append(status)))
+        return int(statuses[0].split()[0]), json.loads(body)
+
+    def test_host_restore_relocates_without_rewriting_published_pins(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "original.sqlite3"
+            restored = root / "restored.sqlite3"
+            backup = root / "runtime-backup.sqlite3"
+            document = self._document(root, source)
+            with (
+                SQLiteConfigurationRepository(source) as configuration_repository,
+                SQLiteTaskRepository(source) as runtime_repository,
+            ):
+                service = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=str(source),
+                )
+                first = self._activate(service, document)
+                second_document = json.loads(json.dumps(document))
+                second_document["historyPath"] = str(root / "second-history.jsonl")
+                successor = service.stage_successor_draft(actor="tester")
+                edited = service.edit_draft(
+                    successor.revision_id,
+                    second_document,
+                    expected_version=successor.version,
+                    actor="tester",
+                )
+                validated = service.validate(edited.revision_id, actor="tester")
+                self.assertEqual(validated.status.value, "validated", validated.validation_errors)
+                second = service.activate(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    actor="tester",
+                )
+                self.assertEqual(
+                    configuration_repository.get_revision(first.revision_id).status.value,
+                    "superseded",
+                )
+                runtime_repository.create_task(
+                    PersistentTask(
+                        "original-task",
+                        "organize",
+                        PersistentTaskStatus.COMPLETED,
+                        False,
+                        NOW,
+                        NOW,
+                        total_items=1,
+                        completed_items=1,
+                        configuration_snapshot_id=first.revision_id,
+                        configuration_snapshot_digest=first.digest,
+                    )
+                )
+            source_config = root / "source-config.json"
+            self._write_bootstrap(source_config, source)
+            source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            code, output, error = run_host(source_config, "backup", "--output", str(backup))
+            self.assertEqual(code, 0, error)
+            self.assertIn("Integrity: OK", output)
+            backup_digest = hashlib.sha256(backup.read_bytes()).hexdigest()
+
+            restore_config = root / "restore-config.json"
+            self._write_bootstrap(restore_config, restored)
+            code, output, error = run_host(
+                restore_config, "restore", str(backup), "--confirm-empty-destination"
+            )
+            self.assertEqual(code, 0, error)
+            self.assertIn("Status: RESTORED", output)
+            self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), source_digest)
+            self.assertEqual(hashlib.sha256(backup.read_bytes()).hexdigest(), backup_digest)
+
+            # Published snapshots and the Task pin keep their exact bytes and
+            # identity; only the deployment-internal locator history changes.
+            with SQLiteConfigurationRepository(restored) as repository:
+                self.assertEqual(
+                    repository.get_revision(first.revision_id).document, first.document
+                )
+                self.assertEqual(repository.get_revision(first.revision_id).digest, first.digest)
+                self.assertEqual(
+                    repository.get_revision(second.revision_id).document, second.document
+                )
+                self.assertEqual(
+                    repository.deployment_database_locations(), (str(source), str(restored))
+                )
+            with SQLiteTaskRepository(restored) as repository:
+                pinned = repository.get_task("original-task")
+                self.assertEqual(pinned.configuration_snapshot_id, first.revision_id)
+                self.assertEqual(pinned.configuration_snapshot_digest, first.digest)
+
+            current = resolve_configuration(str(restore_config))
+            self.assertEqual(current.database_path, str(restored))
+            self.assertEqual(current.configuration_snapshot_id, second.revision_id)
+            old_pin = resolve_configuration(
+                str(restore_config),
+                snapshot_id=first.revision_id,
+                snapshot_digest=first.digest,
+            )
+            self.assertEqual(old_pin.configuration_snapshot_id, first.revision_id)
+            self.assertEqual(old_pin.database_path, str(restored))
+
+            restore_bootstrap = json.loads(restore_config.read_text(encoding="utf-8"))
+            with (
+                SQLiteConfigurationRepository(restored) as configuration_repository,
+                SQLiteTaskRepository(restored) as runtime_repository,
+            ):
+                managed = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=str(restored),
+                    bootstrap_document=restore_bootstrap,
+                )
+                api = MediaFlowApi(
+                    runtime_repository,
+                    principals=(
+                        ResolvedApiPrincipal(
+                            "viewer", "viewer-token", frozenset({ApiPermission.READ})
+                        ),
+                    ),
+                    configuration_service=managed,
+                    bootstrap_document=restore_bootstrap,
+                    storage_browser_cursor_secret="restore-test-secret",
+                )
+                status, files = self._get(api, "/api/resource-libraries/source/files")
+                self.assertEqual(status, 200, files)
+                self.assertEqual(files["configuration"]["revisionId"], second.revision_id)
+                self.assertEqual([entry["name"] for entry in files["entries"]], ["Movie.2001.mkv"])
+
+                # New input carrying the pre-restore locator is still refused.
+                wrong = json.loads(json.dumps(managed.active().document))
+                wrong["historyPath"] = str(root / "wrong-history.jsonl")
+                wrong_draft = managed.import_draft(wrong, actor="tester")
+                wrong_validated = managed.validate(wrong_draft.revision_id, actor="tester")
+                self.assertEqual(wrong_validated.status.value, "draft")
+                self.assertTrue(
+                    any("databasePath" in item for item in wrong_validated.validation_errors)
+                )
+
+                # A composed successor carries the current locator; a direct
+                # publication derived from the old Active is rebound to the
+                # same current locator instead of failing the strict input check.
+                candidate = managed.stage_successor_draft(actor="tester")
+                self.assertEqual(candidate.document["persistence"]["databasePath"], str(restored))
+                base = managed.active()
+                derived = json.loads(json.dumps(base.document))
+                derived["operationalLogging"]["minimumLevel"] = "WARN"
+                published = managed.publish_document(
+                    derived,
+                    actor="tester",
+                    expected_active_revision_id=base.revision_id,
+                    expected_active_version=base.revision_sequence or base.version,
+                    expected_active_digest=base.digest,
+                )
+                self.assertEqual(published.document["persistence"]["databasePath"], str(restored))
+                self.assertEqual(published.document["operationalLogging"]["minimumLevel"], "WARN")
+
+            after_save = resolve_configuration(
+                str(restore_config),
+                snapshot_id=first.revision_id,
+                snapshot_digest=first.digest,
+            )
+            self.assertEqual(after_save.configuration_snapshot_id, first.revision_id)
+
+            # Copying the restored file without an explicit restore does not
+            # silently adopt it at another bootstrap locator.
+            copied = root / "copied.sqlite3"
+            shutil.copyfile(restored, copied)
+            copied_config = root / "copied-config.json"
+            self._write_bootstrap(copied_config, copied)
+            with self.assertRaises(RuntimeSnapshotUnavailable) as refused:
+                resolve_configuration(str(copied_config))
+            self.assertEqual(refused.exception.reason, "runtime_invalid")
+
+            self.assertEqual((root / "incoming" / "Movie.2001.mkv").read_bytes(), b"media")
+            self.assertEqual(
+                sorted(path.name for path in (root / "organized").rglob("*")),
+                ["Movies", "TV Shows"],
+            )
 
 
 if __name__ == "__main__":

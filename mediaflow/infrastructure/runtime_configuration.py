@@ -595,6 +595,56 @@ def load_managed_runtime_configuration(
     return resolved
 
 
+def load_published_runtime_configuration(
+    document: Any,
+    *,
+    bootstrap_database_path: str,
+    deployment_database_locations: tuple[str, ...],
+) -> RuntimeConfiguration:
+    """Load one already published snapshot under this deployment's locator history.
+
+    A formal offline restore may publish the same immutable snapshots to a new
+    database file.  Those snapshots keep the locator they were published under,
+    so their ID, digest and Task pins stay unchanged.  The restore records the
+    new destination as the current deployment locator; published consumption
+    accepts earlier recorded locators but always opens the path the bootstrap
+    actually selected.  New input still uses the strict
+    :func:`load_managed_runtime_configuration` boundary.
+    """
+
+    if not isinstance(bootstrap_database_path, str) or not bootstrap_database_path.strip():
+        raise ValueError("bootstrap databasePath is required")
+    if not isinstance(deployment_database_locations, tuple):
+        raise ValueError("deployment database locations must be a tuple")
+    locations: list[str] = []
+    for value in deployment_database_locations:
+        if not isinstance(value, str) or not value.strip() or "\x00" in value:
+            raise ValueError("deployment database location is invalid")
+        if value not in locations:
+            locations.append(value)
+    if not locations:
+        return load_managed_runtime_configuration(
+            document, bootstrap_database_path=bootstrap_database_path
+        )
+    current = locations[-1]
+    if current != bootstrap_database_path:
+        raise ValueError(
+            "this database was explicitly restored for deployment locator "
+            f"{current!r}, but the bootstrap opens {bootstrap_database_path!r}; "
+            "start the services with the bootstrap for that locator or perform an explicit "
+            "restore to this location"
+        )
+    resolved = load_runtime_configuration(document)
+    if resolved.database_path not in locations:
+        raise ValueError(
+            "published configuration records a database locator this deployment never "
+            f"occupied; expected one of {tuple(locations)!r}"
+        )
+    # The published document keeps its own immutable bytes and digest.  The
+    # effective runtime always opens the SQLite file the bootstrap selected.
+    return replace(resolved, database_path=bootstrap_database_path)
+
+
 def with_managed_snapshot(
     configuration: RuntimeConfiguration,
     *,

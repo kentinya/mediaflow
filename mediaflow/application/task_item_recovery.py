@@ -611,21 +611,10 @@ class TaskItemRecoveryService:
             if revision.digest != digest:
                 raise ValueError("configuration pin mismatch")
             from mediaflow.infrastructure.runtime_configuration import (
-                load_managed_runtime_configuration,
                 with_managed_snapshot,
             )
 
-            runtime = load_managed_runtime_configuration(
-                revision.document,
-                bootstrap_database_path=(
-                    self._configuration_service.bootstrap_database_path
-                    or getattr(
-                        getattr(self._configuration_service, "_repository", None),
-                        "database_path",
-                        "",
-                    )
-                ),
-            )
+            runtime = self._configuration_service.load_published_runtime(revision.document)
             return with_managed_snapshot(
                 runtime,
                 snapshot_id=snapshot_id,

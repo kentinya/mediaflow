@@ -70,7 +70,6 @@ from mediaflow.infrastructure.operational_logging import SQLiteOperationalLogger
 from mediaflow.infrastructure.runtime_configuration import (
     ManagementBootstrapConfiguration,
     RuntimeConfiguration,
-    load_managed_runtime_configuration,
     load_management_bootstrap,
 )
 from mediaflow.infrastructure.runtime_lease import (
@@ -448,14 +447,14 @@ def _schedule_intent_continuity(database_path, job, definition):
 def _current_automation_configuration(database_path):
     """Read current permissions from the same managed authority as the Job queue."""
     with SQLiteConfigurationRepository(database_path) as repository:
-        managed = ManagedConfigurationService(repository)
+        managed = ManagedConfigurationService(
+            repository, bootstrap_database_path=str(database_path)
+        )
         active = managed.active()
         if active is None:
             raise RuntimeError("current Active is unavailable")
         managed.verify_integrity(active)
-        return load_managed_runtime_configuration(
-            active.document, bootstrap_database_path=str(database_path)
-        )
+        return managed.load_published_runtime(active.document)
 
 
 def _resident_infrastructure_defaults() -> tuple[float, float, float]:

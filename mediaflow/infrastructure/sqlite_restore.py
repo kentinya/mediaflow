@@ -29,6 +29,10 @@ class SQLiteRestoreService:
     def __init__(self, backup: str | Path, destination: str | Path) -> None:
         self._backup = _path(backup, "backup")
         self._destination = _path(destination, "destination")
+        # Preserve the raw deployment locator spelling: the service opens the
+        # destination through exactly this bootstrap value later, so the
+        # restored store records the same locator the deployment will use.
+        self._destination_locator = os.fspath(destination)
 
     def restore(self, *, confirmed_empty_destination: bool = False) -> DatabaseRestoreResult:
         if not confirmed_empty_destination:
@@ -48,6 +52,14 @@ class SQLiteRestoreService:
         try:
             os.chmod(temporary, 0o600)
             _copy_database(backup, temporary)
+            staged = verifier.verify(temporary, destination=target)
+            _require_startable(staged)
+            # The restored copy keeps every business row and every published
+            # snapshot byte, ID, digest and Task pin.  Only the deployment-
+            # internal locator record is established here, so the same explicit
+            # restore that published this file also authorizes the runtime to
+            # consume snapshots carrying the pre-restore locator.
+            _record_deployment_location(temporary, self._destination_locator)
             staged = verifier.verify(temporary, destination=target)
             _require_startable(staged)
             # The published copy is what the services start from, but the
@@ -101,6 +113,23 @@ def _copy_database(source: Path, destination: Path) -> None:
         closing(sqlite3.connect(destination)) as output_connection,
     ):
         input_connection.backup(output_connection)
+
+
+def _record_deployment_location(database: Path, destination: str) -> None:
+    """Bind the verified copy to the locator this deployment will open.
+
+    The configuration repository owns the deployment-internal metadata table
+    and the published-revision reads.  Opening it on the staged copy (never the
+    source backup) creates the current configuration structure on a runtime-only
+    source and records prior published locators plus this destination.
+    """
+
+    from mediaflow.infrastructure.sqlite_configuration_management import (
+        SQLiteConfigurationRepository,
+    )
+
+    with SQLiteConfigurationRepository(database) as repository:
+        repository.record_deployment_location(destination)
 
 
 def _fsync(path: Path) -> None:

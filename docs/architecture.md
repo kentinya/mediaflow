@@ -1010,7 +1010,11 @@ Native `/configuration` owns explicit empty initialization, checked full-documen
 labelled Active JSON, portable secret-free export and schema/field-allowlisted editing for supported
 fields absent elsewhere. Read/navigation creates no candidate or work. JSON defaults to
 runtime-consumed Active, never cache or a historical substitute. The database locator belongs
-to deployment. The runtime database owns the administrator, sessions and issued tokens.
+to deployment. An explicit offline restore may publish the same immutable store at a new path;
+it records that destination as the current deployment locator while published snapshots and Task
+pins keep their original bytes, IDs and digests, and subsequent versions use that history only to
+consume those already published snapshots. New configuration input must still name the current
+locator. The runtime database owns the administrator, sessions and issued tokens.
 Business configuration edits and imports cannot change these authorities. Export retains
 portable business settings and safe secret references. Existing
 published snapshot identities remain verifiable; this is no permission to rewrite historical pins.
