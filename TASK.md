@@ -1,15 +1,15 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: B REVIEWS TASK 58.2 RETAINED DOCKER ACCEPTANCE FIXES
+Next Action: DEVELOPER FIXES RESIDENT FILES TASK CONTINUATION
 
-用户已授权激活 Task 58.2。Developer 已修复保留 Docker 验收入口的旧认证输入，提交 `25c81e19`，交 B 复审。
+用户已授权激活 Task 58.2。保留 Docker 验收入口的修正已通过实跑，固定 Slice Base 接续复验发现下述阻塞。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Difficulty: High
 Test Level: T4
@@ -17,99 +17,56 @@ Planner / Reviewer: B
 Implementation Authorization: AUTHORIZED BY USER FOR TASK 58.2
 ```
 
-## Developer 交接 — 保留 Docker 验收入口改为现行认证
-
-```text
-Candidate: 25c81e19
-Source checkpoint: 6e5dc4e7
-Scope: 三个保留 Docker 验收入口 + 共享夹具；重复启动入口退役
-```
-
-- `docker_files_toolbar_browser_proof.py` 只用最低管理 bootstrap 启动 Compose；从 API 容器的主机维护入口
-  领取设置码，经 `/api/auth/bootstrap` 创建管理员；用管理员会话向
-  `POST /api/configuration/publish` 提交临时媒体配置；浏览器从根页以该管理员登录后打开两个库。
-  长路径、列表/网格、四种视口、边界空白精确导航、读取失败恢复与读取零变更断言保留。
-- `docker_files_transfer_impact_smoke_test.py` 与 `docker_files_transfer_lifecycle_smoke_test.py`
-  改为同一 bootstrap、主机发码、管理员会话和 checked publication 路径，删除
-  `api.principals` 与 `MEDIAFLOW_API_TOKEN` 输入。Impact 补挂正式媒体 overlay，使临时 Local
-  Storage 根在容器内真实可见；Lifecycle 保留 `OPENLIST_TOKEN` 仅作为 Storage options 凭据。
-- 共享夹具移到 `scripts/docker_harness.py`。`docker_smoke_test.py` 与
-  `docker_health_smoke_test.py` 的重复验收入口退役；启动、重启和发布安全分别由
-  `docker_empty_baseline_smoke_test.py`、`docker_restart_fault_smoke_test.py` 与
-  `docker_release_security_smoke_test.py` 承接。Release-security 继续保留旧
-  `api.principals`/`api.tokenEnv`/环境 token 的负向拒绝和 canary 脱敏验证。
-- 三个保留入口支持 `MEDIAFLOW_SMOKE_TEMP_DIR`，供 Docker daemon 看不到平台临时目录时使用。
-- Toolbar 的键盘根返回断言改为核对真实根状态（当前面包屑消失、根条目 `short.mkv` 可见）。
-  现行 ResourceLibrary 文件页只在库切换或保存时写 URL，目录导航本身不写 URL；URL 目录同步不在
-  本 Task 的入口退役范围。长路径、列表/网格、四视口及精确路径读取断言未变。
-
-本轮实际运行（仓库根目录，除注明外）：
-
-- `python3 scripts/check_governance.py` → PASS；`git diff --check` → 无输出；
-  `.venv/bin/ruff check .` → All checks passed；`.venv/bin/ruff format --check .` →
-  355 files already formatted；`.venv/bin/python -m compileall -q mediaflow tests scripts` → 通过。
-- `MEDIAFLOW_SMOKE_TEMP_DIR="$PWD/.dsh-docker-tmp" .venv/bin/python
-  scripts/docker_files_toolbar_browser_proof.py --image mediaflow:b-task582-1daad11a` →
-  `{"ok":true,"passes":22,"screenshots":48}`，served index `53a73a8625cf`。
-- `.venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py --image
-  mediaflow:b-task582-1daad11a` → `Docker transfer lifecycle acceptance passed.`。
-- `.venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py --image
-  mediaflow:b-task582-1daad11a` → 22,548,578,304 bytes admitted、1 bounded manifest entry、
-  depth/entry/over-selection 均结构化拒绝、Malformed/escape 拒绝、零 Copy/Move/Delete。
-- `PYTHONPATH=tests .venv/bin/python -m unittest test_release_security test_release_validation
-  test_container_deployment` → 38 项通过。
-- 复用镜像的 `/opt/mediaflow/web/dist/index.html` 与本地 `web/dist/index.html` 均为
-  `sha256:53a73a8625cfd4eace787d27b72e0eeb5f69d9d6ccc015d796f36bdf3f0a0394`。
-
-剩余风险与待 B 验收：
-
-- 本 Task 的差异只涉及主机侧 Docker/浏览器验收脚本；产品代码、部署清单和镜像内容未变。B 仍应按
-  T4 构建精确候选并执行全量、wheel、候选镜像和固定 Slice Base 接续门禁。
-- 本机 Docker daemon 不能直接看到 macOS 平台临时目录；三个保留入口已支持
-  `MEDIAFLOW_SMOKE_TEMP_DIR`，B 需在同类环境使用该变量。
-- 全量 Python/Web/E2E、源码外安装、wheel、候选镜像安全冒烟及 RO-4/AC-05 终验仍归 B/A。
-
 ## B 复审 — FIX REQUIRED
 
 ```text
 Reviewed Base: 307eaaf8b006527a11fa2514de839a5528e6c202
-Reviewed Head: f23ed9711016dcb11753501ca1680ec48e84ebe3
+Reviewed Head: 32c269044ad14843d37f80f9b855e0b668062daa
 Decision: FIX REQUIRED
 Slice Outcomes / Surfaces complete: NO
 ```
 
-**P1 / RO-4：替代旧 Files 脚本的 Docker 验收仍无法启动。** 构建 Web 后，维护者按现有入口运行
-`.venv/bin/python scripts/docker_files_toolbar_browser_proof.py`，期望在正式镜像打开两种库的
-长路径目录，检查列表、网格和窄屏工具栏。用本 Slice 已测、生产输入与本轮一致的候选镜像实跑，
-四个服务均因脚本写入已退役的 `api.principals` 而在预检退出。已读取四服务日志并结束等待，
-浏览器尚未打开。产品拒绝行为正确。Task Base 已含这套部署输入，`e2cb3028` 保留该脚本作为
-生产镜像上的替代证据，但只更新了它的说明。两个文件传输 Docker 脚本的正式启动函数也生成
-同一种旧认证配置，分别见 `prepare_transfer_config` 和 `prepare`。
+**P1 / AC-05：常驻 Worker 无法应用 Files Task 已保存的识别决定。** 在固定 Slice Base
+(`5b2e0de4`) 启动的隔离 Compose 中，管理员从现行 API 通过 Run once 产生成功结果，
+通过 Files 受理并显式确认另一项来记录效果不确定的写入，再从 Files 受理一项待识别文件。
+切换候选时保留同一数据库卷、媒体挂载和原账号。候选读回三个 Task 的原 ID、条目、审计、
+提交请求、结果和固定配置，以及原管理员、原只读令牌的权限。旧命令被拒绝，Task 数量和媒体
+效果一致。管理员用原账号在候选的真实任务中心打开待识别文件，选择正常电影，点击「保存并
+重新分析」。服务器接受续作，常驻 Worker 随即把该项记为失败。页面仍提示等待新方案，用户
+无法看到可确认的摘要。
 
-六个旧 CLI 浏览器脚本已退役。B 复验两个库的真实分页、准确文件名和读取零效果，6 项通过；
-Rules 相关单测 60 项通过。前两轮通过的旧库恢复指引、wheel 清单及 Files/Automation 受理
-覆盖保持可核对。交接和两轮复审记录见 `f23ed971:TASK.md`、`8cb501e1:TASK.md` 与
-`03464d11:TASK.md`。
+在固定 Base 和候选各自独立的正式 Compose 中，用同一现行 API 操作复现同样失败。
+Worker 的 Files discovery 装配创建 `ManualOrganizeIntentService` 时没有传入 Storage
+工厂。`_apply_native_decisions` 尝试把已保存的决定应用到原 intent 时，实际源文件无法按
+原快照重验。后续分析仍把该条目标为未识别，尝试为同一条目再次创建识别审核而失败。Base 里的
+装配可追溯到 `aeae518e`，本 Slice 搬迁了这一装配，缺口由本合同的 AC-05 接续验收暴露。
 
 ### 本轮返工开发指导
 
-1. 修正保留的 `scripts/docker_files_toolbar_browser_proof.py` 启动到浏览器的完整路径。
-   复用 `scripts/docker_empty_baseline_smoke_test.py` 的隔离部署及真实登录做法。Compose
-   只挂载最小 bootstrap；从当前主机入口领设置码并创建管理员，再用管理员会话把临时媒体
-   配置提交给 `POST /api/configuration/publish`。浏览器用实际管理员登录后打开两个库。
-   保留已有长路径和四种视口断言。
-2. 一并核对保留的 Docker 启动与文件传输冒烟调用。普通入口共用正式 bootstrap、主机发码、
-   管理员会话和 checked publication；已有现行验收完整承接的重复入口可以退役。保留
-   `docker_release_security_smoke_test.py` 对旧认证输入的负向验证。按现有脚本入口复验
-   受影响的实际启动、登录和浏览结果，并执行治理和差异检查。
+1. 修正 `mediaflow/resident_entry.py` 的 `_media_discovery_service_context`。参照同模块
+   自动化续作已有的 Storage 工厂用法，用原 Task 的固定配置和所需 Storage IDs 装配源文件
+   验证。Worker 应能在重新核对原文件后把已保存的 RecognitionType 应用到原 intent。
+2. 从正式 Compose 的 Web/API 受理一项待识别文件，再到原 Task 保存决定、重新分析、查看精确摘要
+   并显式确认。复用现有媒体挂载和隔离 Provider 夹具。核对原 Task、原 Item、原请求和固定摘要，
+   分析阶段零媒体效果，确认后仅选中条目产生结果。用这条实际常驻 Worker 路径覆盖回归。
+3. 缩小修改到上述续作路径。Developer 执行新增或直接受影响的整理测试与正式 Compose 复现；
+   B 复跑固定 Slice Base 切换和修正候选的 T4 门禁。已完成及效果不确定的条目继续按现有规则处理。
 
-### Slice 重评与剩余验收
+### 已复验的结果与剩余门禁
 
-RO-1、RO-2 和 RO-3 的已验收旅程见 Task 58.1 及上一轮候选证据。本轮 diff 只删除旧验收
-脚本并调整其余测试的说明，生产代码、部署清单和依赖输入无变化。RO-4 的替代验收脚手架
-仍未完成，固定 Slice Base 的 AC-05 和原生浏览器待补项继续由 B 执行。
-本轮日志位于
-`.git/validation-evidence/f23ed9711016dcb11753501ca1680ec48e84ebe3/b-review/`。
+- 上一轮 Docker 验收阻塞已关闭。正式镜像下登录和发布成功，两个库工具栏 22 项测量、
+  48 张截图；文件传输影响与生命周期两项通过。空库、媒体挂载、重启故障和发布安全也通过。
+  RO-1 至 RO-3 的已验收旅程及边界见 Task 58.1，候选的主机维护、旧库校验和 wheel 冒烟已核对。
+- 精确候选 Python 全量 2326 项，2319 通过、7 跳过；静态、样例和源码外 wheel 通过。
+  Web 静态与 1642 单测通过。常规浏览器首跑 288 通过、1 失败，Rules 原用例独立复跑通过。
+- 原生浏览器首跑 36 通过、4 失败。四项手工整理浏览器检查复跑仍失败，原始报告保留；
+  另外 4 项定向任务中心检查独立通过。证据看到了首项实际执行请求 HTTP 202，旧浏览器
+  夹具的单步 Worker 返回无可领取任务，后续同一夹具的几个用例读到先前任务的完成结果。
+  这组夹具的结论与上述正式 Compose 的接续失败分别保留，后续仍由 B 复验。
+- RO-4 的入口和制品退役、旧库保护及同库读回已获得证据，AC-05 的合法条目续作未通过。
+  B 保留原生浏览器和切换接续的验收所有权。原始输出、镜像和 wheel 标识位于
+  `.git/validation-evidence/32c269044ad14843d37f80f9b855e0b668062daa/b-review/`。
+  前轮 Docker 返工及 Developer 交接见 `440355c1:TASK.md`、`32c26904:TASK.md`。
 
 ## 目标与当前缺口
 
@@ -119,7 +76,7 @@ RO-1、RO-2 和 RO-3 的已验收旅程见 Task 58.1 及上一轮候选证据。
 当前版本发现旧配置 schema 11 时，启动、探针和主机维护在写入前拒绝并给出原版本处理或新数据目录初始化的去向。
 
 Task 58.1 已切换部署和主机维护。Task Base 仍包含通用 console script、CLI 专属 Worker 路径、
-旧列表夹具及 schema 11 切换逻辑。候选已移除这些入口及实现，剩余可执行验收脚本见本轮复审。
+旧列表夹具及 schema 11 切换逻辑。候选已退出旧入口，剩余的原 Task 接续缺口见本轮复审。
 
 ## 实施范围与开发指导
 
