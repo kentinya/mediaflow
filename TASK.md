@@ -1,21 +1,72 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: B REVIEWS TASK 58.2 IMPLEMENTATION
+Next Action: DEVELOPER FIXES TASK 58.2
 
-用户已授权激活 Task 58.2。Developer 已实施并交 B 审查（`b0190338`）。
+用户已授权激活 Task 58.2。Developer 提交了 `b0190338`，B 已完成首轮复核。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: AUTHORIZED BY USER FOR TASK 58.2
 ```
+
+## B 复核 — FIX REQUIRED
+
+```text
+Reviewed Base: 307eaaf8b006527a11fa2514de839a5528e6c202
+Reviewed Head: 0f37d8e94d03426d55da94e9987ed803282bd3ed
+Decision: FIX REQUIRED
+Slice Outcomes / Surfaces complete: NO
+```
+
+1. **旧库的恢复指引仍指向已退役命令（P1，AC-03/04）。** 部署者使用原数据目录启动，
+   看到 schema 11 与 12 不符，停机后按发布指引校验旧备份。实际结果为 `Integrity: OK` 和
+   `Usable by this version: NO`。部署、配置、文档导航和发布指引仍承诺可以完成切换；
+   配置指南直接给出候选制品里已经不存在的命令。运行提示可引导用新目录启动，
+   需要找回旧数据的操作者还需要看到保留原文件并使用原版本处理的去向。
+2. **旧文件列表的专属实现仍随 wheel 交付（P1，AC-04）。** 管理员登录后可从两种库页浏览文件，
+   现行 API 通过配置服务读 Active 和游标密钥。Base 的唯一调用者是原 CLI 的
+   `files list`，候选 wheel 仍包含其两套专属 SQLite 读取模块。
+3. **转接的整理回归从已退役的票据任务起步（P1，AC-05 的现行旅程覆盖）。** 管理员从资源库
+   文件页发起整理，遇到识别或元数据问题时在原 Task 作决定，复核摘要后继续；发生部分写入时，
+   需要从原 Task 读回原效果并处理仍可继续的条目。迁移后的若干测试直接写入
+   `remote-organize` 任务，再验证已退出受理的远程票据路径。这些结果无法证明上述当前旅程。
+
+候选复核覆盖完整 Task Base..Head。源码外 wheel 冒烟通过，旧 console script 与旧主模块缺席，
+样例配置和当前库备份恢复通过。四服务的容器／源码启动入口、探针、主机发码和离线维护以现有
+schema 11 夹具实测。原库和备份 SHA-256 一致，备份与恢复目标均未发布。备份、恢复、两种库
+列表相关测试和策略身份共 29 项通过，包含 C 复用 A/A 后仍为 C。
+
+Slice 重评以 58.1 已验收的 RO-1、RO-2 和离线恢复运行能力为基线。本轮核对了新入口对旧库的
+拒绝、空目标保护及当前库 wheel 冒烟；RO-3 的恢复文档和 RO-4 的退役与当前任务接续仍需验收。
+B 保留修正后候选的 T4 全量、真实 Compose／浏览器和固定 Slice Base 的 AC-05 接续门禁。
+原始日志及 wheel 清单位于
+`.git/validation-evidence/0f37d8e94d03426d55da94e9987ed803282bd3ed/b-review/`。
+
+### 本轮返工开发指导
+
+1. 从 README 可达的文档索引、配置、部署、发布和用户操作说明统一旧库处理。删除当前版本的
+   切换步骤与失效链接；核对 `verify` 的两种输出及对应行动。现有适用性拒绝说明保留原库，
+   并给出使用原版本处理旧数据或在新目录初始化本版本的选择。沿用现有主机操作和备份保护。
+   A 终审负责同步稳定需求、架构和关闭记录。
+2. 删除旧 CLI 文件列表独用的 `infrastructure/read_only_active_configuration.py` 与
+   `infrastructure/internal_key_store.py`。保留现行配置仓储的 Active 读取、持久游标密钥和
+   两种库共同使用的浏览逻辑。用现有 wheel 冒烟和库文件 API 核对文件清单、分页及零效果。
+3. 从现有 Files 整理受理 API、Automation 到期或 Run once 建立仍适用的测试任务，复用
+   现有 Worker 与同 Task 决定、分析和确认夹具。优先复用 `tests/test_manual_task_engine.py`
+   已覆盖的逐项失败与续作；把仍缺的部分效果、取消和来源历史断言放到同一真实旅程。
+   核对 `test_automation_entrance_recovery`、`test_organize_source_history` 和
+   `test_task_item_metadata_search` 中从旧 CLI 转接的案例。删除为替代旧 CLI 覆盖而新增的
+   远程票据专属失败处理，保留既有历史读回和共享 Worker 路径。
+4. Developer 运行改动覆盖的恢复、列表和整理测试，以及现有 wheel 冒烟、治理和
+   `git diff --check`。每段测试集中覆盖受影响入口。B 负责全量和固定 Base 接续复验。
 
 ## 目标与当前缺口
 
