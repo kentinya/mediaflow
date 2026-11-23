@@ -8,6 +8,7 @@ newly admitted Files work.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 import unittest
@@ -101,6 +102,48 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
     def _drive(self, value, task_id, *, steps=12):
         for _ in range(steps):
             value.task_engine.run_next()
+            discovery = value.repository.get_media_discovery_for_task(task_id)
+            state = value.repository.get_task_scheduling(task_id)
+            if discovery is None or state is None:
+                continue
+            if state.queue_state in {
+                TaskQueueState.WAITING_HUMAN,
+                TaskQueueState.SETTLED,
+            }:
+                return discovery
+        return value.repository.get_media_discovery_for_task(task_id)
+
+    def _resident_worker_config(self) -> str:
+        """The deployment-owned locator the real resident Worker entry reads."""
+
+        path = self.root / "mediaflow.json"
+        path.write_text(
+            json.dumps({"version": 1, "persistence": {"databasePath": str(self.database)}}),
+            encoding="utf-8",
+        )
+        return str(path)
+
+    def _drive_resident(self, value, config_path: str, task_id: str, *, provider, steps=10):
+        """Advance the real resident Worker entry until the Task's analysis settles.
+
+        Production runs one long-lived Worker process; a test drives the exact
+        production loop one step at a time through the same service composition,
+        so a Files continuation is only ever consumed by the Worker assembly the
+        formal Compose deployment uses.  Only the Metadata Provider is a
+        synthetic fixture, exactly like the isolated Provider a deployment
+        configures through its own environment.
+        """
+
+        from mediaflow.application.metadata import MetadataProviderRegistry
+        from tests.resident_entry_fixtures import run_resident_step
+
+        for _ in range(steps):
+            with mock.patch(
+                "mediaflow.resident_entry.metadata_provider_registry_from_environment",
+                return_value=MetadataProviderRegistry((provider,)),
+            ):
+                code, output = run_resident_step("worker", config_path)
+            self.assertEqual(0, code, output)
             discovery = value.repository.get_media_discovery_for_task(task_id)
             state = value.repository.get_task_scheduling(task_id)
             if discovery is None or state is None:
@@ -1747,6 +1790,96 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertIs(final.status, PersistentTaskStatus.COMPLETED, final.error)
             self.assertEqual(1, len(value.repository.list_results(task_id)))
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+
+    def test_resident_worker_applies_the_saved_recognition_decision_on_the_task(self) -> None:
+        """The resident Worker re-verifies the pinned source and applies its saved type.
+
+        The Task is admitted and analysed by the real resident Worker entry, the
+        operator saves a native recognition decision on its own item and
+        explicitly continues it.  The next resident Worker pass must re-read the
+        exact pinned Storage source, apply the saved RecognitionType to the same
+        intent item and publish that Task's own confirmable summary, with zero
+        media effects.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        provider = SyntheticMetadataProvider(
+            (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "One",
+                    year=2001,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+        )
+        with self.journey(provider=provider) as value:
+            config_path = self._resident_worker_config()
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive_resident(value, config_path, task_id, provider=provider)
+            self.assertIs(DiscoveryStatus.COMPLETED, discovery.status, discovery.error)
+            (item,) = value.repository.list_items(task_id)
+            self.assertIs(item.status, TaskItemStatus.WAITING_RECOGNITION)
+
+            status, checkpoint = self.request(value, f"/api/tasks/{task_id}/items/{item.item_id}")
+            self.assertEqual(200, status, checkpoint)
+            status, decision = self.request(
+                value,
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                "POST",
+                {
+                    "kind": "recognition",
+                    "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+                    "recognitionTypeId": "A",
+                },
+            )
+            self.assertEqual(200, status, decision)
+            status, accepted = self._continue_from_task_center(
+                value,
+                task_id,
+                item.item_id,
+                decision["checkpoint"]["checkpoint_version"],
+            )
+            self.assertEqual(202, status, accepted)
+            self.assertEqual("none", accepted["sideEffects"])
+
+            continued = self._drive_resident(value, config_path, task_id, provider=provider)
+            self.assertIs(DiscoveryStatus.COMPLETED, continued.status, continued.error)
+            self.assertEqual(discovery.discovery_id, continued.discovery_id)
+            self.assertIsNotNone(continued.preview_id, continued)
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state,
+                TaskQueueState.WAITING_HUMAN,
+            )
+            # The saved type reached the Task's own intent item, so the same
+            # analysis published the ready summary instead of the same problem.
+            intent = value.repository.get_manual_intent(continued.intent_id)
+            self.assertIsNotNone(intent)
+            (intent_item,) = intent.items
+            self.assertEqual("A", intent_item.choice.recognition_type_id)
+            (item,) = value.repository.list_items(task_id)
+            self.assertIs(item.status, TaskItemStatus.WAITING_CONFIRM, item)
+
+            status, preview = self.request(
+                value, f"/api/operations/organize/previews/{continued.preview_id}"
+            )
+            self.assertEqual(200, status, preview)
+            (entry,) = preview["items"]
+            self.assertEqual("previewed", entry["status"], entry)
+            self.assertEqual("A", entry["choice"]["recognitionTypeId"], entry)
+            self.assertEqual("A", entry["plan"]["recognitionType"], entry)
+            self.assertEqual("One", entry["plan"]["mediaIdentity"]["title"], entry)
+
+            # The whole continuation stayed zero-mutation: the exact source is
+            # unchanged, no target file exists and no Result was recorded.
+            self.assertEqual(512, (self.source_root / "Movies/One.2001.mkv").stat().st_size)
+            self.assertEqual([], [path for path in self.target_root.rglob("*") if path.is_file()])
+            self.assertEqual((), value.repository.list_results(task_id))
 
     def test_continue_at_full_capacity_keeps_the_saved_decision_and_waits(self) -> None:
         """A full shared queue refuses the continuation without consuming it.

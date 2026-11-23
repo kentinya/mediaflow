@@ -1239,7 +1239,17 @@ def _media_discovery_service_context(configuration, configured_path: str | None,
             bootstrap_document=bootstrap_document,
             management_only=management_only,
         )
-        intents = ManualOrganizeIntentService(repository, configuration_service)
+        intents = ManualOrganizeIntentService(
+            repository,
+            configuration_service,
+            # A saved Files decision is re-verified against the exact pinned
+            # Storage source before ``update_choice`` persists it.  The Worker
+            # owns that authority, so its intent service must build the live
+            # validator from the Task's own pin and the Storage IDs it names;
+            # otherwise every saved native decision is silently dropped and the
+            # next analysis re-publishes the same problem on the same item.
+            storage_factory=lambda runtime, ids: runtime.create_storages(storage_ids=set(ids)),
+        )
         previews = ManualOrganizePreviewService(
             repository,
             intents,
