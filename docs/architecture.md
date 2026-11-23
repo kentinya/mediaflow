@@ -11,6 +11,23 @@ The sections below state the current component contracts; original acceptance id
 and unchanged deferrals remain in Progress and immutable Git checkpoints.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
+## CURRENT — Service startup and SQLite recovery (Slice 58 PASS / CLOSED)
+
+`resident_entry` assembles the four fixed roles, using the same application authority for Web,
+API and residents. The image entrypoint performs preflight and dispatches only those roles and
+the bounded `host_operations` entry. The latter issues account codes and backs up, verifies or
+restores SQLite. HTTP consumes account codes and cannot issue them. The general CLI and its
+exclusive Task branches have exited. [Deployment](deployment.md)
+
+Restore holds the destination's exclusive lease while verifying the backup. It records the new
+locator on the staged copy, revalidates it and publishes to the empty destination without
+overwriting the source or original. The deployment locator history is SQLite-internal metadata.
+Published Active and pinned snapshot consumers verify the original document and digest, accept a
+locator from that store's restore history, and use the bootstrap's current database for I/O.
+New checked publication binds to that current locator. A successor composed from the restored
+Active carries the current locator while historic snapshots and pins retain their original bytes.
+[Offline restore](release.md#offline-restore-procedure)
+
 ## CURRENT — Single Web administrator and scoped API tokens (Slice57 PASS / CLOSED)
 
 SQLite 保存唯一管理员、会话和 API 令牌状态。HTTP 将会话解析为管理员身份，将 Bearer
@@ -25,7 +42,7 @@ SQLite 保存唯一管理员、会话和 API 令牌状态。HTTP 将会话解析
 相应工作，脚本令牌的生命周期由 HTTP 入口独立校验。启动预检只读核对数据库版本和创建标记，
 仅接受空库及本版本创建的库。
 
-[Slice 57 验收账本](progress.md#latest-accepted-closure--slice57)
+[Slice 57 验收账本](progress.md#prior-accepted-closure--slice57)
 
 ## CURRENT — Root Web and unversioned API (Slice56 PASS / CLOSED)
 
@@ -53,7 +70,7 @@ explicit item actions. See [Slice 56 A Final Review](https://github.com/kentinya
 ```text
 minimal deployment bootstrap (database locator only)
   -> durable Web accounts/sessions + current complete configuration/runtime schema + managed Active
-  -> native V2 + one current /api and CLI contract
+  -> native V2 + one current /api contract
   -> Task admission / claim / discovery-analysis / exact authority / execution
   -> same-Task decisions, attempts, independent Results/effects and audit
 ```
@@ -149,7 +166,7 @@ destination metadata, list/name entries and exclusive client dependencies; fix o
 backlinks to supported list/records. Old routes use ordinary not-found without aliases/redirects.
 Keep lifecycle create/edit cards and valid deep links, focused publication, list Copy/Run once,
 unknown-command reconciliation, records and exact Task links. General revision/successor APIs and
-other shared backend/CLI consumers remain; this is not whole-backend Automation API retirement.
+other shared backend consumers remain; this is not whole-backend Automation API retirement.
 Do not delete persisted configuration, definitions, Tasks, Results, records or audit history.
 
 Implementation: pending feedback is revealed after a real read persists for 400ms; requests,
@@ -246,7 +263,8 @@ authority-related query state; 403 does not masquerade as empty data.
 **Dashboard retirement:** route/command registration, dedicated parameters/help/rendering,
 `domain/dashboard.py`, `application/dashboard.py`, SQLite aggregation/helpers and runtime service/
 library-count injection are removed. Old Web addresses use ordinary not-found; authenticated old
-API requests use generic 404, and CLI rejects the old command at parsing. No redirect, alias, 410,
+API requests use generic 404. Slice51 verified the old command's parser refusal before Slice 58
+retired the general CLI. No redirect, alias, 410,
 retirement page, empty-success response or renamed aggregation remains. Shared CountGrid/CSS,
 Task Center/Automation/notifications/system reads and durable records are retained. V1 only loses
 the Dashboard view/default request; no V1 Explore or broader repair was introduced. Shared startup,
@@ -486,7 +504,7 @@ completed+failed Tasks. Cancelled and pending/running are excluded from numerato
 no completed/failed Tasks or unavailable evidence yields no rate. Cancelled Tasks remain in records,
 admitted totals and all-ended counts, outside active counts. Server/API/Web denominator explanations
 and validation must not reuse the all-ended count (which includes cancellation) as the rate denominator.
-Both automatic due and the definition's Run once count; Files/CLI manual organizing and
+Both automatic due and the definition's Run once count. Files manual organizing and
 ordinary file operations do not. Explicit continuation keeps the original cohort identity without
 another admission. Count stable Task identities once before paging. Remove primary/attachment
 success/effect-certainty and frozen file-derived stage-outcome predicates from the rate. Current
@@ -506,7 +524,7 @@ rewrite original execution times, append-only attempts or file/effect evidence. 
 read-only and free of new execution/recovery controls. No second history/metric execution store is
 required. This amends `V2-AUTO-006` result/filter semantics while retaining scoped zero-write reads.
 
-**Consumers/persistence:** audit Task settlement producers, Task/run API/CLI/Web models/filters,
+**Consumers/persistence:** audit Task settlement producers, Task/run API and Web models/filters,
 Task Center views/counts/progress, Files local ordinary status, Automation metrics/readback and existing
 export/log/notification Task-status consumers. Unavailable reads do not invent a sixth
 state or coerce corrupted facts into pending/completed/failed. Fresh/new work and same-version
@@ -531,7 +549,7 @@ scheduling/claim/execution lifecycle. Slice46's Contract/A review remains at
 `5144ab1fc2344b06194969cc2c496835729664c0:SLICE.md`; no old acceptance is rewritten.
 
 ```text
-Files manual / supported API-CLI / Automation Run once / Scheduler due occurrence
+Files manual / supported API / Automation Run once / Scheduler due occurrence
   -> shared Task admission (scope + trigger + authority + immutable configuration pin)
   -> Task-owned bounded queue eligibility and Worker claim/heartbeat/fence
   -> shared organizing application engine
@@ -589,7 +607,7 @@ is required. The publication changes only the submitted runtime settings.
 
 | Existing key | CURRENT consumer |
 |---|---|
-| `automation.maximumActiveJobs` | One atomic organizing Task allowance, integer 1–10000, shared by Files/direct CLI/API/remote, due/Run once and same-Task machine-work re-entry. It is not execution parallelism; ordinary asynchronous file work retains its existing admission rules. |
+| `automation.maximumActiveJobs` | One atomic organizing Task allowance, integer 1–10000, shared by Files/API, due/Run once and same-Task machine-work re-entry. It is not execution parallelism; ordinary asynchronous file work retains its existing admission rules. |
 | `automation.workerPollSeconds` | Shared resident Worker idle-work cadence for organizing and both library kinds' ordinary asynchronous copy/move/delete. No per-origin cadence or new parallelism. |
 | `automation.schedulerPollSeconds` | Scheduler checks for due Automation definitions only; not manual/Run once submission, Worker polling, Cron/interval/timezone or notification cadence. |
 
@@ -703,11 +721,9 @@ automatic and old-attempt uncertain replay remain forbidden.
 The user checks actual Storage effects and confirms the normal plan; this is not provider proof
 that a remote call ended. No Storage protocol redesign/remote operation-ID polling is selected.
 Normal OrganizerExecutor/capability/Hash/conflict/destructive-authority logic handles directories,
-targets and remnants; failed attachments keep existing manual guidance. Remove retry-failed's
-exclusive CLI admission and renderers while retaining ordinary analysis/organize and shared
-four-type code. Keep ordinary CLI/remote source and authorization semantics; add no CLI history
-warning obligation or new remote history/consent category. Existing backend origin/permission checks
-are retained.
+targets and remnants; failed attachments keep existing manual guidance. Slice47 retired the
+standalone retry-failed command. Slice 58 retired the general CLI and its exclusive work paths.
+The current Files analysis, four-type continuation and backend origin and permission checks remain.
 
 This is accepted CURRENT behavior. No old-task/cross-version migration or V1 support is added; fresh and
 same-version persistence, audit, idempotency, pins and permission checks remain applicable.
@@ -921,7 +937,7 @@ The current runtime can load all supported Storage kinds from JSON. Managed Web/
 now exposes one provider-neutral, read-only bounded Storage Browser and directory picker for every
 configured Storage kind. Its browser paths are Storage-relative and its continuation is bound to
 the exact managed revision, Storage, directory and page request. It remains a read-only bounded
-Storage browser. Library-level live browsing is shared with CLI/Files/MediaLibrary; FileIndex is absent.
+Storage browser. The library APIs and both library pages share live browsing.
 
 For Local Storage, `rootPath` is an absolute path visible inside the execution environment. In a
 self-hosted Docker deployment the path must be explicitly bind-mounted with the intended
@@ -949,19 +965,12 @@ the MediaLibrary destination must be current for every Storage kind. The earlier
 check remains available as a Local diagnostic but is no longer the publication authority. The
 previous Active remains available when replacement fails.
 
-A previous supported store that still reports configuration schema 11 may contain unpublished
-revisions from the retired draft lifecycle when its runtime schema is absent or already current.
-The current build reads that scope through a read-only connection and refuses every ordinary
-service start — Web/API, Worker, Scheduler, Notification Worker and the container preflight —
-until an operator reviews the listed revisions, evidence and admitted Task pins and applies `config
-retire-unpublished --confirm`. The read-only `config status` review and the confirmed switch stay
-their own entrances. That switch retires only the unpublished rows and advances the marker
-in one transaction; published snapshots, audits, Task pins and results are untouched. The
-configuration-only layout is unchanged across versions, so creation records a `store_origin` marker
-with the creating runtime schema; a configuration-only store without the current marker is refused
-before any table is created. This is the only supported configuration schema transition. A
-database that already contains a runtime schema from another MediaFlow version is refused before
-this switch can run.
+Startup, the container probe, host code issuance and offline restore share the read-only
+applicability boundary. It accepts fresh or supported current stores with configuration schema 12
+and runtime schema 60 when those components are present. A configuration-only store must carry
+the current `store_origin` marker. Configuration schema 11 and previous runtime schemas are refused
+before startup writes; the earlier schema 11 switch is retired. Backup verification reports file
+integrity and applicability independently.
 
 After publication, `ManagedConfigurationService` verifies the digest/schema/runtime load and builds an
 immutable runtime binding containing revision ID, version and digest. API requests, Workers, Tasks and
@@ -1012,9 +1021,9 @@ fields absent elsewhere. Read/navigation creates no candidate or work. JSON defa
 runtime-consumed Active, never cache or a historical substitute. The database locator belongs
 to deployment. An explicit offline restore may publish the same immutable store at a new path;
 it records that destination as the current deployment locator while published snapshots and Task
-pins keep their original bytes, IDs and digests, and subsequent versions use that history only to
-consume those already published snapshots. New configuration input must still name the current
-locator. The runtime database owns the administrator, sessions and issued tokens.
+pins keep their original bytes, IDs and digests. Runtime uses that locator history when consuming
+published snapshots. New publications bind to the current locator. The runtime database owns
+the administrator, sessions and issued tokens.
 Business configuration edits and imports cannot change these authorities. Export retains
 portable business settings and safe secret references. Existing
 published snapshot identities remain verifiable; this is no permission to rewrite historical pins.
@@ -1028,8 +1037,8 @@ reasons and no stale-cache fallback. Current Active governs new admission; intac
 pins remain valid independently of current Active. Activation alone starts no media work or delivery.
 
 Process liveness, DB/schema/registration/heartbeat readiness and command/pin work readiness remain
-separate. Supported fresh Compose needs bootstrap/admin credentials and durable data but no media
-mounts. Explicit Local Storage mounts/permissions become prerequisites only when Local is used;
+separate. Fresh Compose uses the bootstrap and durable data. The first administrator is created
+with a host-issued code. Local Storage uses explicit mounts and permissions;
 mount changes remain deployment operations. Infrastructure health must allow normal unconfigured
 waiting without presenting Scheduler/notification work as ready. Recoverable configuration/DB faults
 retain resident processes and durable work; schema incompatibility remains fail-closed under the
@@ -1050,7 +1059,7 @@ every policy/Review/Recovery workspace.
   → shared object/reference/audit/concurrency services
   → whole-document validation + applicable evidence
   → atomic publication/runtime binding
-  → existing Files / Operations / Automation / API / CLI consumers
+  → existing Files / Operations / Automation / API consumers
 
 explicit object test / complete-flow test
   → exact bounded non-Active candidate and sample
@@ -1335,8 +1344,8 @@ V2-OPS-013 below. Organizing DryRun and shared Rules/configuration checks stay s
 
 Slice46 narrows this CURRENT population to admitted organizing work, retained by Slice47:
 center membership is proved by persisted organizing admission, not a command label or a DryRun.
-A Task counts once across its own discovery/analysis/confirmation/execution. Analysis-only CLI
-DryRun stays administrative history outside the center. Four-type lineage remains until the
+A Task counts once across its own discovery, analysis, confirmation and execution. Analysis-only
+work stays outside the center's admitted organizing population. Four-type lineage remains until the
 required decision/analysis/summary/confirmation is resolved; plain queued/running is not human
 Attention. A technical failure leaves four-type Attention and stays factual read-only All/Ended
 history. Under Slice48, completed is the durable flow outcome regardless of file failures;
@@ -1355,7 +1364,7 @@ Supported same-version restart/results/pins/claims/non-replay remain required an
 ## CURRENT — FileIndex retirement and shared live listing (Slice45)
 
 [The FileIndex retirement design](file-index-retirement-spec.md) owns `V2-FILES-005/006` and complete
-consumer/removal acceptance. CLI, ResourceLibrary Files and MediaLibrary resolve the same exact Active
+consumer/removal acceptance. The library APIs, ResourceLibrary Files and MediaLibrary resolve the same Active
 library kind/ID/root through shared bounded live Storage list/stat behavior. Browsing persists no
 catalog/observations/work, grants no authority and calls no Provider/Hash/mutation.
 
@@ -1369,7 +1378,7 @@ Necessary shared Automation coupling may be cleaned without preserving43 UI or r
 Continuation cursors for the shared live listing are stateless and authenticated with one
 deployment-internal key generated create-if-absent in the managed configuration store. The key is
 internal metadata (not business configuration, not part of an Active revision, never portable or
-exported) so a cursor issued by one CLI/API process stays verifiable by a later process. A strictly
+exported) so a cursor issued by one API process stays verifiable by a later process. A strictly
 read-only listing reads the key without creating or upgrading the store and refuses an uninitialized
 store explicitly rather than minting a one-off process key.
 
@@ -1381,14 +1390,13 @@ scheduled/definition-bound dispatch/retry/continuation, exclusive schema/service
 composition or compatibility/retirement layer. Old inputs ordinarily reject under normal auth and
 shared supported-type validation before Storage/Provider/admission/authority; no conversion to Organize.
 
-Web creation/Files/recovery and CLI organize without --execute call the same shared Organize DryRun
-application analysis/planning behavior, retaining each entrance's actual scope/pin/policy choices.
-API calls the application service directly; it does not spawn the CLI or add another analysis engine.
+Web Files and Task recovery use shared Organize analysis and planning with each entrance's
+actual scope, pin and policy choices. The API calls the application service directly.
 Web flow: Organize DryRun -> persist complete immutable source/configuration/plan/version evidence -> project
 same-page summary -> exact explicit authority/admission -> revalidate the confirmed plan/source/permission
 -> existing Worker/OrganizerExecutor/Result. Summary text alone is not an execution plan; material
 source/plan changes require updated analysis/summary and fresh confirmation.
-CLI organize without --execute and Rules/configuration/Automation preflight reuse real planning.
+Rules, configuration and Automation preflight reuse real planning.
 Preserve current candidate/definition/scope/permission boundaries, elapsed stability, findings,
 attachments, capabilities and source revalidation. Analysis grants no permission and creates no
 formal execution waiting/recovery backlog. Plan publication, pins/claims/fences and non-replay remain.
@@ -1427,10 +1435,10 @@ flow atomically admits an exact plan selection
 with server-held one-shot authority, returns a durable execution/Task identity, and lets the
 resident processing Worker claim it under a persisted fence before any mutation. V2 ResourceLibrary
 Files uses live Storage for exact preparation and explicit manual Organize admission; indexed
-compatibility entry points are removed. Supported direct API/CLI organizing enters the same Task
-kernel with its existing explicit execute/permission/one-shot-authority boundary; no Jobs API remains. CLI organize without
---execute and Web preparation remain zero-mutation analysis. Execution requires explicit confirmation
-and the relevant destructive-effect permissions; revalidation, RBAC, conflict and capability gates
+compatibility entry points are removed. Supported API organizing enters the same Task kernel with
+its explicit execute permission and one-shot authority. Web preparation performs zero-mutation
+analysis. Execution requires explicit confirmation and the relevant destructive-effect permissions;
+revalidation, RBAC, conflict and capability gates
 remain in force, and only `OrganizerExecutor` mutates Storage.
 
 MetadataPolicy query type is the sole lookup/type constraint: Movie accepts movie, TV accepts TV,
@@ -1705,9 +1713,8 @@ entry's existing configuration permissions. Activation audit stores principal, t
 an effective-scope digest atomically with Active. Unrelated administration changes retain the prior
 intent; unreferenced Storage changes do not expand it. Effective context includes the definition,
 source ResourceLibrary, strategy graph, destination libraries and referenced Storage configurations.
-Legacy activation audit supplies its actual actor, never a fabricated administrator. Local CLI
-publication records the invoking OS uid; `--actor` cannot impersonate remote authority. Workers
-require that same trusted uid or the publishing administrator's current capability.
+Activation history retains its actual actor. For current publication, Workers check the publishing
+administrator's current capability and scheduled scope before effects.
 
 The existing Scheduler checks current authority before normal due admission; enable itself admits
 nothing. Tasks keep immutable revision/definition/scope pins. Worker/Executor checks current permission
@@ -1809,9 +1816,9 @@ The accepted implementation exposes the three shared runtime fields in System Se
 immutable documents remain readable with it ignored. Task47.6 passed independent B acceptance and Slice47 passed independent A whole-range review. Capacity bounds queued+claimed organizing Tasks in the shared pool. Polling adoption must be proved by
 fresh actual consumer values/version at safe resident-loop boundaries, independently of each Task's
 media pin. API runtime binding alone is not proof of another process's cadence. Idle/long waits,
-heartbeat/lease ownership and CLI/deployment overrides retain meaning; unavailable Active cannot
-schedule from cache. Preserve supported history/schema/pins and non-replay; no process supervisor
-or new execution parallelism. Inventory/records/Run once and the engine-settings publication and
+heartbeat and lease ownership retain their meaning. Scheduling requires a usable Active.
+Preserve supported history/schema/pins and non-replay; no process supervisor or new execution
+parallelism. Inventory/records/Run once and the engine-settings publication and
 resident adoption below are accepted parts of the same Slice.
 
 #### Focused engine-settings publication and resident adoption
@@ -1838,7 +1845,6 @@ resident Worker/Scheduler loop
     claims work or ticks the Scheduler early
   → an unchanged live consumer re-reports on the bounded refresh; a failed
     report write is retried and is never acknowledged as adopted
-  → override (CLI/deployment) keeps precedence and is reported as an override
 ```
 
 Preparation happens **before** publication: the same `before_publish` callback
@@ -2022,8 +2028,9 @@ logging boundaries.
 
 ## Backup, restore and migration
 
-SQLite backup uses online snapshot semantics and integrity verification. Restore is an explicit
-non-overwriting same-version operation into a controlled destination. Fresh initialization and
+Offline maintenance stops the services before SQLite backup, which uses the SQLite snapshot API
+and integrity verification. Restore is an explicit, non-overwriting same-version operation into
+a controlled destination. Fresh initialization and
 same-version reopen/restart preserve supported work. Schema incompatibility fails closed without
 changing durable state or authorizing media work; old-task/Job conversion, cross-version upgrade/
 rollback and mixed-version writers are outside current support. Prior upgrade tooling and evidence

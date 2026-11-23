@@ -26,7 +26,7 @@
 精确来源/计划、Result 和审计；不能用“列表不记录”删除执行安全所需证据。
 文件页和媒体库页已有维护动作继续存在，媒体库仍不是整理来源。
 
-## 2. 三入口的共享应用行为
+## 2. 共享应用行为
 
 复用现有 `RuntimeFilesBrowserService` 的库级实时浏览，两个库文件 API 与页面调用同一应用行为；
 不以 FileIndex/Result 决定条目是否存在。
@@ -35,7 +35,7 @@
 应用解析精确 Active 的 Storage/root，所有 list/stat 均通过 Storage 接口。
 ResourceLibrary 与 MediaLibrary 的同名 ID、同 Storage/root 仍是不同作用域。
 游标沿用服务端已有的库种类/ID、配置和目录绑定规则，不跨种类、目录或配置使用。
-游标是无状态的并带认证密钥，因此同一部署内的 CLI/API 进程必须共享同一内部密钥：该密钥由
+游标是无状态的并带认证密钥，因此同一部署内的 API 进程共享同一内部密钥：该密钥由
 受支持的初始化在托管配置存储中原子 create-if-absent 生成一次，只读列表只读取它、不建库/
 不升级/不覆盖；缺失或损坏明确拒绝并指向正常初始化，而不是每次读取临时生成一个进程密钥。
 密钥属于内部元数据，不是业务配置、不属于 Active 文档、不导出、不呈现给操作者。
@@ -58,8 +58,7 @@ GET /api/resource-libraries/{SOURCE_ID}/files?path=relative/directory&limit=100&
 内部游标密钥，因此一页发出的游标可在另一进程继续。
 
 两种库选择互斥且必须明确；路径默认库根，使用库相对路径。缺少/冲突选择给出可操作用法，
-不默认为全部库递归、不把 `--storage` 加任意路径作为库约束绕过。CLI 与 Web 解析同一 Managed
-Active；不为列举自动创建业务配置、任务、文件目录数据库或触发 schema 初始化/升级。
+从选中库的相对目录读取。Web 和 API 解析同一 Managed Active；不为列举自动创建业务配置、任务、文件目录数据库或触发 schema 初始化/升级。
 尚无 Active 时给出已有设置路径，不把旧 JSON 中的竞争快照当作 Web 当前 Active。
 
 输出为当前目录的真实条目和分页信息，不带 FileIndex ID、scanStatus、识别/Provider/整理状态。

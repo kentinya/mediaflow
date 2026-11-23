@@ -8,10 +8,17 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice 58](../SLICE.md) is **FIX REQUIRED** after A Final Review. B plans the A58-01 correction
-in [Task 58.2](../TASK.md). Slice 57 remains the latest accepted Slice.
+[Slice 58](../SLICE.md) is **PASS / CLOSED**. [TASK.md](../TASK.md) records the closure handoff.
 
-## Latest accepted closure — Slice57
+## Latest accepted closure — Slice 58
+
+The general CLI and configuration schema 11 switch are retired. Four fixed services and a
+dedicated host entry cover startup, account codes and offline SQLite recovery. A independently
+verified that a restored deployment consumes the original Active and safely continues work under
+the original Task pin. The final B packet is at `ac7d9be28cc0848723c21e34e465e3a04b1cb80d:TASK.md`.
+[A Final Review](../SLICE.md#a-final-review--pass--closed)
+
+## Prior accepted closure — Slice57
 
 Fresh deployments set up one Web administrator with a host-issued code. The administrator signs in
 with a password and issues scoped integration tokens from System Settings. A57-01 was corrected and
@@ -87,6 +94,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 58 — Complete Retirement of the General CLI | PASS / CLOSED | `5b2e0de4ac1c9d79e3618cef82d420ae302401e7` | `5415534a38bb8e23ea64a7fd2929c9e6a59a2cad` | Independent A Final Review on 2026-11-24 | Fixed four-service startup, host account codes, offline SQLite recovery with usable Active and pins, CLI and schema 11 switch retired, current work and audit retained | Media backup, cross-version migration and restore, Web backup management, new authentication and production deployment. A and B reports record evidence limits. |
 | 57 — Single Web Administrator and Scoped API Tokens | PASS / CLOSED | `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab` | `5d2f215fb7afaceeae677877fdb4990fc6815077` | Independent A Final Review on 2026-11-22 | Empty-store setup, Web login and recovery, scoped integration tokens, same-version restart and scheduled stop with existing effects retained | Web multi-user management, external identity, Passkey/MFA, cross-version upgrade and production rollout. Validation limits are recorded in the A and B reports. |
 | 56 — Canonical Web and API Routes | PASS / CLOSED | `33c70735e0a8f45426dde614587ea3d43af94e9b` | `472759665a42a73d24910464e903382adeb37e56` | Independent A Final Review on 2026-11-19 | Web at root and API at `/api/*`, old prefixes retired, deep-link continuation, Base Tasks and audit preserved, exact read-only submission reconciliation and existing per-item recovery | Production deployment, external caller inventory and changeover, general historic version migration and V1. Seven optional tests remain skipped. |
 | 55 — Complete V1 and Migration Residue Retirement | PASS / CLOSED | `2b2e7c1824fa5681864455714d0f97b26555c7dc` | `80334ccaa30d54019934b50855f7dee00525abcc` | Independent A Final Review PASS / CLOSED — 2026-11-19 | Native V2 only, legacy transports and runtime removed, supported V2 data and pins preserved, current Task and configuration journeys verified | V1/obsolete import or takeover, generic upgrade/rollback, new providers/permissions/engine, production release and deployment. Original validation limits apply. |

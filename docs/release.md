@@ -6,7 +6,7 @@
 
 当前公开入口为 Web `/` 和 API `/api/*`。当前支持全新初始化和同版本重开；启动只接受空库或本版本创建的数据库（包括本版本首次设置创建的仅配置库），其他版本创建的库在启动前拒绝并保留原文件，即使它只含当前编号的配置。需要旧数据的部署者用创建它的原版本处理原文件，本版本改用新的空数据目录；没有就地切换、降级或恢复入口。通用跨版本升级与回滚、混合版本写入和旧任务迁移均在支持范围之外。Slice 56 的入口切换验证早于本版本的 runtime schema 变化，其 Base 数据仍作为历史验证记录，但不被当前版本作为可启动数据接受。
 
-- Slice 57 终审覆盖 Base `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab` 至实施 `5d2f215fb7afaceeae677877fdb4990fc6815077`。验证了空库设置、管理员会话及恢复、令牌轮换、计划停用和同版本四服务重启。[验收记录](progress.md#latest-accepted-closure--slice57)
+- Slice 58 终审覆盖 Base `5b2e0de4ac1c9d79e3618cef82d420ae302401e7` 至实施 `5415534a38bb8e23ea64a7fd2929c9e6a59a2cad`。验证四个固定服务、首次设置与找回、停机 SQLite 恢复、原 Active 和任务固定快照的实际采用，以及通用 CLI 和配置 schema 11 切换退役。[验收记录](progress.md#latest-accepted-closure--slice-58)
 - 当前 runtime schema 只接受空库或本版本创建的数据库；上一版本生成的库在启动前被拒绝，文件字节保持不变。仅配置库同样要求本版本的 store origin 标记；上一版本首次设置生成的仅配置库不会被启动流程补建 runtime，也不会被恢复或切换。
 - 更早的结果、适用范围和测试限制可从验收账本和固定文档版本查阅。[验收账本](progress.md#closure-ledger) · [既往验证记录](https://github.com/kentinya/mediaflow/blob/a9f3022ab061c8379adfeda7d464498345e13000/docs/release.md#earlier-v2-validation)
 

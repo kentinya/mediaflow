@@ -4,14 +4,14 @@
 Slice ID: 58
 Name: Complete Retirement of the General CLI
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: 5b2e0de4ac1c9d79e3618cef82d420ae302401e7
 Implementation Head: 5415534a38bb8e23ea64a7fd2929c9e6a59a2cad
 Working Branch: main
-Development Authorization: TASK 58.2 CORRECTION ACCEPTED BY B
+Development Authorization: NO ACTIVE IMPLEMENTATION TASK
 Risk: High
 Target Test Level: T4
-Next Action: A RE-REVIEWS ENTIRE SLICE BASE..IMPLEMENTATION HEAD
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## 授权与基线
@@ -36,10 +36,10 @@ Slice 57 已关闭，固定终审保留原范围、证据及限制。
 Base 的 Compose 四服务经容器预检后执行 `mediaflow`。`final_cli.py` 同时承载服务装配和
 旧命令分派，Web 的文件发现、整理分析和文件传输也依赖这些 Worker 装配。此次切换按调用
 路径提取四服务和现行业务使用的装配及共享逻辑，删除旧命令及其专属执行路径。
-[容器入口](mediaflow/container_entrypoint.py) · [当前 Worker 和 API 装配](mediaflow/final_cli.py)
+[容器入口](mediaflow/container_entrypoint.py) · [四服务装配](mediaflow/resident_entry.py)
 
-合同验收后，更新 `V2-RETIRE-002/009`、`V2-FILES-005`、`V2-TASK-005/014` 等现行
-要求的 CLI 实现，以及 Direct configuration publication 的 schema 11 切换例外。
+验收同步更新 `V2-RETIRE-002/009`、`V2-FILES-005`、`V2-TASK-005/014` 的现行入口，
+并退役 Direct configuration publication 的 schema 11 切换例外。
 `V2-AUTH-004/005/007–009`、`V2-DEPLOY-001/002`、`V2-ROUTE-001/002/004`、
 `REQ-CONFIG-004/008`、`REQ-API-002` 和现行安全要求继续约束保留的能力。按本合同的
 受支持数据库范围落实 `V2-RETIRE-005`。冻结 V1 及已验收 Slice 的历史事实保留原义。
@@ -115,22 +115,22 @@ Base 的 Compose 四服务经容器预检后执行 `mediaflow`。`final_cli.py` 
 
 ## Acceptance Criteria
 
-- [ ] **AC-01 / RO-1。** 用候选镜像及正式 Compose 从无媒体挂载、空库启动四服务，
+- [x] **AC-01 / RO-1。** 用候选镜像及正式 Compose 从无媒体挂载、空库启动四服务，
   核对进程和就绪状态、系统设置初始化与重启。用隔离媒体挂载核对 Web 文件夹准备到
   同任务的精确确认、普通文件传输、Automation 到期与 Run once、Webhook 投递。
   验证失败预检和恢复，分析阶段零媒体变更，Worker/Scheduler 在原授权边界内工作。
-- [ ] **AC-02 / RO-2。** 使用正式镜像的新主机入口和生产浏览器页面完成首次设置及未登录
+- [x] **AC-02 / RO-2。** 使用正式镜像的新主机入口和生产浏览器页面完成首次设置及未登录
   找回，核对过期、错用途、重复／并发消费、丢回包后的状态核对、会话撤销及脱敏。
   同时验证现有 Web 登录与 API 令牌权限，HTTP 无签发权限。
-- [ ] **AC-03 / RO-3。** 在有管理员、Active、任务及审计的隔离实例，停机备份、校验、恢复，
+- [x] **AC-03 / RO-3。** 在有管理员、Active、任务及审计的隔离实例，停机备份、校验、恢复，
   先从 API／Web 核对备份时点的记录，再按指引启动后台。核对损坏及不适用的备份、
   无确认、租约被占用、目标已有文件或旁路文件、发布冲突的保护行为。比较媒体根、
   源备份与应保留的原文件，核对零媒体效果和非覆盖。
-- [ ] **AC-04 / RO-4。** 检查源码和构建清单，验证源码外安装和候选镜像中旧二进制、
+- [x] **AC-04 / RO-4。** 检查源码和构建清单，验证源码外安装和候选镜像中旧二进制、
   可导入旧模块和旧分派全部消失。用正规配置尝试旧调用及任意分派，确认零新任务、
   配置发布、Provider 调用和媒体效果。用临时 schema 11 测试库验证启动、发码及恢复路径
   在写入前拒绝，失败提示对应正确去向，原文件摘要保持一致。
-- [ ] **AC-05 / RO-4。** 用 Base 的现行 Web/API 和自动化在隔离的当前格式库建立合法任务，
+- [x] **AC-05 / RO-4。** 用 Base 的现行 Web/API 和自动化在隔离的当前格式库建立合法任务，
   覆盖已有完成结果和仍可安全续作的工作。候选重新打开同一库，通过正式 Web/Worker
   核对原任务、审计、结果、来源和 pin，并在明确选择后续作合法条目。核对原 ID、配置摘要、
   逐项效果与已完成／不确定项零重放，以及管理员和脚本令牌的原权限。
@@ -143,8 +143,8 @@ Base 的 Compose 四服务经容器预检后执行 `mediaflow`。`final_cli.py` 
 [测试等级与验收分工](docs/development-workflow.md#6-test-levels)
 
 B 验收了 Task 58.1 和 Task 58.2，并复核修正后的全部合同结果。
-[最新 Closure Packet](TASK.md#b-复核与-slice-58-交接)记录本轮结论。原包保存在
-`435a0b42904765820c85cc71cb904c14bf66f10e:TASK.md`。
+最终 Closure Packet 保存在 `ac7d9be28cc0848723c21e34e465e3a04b1cb80d:TASK.md`。
+首次交接保存在 `435a0b42904765820c85cc71cb904c14bf66f10e:TASK.md`。
 
 ## A Final Review — FIX REQUIRED
 
@@ -185,3 +185,45 @@ Active 和已有合法 Task 的固定快照，核对原账号、任务、结果�
 
 A 复现脚本、日志和范围清单保存在本机
 `.git/validation-evidence/1a2383942aff3200f99c9c0560dec3e191ce611e/a-review/`。
+
+## A Final Review — PASS / CLOSED
+
+```text
+Review Date: 2026-11-24
+Reviewed Base: 5b2e0de4ac1c9d79e3618cef82d420ae302401e7
+Accepted Implementation Head: 5415534a38bb8e23ea64a7fd2929c9e6a59a2cad
+B Closure Packet: ac7d9be28cc0848723c21e34e465e3a04b1cb80d:TASK.md
+Decision: PASS / CLOSED
+```
+
+A 从干净的 `main` 复审完整 127 文件范围，重点核对恢复时的定位登记、已发布快照读取与新配置
+发布、任务固定配置、共享 Rules 与通知消费者、Compose 挂载和交付入口。实施候选到 B 交接只
+更新 `SLICE.md` 与 `TASK.md`。首个 Task 的角色例外限于 A 代规划，B 验收与 A 终审独立。
+
+- **AC-01 / AC-02。** B 的正式 Compose 记录覆盖空库、媒体挂载、原进程配置采用、Task 与签名
+  Webhook、重启及发布安全；真实浏览器核对主机码建号、密码重置、会话撤销和未确认提交的核对。
+- **AC-03。** A 分别通过源码启动和正式 Compose，从停机备份恢复到新路径，再恢复到已腾空的
+  原路径。API-only 阶段读到原 Active ID、digest 和真实 Files。Compose 保留两处媒体挂载，
+  Rules 对同一离线样例生成相同方案，核对了原库、前一数据库、备份摘要及零媒体变更。
+  B 的全量和 wheel 记录覆盖租约、适用性、非覆盖和失败原子性。A58-01 通过复验。
+- **AC-04。** A 独立复跑精确 wheel 的源码外安装冒烟。B 以候选镜像核对四服务、探针、发码与
+  恢复拒绝 schema 11，库与备份摘要一致。旧入口退出，当前通知死信在正式链路按原投递记录
+  显式恢复。
+- **AC-05。** A 从固定 Base 镜像用正式入口受理工作。候选重开原库并离线恢复后，核对原账号、
+  只读令牌、请求、审计、任务和固定快照。在恢复库通过系统设置发布新 Active，浏览器在原 Task
+  保存识别决定、查看精确摘要并确认一项。常驻 Worker 只处理该条目，保留原 Task、Item 和
+  pin，已完成和效果不确定的操作零重放。
+
+B 的精确候选 Python 2321 项通过、7 项可选 Storage 或耐久测试跳过，Web 单测 1642 项、默认
+Chromium 289 项通过。真实 Python 浏览器通知和恢复组分别通过 3 项和 4 项。上轮原生整理夹具
+4 项失败保留在原验收包，本轮对应业务结果由正式 Compose 和固定 Base 的真实浏览器续作验证。
+两轮 Docker 复验为隔离实例。生产发布、跨版本迁移、媒体备份、Web 备份管理和新认证机制沿用
+合同边界。
+
+B 镜像为 `sha256:b620c763162eb9d6912602669282bdc7aeb5b9d125361b5223a9948a257d9a28`。
+A 从确切实现提交独立构建镜像 `sha256:130c2b30f0fdbadaefa9cf31bf459d0a253382df0cfd519e0128349f9f603658`，
+用于 Compose 恢复和 Base 续作复验。wheel SHA-256 为
+`defb3ab85509efa274686486efb15ec7eef642ecdc0c8761a4f77a3254b893ce`。
+本机日志、复验脚本及截图位于
+`.git/validation-evidence/5415534a38bb8e23ea64a7fd2929c9e6a59a2cad/` 下的
+`a-review/` 和 `b-review/`。

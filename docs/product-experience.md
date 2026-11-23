@@ -11,6 +11,27 @@ points to the current implementation state and immutable review packet.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
+## CURRENT — Deployment and offline recovery (Slice 58 PASS / CLOSED)
+
+- Start the four services with the deployment's original Compose files and mounts, or start the
+  fixed roles from the installed package. Check process health and work readiness separately.
+  For first setup or a forgotten password, the root Web page gives the deployment's host command
+  to issue a one-time code. Enter it on that page. If a submission response is lost, check the
+  account state there before submitting again.
+- For offline maintenance, stop all four services. Use the host maintenance entry to back up and
+  verify SQLite. Use a new target for restore, keeping the original database and backup. An
+  intact backup from an earlier version stays available for recovery with its creating version.
+  Use a new empty data directory to start this version.
+- Start only the API against the restored database, with the original media mounts. Sign in and
+  verify the restored account, actually consumed Active, live Files, tasks, results and audit.
+  Enable background work after checking media effects since the backup and pending work.
+  Keep the relevant services stopped while effects remain uncertain. Continue eligible items
+  from their original Tasks through explicit confirmation.
+- Everyday configuration, live browsing, organizing, recovery and notifications use the current
+  Web and API. Scheduled organizing keeps its existing Automation controls and visible outcomes.
+
+[Deployment guide](deployment.md) · [Offline restore procedure](release.md#offline-restore-procedure)
+
 ## CURRENT — Single Web administrator and scoped API tokens (Slice57 PASS / CLOSED)
 
 - **首次访问。** 从空库启动并打开根地址，页面指引部署者从主机领取一次性设置码。创建实例
@@ -30,7 +51,7 @@ Detailed superseded delivery notes are retained at
 - **重启后继续工作。** 同版本重启后，管理员可打开已创建的任务、结果和审计，忘记密码时
   从主机领取一次性重置码。
 
-[Slice 57 验收账本](progress.md#latest-accepted-closure--slice57)
+[Slice 57 验收账本](progress.md#prior-accepted-closure--slice57)
 
 ## CURRENT — Canonical entry journey (Slice56 PASS / CLOSED)
 
@@ -417,7 +438,7 @@ The user selected `V2-TASK-012–014` / `V2-AUTO-012` on 2026-11-03.
 `a80015e2f7d46e3ad1b8f7b14c453d1030e62104`. These journeys supersede the affected earlier
 aggregate, recovery-display, metric and execution-record meanings; original acceptance facts remain in Git.
 
-- **Goal/entry:** organize from the existing ResourceLibrary Files/manual API/CLI, due Automation
+- **Goal/entry:** organize from the existing ResourceLibrary Files or its API, due Automation
   or saved-definition Run once, then distinguish whether the Task flow finished from what happened
   to each file. Existing manual initial confirmation, Automation intent and four-type continuation
   remain; ordinary-file operations stay on their originating library page.
@@ -452,7 +473,7 @@ aggregate, recovery-display, metric and execution-record meanings; original acce
   Task-status read/publication failures preserve last durable truth. No new generic retry, remote-stop
   verification gate, pause restoration or universal rollback.
 - **Automation success rate:** in the existing local-month Automation cohort, each admitted due/Run
-  once Task counts once. Run once means the Automation definition button; manual Files/CLI organizing
+  once Task counts once. Run once means the Automation definition button; manual Files organizing
   and ordinary Copy/Move/Delete do not enter this statistic. The rate is
   completed/(completed+failed); cancelled and pending/running human waiting are excluded from both
   numerator and denominator. No completed/failed Tasks or unavailable data shows no rate, even if
@@ -472,7 +493,7 @@ aggregate, recovery-display, metric and execution-record meanings; original acce
   remain factual when legal continuation changes the current Task status. Records stay compact and
   read-only with no new execution/recovery control. All-failed is not empty/no-work or successful
   media organization. This CURRENT amendment changes the result/filter meaning of `V2-AUTO-006`.
-- **Other surfaces:** Files local ordinary-operation status, Task Center, API/CLI,
+- **Other surfaces:** Files local ordinary-operation status, Task Center, API,
   export/logs and existing Task-status notifications distinguish flow state from per-file effects,
   without adding a page or control. Ordinary Copy/Move/Delete already have Tasks and use the same
   technical-failure completion rule on their originating library page. The operation still shows
@@ -569,7 +590,7 @@ through one Task identity; historical Job-based acceptance remains in Git.
   union; Files retains initial confirmation and the admitted Task Center detail reopens the same
   task/preparation readback. Both library
   kinds keep ordinary-operation progress/recovery locally. Automation keeps definition lifecycle,
-  records/metrics; System Settings owns the three runtime fields. Scoped logs/export, API/CLI and health retain
+  records/metrics; System Settings owns the three runtime fields. Scoped logs/export, API and health retain
   their capabilities through Tasks. No Job management page/API/CLI command remains. Capacity is
   bounded queued/claimed executable work, not new parallelism; immutable old configurations and
   explicit runtime overrides retain their meaning.
@@ -608,10 +629,8 @@ The accepted `V2-TASK-008–010` extension uses the ordinary Files and Automatio
   remote Storage call. Explain that limitation without claiming automated verification. New conflicts,
   source/plan changes, denied authority or queue-full retain normal explicit correction/readback.
 
-CLI `tasks retry-failed` is removed, including its analysis-only form; ordinary `organize` analysis
-and explicit execution remain. Normal CLI/remote source and authorization behavior is retained,
-without new CLI warnings or a new remote history gate; the required conspicuous warning is in Web
-Files. Unrelated history appends do not by themselves require an extra confirmation. Source identity
+The standalone retry command was retired in Slice47. Slice 58 retired the general CLI.
+The history warning and explicit confirmation remain in Web Files. Unrelated history appends do not by themselves require an extra confirmation. Source identity
 is canonical Storage/path plus comparable version, not a pathname blacklist or a new FileIndex.
 Only latest failed/partial outcomes cause exclusion; an earlier failure is not permanent after success.
 
@@ -630,7 +649,7 @@ Choose the most direct complete Web journey that preserves correctness, security
 Automate determinable scope/capability/permission/freshness checks; interrupt for meaningful intent,
 authority escalation, ambiguity, conflict, uncertain effects or irreversible/destructive scope.
 Internal tokens/grants/revisions/claims/fences remain backend mechanisms, not ordinary user chores.
-CLI supports administration, automation and diagnosis; it cannot complete a required ordinary Web flow.
+Day-to-day work and diagnosis use the Web and its authorized API. Service startup and host maintenance have dedicated entries.
 
 ## Product completion contract
 
@@ -1235,7 +1254,7 @@ recovered display, without rewriting attempts or double-counting recovery. A fai
 even if every file succeeded. Mixed technical/ignored/uncertain siblings
 never become all-success just because the business problems cleared. Provider transport failures are
 not Metadata decisions, and other terminal failures have no separate failure statistics or generic
-center recovery guidance/actions. Administrative API/CLI recovery remains outside this V2 UX.
+center recovery guidance/actions. Administrative API recovery remains outside this V2 UX.
 
 - **Goal/entry:** find one admitted run from Task Center, Files, Automation or a Task
   deep link, then understand and safely resolve its actual files. Default list has no open detail.
@@ -1524,10 +1543,10 @@ task-center return button, including when leaving a Files visit that already car
 task/preparation/organizing links retain their own exact return context through reconnect; ordinary
 page navigation does not start a new organizing journey or discard durable work.
 
-### CURRENT — FileIndex 退出与 CLI/两种库页实时列表（Slice45）
+### CURRENT — FileIndex 退出与两种库页实时列表（Slice45，Slice 58 更新入口）
 
 [FileIndex retirement design](file-index-retirement-spec.md) and `V2-FILES-005/006` define the complete
-CLI/ResourceLibrary/MediaLibrary same-library live list journey and removal of all global-index
+same-library live list journey through the two library pages and their APIs and removal of all global-index
 products/consumers/schema/sync/repair/stand-ins. Browse/refresh/page creates no catalog/observations/
 work/authority, Provider/Hash or media effects; explicit work retains exact evidence/results/audit.
 Old indexed inputs offer library browsing/Task Center guidance, no compatibility engine or data clear.
@@ -1541,7 +1560,7 @@ Scan 相同的首次部署标准移除：独立 V1/V2 页面、CLI/API、Job/Tas
 提示/兼容执行器或自动转成整理；不建设旧 Preview 停止/接管、迁移、历史或 V1 parity 服务。
 
 操作者在整理创建/Files 或原任务恢复界面显式分析，直接检查当前计划摘要和逐项原因，选择
-合法就绪子集后明确确认。CLI organize 不带 --execute 继续显示完整零媒体变更分析。
+合法就绪子集后明确确认。分析阶段保持零媒体变更。
 独立分析的未就绪或冲突留在准备上下文，不产生正式执行待办或权限；明确 Files 整理或
 Automation Run once 已受理的任务则在四类原生恢复中补充决定、重新分析并明确继续。
 来源/计划变化需更新摘要和意图，成功/未知效果不得重放。

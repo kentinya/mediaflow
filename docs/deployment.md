@@ -196,10 +196,9 @@ the session cookie with `Secure` over HTTPS. Direct loopback HTTP keeps the
 cookie usable without `Secure`. Same-origin write protection still compares the
 browser `Origin`/`Referer` with the forwarded `Host`; do not rewrite the host to
 a different name. `X-Forwarded-Proto` never grants an account, role or request
-authority. Startup and every new configuration input, including `config
-validate` and System Settings, reject `api.principals` and
-`api.tokenEnv`; remove those keys and create the first administrator through the
-Web sign-in page with
+authority. Startup and every new configuration input, including checked publication from System
+Settings, reject `api.principals` and `api.tokenEnv`. Remove those keys and create the first
+administrator through the Web sign-in page with
 `python -m mediaflow.host_operations issue-setup-code` in the host maintenance
 entry.
 
@@ -508,7 +507,7 @@ results and audit. With the media overlay, also verify the original Files entrie
 restored mounts. Keep the existing database and verified backup until restored authority is
 verified. When enabling the background services, keep the same `MEDIAFLOW_CONFIG_FILE` (or write it
 to the project `.env`) and the same Compose file combination so they open the restored database and
-keep the original media roots rather than the original database. Restore/restart never grants new
+keep the original media roots. Restore/restart never grants new
 execution permission or proves an uncertain mutation did not occur; supported work retains
 pins/results/fences and only permitted safe remaining stages may continue.
 
