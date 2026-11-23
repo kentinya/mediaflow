@@ -1,7 +1,8 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: IMPLEMENTATION AUTHORIZATION FOR TASK 58.2
+Next Action: DEVELOPER STARTS TASK 58.2 IMPLEMENTATION
 
+用户已授权激活 Task 58.2。Developer 开始实施时将状态从 `PLANNED` 改为 `IN PROGRESS`。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
@@ -13,7 +14,7 @@ Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Implementation Authorization: PENDING USER AUTHORIZATION
+Implementation Authorization: AUTHORIZED BY USER FOR TASK 58.2
 ```
 
 ## 目标与当前缺口
