@@ -1,21 +1,73 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: DEVELOPER UPDATES THE RETAINED DOCKER ACCEPTANCE ENTRY
+Next Action: B REVIEWS TASK 58.2 RETAINED DOCKER ACCEPTANCE FIXES
 
-用户已授权激活 Task 58.2。Developer 的浏览器验收入口修正为 `e2cb3028`，B 已复审。
+用户已授权激活 Task 58.2。Developer 已修复保留 Docker 验收入口的旧认证输入，提交 `25c81e19`，交 B 复审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: AUTHORIZED BY USER FOR TASK 58.2
 ```
+
+## Developer 交接 — 保留 Docker 验收入口改为现行认证
+
+```text
+Candidate: 25c81e19
+Source checkpoint: 6e5dc4e7
+Scope: 三个保留 Docker 验收入口 + 共享夹具；重复启动入口退役
+```
+
+- `docker_files_toolbar_browser_proof.py` 只用最低管理 bootstrap 启动 Compose；从 API 容器的主机维护入口
+  领取设置码，经 `/api/auth/bootstrap` 创建管理员；用管理员会话向
+  `POST /api/configuration/publish` 提交临时媒体配置；浏览器从根页以该管理员登录后打开两个库。
+  长路径、列表/网格、四种视口、边界空白精确导航、读取失败恢复与读取零变更断言保留。
+- `docker_files_transfer_impact_smoke_test.py` 与 `docker_files_transfer_lifecycle_smoke_test.py`
+  改为同一 bootstrap、主机发码、管理员会话和 checked publication 路径，删除
+  `api.principals` 与 `MEDIAFLOW_API_TOKEN` 输入。Impact 补挂正式媒体 overlay，使临时 Local
+  Storage 根在容器内真实可见；Lifecycle 保留 `OPENLIST_TOKEN` 仅作为 Storage options 凭据。
+- 共享夹具移到 `scripts/docker_harness.py`。`docker_smoke_test.py` 与
+  `docker_health_smoke_test.py` 的重复验收入口退役；启动、重启和发布安全分别由
+  `docker_empty_baseline_smoke_test.py`、`docker_restart_fault_smoke_test.py` 与
+  `docker_release_security_smoke_test.py` 承接。Release-security 继续保留旧
+  `api.principals`/`api.tokenEnv`/环境 token 的负向拒绝和 canary 脱敏验证。
+- 三个保留入口支持 `MEDIAFLOW_SMOKE_TEMP_DIR`，供 Docker daemon 看不到平台临时目录时使用。
+- Toolbar 的键盘根返回断言改为核对真实根状态（当前面包屑消失、根条目 `short.mkv` 可见）。
+  现行 ResourceLibrary 文件页只在库切换或保存时写 URL，目录导航本身不写 URL；URL 目录同步不在
+  本 Task 的入口退役范围。长路径、列表/网格、四视口及精确路径读取断言未变。
+
+本轮实际运行（仓库根目录，除注明外）：
+
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` → 无输出；
+  `.venv/bin/ruff check .` → All checks passed；`.venv/bin/ruff format --check .` →
+  355 files already formatted；`.venv/bin/python -m compileall -q mediaflow tests scripts` → 通过。
+- `MEDIAFLOW_SMOKE_TEMP_DIR="$PWD/.dsh-docker-tmp" .venv/bin/python
+  scripts/docker_files_toolbar_browser_proof.py --image mediaflow:b-task582-1daad11a` →
+  `{"ok":true,"passes":22,"screenshots":48}`，served index `53a73a8625cf`。
+- `.venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py --image
+  mediaflow:b-task582-1daad11a` → `Docker transfer lifecycle acceptance passed.`。
+- `.venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py --image
+  mediaflow:b-task582-1daad11a` → 22,548,578,304 bytes admitted、1 bounded manifest entry、
+  depth/entry/over-selection 均结构化拒绝、Malformed/escape 拒绝、零 Copy/Move/Delete。
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_release_security test_release_validation
+  test_container_deployment` → 38 项通过。
+- 复用镜像的 `/opt/mediaflow/web/dist/index.html` 与本地 `web/dist/index.html` 均为
+  `sha256:53a73a8625cfd4eace787d27b72e0eeb5f69d9d6ccc015d796f36bdf3f0a0394`。
+
+剩余风险与待 B 验收：
+
+- 本 Task 的差异只涉及主机侧 Docker/浏览器验收脚本；产品代码、部署清单和镜像内容未变。B 仍应按
+  T4 构建精确候选并执行全量、wheel、候选镜像和固定 Slice Base 接续门禁。
+- 本机 Docker daemon 不能直接看到 macOS 平台临时目录；三个保留入口已支持
+  `MEDIAFLOW_SMOKE_TEMP_DIR`，B 需在同类环境使用该变量。
+- 全量 Python/Web/E2E、源码外安装、wheel、候选镜像安全冒烟及 RO-4/AC-05 终验仍归 B/A。
 
 ## B 复审 — FIX REQUIRED
 
