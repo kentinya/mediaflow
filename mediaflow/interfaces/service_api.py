@@ -7247,7 +7247,7 @@ class MediaFlowApi:
             if active is None:
                 return ()
             service.verify_integrity(active)
-            return tuple(service._load_for_runtime(active.document).webhooks)
+            return tuple(service.load_published_runtime(active.document).webhooks)
         except Exception:
             return ()
 
@@ -7282,7 +7282,7 @@ class MediaFlowApi:
         if active is None:
             return {}
         service.verify_integrity(active)
-        runtime = service._load_for_runtime(active.document)
+        runtime = service.load_published_runtime(active.document)
         return {
             item.webhook_id: item
             for item in runtime.webhooks

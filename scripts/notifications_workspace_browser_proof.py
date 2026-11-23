@@ -187,7 +187,7 @@ def start_api(root: Path):
     )
 
     # Seed one durable dead-letter delivery through the real publisher/worker.
-    runtime = configuration._load_for_runtime(configuration.active().document)
+    runtime = configuration.load_published_runtime(configuration.active().document)
     definition = next(item for item in runtime.webhooks if item.webhook_id == WEBHOOK_ID)
     event = NotificationEvent(
         DELIVERY_EVENT_ID,
