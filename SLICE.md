@@ -4,14 +4,14 @@
 Slice ID: 58
 Name: Complete Retirement of the General CLI
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: FIX REQUIRED
+Status: READY FOR A REVIEW
 Base SHA: 5b2e0de4ac1c9d79e3618cef82d420ae302401e7
-Implementation Head: 1a2383942aff3200f99c9c0560dec3e191ce611e
+Implementation Head: 5415534a38bb8e23ea64a7fd2929c9e6a59a2cad
 Working Branch: main
-Development Authorization: ORIGINAL TASK 58.2 CORRECTION SCOPE; B CORRECTION PLAN PENDING
+Development Authorization: TASK 58.2 CORRECTION ACCEPTED BY B
 Risk: High
 Target Test Level: T4
-Next Action: B PLANS TASK 58.2 CORRECTION FOR A58-01
+Next Action: A RE-REVIEWS ENTIRE SLICE BASE..IMPLEMENTATION HEAD
 ```
 
 ## 授权与基线
@@ -142,7 +142,8 @@ Base 的 Compose 四服务经容器预检后执行 `mediaflow`。`final_cli.py` 
 和独立验收证据，关闭时同步现行要求、旅程、架构和交付指引。
 [测试等级与验收分工](docs/development-workflow.md#6-test-levels)
 
-B 验收了 Task 58.1 和 Task 58.2。原 Closure Packet 保存在
+B 验收了 Task 58.1 和 Task 58.2，并复核修正后的全部合同结果。
+[最新 Closure Packet](TASK.md#b-复核与-slice-58-交接)记录本轮结论。原包保存在
 `435a0b42904765820c85cc71cb904c14bf66f10e:TASK.md`。
 
 ## A Final Review — FIX REQUIRED
