@@ -837,8 +837,11 @@ class SQLiteConfigurationRepository:
 
         The already recorded history and every locator carried by a published
         snapshot are preserved in order, then the destination becomes the last
-        (current) locator.  Only this internal metadata row changes; revision
-        payloads, IDs, digests, authorities, Tasks and Task pins stay untouched.
+        (current) locator.  A destination the deployment occupied before moves
+        to that last position instead of keeping its historical index, because
+        the same explicit restore re-published the store under it.  Only this
+        internal metadata row changes; revision payloads, IDs, digests,
+        authorities, Tasks and Task pins stay untouched.
         """
 
         if (
@@ -852,10 +855,12 @@ class SQLiteConfigurationRepository:
             for value in (
                 *self.deployment_database_locations(),
                 *self.published_database_locations(),
-                database_path,
             ):
                 if value not in locations:
                     locations.append(value)
+            if database_path in locations:
+                locations.remove(database_path)
+            locations.append(database_path)
             payload = json.dumps(locations, ensure_ascii=False, separators=(",", ":")).encode(
                 "utf-8"
             )

@@ -656,6 +656,147 @@ class RestoredDeploymentConsumptionTests(unittest.TestCase):
                 ["Movies", "TV Shows"],
             )
 
+            # Second explicit offline restore back into the vacated original
+            # locator.  The operator stops the restored deployment, backs up and
+            # verifies its live store, archives the first original file and
+            # restores that verified backup into the now empty original path.
+            # A destination this deployment occupied before must become the
+            # current locator again, otherwise the runtime refuses the Active
+            # that the same restore just carried over.
+            with (
+                SQLiteConfigurationRepository(restored) as configuration_repository,
+                SQLiteTaskRepository(restored) as runtime_repository,
+            ):
+                managed = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=str(restored),
+                    bootstrap_document=restore_bootstrap,
+                )
+                api = MediaFlowApi(
+                    runtime_repository,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                        ResolvedApiPrincipal(
+                            "viewer", "viewer-token", frozenset({ApiPermission.READ})
+                        ),
+                    ),
+                    configuration_service=managed,
+                    bootstrap_document=restore_bootstrap,
+                    storage_browser_cursor_secret="restore-test-secret",
+                )
+                current_active = managed.active()
+                before_second_status, before_second_flow = self._complete_flow(api, current_active)
+                self.assertEqual(before_second_status, 200, before_second_flow)
+            media_before_second_restore = media_snapshot()
+
+            second_backup = root / "second-backup.sqlite3"
+            code, output, error = run_host(restore_config, "backup", "--output", str(second_backup))
+            self.assertEqual(code, 0, error)
+            self.assertIn("Integrity: OK", output)
+            second_backup_digest = hashlib.sha256(second_backup.read_bytes()).hexdigest()
+            archived = root / "archived-original.sqlite3"
+            source.replace(archived)
+            self.assertFalse(source.exists())
+            code, output, error = run_host(
+                source_config, "restore", str(second_backup), "--confirm-empty-destination"
+            )
+            self.assertEqual(code, 0, error)
+            self.assertIn("Status: RESTORED", output)
+
+            # The archived first original and the source backup keep their
+            # bytes; the destination is current again in the same internal
+            # history format, and no published snapshot or Task pin moved.
+            self.assertEqual(hashlib.sha256(archived.read_bytes()).hexdigest(), source_digest)
+            self.assertEqual(
+                hashlib.sha256(second_backup.read_bytes()).hexdigest(), second_backup_digest
+            )
+            with SQLiteConfigurationRepository(source) as repository:
+                self.assertEqual(
+                    repository.deployment_database_locations(),
+                    (str(restored), str(source)),
+                )
+                self.assertEqual(
+                    repository.get_revision(first.revision_id).document, first.document
+                )
+                self.assertEqual(repository.get_revision(first.revision_id).digest, first.digest)
+                self.assertEqual(
+                    repository.get_revision(second.revision_id).document, second.document
+                )
+                self.assertEqual(repository.get_revision(second.revision_id).digest, second.digest)
+                self.assertEqual(
+                    repository.get_revision(current_active.revision_id).document,
+                    current_active.document,
+                )
+                self.assertEqual(
+                    repository.get_revision(current_active.revision_id).digest,
+                    current_active.digest,
+                )
+            with SQLiteTaskRepository(source) as repository:
+                pinned = repository.get_task("original-task")
+                self.assertEqual(pinned.configuration_snapshot_id, first.revision_id)
+                self.assertEqual(pinned.configuration_snapshot_digest, first.digest)
+
+            restored_current = resolve_configuration(str(source_config))
+            self.assertEqual(restored_current.database_path, str(source))
+            self.assertEqual(restored_current.configuration_snapshot_id, current_active.revision_id)
+            self.assertEqual(restored_current.configuration_snapshot_digest, current_active.digest)
+            restored_old_pin = resolve_configuration(
+                str(source_config),
+                snapshot_id=first.revision_id,
+                snapshot_digest=first.digest,
+            )
+            self.assertEqual(restored_old_pin.configuration_snapshot_id, first.revision_id)
+            self.assertEqual(restored_old_pin.database_path, str(source))
+
+            # Only the API starts on the restored store: the original session
+            # reads the same Active identity and the original resource library,
+            # and the formal Rules check gives the same plan with no media or
+            # storage effect.
+            source_bootstrap = json.loads(source_config.read_text(encoding="utf-8"))
+            with (
+                SQLiteConfigurationRepository(source) as configuration_repository,
+                SQLiteTaskRepository(source) as runtime_repository,
+            ):
+                managed = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=str(source),
+                    bootstrap_document=source_bootstrap,
+                )
+                api = MediaFlowApi(
+                    runtime_repository,
+                    principals=(
+                        ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                        ResolvedApiPrincipal(
+                            "viewer", "viewer-token", frozenset({ApiPermission.READ})
+                        ),
+                    ),
+                    configuration_service=managed,
+                    bootstrap_document=source_bootstrap,
+                    storage_browser_cursor_secret="restore-test-secret",
+                )
+                status, files = self._get(api, "/api/resource-libraries/source/files")
+                self.assertEqual(status, 200, files)
+                self.assertEqual(files["configuration"]["revisionId"], current_active.revision_id)
+                self.assertEqual(files["configuration"]["digest"], current_active.digest)
+                self.assertEqual([entry["name"] for entry in files["entries"]], ["Movie.2001.mkv"])
+
+                status, after_second_flow = self._complete_flow(api, managed.active())
+                self.assertEqual(status, 200, after_second_flow)
+                self.assertEqual(
+                    {key: value for key, value in before_second_flow.items() if key != "testedAt"},
+                    {key: value for key, value in after_second_flow.items() if key != "testedAt"},
+                )
+                self.assertEqual(after_second_flow["readiness"], "complete_plan_ready")
+                self.assertEqual(after_second_flow["revisionId"], current_active.revision_id)
+                self.assertEqual(after_second_flow["revisionDigest"], current_active.digest)
+                self.assertEqual(after_second_flow["executionAuthorityGranted"], "none")
+                self.assertEqual(after_second_flow["storageReads"], 0)
+                self.assertEqual(after_second_flow["sideEffects"], "none")
+                self.assertEqual(after_second_flow["providerCalls"], 0)
+                self.assertEqual(media_snapshot(), media_before_second_restore)
+
+            self.assertEqual(media_snapshot(), before_flow)
+
 
 if __name__ == "__main__":
     unittest.main()
