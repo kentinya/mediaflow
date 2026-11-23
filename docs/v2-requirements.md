@@ -641,6 +641,19 @@ appears as one status line. If the service has no admission record and the origi
 eligible, an explicit confirmation of that same batch uses the existing atomic admission check.
 [B acceptance](https://github.com/kentinya/mediaflow/blob/455ad4f70c645b1a2e65f4af61378101a25435d8/TASK.md#patch-20261120-3--b-验收-pass).
 
+## TARGET — Slice 59 Files manual organize and task detail content (PLANNED)
+
+[Slice 59](../SLICE.md) limits the presentation amendment to the organizer launched from
+ResourceLibrary Files and the selected Task detail body. Current behavior remains the accepted
+baseline until closure. Retain the product topbar, page and dialog titles, Files and Task Center
+entry points and list context. Existing precise admission, same-Task continuation, permissions,
+Task flow, Storage effects and original-request reconciliation continue to apply.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-OPS-020 | The Files manual organizer presents a readable preparation screen and a same-dialog overview before exact selected confirmation. | Preparation uses the actual stage, scope and progress, with exact scope details and exceptions on demand. The overview identifies independently actionable, ready and recorded files. A confirmed reanalysis outcome returns the current item to the overview with its new state. Unresolved inputs, waits and refusals stay actionable in context, and late reads preserve other drafts, navigation and the exact original submission. Keep one-file detail, selected-plan review, explicit effect permission and exact Task handoff. |
+| V2-OPS-021 | The Task Center detail body presents task flow and independent file/attachment outcomes with existing evidence and recovery. | Order current stage, progress and applicable actions ahead of results and expandable diagnostics. Preserve the separate outcomes and read availability under V2-TASK-012–014, the exact original preparation entry of V2-OPS-019, and native four-type evidence, same-page summary and explicit continuation under V2-OPS-012/016. Preserve the surrounding list, titles, detail tabs, deep links, history and read-only terminal boundaries. |
+
 ## CURRENT — Organizing rules dialogs and readability (Slice54 PASS / CLOSED)
 
 [Slice54](https://github.com/kentinya/mediaflow/blob/05b51268f60f8cc932f6c71d9cfa1efac1227b3e/SLICE.md#a-final-review--pass--closed) passed independent A Final Review on 2026-11-11, from fixed Base

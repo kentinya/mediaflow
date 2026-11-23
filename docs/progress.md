@@ -8,7 +8,9 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice 58](../SLICE.md) is **PASS / CLOSED**. [TASK.md](../TASK.md) records the closure handoff.
+[Slice 59](../SLICE.md) is **PLANNED** for the Files manual organizer and Task Center detail
+body. [TASK.md](../TASK.md) records no active implementation Task. Slice 58 remains the latest
+accepted closure.
 
 ## Latest accepted closure — Slice 58
 
