@@ -1,6 +1,6 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: B REVIEWS TASK 58.2 CANCELLATION NOTIFICATION FIX
+Next Action: DEVELOPER FIXES REPEAT RESTORE AND FINISHES THE RETAINED NOTIFICATION BROWSER ENTRY
 
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -8,14 +8,64 @@ Next Action: B REVIEWS TASK 58.2 CANCELLATION NOTIFICATION FIX
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
-Reviewed Head: f7de678a2e4e0384b89b8de991726ba756ce9f86
+Reviewed Head: 1be61cff3e508af171093b23c55836a341564fd5
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: ORIGINAL TASK 58.2 CORRECTION SCOPE — A58-01
 ```
+
+## B 复审 — FIX REQUIRED
+
+**P1（RO-3 / AC-03）恢复到已腾空的旧路径后，原资源库打不开。** 第一次停机备份后，从
+`mediaflow.sqlite3` 恢复到 `mediaflow-restored.sqlite3`，原管理员会话能打开 Files。后来将现用库
+再次停机备份，归档第一次的原库，按发布指引用新 bootstrap 恢复到已腾空的 `mediaflow.sqlite3`。
+主机命令报告 `RESTORED`，现用库和备份的校验值一致。只启动 API 后，原会话能读到同一 Active ID
+和 digest，但就绪接口显示运行时未采用配置，Files 返回 503 `runtime_invalid`。源媒体仍保持原字节。
+
+`2c05bc19` 引入的恢复记录用列表的末项表示当前数据库路径。恢复目标若已在历史中，写入时去重保留
+了它第一次出现的位置，末项仍是上一次的路径。运行时因此拒绝了本次恢复使用的正确 bootstrap。
+[恢复写入](mediaflow/infrastructure/sqlite_configuration_management.py#L835) ·
+[运行时读取](mediaflow/infrastructure/runtime_configuration.py#L598) ·
+[正式恢复步骤](docs/release.md#offline-restore-procedure)
+
+**P1（RO-4）保留的通知浏览器脚本无法进入通知页。** 维护者构建 Web 后，运行现有的
+`.venv/bin/python scripts/notifications_workspace_browser_proof.py --artifacts <证据目录>`。
+脚本已能生成死信夹具，但打开根页后仍等待已经退役的 `API token` 登录字段，30 秒后退出。
+现行根页使用管理员账号和会话。这是保留验收入口的切换遗漏。B 另用现行真实 Python 浏览器用例核对了
+任务中心已取消状态和通知投递详情，另用正式 API 用例核对了死信原 ID 重排并再次投递。
+[通知浏览器脚本](scripts/notifications_workspace_browser_proof.py#L264)
+
+### 本轮返工开发指导
+
+1. 修改 `SQLiteConfigurationRepository.record_deployment_location`。汇总已有历史和已发布快照的路径，
+   从历史位置取出本次目的路径，再把它写为末项。使用现有的历史格式和加载入口。由正式离线恢复完成这次写入，
+   保留各原快照的内容、ID、digest 和 Task pin。
+2. 在 `tests/test_sqlite_restore.py` 的现有恢复旅程里增加第二次恢复。先从 A 恢复到 B 并读 Files，
+   再停用 B，备份并校验 B，归档 A，用新 bootstrap 恢复到空出的 A。只启 API 后核对原会话、Active
+   和 Files，比较现用库、备份和媒体的前后摘要。运行
+   `PYTHONPATH=tests .venv/bin/python -m unittest test_sqlite_restore test_configuration_snapshot`。
+3. 对照 `web/tests/e2e/operations-inventory.python.spec.ts`、`web/tests/e2e/notifications.spec.ts`
+   和 `tests/test_v2_notification_operations.py` 核对脚本的现有断言。已有等效覆盖的重复脚本可以移除。
+   把仍缺的合同断言接到现有测试的管理员会话和正式通知链路。以浏览器进入通知页、打开目标投递、确认重排，
+   以及正式 API 核对原投递 ID 和接收端作为交接证据。
+
+### 本轮验收
+
+- B 核对完整 `307eaaf8..1be61cff` 和 `5b2e0de4..1be61cff`，工作区与暂存区起始干净。
+  上一项通知阻塞已复验通过。正式 Files 受理后，取消生成恰好一条 `task.cancelled`，再次取消仍为一条，
+  源文件保留。死信重排保留原 ID，Worker 再次投递。真实 Python 浏览器两项通过。
+- 候选镜像通过空库和媒体挂载、重启故障、发布安全和 schema 11 拒绝。受控接收端收到签名 Webhook，
+  旧投递在改地址后保持阻塞，恢复原地址后才继续投递。wheel 源码外冒烟通过。
+- 首次停机恢复在源码和正式 Compose 通过。Compose 恢复前后，Rules 完整流程检查对同一离线样例给出
+  同一整理计划。固定 Slice Base 的原库、账号、令牌和工作可读。恢复库发布新 Active 后，浏览器继续
+  原 Task 的一个明确选择的条目，Worker 用原 pin 完成。已完成和不确定效果条目保留原结果。
+- Python 全量 2328 项，2321 通过、7 跳过。治理、Ruff、编译、依赖、样例和禁用依赖检查通过。
+  完整 Web 门禁留待修正候选。原验收包保留此前 4 个原生整理夹具失败和对应 Compose 验收结果。
+- 第二次恢复和独立通知浏览器脚本均有失败日志。镜像和本轮日志在
+  `.git/validation-evidence/1be61cff3e508af171093b23c55836a341564fd5/b-review/`。
 
 ## Developer 交接 — 取消通知与投递恢复使用已发布快照
 
@@ -44,7 +94,7 @@ Scope: MediaFlowApi 的 Active Webhook 发布与通知中心投递恢复目标�
 - 本轮未启动 Web/Worker 或 Compose；任务中心取消通知的浏览器入口、通知中心死信恢复页面及 T4 全量仍由 B 复跑。
 - 其余 Slice 58 验收边界不变。
 
-## B 复审 — FIX REQUIRED
+## 上一轮 B 复审 — 取消通知（本轮已通过）
 
 **P1，RO-1 / AC-01。** 管理员先启用订阅 `task.cancelled` 的 Webhook，再在 Files 提交整理，趁 Worker
 尚未处理时从任务中心取消。正式 API 报告任务已取消，源文件仍在，通知却没有生成投递记录。Python 全量验收发现这个
@@ -59,7 +109,7 @@ Scope: MediaFlowApi 的 Active Webhook 发布与通知中心投递恢复目标�
    核对任务中心取消后恰好生成一条对应的通知投递，重复取消保持一条，源媒体无变更。用现有死信投递详情和恢复入口
    核对原投递 ID 与原接收端。
 
-**A58-01 验收通过。** 源码和正式 Compose 均可用原会话读取恢复库的 Active 和 Files。Compose 上恢复前后同一
+**上轮首次恢复验收通过。** 源码和正式 Compose 均可用原会话读取恢复库的 Active 和 Files。Compose 上恢复前后同一
 离线 Rules 样例生成了同一计划。固定 Slice Base 的原账号、只读令牌、Task、Item、原请求、结果和审计可读。恢复后
 保存新 Active，再由浏览器分析、确认原任务里的一项，Worker 按原 pin 完成该项。原库和备份校验值一致，已完成与
 效果不确定条目保留原结果。候选镜像还通过空库和媒体挂载、重启、发布安全与 schema 11 拒绝检查。wheel 源码外冒烟通过。
@@ -198,10 +248,10 @@ git diff --check
 
 | 结果 | 当前结论 |
 | --- | --- |
-| RO-1 / AC-01 | **未达到。** 四服务、空库与挂载、整理、传输、定时工作和已验收的 Webhook 投递通过。任务中心取消后缺少对应通知。 |
-| RO-2 / AC-02 | 原候选首次建号、找回和撤销会话证据保留。本候选复验主机建号与原账号、只读令牌的有效权限。 |
-| RO-3 / AC-03 | 本候选源码和 Compose 恢复、原 Active 实际采用、Files、Rules 和原任务浏览器续作通过。 |
-| RO-4 / AC-04、AC-05 | 本候选复验 wheel 与镜像旧入口移除、schema 11 拒绝，以及固定 Base 的原库重开、恢复及显式续作。 |
+| RO-1 / AC-01 | 四服务、空库与挂载、整理、传输、定时工作和签名 Webhook 投递通过。正式 API 取消恰好生成一条通知。通知投递详情和任务中心取消状态在现行浏览器用例可见。 |
+| RO-2 / AC-02 | 候选复验主机设置码、建号和登录。固定 Base 的原账号及只读令牌权限读回一致。首次设置、找回和撤销会话沿用 58.1 的验收证据。 |
+| RO-3 / AC-03 | **未达到。** 首次恢复后的 Active、Files、Rules 和原任务续作通过。第二次恢复到已腾空的旧路径后，运行时无法采用原 Active，Files 读不到原资源库。 |
+| RO-4 / AC-04、AC-05 | **未达到。** wheel、镜像旧入口移除、schema 11 拒绝以及固定 Base 的原库重开、恢复及显式续作通过。保留的通知浏览器脚本仍依赖旧登录表单。 |
 
 本轮范围限于合同内的同版本停机恢复及实际继续使用。跨版本迁移、媒体备份、Web 备份管理和新的维护入口属于合同
 延期范围。原 Task 的全部验收边界见 `32c269044ad14843d37f80f9b855e0b668062daa:TASK.md`。
