@@ -1,6 +1,6 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: DEVELOPER FIXES RULES COMPLETE-FLOW AFTER RESTORE
+Next Action: B REVIEWS TASK 58.2 COMPLETE-FLOW RESTORE FIX
 
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -8,7 +8,7 @@ Next Action: DEVELOPER FIXES RULES COMPLETE-FLOW AFTER RESTORE
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Reviewed Head: 2c05bc195c73fb59fba809474c52d04e7ba4d36e
 Difficulty: High
@@ -16,6 +16,36 @@ Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: ORIGINAL TASK 58.2 CORRECTION SCOPE — A58-01
 ```
+
+## Developer 交接 — 恢复后的完整流程检查使用已发布快照
+
+```text
+Candidate: f7de678a
+Scope: ConfigurationObjectService 的 complete-flow 运行时加载 + 恢复夹具中的正式 Rules API 回归
+```
+
+- `_load_runtime_for_analysis` 改用 `ManagedConfigurationService.load_published_runtime`。完整流程读取本次
+  检查指向的当前 Active 时沿用已发布快照加载边界：接受恢复记录的原定位，始终按 bootstrap 实际打开的恢复库
+  构造运行时；原快照 ID、digest、样例和只读响应不变。新候选发布仍走严格的
+  `load_managed_runtime_configuration`。
+- 现有 `RestoredDeploymentConsumptionTests` 在正式 host backup/restore 前后，以同一 Active、digest 和
+  离线样例 `电影/Example.Movie.2024.mkv` 调用正式 Rules complete-flow API。两次均返回
+  `complete_plan_ready`，响应除 `testedAt` 外一致；两次检查前后源媒体字节及目标目录/文件均未变化。
+  原 Task pin、旧快照读取、错误 locator 拒绝和恢复后系统设置 Save 的既有断言保留。
+
+本轮实际运行（仓库根目录）：
+
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_sqlite_restore test_v2_rules_object_analysis`
+  → 102 项通过。
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_configuration_snapshot test_sqlite_backup
+  test_runtime_lease` → 50 项通过。
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` 无输出；改动文件
+  `ruff format --check`、`ruff check` 与 `compileall` 通过。
+
+剩余风险与待 B 验收：
+
+- 本轮未启动 Docker/Compose；API-only 恢复后的正式 Compose 旅程、两处媒体挂载和后台启用仍由 B 复跑。
+- T4 全量、原 Task 的 Web/Worker 接续、媒体效果及 wheel/镜像门禁属于 B 的验收范围。
 
 ## B 复审 — FIX REQUIRED
 
