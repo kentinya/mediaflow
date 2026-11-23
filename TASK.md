@@ -1,21 +1,69 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: DEVELOPER FIXES RESIDENT FILES TASK CONTINUATION
+Next Action: B REVIEWS TASK 58.2 RESIDENT FILES CONTINUATION FIX
 
-用户已授权激活 Task 58.2。保留 Docker 验收入口的修正已通过实跑，固定 Slice Base 接续复验发现下述阻塞。
+用户已授权激活 Task 58.2。Developer 已修复常驻 Worker 无法应用 Files Task 已保存识别决定的缺口，提交 `c1626335`，交 B 复审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: AUTHORIZED BY USER FOR TASK 58.2
 ```
+
+## Developer 交接 — 常驻 Worker 应用 Files Task 已保存的识别决定
+
+```text
+Candidate: c1626335
+Scope: mediaflow/resident_entry.py 的 Files discovery 装配 + 真实常驻 Worker 回归
+```
+
+- `_media_discovery_service_context` 为 `ManualOrganizeIntentService` 传入与
+  `_automatic_continuation_context` 相同的 Storage 工厂：按原 Task 固定快照与所需 Storage IDs
+  构造源文件验证。`_apply_native_decisions` 重新核对原源文件后，`update_choice` 把已保存的
+  RecognitionType 应用到原 intent；下一次分析发布可确认摘要，不再重复创建同一条目的识别审核。
+- 未改动 Web/API、Task 内核、Storage 工厂实现或部署入口；识别决定仍按原有权限、pin、审计与
+  零媒体效果规则应用。
+
+本轮实际运行（仓库根目录，除注明外）：
+
+- `python3 scripts/check_governance.py` → PASS。
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_container_deployment test_container_probe`
+  `test_resident_services test_runtime_lease test_sqlite_backup test_sqlite_restore`
+  `test_file_index_retirement test_runtime_strategy_configuration test_release_validation`
+  `test_release_security` → 125 项通过。
+- `... test_automation_entrance_recovery test_resident_correction test_configuration_snapshot`
+  → 45 项通过；`test_manual_task_engine` → 47 项通过；
+  `test_media_discovery test_manual_organize_intent test_manual_organize_preview
+  test_v2_manual_organize` → 83 项通过。
+- 新增回归 `test_resident_worker_applies_the_saved_recognition_decision_on_the_task`：经真实
+  `run_resident_step("worker", ...)` 入口完成受理、分析、保存决定、显式续作与可确认摘要；只把
+  Metadata Provider 换成隔离夹具。移除修复时该用例失败，条目 stage 为
+  `organizing_problem_unavailable`（`the organizing problem could not be published for this analysis`），
+  队列为 `settled`；修复后原 intent 条目识别类型为 A，预览项 `previewed`，源文件未变、目标无文件、
+  无 Result。
+- `git diff --check` 无输出；`ruff check` 与 `ruff format --check` 对改动文件通过。
+- 正式 Compose 固定 Slice Base → 候选接续：Base 镜像
+  `mediaflow:b-task582-slice-base-5b2e0de4`（`sha256:349198a6fbbf...`），候选镜像
+  `mediaflow:b-task582-fix-c1626335`（`sha256:8590dbbe3fbf...`，由 `git archive HEAD` 构建）。
+  Base Run once 完成并投递；Base Files 记录 `attempted_unverified` 写入；Base 待识别 Task 等待。
+  同一数据库卷切到候选后，原管理员与只读令牌权限、Active、审计、三个 Task／Item／Result 与固定 pin
+  读回一致。候选接受决定与续作，精确摘要确认只完成原条目：已完成及效果不确定项零重放，已有效果
+  不变且只新增该条目一份原字节 COPY。原始输出与结果在
+  `.git/validation-evidence/c1626335/developer/`。
+
+剩余风险与待 B 验收：
+
+- 回归用例使用隔离 Metadata Provider（与部署环境注入的受控 Provider 等价）；正式 Provider 环境
+  的同一路径已由上述 Compose 接续覆盖。
+- 全量 Python、Web、源码外安装、wheel 与候选 release-security 仍归 B；固定 Slice Base 切换的最新
+  T4 门禁由 B 复跑。本修复未改 Web 资源，若执行输入一致可复用上次 Web 结果。
 
 ## B 复审 — FIX REQUIRED
 
