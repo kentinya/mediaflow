@@ -1,6 +1,6 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: B REVIEWS TASK 58.2 COMPLETE-FLOW RESTORE FIX
+Next Action: DEVELOPER COMPLETES NOTIFICATION CONSUMER CUTOVER
 
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -8,14 +8,38 @@ Next Action: B REVIEWS TASK 58.2 COMPLETE-FLOW RESTORE FIX
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
-Reviewed Head: 2c05bc195c73fb59fba809474c52d04e7ba4d36e
+Reviewed Head: f7de678a2e4e0384b89b8de991726ba756ce9f86
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: ORIGINAL TASK 58.2 CORRECTION SCOPE — A58-01
 ```
+
+## B 复审 — FIX REQUIRED
+
+**P1，RO-1 / AC-01。** 管理员先启用订阅 `task.cancelled` 的 Webhook，再在 Files 提交整理，趁 Worker
+尚未处理时从任务中心取消。正式 API 报告任务已取消，源文件仍在，通知却没有生成投递记录。Python 全量验收发现这个
+问题，单独复跑了同一正式受理和取消入口，结果一致。`2c05bc19` 在切换到已发布快照加载器时移除了 `_load_for_runtime`，
+但 `service_api.py` 的 `_active_webhook_definitions` 仍调用该方法。异常被转成空的 Webhook 列表，取消事件未入队。
+
+### 本轮返工开发指导
+
+1. 把 `_active_webhook_definitions` 和通知中心投递恢复使用的 `_notification_recovery_targets` 接到现有的
+   `ManagedConfigurationService.load_published_runtime`，沿用 Active 完整性检查和原投递规则。
+2. 运行现有通知测试 `PYTHONPATH=tests .venv/bin/python -m unittest test_notifications test_v2_notification_operations`。
+   核对任务中心取消后恰好生成一条对应的通知投递，重复取消保持一条，源媒体无变更。用现有死信投递详情和恢复入口
+   核对原投递 ID 与原接收端。
+
+**A58-01 验收通过。** 源码和正式 Compose 均可用原会话读取恢复库的 Active 和 Files。Compose 上恢复前后同一
+离线 Rules 样例生成了同一计划。固定 Slice Base 的原账号、只读令牌、Task、Item、原请求、结果和审计可读。恢复后
+保存新 Active，再由浏览器分析、确认原任务里的一项，Worker 按原 pin 完成该项。原库和备份校验值一致，已完成与
+效果不确定条目保留原结果。候选镜像还通过空库和媒体挂载、重启、发布安全与 schema 11 拒绝检查。wheel 源码外冒烟通过。
+
+Python 全量 2328 项，2319 通过、7 跳过、1 失败、1 错误。B 修正了 Task 的测试分工标题并复跑对应文档断言，已通过。
+取消通知错误独立复现。其余 Slice 结果和验收边界见下表。证据位于
+`.git/validation-evidence/f7de678a2e4e0384b89b8de991726ba756ce9f86/b-review/`。
 
 ## Developer 交接 — 恢复后的完整流程检查使用已发布快照
 
@@ -115,7 +139,7 @@ bootstrap 或原部署挂载，核对完成前保持后台停用。
 
 ## 测试分工
 
-### Developer — 受影响测试
+### Developer — affected tests
 
 在仓库根目录扩充现有恢复或配置集成用例，证明通过主机恢复入口切换数据库路径后，原发布快照可实际消费。复用
 现有镜像和部署夹具沿正式命令核对带 overlay 的 API-only 启动及 Files 读取。运行受影响模块并记录结果及镜像标识。
@@ -128,7 +152,7 @@ PYTHONPATH=tests .venv/bin/python -m unittest \
 git diff --check
 ```
 
-### B — 独立验收和全量门禁
+### B — acceptance and full regression
 
 从原 Task Base 审查完整候选差异，先对照本轮真实 Compose 复现走修正后的源码与 Compose 指引，再做原 Task
 的 Web/Worker 接续和文件效果核对。复用现有隔离夹具和正式命令。按 [T4 共享门禁](docs/development-workflow.md#6-test-levels)
@@ -147,10 +171,10 @@ git diff --check
 
 | 结果 | 当前结论 |
 | --- | --- |
-| RO-1 / AC-01 | 原候选四服务、空库和媒体挂载启动、整理与传输、调度与通知的验收证据保留。修正候选复验四服务采用配置。 |
-| RO-2 / AC-02 | 原候选首次建号、忘记密码及权限的验收证据保留。修正候选复验既有账号与权限的同库连续性。 |
-| RO-3 / AC-03 | **未达到。** 修正后的 Compose 指引保留原挂载，Files 已可读。规则总览的完整流程检查仍无法使用原 Active。 |
-| RO-4 / AC-04、AC-05 | 原候选旧 CLI 和 schema 11 退出及固定 Base 同库续作的证据保留。修正涉及共享 Active/pin 消费，精确候选复验同库接续。 |
+| RO-1 / AC-01 | **未达到。** 四服务、空库与挂载、整理、传输、定时工作和已验收的 Webhook 投递通过。任务中心取消后缺少对应通知。 |
+| RO-2 / AC-02 | 原候选首次建号、找回和撤销会话证据保留。本候选复验主机建号与原账号、只读令牌的有效权限。 |
+| RO-3 / AC-03 | 本候选源码和 Compose 恢复、原 Active 实际采用、Files、Rules 和原任务浏览器续作通过。 |
+| RO-4 / AC-04、AC-05 | 本候选复验 wheel 与镜像旧入口移除、schema 11 拒绝，以及固定 Base 的原库重开、恢复及显式续作。 |
 
 本轮范围限于合同内的同版本停机恢复及实际继续使用。跨版本迁移、媒体备份、Web 备份管理和新的维护入口属于合同
 延期范围。原 Task 的全部验收边界见 `32c269044ad14843d37f80f9b855e0b668062daa:TASK.md`。
