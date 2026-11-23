@@ -1,8 +1,8 @@
 # Task 58.1 — 切换正式部署和主机恢复入口
 
-Next Action: DEVELOPER COMPLETES RECOVERY CUTOVER IN THE OPERATOR GUIDE
+Next Action: B INDEPENDENT RE-REVIEW OF THE RECOVERY JOURNEY FIX
 
-用户已授权实施 Task 58.1。Developer 开始本轮返工时将状态改为 `IN PROGRESS`。
+用户已授权实施 Task 58.1。Developer 本轮返工已完成，状态为 `READY FOR B REVIEW`。
 用户授权 A 代 B 规划首个 Task，角色例外限于首个 Task 的规划。B 独立验收，A 按工作流终审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -10,7 +10,7 @@ Next Action: DEVELOPER COMPLETES RECOVERY CUTOVER IN THE OPERATOR GUIDE
 Task ID: 58.1
 Task Type: SLICE
 Parent Slice: 58
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
 Difficulty: High
 Test Level: T4
@@ -396,6 +396,65 @@ Compose 定向复验沿用同一镜像 `sha256:68ff7c437891dfb6356a0717f9475cfa7
 
 本机证据在 `.git/validation-evidence/ce3c9e0aa2ab876a619c27910daaeac3789b3864/b-review/`。
 Slice 58 的通用业务 CLI、专属任务路径、schema 11 切换退役和 Base 合法任务续作验收仍待完成。
+
+## Developer fix handoff — Task 58.1 recovery journey gaps
+
+```text
+Fix Implementation Head: db1d82b4d7aed64f94ca941a1e6efe415f3fd180
+Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
+Reviewed Candidate: ce3c9e0aa2ab876a619c27910daaeac3789b3864
+Candidate state: READY FOR B REVIEW
+```
+
+### 本轮改动
+
+- [离线恢复步骤](docs/release.md#offline-restore-procedure)源码流程：原第 6 步拆为“登录
+  核对”与“启用后台”两步。新的第 7 步先说明本节开头 `export` 的 `MEDIAFLOW_CONFIG` 仍指向
+  原 bootstrap、直接启动会让后台服务打开原库，再给出把部署变量固定到恢复 bootstrap 的两行
+  `export`（`MEDIAFLOW_DATA_DIR` 仍是原数据目录，变更的只是 bootstrap 文件）和三个后台服务
+  的实际启动命令；并说明之后在本终端或新终端启动任何 MediaFlow 进程前先执行这两行。“四个
+  职责都打开恢复库”的确认入口指向部署指南的认证只读 `GET /api/management/readiness`（或
+  Web 系统视图同一信号），`infrastructure.services` 应同时显示四职责在线。
+- 同一指引为源码和 Compose 两条流程各增加“原库不可读时，从已保存的备份接续”小节：原库
+  损坏或 `verify` 失败时跳过对原库的备份，不删除、改写或重命名原库及旁路文件；校验已保存
+  且此前校验通过的备份，按第 3–4 步生成指向新目标的 bootstrap 并恢复，之后核对原文件摘要
+  未变化（Compose 同时重验备份摘要），再按原步骤仅启动 API、读回账号与任务，并按原有条件
+  固定恢复 bootstrap 启用后台。源码路线用 `shasum -a 256` 记录原文件摘要（损坏库的字节摘要
+  仍可计算）；Compose 路线用 `docker compose cp` 把原库复制到主机再记录摘要（停止后的容器
+  仍可读取卷内文件，已实测）。
+- 两条流程的第 1、2 步补充“原库不可读时”的路由指引；`config/mediaflow.restore.json` 按
+  原 bootstrap 规则加入 `.gitignore`。
+
+### 实际验证
+
+- 源码旅程 1（完好原库、隔离配置／数据目录、仓库 `.venv`）：verify 原库与备份后恢复到同一
+  数据目录内新目标；原库 SHA-256 恢复前后同为 `443b6d0d…`；恢复 bootstrap 单独启动 API，
+  admin 登录读回同一 accountId（`b4f92700…`）；按修正后第 7 步固定恢复 bootstrap 启动三个
+  后台服务，认证只读 `GET /api/management/readiness` 的 `infrastructure.services` 同时显示
+  `api`／`worker`／`scheduler`／`notification-worker` ready 且 `liveServices ≥ 1`。
+- 源码旅程 2（原库覆写为非法字节）：记录原文件摘要 `661b6ebf…`，`verify` 以有界错误拒绝；
+  从已验证备份（`00080d8f…`）恢复到另一个新目标，原文件摘要不变；单独启动 API 后读回同一
+  admin accountId。
+- Compose 旅程（隔离项目、无宿主 MediaFlow Python 包、候选镜像
+  `mediaflow:b-task581-9f4e526a`／`68ff7c437891`）：容器内备份 `a75812e3…`；原库损坏后用
+  `compose cp` 复制出并记录摘要 `661b6ebf…`，从已验证备份恢复到 `/data/mediaflow-restored
+  .sqlite3`，原文件摘要与备份摘要均不变；恢复 bootstrap 仅启动 API，admin 登录读回同一
+  accountId（`a35ce198…`）；固定 `MEDIAFLOW_CONFIG_FILE` 后 `docker compose up -d` 启动四
+  服务，readiness 四职责同时 ready。
+- `git check-ignore config/mediaflow.restore.json`、`git diff --check`、
+  `python3 scripts/check_governance.py` 全部通过；`docs/release.md` 代码围栏配对完整。无残留
+  常驻进程或 Compose 容器。命令输出证据在
+  `.git/validation-evidence/db1d82b4d7aed64f94ca941a1e6efe415f3fd180/developer-fix/`。
+
+### 剩余风险与待 B 验收
+
+- 本轮仅改 `docs/release.md` 与 `.gitignore`，未改运行时代码；部署文档参与构建上下文，B
+  需在最终候选上重新构建并打标镜像，再执行本 Task 的 T4 门禁（全量回归、精确 wheel、发布
+  安全、真实浏览器 E2E 与 Docker 旅程）。
+- `test_configuration_package_exchange` 既有失败仍保留（父版本可复现），未用跳过或弱断言
+  掩盖。
+- Slice 58 的通用业务 CLI、专属任务路径、schema 11 切换退役和 Base 合法任务续作验收仍属
+  剩余范围。
 
 ## Latest accepted Task — PATCH-20261122-3
 
