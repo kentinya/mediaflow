@@ -1842,8 +1842,8 @@ describe("RulesWorkspacePage mode-scoped correctable drafts", () => {
     expect(name.value).toBe("Special + Back");
 
     // Leaving the open card is held by the same resolver a browser Back
-    // drives in a real history (the native-verified journey lives in
-    // scripts/rules_workspace_browser_proof.py): the address is not
+    // drives in a real history (the native browser journey lives in
+    // web/tests/e2e/rules-identity.spec.ts): the address is not
     // committed while the choice is open.
     void router.navigate({
       to: "/rules",

@@ -16,7 +16,7 @@
  * jsdom does not apply the stylesheet, so this checks the exact selector
  * relationships that caused the defect. It is a structural guard, not a
  * substitute for the real-browser dimension assertions in
- * `scripts/rules_workspace_browser_proof.py`.
+ * `web/tests/e2e/rules-readiness.spec.ts`.
  */
 
 /// <reference types="node" />

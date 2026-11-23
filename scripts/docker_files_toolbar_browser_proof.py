@@ -5,8 +5,8 @@ This harness builds the candidate image from the exact committed checkout,
 starts the real four-service Compose topology against temporary configuration,
 temporary SQLite, temporary Local Storage roots and generated throwaway
 credentials, checks and activates one managed configuration, and then drives a
-real Chromium browser through the same RO-5 matrix as
-``scripts/files_toolbar_browser_proof.py`` — but against the assets the
+real Chromium browser through the RO-5 long-path toolbar matrix — both library
+kinds, list and grid, four supported viewports — against the assets the
 production image actually serves.
 
 It therefore closes the specific gap RO-5 names: a source/jsdom-only change or
