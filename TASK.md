@@ -1,15 +1,16 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: DEVELOPER FIXES TASK 58.2
+Next Action: B REVIEWS TASK 58.2 FIXES
 
-用户已授权激活 Task 58.2。Developer 提交了 `b0190338`，B 已完成首轮复核。
+用户已授权激活 Task 58.2。Developer 提交了 `b0190338`，B 已完成首轮复核并给出 FIX REQUIRED；
+Developer 已修复并提交 `f162cf0e`，交 B 复审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Difficulty: High
 Test Level: T4
