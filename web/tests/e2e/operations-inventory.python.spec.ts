@@ -5636,3 +5636,94 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   // Reopening and viewing the admitted result submitted nothing.
   expect(executePosts()).toHaveLength(1);
 });
+
+test("the dead-letter delivery the browser requeues keeps its original identity and receiver", async ({
+  page,
+  request,
+}) => {
+  // Task 58.2 RO-4: the retained Notification delivery-recovery assertion moved
+  // from a standalone script to this real-Python chain.  The harness seeds the
+  // delivery through the production publisher + Notification Worker (its local
+  // transport fails the first bounded attempts), so the row the browser opens
+  // reached dead-letter through the ordinary retry path.
+  const seeded = await request.post(
+    `${BASE}/__harness__/seed-dead-letter-delivery`,
+  );
+  expect(seeded.ok()).toBeTruthy();
+  const seededDelivery = (await seeded.json()) as {
+    readonly deliveryId: string;
+    readonly webhookId: string;
+    readonly eventId: string;
+    readonly status: string;
+    readonly failedAttempts: number;
+  };
+  expect(seededDelivery.status).toBe("dead-letter");
+  expect(seededDelivery.failedAttempts).toBeGreaterThan(0);
+
+  await connect(page, ADMIN_TOKEN);
+  await page.getByRole("link", { name: "Notifications", exact: true }).click();
+  await page.getByRole("link", { name: "投递记录", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "投递状态" })
+    .selectOption("dead-letter");
+  await expect(page).toHaveURL(/status=dead-letter/);
+  // The exact durable row, opened from the filtered list, never the newest card.
+  const deliveryCard = page.locator(
+    `#notification-delivery-${seededDelivery.deliveryId}`,
+  );
+  await expect(deliveryCard).toBeVisible();
+  await deliveryCard
+    .getByRole("link", { name: "查看投递", exact: true })
+    .click();
+  const deliveryDialog = page.getByRole("dialog", {
+    name: `投递 ${seededDelivery.deliveryId}`,
+  });
+  await expect(deliveryDialog).toBeVisible();
+  await expect(
+    deliveryDialog.getByText("接收端返回 HTTP 400", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    deliveryDialog.getByText(seededDelivery.webhookId, { exact: true }),
+  ).toBeVisible();
+
+  // The explicit confirmation is the only path to the recovery command.
+  const requeue = deliveryDialog.getByRole("button", {
+    name: "重新入队死信投递",
+  });
+  await expect(requeue).toBeDisabled();
+  await deliveryDialog.getByLabel("我确认重新入队这条精确的死信投递").check();
+  await requeue.click();
+  await expect(deliveryDialog.getByText(/重新入队已完成/)).toBeVisible();
+  await expect(
+    deliveryDialog.getByText("待投递", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(
+    deliveryDialog.getByText(/当前没有已确认的发送结果/),
+  ).toBeVisible();
+  // A requeue proves a new pending attempt, never that the receiver was reached.
+  await expect(deliveryDialog.getByText(/接收端尚未收到/)).toHaveCount(0);
+
+  // The formal API confirms the same durable delivery ID, event and receiving
+  // Webhook, back at one fresh pending attempt against the original target.
+  const detail = await request.get(
+    `${BASE}/api/operations/notifications/deliveries/${seededDelivery.deliveryId}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(detail.ok()).toBeTruthy();
+  const recovered = (await detail.json()) as {
+    readonly deliveryId: string;
+    readonly webhookId: string;
+    readonly eventId: string;
+    readonly status: string;
+    readonly attempts: number;
+    readonly retrySafe: boolean;
+    readonly recovery: { readonly availableActions: readonly string[] };
+  };
+  expect(recovered.deliveryId).toBe(seededDelivery.deliveryId);
+  expect(recovered.webhookId).toBe(seededDelivery.webhookId);
+  expect(recovered.eventId).toBe(seededDelivery.eventId);
+  expect(recovered.status).toBe("pending");
+  expect(recovered.attempts).toBe(0);
+  expect(recovered.retrySafe).toBe(true);
+  expect(recovered.recovery.availableActions).toEqual([]);
+});

@@ -32,6 +32,11 @@ Four test-only control routes exist for the browser journey (they are harness
 infrastructure, not product endpoints, and never touch product documents):
 
 - ``POST /__harness__/run-worker`` runs one real Worker claim + linkage;
+- ``POST /__harness__/seed-dead-letter-delivery`` publishes one real
+  Notification event and lets the production Notification Worker exhaust its
+  bounded attempts against a local failing transport, so the browser recovery
+  journey requeues a delivery that reached dead-letter through the real
+  publisher/worker path;
 - ``POST /__harness__/run-manual-organize`` admits one exact Preview through
   the real API and completes its MOVE through ``ManualOrganizeExecutionWorker``;
 - ``POST /__harness__/register-manual-worker`` makes the real Worker readiness
@@ -1203,9 +1208,10 @@ def build_managed_fixture(
     # The delivery journey needs the outbox row a settled Task really writes.
     # The fixture publishes its Webhook as enabled through the ordinary checked
     # draft/activate path, exactly like any other configured definition, so the
-    # Task kernel's post-commit publication is the only producer.  This harness
-    # runs no Notification Worker and sends no external HTTP, so the durable row
-    # stays honestly pending.  The example already carries the current root-level
+    # Task kernel's post-commit publication is the only producer.  The harness
+    # sends no external HTTP, so that row stays honestly pending until the
+    # dead-letter journey runs the production Notification Worker over a local
+    # transport.  The example already carries the current root-level
     # Webhook section and subscribes to its current Task lifecycle events.
     document["webhooks"][0]["enabled"] = True
     # One managed definition whose scope is exactly the fixture's scheduled
@@ -2620,6 +2626,87 @@ def run_worker_once(state: AppState, *, task_id: str | None = None) -> dict:
         "linked": True,
         "taskId": target.task_id,
         "status": current.status.value if current is not None else None,
+    }
+
+
+def seed_dead_letter_delivery(state: AppState) -> dict[str, object]:
+    """Produce one real dead-letter delivery through the notification chain.
+
+    The production publisher writes the outbox row for one bounded event and
+    the production Notification Worker claims it.  A transport that fails only
+    this event's requests drives the ordinary attempt/backoff path until the
+    delivery reaches its terminal dead-letter row, so the browser recovery
+    journey requeues a delivery every prior transition really wrote.  Deliveries
+    of earlier settled Tasks are attempted with a successful response, which is
+    the progress a resident Notification Worker would make anyway.
+    """
+
+    from mediaflow.application.notification import NotificationPublisher, NotificationWorker
+    from mediaflow.domain.notification import (
+        NotificationDeliveryStatus,
+        NotificationEvent,
+        NotificationEventType,
+    )
+
+    definitions = tuple(item for item in state.managed.runtime.webhooks if item.enabled)
+    if not definitions:
+        raise RuntimeError("the harness Active configuration has no enabled Webhook")
+    definition = definitions[0]
+    secret = os.environ.get(definition.secret_env)
+    if not secret:
+        raise RuntimeError("the harness Webhook secret is unavailable")
+
+    event_id = f"harness-dead-letter-{uuid4()}"
+    event = NotificationEvent(
+        event_id,
+        NotificationEventType.TASK_COMPLETED,
+        datetime.now(UTC),
+        {"jobId": event_id},
+    )
+    created = NotificationPublisher(state.repository, (definition,)).publish(event)
+    delivery = next((item for item in created if item.webhook_id == definition.webhook_id), None)
+    if delivery is None:
+        raise RuntimeError("the harness event created no delivery for its Webhook")
+
+    class _EventFailTransport:
+        """Fail exactly the seeded event; every other request succeeds."""
+
+        def __init__(self) -> None:
+            self.failed_attempts = 0
+
+        def send(self, request) -> int:
+            if request.headers.get("X-MediaFlow-Event-ID") == event_id:
+                self.failed_attempts += 1
+                return 400
+            return 204
+
+    transport = _EventFailTransport()
+    # The retry backoff schedule is real; a monotonically advancing clock makes
+    # each of the Webhook's bounded attempts due immediately in this fixture.
+    ticks = iter(range(0, 10_000))
+    worker = NotificationWorker(
+        state.repository,
+        {definition.webhook_id: (definition, secret)},
+        transport,
+        clock=lambda: datetime.now(UTC) + timedelta(minutes=10 * next(ticks)),
+    )
+    settled = None
+    for _ in range(256):
+        result = worker.run_next()
+        if result is None:
+            break
+        if result.delivery_id == delivery.delivery_id:
+            settled = result
+            if result.status is NotificationDeliveryStatus.DEAD_LETTER:
+                break
+    if settled is None or settled.status is not NotificationDeliveryStatus.DEAD_LETTER:
+        raise RuntimeError("the harness delivery did not reach dead-letter")
+    return {
+        "deliveryId": delivery.delivery_id,
+        "webhookId": delivery.webhook_id,
+        "eventId": event_id,
+        "status": settled.status.value,
+        "failedAttempts": transport.failed_attempts,
     }
 
 
@@ -6269,6 +6356,8 @@ def application(environ, start_response):
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             requested_task = (query.get("taskId") or [None])[0]
             document = run_worker_once(STATE, task_id=requested_task)
+        elif path == "/__harness__/seed-dead-letter-delivery" and method == "POST":
+            document = seed_dead_letter_delivery(STATE)
         elif path == "/__harness__/run-manual-organize" and method == "POST":
             document = run_manual_organize_once(STATE)
         elif path == "/__harness__/seed-recorded-unknown-history" and method == "POST":
