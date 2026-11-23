@@ -1,21 +1,88 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: DEVELOPER COMPLETES THE BROWSER TEST ENTRY CUTOVER
+Next Action: B REVIEWS TASK 58.2 BROWSER TEST ENTRY CUTOVER
 
-用户已授权激活 Task 58.2。Developer 提交的首轮修正为 `f162cf0e`，B 已复审。
+用户已授权激活 Task 58.2。Developer 提交的首轮修正为 `f162cf0e`，B 已复审并给出 FIX REQUIRED；
+Developer 已完成浏览器验收入口切换并提交 `e2cb3028`，交 B 复审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
 ```text
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: AUTHORIZED BY USER FOR TASK 58.2
 ```
+
+## Developer 交接 — 浏览器验收入口切换
+
+```text
+Candidate: e2cb3028
+Scope: 六个旧入口浏览器验收脚本退役 + 三处过期引用
+```
+
+- 删除 `files_toolbar_browser_proof.py`、`storage_settings_browser_proof.py`、
+  `classification_destination_browser_proof.py`、`rules_identity_browser_proof.py`、
+  `rules_object_analysis_browser_proof.py`、`rules_workspace_browser_proof.py`。它们都从
+  `.venv/bin/mediaflow config import/validate-draft/activate` 起步，58.2 已删除该 console script
+  与命令，因此运行即在启动阶段退出。修正后的工作区已无旧命令的可执行调用；其余引用只剩
+  `tests/` 中的退役断言。
+- 删除前逐个核对现行自动化：
+  - 两种库的精确目录、条目、超长名、边界空白、游标分页与读取零效果 →
+    `web/tests/e2e/live-files.python.spec.ts`（真实 Python + 真实 Storage 读）。
+  - 长路径工具栏与面包屑 → 结构断言 `web/src/shared/ui/files-toolbar-styles.test.ts`、
+    行为断言 `web/src/shared/ui/files-path.test.tsx`、命令与列表/网格
+    `web/tests/e2e/library-files.spec.ts`、`medialib-files.spec.ts`、`medialib-commands.spec.ts`；
+    生产镜像上的同一测量矩阵仍在 `scripts/docker_files_toolbar_browser_proof.py`。
+  - Storage 卡片的 checked 保存与回读 → `web/tests/e2e/storage-dialog.python.spec.ts`；
+    空库首次设置与空 Active → `scripts/docker_empty_baseline_smoke_test.py`。
+  - Rules 对象身份、发布、复制与引用影响 → `web/tests/e2e/rules-identity.spec.ts`。
+  - Rules 对象分析与 C 复用 A 的 Naming/Classification 策略后仍为 C →
+    `tests/test_v2_rules_object_analysis.py` 与 `web/src/features/rules/RulesObjectTestPanel.test.tsx`。
+  - Rules 工作区八张导航卡、七族表单、B54-02/03/05/06 与卡片样式 →
+    `web/src/features/rules/RulesWorkspacePage.test.tsx`、`RulesEditPage.test.tsx`、
+    `web/src/shared/ui/rules-form-styles.test.ts`。
+  - 分类目标契约、历史前缀保留与导出不持久化只读键 →
+    `tests/test_classification_destination_contract.py`、
+    `web/src/features/rules/ClassificationDestinationForm.test.tsx`。
+  核对后没有仅存在于这些脚本、且在现行入口下仍可发生的合同断言缺口，因此未新增用例；
+  历史截图与定量结果从原 Git 检查点取得。
+- 三处指向已删脚本的过期引用改为现行证据位置：
+  `scripts/docker_files_toolbar_browser_proof.py` docstring、
+  `web/src/shared/ui/rules-form-styles.test.ts`、
+  `web/src/features/rules/RulesWorkspacePage.test.tsx`。
+
+本轮实际运行（仓库根目录，除注明外）：
+
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` → 无输出。
+- `.venv/bin/ruff check .` → All checks passed；`.venv/bin/ruff format --check .` → 356 files
+  already formatted；`.venv/bin/python -m compileall -q mediaflow tests scripts` → 通过。
+- 定向 Python：`test_container_deployment test_container_probe test_resident_services
+  test_runtime_lease test_sqlite_backup test_sqlite_restore test_file_index_retirement
+  test_runtime_strategy_configuration test_release_validation test_release_security` → 125 项通过；
+  `test_automation_entrance_recovery test_resident_correction test_configuration_snapshot`
+  → 45 项通过。
+- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 通过。
+- `web/`：`npx vitest run src/shared/ui/rules-form-styles.test.ts
+  src/features/rules/RulesWorkspacePage.test.tsx` → 60 项通过。
+- `web/`：`npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/live-files.python.spec.ts` → 6 项通过（登录后两个库的真实目录、分页与零效果）；
+  `tests/e2e/storage-dialog.python.spec.ts` → 8 项通过（Storage 卡片 checked 保存与回读）；
+  `npm run test:e2e -- tests/e2e/files-interactions.spec.ts tests/e2e/rules-identity.spec.ts`
+  → 8 项通过；`--config=playwright.python.automation.config.ts
+  tests/e2e/configuration-settings.python.spec.ts` → 10 项通过（Settings checked 发布）。
+
+剩余风险与待 B 验收：
+
+- 被删脚手架曾产出定量几何与截图证据。现行仓库仍在 Docker 工具栏脚本、
+  `rules-readiness.spec.ts` 等处以真实浏览器测量保留同类断言，历史数值只存于原 Git 检查点。
+- `docs/v2-requirements.md` 的 schema 11 切换例外、`docs/architecture.md` 的 switch 描述与
+  `docs/requirements.md` 的 CLI 命令清单尚未随退役实现同步，按 Task 由 A 终审时更新。
+- 全量 Python/Web/E2E、源码外安装、wheel、候选镜像与固定 Slice Base 接续仍归 B。
 
 ## B 复审 — FIX REQUIRED
 
