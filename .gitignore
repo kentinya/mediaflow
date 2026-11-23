@@ -23,6 +23,7 @@ venv/
 config/strategy.json
 config/alist.json
 config/mediaflow.json
+config/mediaflow.restore.json
 config/mediaflow.activation.json
 .env.mediaflow
 media/

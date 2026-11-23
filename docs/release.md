@@ -57,14 +57,16 @@ export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.json"
 export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"
 ```
 
-1. 记录原库摘要并确认当前版本能否启动它。`verify` 只读地检查数据库，不改写库内容：
+1. 记录原库摘要并确认当前版本能否启动它。`verify` 只读地检查数据库，不改写库内容；原库
+   已损坏或校验失败时保持原文件原样，改走下面的[原库不可读时](#原库不可读时从已保存的备份接续)：
 
    ```bash
    .venv/bin/python -m mediaflow.host_operations verify \
      "$MEDIAFLOW_DATA_DIR/mediaflow.sqlite3"
    ```
 
-2. 生成并校验备份。备份已存在时不要覆盖，改用另一个新文件名：
+2. 生成并校验备份。备份已存在时不要覆盖，改用另一个新文件名；原库不可读时跳过这一步，
+   直接走[原库不可读时](#原库不可读时从已保存的备份接续)：
 
    ```bash
    .venv/bin/python -m mediaflow.host_operations backup \
@@ -102,10 +104,52 @@ export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"
      .venv/bin/python -m mediaflow.resident_entry api
    ```
 
-6. 打开 `http://127.0.0.1:8787/`，用原管理员登录，核对账号、Active、任务、结果与审计。核对
-   通过后，再用同一 `MEDIAFLOW_CONFIG` 和 `MEDIAFLOW_DATA_DIR` 启动 `worker`、`scheduler` 和
-   `notification-worker`。无法确认备份时点之后的实际文件效果或仍待处理的任务时，保持后台服务
-   停用。
+6. 打开 `http://127.0.0.1:8787/`，用原管理员登录，核对账号、Active、任务、结果与审计。
+
+7. 核对通过后启用后台。本节开头 `export` 的 `MEDIAFLOW_CONFIG` 仍指向原 bootstrap，直接
+   启动会让三个后台服务打开原库。先把部署变量固定到恢复 bootstrap（`MEDIAFLOW_DATA_DIR`
+   仍是本节开头的原数据目录，变更的只是 bootstrap 文件），再在各自的终端启动三个后台
+   服务：
+
+   ```bash
+   export MEDIAFLOW_CONFIG="$PWD/config/mediaflow.restore.json"
+   export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"   # 与本节开头相同的原数据目录
+   .venv/bin/python -m mediaflow.resident_entry worker
+   .venv/bin/python -m mediaflow.resident_entry scheduler
+   .venv/bin/python -m mediaflow.resident_entry notification-worker
+   ```
+
+   之后在本终端或新终端启动任何 MediaFlow 进程前，先执行上面两行 `export` 再启动。确认
+   四个职责都打开恢复库：按[部署指引](deployment.md#health-and-readiness-signals)的认证
+   只读请求 `GET /api/management/readiness`（或 Web 系统视图的同一信号），
+   `infrastructure.services` 应同时显示 `api`、`worker`、`scheduler` 和
+   `notification-worker` 在线。无法确认备份时点之后的实际文件效果或仍待处理的任务时，
+   保持后台服务停用。
+
+#### 原库不可读时，从已保存的备份接续
+
+原库已损坏或第 1 步 `verify` 失败时，跳过第 2 步，不要对原库再执行 `backup`，也不要删除、
+改写或重命名原库及其旁路文件。从部署中已保存且此前校验通过的备份接续：
+
+1. 记录原文件摘要，供恢复后核对原文件未变化。损坏的库无法通过 `verify`，但文件字节的
+   SHA-256 仍可计算（macOS 用 `shasum -a 256`，Linux 用 `sha256sum`）：
+
+   ```bash
+   shasum -a 256 "$MEDIAFLOW_DATA_DIR/mediaflow.sqlite3"
+   ```
+
+2. 校验已保存的备份；这份备份不可用时换用另一份此前校验通过的备份，两份都不可用就停止
+   并保留现场：
+
+   ```bash
+   .venv/bin/python -m mediaflow.host_operations verify \
+     "$MEDIAFLOW_DATA_DIR/runtime-backup.sqlite3"
+   ```
+
+3. 按第 3–4 步生成指向新目标的恢复 bootstrap 并执行恢复。目标文件名不得与原库或它的旁路
+   文件相同。
+4. 重新计算第 1 步的原文件摘要，确认原库未被改动，再按第 5–7 步只启动 API、读回账号与
+   任务，并固定恢复 bootstrap 启用后台。
 
 ### Compose 部署
 
@@ -117,13 +161,15 @@ cd /path/to/mediaflow
 docker compose stop
 ```
 
-1. 记录原库摘要并确认当前版本能否启动它：
+1. 记录原库摘要并确认当前版本能否启动它；原库已损坏或校验失败时保持卷内文件原样，改走
+   下面的[原库不可读时](#原库不可读时从已保存的备份接续-1)：
 
    ```bash
    docker compose run --rm --no-deps api host verify /data/mediaflow.sqlite3
    ```
 
-2. 生成并校验备份。备份已存在时不要覆盖，改用另一个新文件名：
+2. 生成并校验备份。备份已存在时不要覆盖，改用另一个新文件名；原库不可读时跳过这一步，
+   直接走[原库不可读时](#原库不可读时从已保存的备份接续-1)：
 
    ```bash
    docker compose run --rm --no-deps api \
@@ -173,6 +219,32 @@ docker compose stop
    `MEDIAFLOW_CONFIG_FILE=./config/mediaflow.restore.json` 写入项目 `.env`，或在每个维护终端
    导出同一变量；否则普通的 `docker compose up -d` 会重新挂载原 bootstrap 并打开原库。启用后台
    之前仍需核对备份时点之后的实际文件效果和待处理任务，无法确认时保持后台服务停用。
+
+#### 原库不可读时，从已保存的备份接续
+
+原库已损坏或第 1 步 `verify` 失败时，跳过第 2 步，不要对原库再执行 `backup`，也不要删除、
+改写或重命名卷内原库及其旁路文件。从已保存且此前校验通过的备份接续：
+
+1. 把原库复制到主机并记录摘要，供恢复后核对原文件未变化（服务停止后 `compose cp` 仍可
+   读取卷内文件；macOS 用 `shasum -a 256`，Linux 用 `sha256sum`）：
+
+   ```bash
+   docker compose cp api:/data/mediaflow.sqlite3 "$PWD/mediaflow-original.sqlite3"
+   shasum -a 256 "$PWD/mediaflow-original.sqlite3"
+   ```
+
+2. 校验已保存的备份；这份备份不可用时换用另一份此前校验通过的备份，两份都不可用就停止
+   并保留现场：
+
+   ```bash
+   docker compose run --rm --no-deps api host verify /data/runtime-backup.sqlite3
+   ```
+
+3. 按第 3–4 步生成指向新目标的恢复 bootstrap 并执行恢复。目标文件名不得与原库或它的旁路
+   文件相同。
+4. 重新计算第 1 步的原文件摘要，确认原库未被改动；再次校验备份并核对 `SHA-256` 与第 2 步
+   相同。之后按第 5–6 步仅启动 API、读回账号与任务，并固定 `MEDIAFLOW_CONFIG_FILE` 启用
+   其余服务。
 
 POSIX 上，恢复命令必须取得独占租约。恢复后先检查原任务、逐项结果和源／目标状态，使用任务
 已有的安全续作入口处理剩余工作。[备份与重启](deployment.md#backup-and-same-version-recovery)
