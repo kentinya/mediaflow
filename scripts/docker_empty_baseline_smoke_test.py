@@ -37,7 +37,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
-from docker_smoke_test import (
+from docker_harness import (
     bootstrap_account_session,
     free_port,
     http_request,

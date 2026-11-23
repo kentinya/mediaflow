@@ -35,7 +35,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.error
@@ -43,16 +42,19 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from docker_health_smoke_test import (
+from docker_harness import (
     activate_runtime,
-    json_request,
-    wait_for_services_healthy,
-)
-from docker_smoke_test import (
+    bootstrap_account_session,
     compose_environment,
     free_port,
+    json_request,
     wait_for_api,
+    wait_for_services_healthy,
     wait_until,
+)
+from make_deployment_config import (
+    make_deployment_configuration,
+    make_management_bootstrap,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,12 +97,14 @@ def compose_command(project: str) -> list[str]:
         "compose",
         "-f",
         str(ROOT / "compose.yaml"),
+        "-f",
+        str(ROOT / "compose.media-mounts.yaml"),
         "--project-name",
         project,
     ]
 
 
-def prepare_transfer_config(root: Path, admin_token: str) -> tuple[Path, Path, Path, Path]:
+def prepare_transfer_config(root: Path) -> tuple[Path, Path, Path, Path, Path]:
     """Create the temporary managed configuration and synthetic media roots."""
 
     source_root = root / "media" / "incoming"
@@ -114,26 +118,7 @@ def prepare_transfer_config(root: Path, admin_token: str) -> tuple[Path, Path, P
         directory.mkdir()
         directory.chmod(0o777)
 
-    generated = subprocess.check_output(
-        [
-            sys.executable,
-            str(ROOT / "scripts" / "make_deployment_config.py"),
-            "--configuration",
-        ],
-        cwd=ROOT,
-        text=True,
-    )
-    document = json.loads(generated)
-    document["api"] = {
-        "principals": [
-            {
-                "id": "admin",
-                "tokenEnv": "MEDIAFLOW_API_TOKEN",
-                "roles": ["admin"],
-                "enabled": True,
-            }
-        ],
-    }
+    document = make_deployment_configuration()
     # The temporary manual flow is explicitly non-destructive.
     for policy in document.get("organizePolicies", []):
         if policy.get("id") == "A":
@@ -176,20 +161,28 @@ def prepare_transfer_config(root: Path, admin_token: str) -> tuple[Path, Path, P
 
     config_file = root / "mediaflow.json"
     config_file.write_text(
-        json.dumps(document, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(make_management_bootstrap(database_path="/data/mediaflow.sqlite3"), indent=2)
+        + "\n",
         encoding="utf-8",
     )
     config_file.chmod(0o644)
 
+    activation_file = root / "mediaflow.activation.json"
+    activation_file.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    activation_file.chmod(0o644)
+
     environment_file = root / "deployment.env"
-    environment_file.write_text(f"MEDIAFLOW_API_TOKEN={admin_token}\n", encoding="utf-8")
+    environment_file.write_text("# isolated transfer-impact acceptance\n", encoding="utf-8")
     environment_file.chmod(0o644)
-    return config_file, environment_file, source_root, target_root
+    return config_file, activation_file, environment_file, source_root, target_root
 
 
 def impact_request(
     base: str,
-    token: str,
+    cookie: str,
     *,
     paths: list[str],
     operation: str = "copy",
@@ -203,7 +196,7 @@ def impact_request(
     status, body = json_request(
         base,
         f"/api/resource-libraries/source/files/transfer-impact?{query}",
-        token,
+        cookie=cookie,
     )
     if isinstance(body, bytes):
         try:
@@ -366,14 +359,18 @@ def assert_zero_mutation(source_root: Path, target_root: Path) -> None:
         )
 
 
-def transfer_impact_smoke(project: str, image: str, keep: bool, admin_token: str) -> None:
+def transfer_impact_smoke(project: str, image: str, keep: bool) -> None:
     api_port = free_port()
     with tempfile.TemporaryDirectory(prefix="mediaflow-transfer-impact-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
-        config_file, environment_file, source_root, target_root = prepare_transfer_config(
-            root, admin_token
-        )
+        (
+            config_file,
+            activation_file,
+            environment_file,
+            source_root,
+            target_root,
+        ) = prepare_transfer_config(root)
         environment = compose_environment(
             root,
             image,
@@ -396,13 +393,17 @@ def transfer_impact_smoke(project: str, image: str, keep: bool, admin_token: str
                 expected=EXPECTED_SERVICES,
             )
             base = f"http://127.0.0.1:{api_port}"
-            wait_for_api(base, admin_token)
+            wait_for_api(base)
+            admin_cookie, _, _ = bootstrap_account_session(command, environment, base)
+            wait_for_api(base, admin_cookie)
 
             print("Activating the managed runtime snapshot...")
-            activate_runtime(base, admin_token, config_file)
+            activate_runtime(base, admin_cookie, activation_file)
 
             def management_ready() -> bool:
-                status, management = json_request(base, "/api/management/readiness", admin_token)
+                status, management = json_request(
+                    base, "/api/management/readiness", cookie=admin_cookie
+                )
                 return (
                     status == 200
                     and management.get("managementReady") is True
@@ -412,13 +413,13 @@ def transfer_impact_smoke(project: str, image: str, keep: bool, admin_token: str
             wait_until(management_ready, timeout=90.0, description="managed runtime ready")
 
             print("Proving the >20 GiB synthetic aggregate is admitted for Impact...")
-            assert_transfer_impact_admits_large_bytes(base, admin_token, source_root, target_root)
+            assert_transfer_impact_admits_large_bytes(base, admin_cookie, source_root, target_root)
 
             print("Proving control-plane limit classes fail closed with structured 413...")
-            assert_control_plane_limits_fail_closed(base, admin_token)
+            assert_control_plane_limits_fail_closed(base, admin_cookie)
 
             print("Proving malformed and escaping queries fail closed...")
-            assert_invalid_requests_fail_closed(base, admin_token)
+            assert_invalid_requests_fail_closed(base, admin_cookie)
 
             assert_zero_mutation(source_root, target_root)
             print("No Copy/Move/Delete Storage mutation occurred.")
@@ -468,12 +469,10 @@ def main() -> int:
         print(f"Building the exact candidate image {image} from a clean checkout...")
         build_candidate_image(image)
     suffix = f"{os.getpid()}-{int(time.time())}"
-    admin_token = f"transfer-impact-{suffix}"[:64]
     transfer_impact_smoke(
         f"mediaflow-transfer-impact-{suffix}",
         image,
         keep=arguments.keep,
-        admin_token=admin_token,
     )
     return 0
 

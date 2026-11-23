@@ -29,11 +29,7 @@ import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from docker_health_smoke_test import (
-    service_records,
-    wait_for_services_healthy,
-)
-from docker_smoke_test import (
+from docker_harness import (
     PROJECT_PREFIX,
     bootstrap_account_session,
     compose_environment,
@@ -41,7 +37,9 @@ from docker_smoke_test import (
     http_request,
     prepare_files,
     run,
+    service_records,
     wait_for_api,
+    wait_for_services_healthy,
     wait_until,
 )
 
@@ -744,7 +742,6 @@ with (
 
 
 def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
-    token = secrets.token_urlsafe(24)
     api_port = free_port()
     temp_parent = os.environ.get("MEDIAFLOW_SMOKE_TEMP_DIR")
     if temp_parent:
@@ -761,7 +758,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             source_root,
             target_root,
             activation_file,
-        ) = prepare_files(root, token)
+        ) = prepare_files(root)
         add_fault_schedule(activation_file, source_root)
         provider_root, override_file = prepare_offline_provider(root)
         environment = compose_environment(
@@ -801,20 +798,6 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 ],
                 environment=environment,
             )
-            rendered = run(
-                [
-                    "docker",
-                    "compose",
-                    "-f",
-                    str(ROOT / "compose.yaml"),
-                    "-f",
-                    str(ROOT / "compose.media-mounts.yaml"),
-                    "config",
-                ],
-                environment=environment,
-            )
-            if token in rendered.stdout:
-                raise RuntimeError("rendered Compose output contains the deployment API token")
             print("Starting isolated Compose stack...")
             run([*command, "up", "-d", "--no-build"], environment=environment)
             wait_for_services_healthy(command, environment, expected=expected)

@@ -34,8 +34,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from docker_health_smoke_test import wait_for_services_healthy
-from docker_smoke_test import (
+from docker_harness import (
     PROJECT_PREFIX,
     bootstrap_account_session,
     compose_environment,
@@ -43,6 +42,7 @@ from docker_smoke_test import (
     prepare_files,
     run,
     wait_for_api,
+    wait_for_services_healthy,
     wait_until,
 )
 

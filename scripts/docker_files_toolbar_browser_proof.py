@@ -3,11 +3,12 @@
 
 This harness builds the candidate image from the exact committed checkout,
 starts the real four-service Compose topology against temporary configuration,
-temporary SQLite, temporary Local Storage roots and generated throwaway
-credentials, checks and activates one managed configuration, and then drives a
-real Chromium browser through the RO-5 long-path toolbar matrix — both library
-kinds, list and grid, four supported viewports — against the assets the
-production image actually serves.
+temporary SQLite, temporary Local Storage roots and a host-issued setup code,
+creates the first administrator and publishes one managed media configuration
+through that administrator session, and then drives a real Chromium browser
+through the RO-5 long-path toolbar matrix — both library kinds, list and grid,
+four supported viewports — against the assets the production image actually
+serves.
 
 It therefore closes the specific gap RO-5 names: a source/jsdom-only change or
 an old image cannot prove the reported overlap is resolved.  The proof records
@@ -33,10 +34,8 @@ import argparse
 import hashlib
 import json
 import os
-import secrets
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.error
@@ -49,8 +48,18 @@ from docker_files_transfer_impact_smoke_test import (
     image_exists,
     run_docker,
 )
-from docker_health_smoke_test import activate_runtime, wait_for_services_healthy
-from docker_smoke_test import compose_environment, free_port, wait_for_api
+from docker_harness import (
+    activate_runtime,
+    bootstrap_account_session,
+    compose_environment,
+    free_port,
+    wait_for_api,
+    wait_for_services_healthy,
+)
+from make_deployment_config import (
+    make_deployment_configuration,
+    make_management_bootstrap,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = {"api", "worker", "scheduler", "notification-worker"}
@@ -88,7 +97,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const BASE = process.env.MF_PROOF_BASE;
-const TOKEN = process.env.MF_PROOF_TOKEN;
+const USERNAME = process.env.MF_PROOF_USERNAME;
+const PASSWORD = process.env.MF_PROOF_PASSWORD;
 const ARTIFACTS = process.env.MF_PROOF_ARTIFACTS;
 const VIEWPORTS = JSON.parse(process.env.MF_PROOF_VIEWPORTS);
 const ROUTES = JSON.parse(process.env.MF_PROOF_ROUTES);
@@ -97,16 +107,20 @@ function require_(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function connect(page) {
-  await page.getByLabel('API token').fill(TOKEN);
-  await page.getByRole('button', { name: 'Connect' }).click();
+async function signIn(page) {
+  await page.getByLabel('Login name').fill(USERNAME);
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Sign in' }).click();
 }
 
 async function open(page, url, width, height, expectBrowse = true) {
   await page.setViewportSize({ width, height });
   await page.goto(BASE + url);
-  if (await page.getByLabel('API token').count()) {
-    await connect(page);
+  const signInHeading = page.getByRole('heading', { name: 'Sign in' });
+  const accountMenu = page.getByRole('button', { name: 'Account menu' });
+  await expect(signInHeading.or(accountMenu).first()).toBeVisible();
+  if (await signInHeading.isVisible()) {
+    await signIn(page);
   }
   if (expectBrowse) {
     await expect(page.locator('.mf-files-toolbar')).toBeVisible();
@@ -449,10 +463,8 @@ try {
     await page.getByRole('button', { name: route.homeLabel }).focus();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('table')).toBeVisible();
-    require_(
-      !decodeURIComponent(page.url()).includes(`path=${route.exactNavigationPath}`),
-      `${route.name}: keyboard root return kept the deep path`,
-    );
+    await expect(nav.locator('.mf-crumb-link.is-current')).toHaveCount(0);
+    await expect(page.getByLabel('文件条目 short.mkv', { exact: true })).toBeVisible();
   }
 
   for (const route of ROUTES) {
@@ -539,8 +551,8 @@ def route_cases() -> list[dict]:
     ]
 
 
-def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path]:
-    """Temporary configuration, environment file and Local Storage roots."""
+def prepare(root: Path) -> tuple[Path, Path, Path, Path, Path]:
+    """Temporary bootstrap, publication input, environment file and media roots."""
 
     source_root = root / "media" / "incoming"
     target_root = root / "media" / "organized"
@@ -564,47 +576,39 @@ def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path]:
         short_dir = base / "Shows" / "nested"
         short_dir.mkdir(parents=True, exist_ok=True)
         (short_dir / "episode.mkv").write_bytes(b"synthetic short media")
+    (target_root / "TV Shows").mkdir(parents=True, exist_ok=True)
     # The container runs as the unprivileged MediaFlow UID/GID, so the source
     # mount is readable and the destination mount is writable by it.  The
     # container preflight enforces both before serving.
     source_root.chmod(0o755)
     target_root.chmod(0o777)
 
-    document = json.loads(
-        subprocess.check_output(
-            [
-                sys.executable,
-                str(ROOT / "scripts" / "make_deployment_config.py"),
-                "--configuration",
-            ],
-            text=True,
-        )
-    )
-    document["api"] = {
-        "principals": [
-            {
-                "id": "admin",
-                "tokenEnv": "MEDIAFLOW_API_TOKEN",
-                "roles": ["admin"],
-                "enabled": True,
-            }
-        ]
-    }
+    document = make_deployment_configuration()
     document["automation"]["workerPollSeconds"] = 0.2
     document["storages"][0]["rootPath"] = "/media/incoming"
     document["storages"][1]["rootPath"] = "/media/organized"
     document["resourceLibraries"][0]["storagePath"] = ""
     document["mediaLibraries"][0]["rootPath"] = "Movies"
     config = root / "mediaflow.json"
-    config.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    config.write_text(
+        json.dumps(make_management_bootstrap(database_path="/data/mediaflow.sqlite3"), indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
     config.chmod(0o644)
+    activation = root / "mediaflow.activation.json"
+    activation.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    activation.chmod(0o644)
     environment_file = root / "deployment.env"
-    environment_file.write_text(f"MEDIAFLOW_API_TOKEN={api_token}\n", encoding="utf-8")
+    environment_file.write_text("# isolated Files toolbar acceptance\n", encoding="utf-8")
     environment_file.chmod(0o644)
-    return config, environment_file, source_root, target_root
+    return config, activation, environment_file, source_root, target_root
 
 
-def served_asset_identity(base: str, token: str) -> dict:
+def served_asset_identity(base: str) -> dict:
     """The identity of the JS/CSS the production API actually serves."""
 
     identity: dict[str, object] = {}
@@ -686,7 +690,6 @@ def image_provenance(image: str, candidate_sha: str) -> dict:
 
 
 def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> None:
-    api_token = secrets.token_urlsafe(24)
     api_port = free_port()
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     for stale in ARTIFACT_ROOT.glob("*.png"):
@@ -699,7 +702,7 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
     with tempfile.TemporaryDirectory(prefix="mediaflow-files-toolbar-docker-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
-        config, env_file, source_root, target_root = prepare(root, api_token, api_port)
+        config, activation_file, env_file, source_root, target_root = prepare(root)
         environment = compose_environment(
             root,
             image,
@@ -723,9 +726,11 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             run_docker([*command, "up", "-d", "--no-build"], environment=environment)
             wait_for_services_healthy(command, environment, expected=SERVICES)
             base = f"http://127.0.0.1:{api_port}"
-            wait_for_api(base, api_token)
-            active = activate_runtime(base, api_token, config)
-            assets = served_asset_identity(base, api_token)
+            wait_for_api(base)
+            admin_cookie, username, password = bootstrap_account_session(command, environment, base)
+            wait_for_api(base, admin_cookie)
+            active = activate_runtime(base, admin_cookie, activation_file)
+            assets = served_asset_identity(base)
             local = local_asset_identity()
             assert_same_executable_candidate(assets, local)
             (ARTIFACT_ROOT / "served-assets.json").write_text(
@@ -743,7 +748,8 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                 env={
                     **os.environ,
                     "MF_PROOF_BASE": base,
-                    "MF_PROOF_TOKEN": api_token,
+                    "MF_PROOF_USERNAME": username,
+                    "MF_PROOF_PASSWORD": password,
                     "MF_PROOF_ARTIFACTS": str(ARTIFACT_ROOT),
                     "MF_PROOF_VIEWPORTS": json.dumps(
                         [

@@ -5,6 +5,9 @@ The committed candidate's real API and resident Worker are used.  A bounded
 in-process HTTP service implements only the OpenList v4 endpoints needed by
 this proof; no production credentials, media or remote service are accessed.
 The Worker container must stay identical across activation and execution.
+The deployment starts from the formal management bootstrap, claims a
+host-issued setup code and publishes through the ordinary administrator
+session.
 """
 
 from __future__ import annotations
@@ -14,8 +17,6 @@ import json
 import os
 import secrets
 import shutil
-import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -27,8 +28,21 @@ from docker_files_transfer_impact_smoke_test import (
     image_exists,
     run_docker,
 )
-from docker_health_smoke_test import json_request, service_records, wait_for_services_healthy
-from docker_smoke_test import compose_environment, free_port, wait_for_api, wait_until
+from docker_harness import (
+    activate_runtime,
+    bootstrap_account_session,
+    compose_environment,
+    free_port,
+    json_request,
+    service_records,
+    wait_for_api,
+    wait_for_services_healthy,
+    wait_until,
+)
+from make_deployment_config import (
+    make_deployment_configuration,
+    make_management_bootstrap,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = {"api", "worker", "scheduler", "notification-worker"}
@@ -148,33 +162,14 @@ def handler_for(state: OpenListState):
     return Handler
 
 
-def prepare(root: Path, api_token: str, openlist_token: str, port: int) -> tuple[Path, ...]:
+def prepare(root: Path, openlist_token: str, port: int) -> tuple[Path, ...]:
     source_root = root / "media" / "incoming"
     target_root = root / "media" / "organized"
     source_root.mkdir(parents=True)
     target_root.mkdir(parents=True)
     source_root.chmod(0o755)
     target_root.chmod(0o777)
-    document = json.loads(
-        subprocess.check_output(
-            [
-                sys.executable,
-                str(ROOT / "scripts" / "make_deployment_config.py"),
-                "--configuration",
-            ],
-            text=True,
-        )
-    )
-    document["api"] = {
-        "principals": [
-            {
-                "id": "admin",
-                "tokenEnv": "MEDIAFLOW_API_TOKEN",
-                "roles": ["admin"],
-                "enabled": True,
-            }
-        ]
-    }
+    document = make_deployment_configuration()
     document["automation"]["workerPollSeconds"] = 0.2
     document["storages"] = [
         {
@@ -215,13 +210,20 @@ def prepare(root: Path, api_token: str, openlist_token: str, port: int) -> tuple
     for library in document["mediaLibraries"]:
         library["storageId"] = "openlist"
     config = root / "mediaflow.json"
-    config.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-    config.chmod(0o644)
-    environment_file = root / "deployment.env"
-    environment_file.write_text(
-        f"MEDIAFLOW_API_TOKEN={api_token}\nOPENLIST_TOKEN={openlist_token}\n",
+    config.write_text(
+        json.dumps(make_management_bootstrap(database_path="/data/mediaflow.sqlite3"), indent=2)
+        + "\n",
         encoding="utf-8",
     )
+    config.chmod(0o644)
+    activation = root / "mediaflow.activation.json"
+    activation.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    activation.chmod(0o644)
+    environment_file = root / "deployment.env"
+    environment_file.write_text(f"OPENLIST_TOKEN={openlist_token}\n", encoding="utf-8")
     environment_file.chmod(0o644)
     override = root / "compose.lifecycle.yaml"
     override.write_text(
@@ -232,36 +234,10 @@ def prepare(root: Path, api_token: str, openlist_token: str, port: int) -> tuple
         '    extra_hosts: ["host.docker.internal:host-gateway"]\n',
         encoding="utf-8",
     )
-    return config, environment_file, source_root, target_root, override
-
-
-def checked_activate(base: str, token: str, config: Path) -> dict:
-    document = json.loads(config.read_text(encoding="utf-8"))
-    status, active = json_request(
-        base,
-        "/api/configuration/publish",
-        token,
-        method="POST",
-        body={"document": document},
-    )
-    if status != 200 or active.get("published") is not True or active.get("status") != "active":
-        raise RuntimeError(f"configuration publication failed: HTTP {status}: {active}")
-    status, configuration = json_request(base, "/api/configuration", token)
-    current = configuration.get("active") if isinstance(configuration, dict) else None
-    if (
-        status != 200
-        or not isinstance(current, dict)
-        or current.get("revisionId") != active.get("revisionId")
-        or current.get("digest") != active.get("digest")
-    ):
-        raise RuntimeError(
-            f"published Active was not readable back through the API: {configuration}"
-        )
-    return active
+    return config, activation, environment_file, source_root, target_root, override
 
 
 def lifecycle(project: str, image: str, keep: bool) -> None:
-    api_token = secrets.token_urlsafe(24)
     openlist_token = secrets.token_urlsafe(24)
     api_port, openlist_port = free_port(), free_port()
     state = OpenListState(openlist_token)
@@ -271,8 +247,8 @@ def lifecycle(project: str, image: str, keep: bool) -> None:
     with tempfile.TemporaryDirectory(prefix="mediaflow-transfer-lifecycle-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
-        config, env_file, source_root, target_root, override = prepare(
-            root, api_token, openlist_token, openlist_port
+        config, activation_file, env_file, source_root, target_root, override = prepare(
+            root, openlist_token, openlist_port
         )
         environment = compose_environment(
             root,
@@ -299,26 +275,30 @@ def lifecycle(project: str, image: str, keep: bool) -> None:
             run_docker([*command, "up", "-d", "--no-build"], environment=environment)
             wait_for_services_healthy(command, environment, expected=SERVICES)
             base = f"http://127.0.0.1:{api_port}"
-            wait_for_api(base, api_token)
+            wait_for_api(base)
+            admin_cookie, _, _ = bootstrap_account_session(command, environment, base)
+            wait_for_api(base, admin_cookie)
             worker_id = service_records(command, environment)["worker"].get("ID")
-            status, readiness = json_request(base, "/api/workers/readiness", api_token)
+            status, readiness = json_request(base, "/api/workers/readiness", cookie=admin_cookie)
             work = readiness.get("workReadiness") or {}
             if status != 200 or readiness.get("currentActiveAvailable") is not False:
                 raise RuntimeError(f"pre-activation readiness is untruthful: {readiness}")
             if not (work.get("resourceFilesTransfer") or {}).get("ready"):
                 raise RuntimeError(f"pre-activation transfer consumer is unavailable: {readiness}")
 
-            checked_activate(base, api_token, config)
+            activate_runtime(base, admin_cookie, activation_file)
             query = "path=resident.mkv&to=destination&toPath=&operation=move&conflict=fail"
             status, impact = json_request(
-                base, f"/api/resource-libraries/source/files/transfer-impact?{query}", api_token
+                base,
+                f"/api/resource-libraries/source/files/transfer-impact?{query}",
+                cookie=admin_cookie,
             )
             if status != 200:
                 raise RuntimeError(f"transfer impact failed: HTTP {status}: {impact}")
             status, admitted = json_request(
                 base,
                 "/api/resource-libraries/source/files/transfers",
-                api_token,
+                cookie=admin_cookie,
                 method="POST",
                 body={
                     "operation": "move",
@@ -335,7 +315,7 @@ def lifecycle(project: str, image: str, keep: bool) -> None:
             if not state.move_entered.wait(30):
                 raise RuntimeError("the real OpenList Move request was not observed")
             time.sleep(10.5)
-            status, during = json_request(base, "/api/workers/readiness", api_token)
+            status, during = json_request(base, "/api/workers/readiness", cookie=admin_cookie)
             if status != 200 or not (during.get("baseReadiness") or {}).get("ready"):
                 raise RuntimeError(f"Worker registration became stale during slow Move: {during}")
 
@@ -346,7 +326,7 @@ def lifecycle(project: str, image: str, keep: bool) -> None:
                 status_code, terminal = json_request(
                     base,
                     f"/api/resource-libraries/source/files/transfers/{task_id}",
-                    api_token,
+                    cookie=admin_cookie,
                 )
                 return status_code == 200 and terminal.get("terminal") is True
 
