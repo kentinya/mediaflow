@@ -641,7 +641,7 @@ appears as one status line. If the service has no admission record and the origi
 eligible, an explicit confirmation of that same batch uses the existing atomic admission check.
 [B acceptance](https://github.com/kentinya/mediaflow/blob/455ad4f70c645b1a2e65f4af61378101a25435d8/TASK.md#patch-20261120-3--b-验收-pass).
 
-## TARGET — Slice 59 Files manual organize and task detail content (PLANNED)
+## TARGET — Slice 59 Files manual organize and task detail content (ACTIVE)
 
 [Slice 59](../SLICE.md) limits the presentation amendment to the organizer launched from
 ResourceLibrary Files and the selected Task detail body. Current behavior remains the accepted

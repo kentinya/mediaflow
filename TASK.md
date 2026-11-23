@@ -1,8 +1,8 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-[Slice 59](SLICE.md) — 手动整理流程与任务详情弹窗正文 — 为 **PLANNED**。
+[Slice 59](SLICE.md) — 手动整理流程与任务详情弹窗正文 — 为 **ACTIVE**。用户授权 A 代 B 规划首个 Task。
 
-Next Action: USER AUTHORIZES SLICE ACTIVATION; THEN B PLANS THE FIRST TASK
+Next Action: USER-AUTHORIZED A PLANS FIRST TASK IN B ROLE
 
 最近接受的 Slice 58 已关闭，已审实现为
 `5415534a38bb8e23ea64a7fd2929c9e6a59a2cad`。

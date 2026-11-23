@@ -4,29 +4,33 @@
 Slice ID: 59
 Name: Files Manual Organize Journey and Task Detail Content
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PLANNED
+Status: ACTIVE
 Base SHA: 212acdef5d97c14a01353b22c103d44b911d6147
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: PLANNING ONLY
+Development Authorization: SLICE ACTIVE; FIRST TASK PLANNING AUTHORIZED
 Risk: Medium
-Planned Test Level: T3
-Next Action: USER AUTHORIZES SLICE ACTIVATION; THEN B PLANS THE FIRST TASK
+Target Test Level: T3
+Next Action: USER-AUTHORIZED A PLANS FIRST TASK IN B ROLE
 ```
 
 ## 授权、基线与设计依据
 
 用户认可离线原型中手动整理流程与任务详情正文的方向，要求保留正式页面的现有顶栏标题，
-范围限于从文件页进入后的手动整理流程和任务中心的任务详情弹窗正文。本次授权为 Slice 规划。
+范围限于从文件页进入后的手动整理流程和任务中心的任务详情弹窗正文。用户于 2026-11-24
+认可按现有界面制作的新版预览，明确授权激活 Slice 59，并授权 A 代 B 规划第一个 Task。
+该角色例外仅适用于首个 Task 的规划，实施须另获授权，B 独立审查实施候选，A 负责最终验收。
 规划前 `main` 位于上述 Base，工作区和暂存区干净，工作区及 Git 可写，治理检查通过。
+激活前 main 位于规划提交 640ee01808ce33303e9f46a1a9e05b73ccd1e966，治理检查通过，
+工作区和暂存区干净。Slice Base 仍为原接受基线。
 [Development Workflow](docs/development-workflow.md)
 
 Slice 58 已关闭，已审实现、独立终审、限制及 B 交接保留在固定记录。Slice 53 的原验收和此后
 独立修正保留原义。[Slice 58 终审](https://github.com/kentinya/mediaflow/blob/3d01bbbdb088d5e3fc65c1599c5c8bee0790312f/SLICE.md#a-final-review--pass--closed) ·
 [Slice 53 终审](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review)
 
-《MediaFlow-手动整理-交互设计稿.html》供正文视觉与状态转换参考，SHA-256 为
-`6fa65652df09a695de0af68c9a3b5c61446e45c13a08aecfd8713a162d3f51f4`。正式界面的顶栏、
+《MediaFlow-Slice59-现有界面离线预览.html》供正文视觉与状态转换参考，SHA-256 为
+`3d90cb20f3a0e68c3e88a2c41a3ae0a178d9c76047b69e80251f30b64b9b0557`。正式界面的顶栏、
 页面及弹窗标题、入口、权限、数据和状态以上述 Base 为准。原型的示例文件、计数、场景侧栏和
 「推进后台」只用于设计评审。
 
@@ -43,7 +47,7 @@ TARGET `V2-OPS-020/021` 只更新上述两处呈现，细化 `V2-OPS-018/019` �
 `UX-001–003`、`REQ-WEB-003/005/006`、`REQ-ORG-003/004/007/008/012`、
 `REQ-RECOVERY-004–009` 继续约束在用旅程、安全与证据。本规划生效前的产品行为仍按 CURRENT
 理解，相关文档在终审通过后的关闭 checkpoint 同步。
-[V2 TARGET](docs/v2-requirements.md#target--slice-59-files-manual-organize-and-task-detail-content-planned) ·
+[V2 TARGET](docs/v2-requirements.md#target--slice-59-files-manual-organize-and-task-detail-content-active) ·
 [Requirements](docs/requirements.md) ·
 [手动整理旅程](docs/product-experience.md#manual-organize) ·
 [任务中心现行正文](docs/task-center-page-spec.md#current--任务正文与文件证据) ·
@@ -174,5 +178,5 @@ TARGET `V2-OPS-020/021` 只更新上述两处呈现，细化 `V2-OPS-018/019` �
 [原生 Task 回归](web/tests/e2e/operations-inventory.python.spec.ts)
 
 B 在全部 Required Outcomes 满足后提交 Closure Packet，A 独立核对完整 Base..Implementation
-Head、保护边界和实际验收证据。当前为规划 checkpoint，实施 Head、Closure Packet 和
+Head、保护边界和实际验收证据。当前已激活 Slice，实施 Head、Closure Packet 和
 A 终审待后续产生。

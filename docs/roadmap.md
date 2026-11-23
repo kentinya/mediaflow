@@ -44,11 +44,11 @@ only in [the development workflow](development-workflow.md).
 | 56 — Canonical Web and API Routes | Serve the operator Web at the root and the current API at `/api/*`, retire the old prefixes, and keep existing Tasks accessible at the new addresses | PASS / CLOSED | Accepted Slice55 and current baseline `33c70735e0a8f45426dde614587ea3d43af94e9b` |
 | 57 — Single Web Administrator and Scoped API Tokens | Start from an empty database, set up one Web administrator, keep login across navigation, issue scoped API tokens for integrations, and retire configuration-owned credentials | PASS / CLOSED | Accepted Slice56, direct configuration publication and baseline `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab` |
 | 58 — Complete Retirement of the General CLI | Remove the general CLI and configuration schema 11 support. Keep four service launches, first administrator setup, password recovery and offline SQLite backup and restore | PASS / CLOSED | Accepted Slice57 and baseline `5b2e0de4ac1c9d79e3618cef82d420ae302401e7` |
-| 59 — Files Manual Organize Journey and Task Detail Content | Improve the Files organizer preparation and return-to-overview flow and the Task Center detail body, retaining current titles and entry points | PLANNED | Accepted Slice 58 and baseline `212acdef5d97c14a01353b22c103d44b911d6147` |
+| 59 — Files Manual Organize Journey and Task Detail Content | Improve the Files organizer preparation and return-to-overview flow and the Task Center detail body, retaining current titles and entry points | ACTIVE | Accepted Slice 58 and baseline `212acdef5d97c14a01353b22c103d44b911d6147` |
 
 ## Current boundary
 
-[Slice 59](../SLICE.md) is **PLANNED**. Activation precedes B's first Task plan.
+[Slice 59](../SLICE.md) is **ACTIVE**. The user authorized A to plan the first Task in B's role.
 Slice 58 is the latest accepted Slice.
 
 ## Accepted boundary references
