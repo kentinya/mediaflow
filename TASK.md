@@ -1,8 +1,8 @@
 # Task 58.1 — 切换正式部署和主机恢复入口
 
-Next Action: B INDEPENDENT RE-REVIEW OF THE RECOVERY JOURNEY FIX
+Next Action: DEVELOPER COMPLETES THE TASK 58.1 ACCEPTANCE CONSUMERS
 
-用户已授权实施 Task 58.1。Developer 本轮返工已完成，状态为 `READY FOR B REVIEW`。
+用户已授权实施 Task 58.1。Developer 开始本轮返工时将状态改为 `IN PROGRESS`。
 用户授权 A 代 B 规划首个 Task，角色例外限于首个 Task 的规划。B 独立验收，A 按工作流终审。
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -10,7 +10,7 @@ Next Action: B INDEPENDENT RE-REVIEW OF THE RECOVERY JOURNEY FIX
 Task ID: 58.1
 Task Type: SLICE
 Parent Slice: 58
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
 Difficulty: High
 Test Level: T4
@@ -455,6 +455,53 @@ Candidate state: READY FOR B REVIEW
   掩盖。
 - Slice 58 的通用业务 CLI、专属任务路径、schema 11 切换退役和 Base 合法任务续作验收仍属
   剩余范围。
+
+## B 复核 — T4 门禁 FIX REQUIRED
+
+```text
+Reviewed Base: c8d8d30fa77c908bba4a73a1f9b9660ba51f4bfb
+Reviewed Head: c0315d8795fb042448fdc22f1e05b1fb43fcb29f
+Decision: FIX REQUIRED
+Slice Outcomes / Surfaces complete: NO
+Next: SAME TASK FIX LOOP
+```
+
+从完好原库与已有备份恢复损坏库的定向验证通过。原文件和备份摘要保持一致，恢复后读回原账号，
+四个服务报告就绪。T4 发现正式空库 Docker 冒烟仍有两处旧调用，Python 全量还有一项样例夹具
+失败。门禁修正留在 58.1。
+
+### 开发指导与返工验收
+
+1. 在 `scripts/docker_empty_baseline_smoke_test.py` 的真实空库浏览器流程中，初始化并刷新后
+   先打开「配置工具」，再展开「诊断」。保留仅一次初始化、零额外受理、读回同一 Active、浏览器
+   凭据脱敏的原断言。B 用这一处导航调整原样复测，通过了无媒体挂载的整段旅程。
+2. 同一脚本的媒体挂载流程，从 `POST /api/resource-libraries/source/files/organize` 受理指定
+   文件，复用已有的 intent、分析、精确摘要和显式 Execute 请求，等待常驻 Worker 推进同一 Task。
+   可参考同一候选已通过的
+   `scripts/docker_release_security_smoke_test.py` 整理流程。沿用脚本已配置的测试媒体根和本地
+   TMDB TLS 夹具。验证确认前源／目标零变化，确认后正好完成一份原字节 COPY，两种库的普通
+   Copy 都能完成，服务身份始终一致。移除该流程对容器 `organize --execute --limit 1` 的调用。
+3. 修正 `tests/test_configuration_package_exchange.py` 的脱敏单测夹具。样例合并后 `_examples`
+   带有额外变量引用，测试仍精确匹配合并前的三条。用独立明确的输入核对原引用和字面凭据脱敏，
+   或按现行样例精确断言所有输入的引用。保留原有的字段位置、值保留及明文移除断言。
+4. 离线恢复指引的 Compose 诊断副本使用已被 Git 忽略的目录，现行示例把整个原库复制到项目
+   根目录。两种部署的损坏库支路在摘要核对后直接接到第 5 步的 API 启动命令，避免重新运行
+   已知失败的原库 `verify`。
+
+Developer 运行 `PYTHONPATH=tests .venv/bin/python -m unittest test_configuration_package_exchange`、
+`git diff --check`、`python3 scripts/check_governance.py`，并用隔离 Compose 核对两段改动的
+用户入口。B 对修正候选复跑正式 Docker 冒烟与全量 Python，并按工作流核对其余 T4 证据的
+复用条件。
+
+本轮 Python 运行 2373 项，2365 通过、1 失败、7 跳过；唯一失败在隔离 Task Base 复现。
+Web 单测 1642 通过，常规 Chromium E2E 289 通过，原生整理 E2E 18 通过。候选镜像的根页
+实测用主机命令领码建号和重置密码，旧会话失效后用新密码登录。Python 静态、样例
+校验、Web 静态与构建、wheel 源码外安装、Docker 重启故障和发布安全通过。发布安全首跑的
+宿主挂载失败改用 Docker 可见临时目录后通过。空库 Docker 门禁首跑停在「诊断」；临时补上
+现行导航之后，媒体挂载段在退役命令处被正式入口拒绝，均保留原日志。
+
+证据在 `.git/validation-evidence/c0315d8795fb042448fdc22f1e05b1fb43fcb29f/b-review/`。
+Slice 58 仍须完成通用 CLI、专属任务路径、schema 11 切换退役和 Base 合法任务续作验收。
 
 ## Latest accepted Task — PATCH-20261122-3
 
