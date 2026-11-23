@@ -8,8 +8,8 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice 58](../SLICE.md) is **ACTIVE**. [TASK.md](../TASK.md) records the current Task state.
-Slice 57 remains the latest accepted Slice.
+[Slice 58](../SLICE.md) is **FIX REQUIRED** after A Final Review. B plans the A58-01 correction
+in [Task 58.2](../TASK.md). Slice 57 remains the latest accepted Slice.
 
 ## Latest accepted closure — Slice57
 

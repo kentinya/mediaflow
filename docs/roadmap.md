@@ -47,8 +47,9 @@ only in [the development workflow](development-workflow.md).
 
 ## Current boundary
 
-[Slice 58](../SLICE.md) is **ACTIVE**. [TASK.md](../TASK.md) records the current Task state.
-Slice 57 remains the latest accepted Slice.
+[Slice 58](../SLICE.md) is **FIX REQUIRED** after A Final Review. The Roadmap row stays ACTIVE
+during correction. B plans the A58-01 correction in [Task 58.2](../TASK.md). Slice 57 remains the
+latest accepted Slice.
 
 ## Accepted boundary references
 

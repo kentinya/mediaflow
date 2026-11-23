@@ -4,14 +4,14 @@
 Slice ID: 58
 Name: Complete Retirement of the General CLI
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: FIX REQUIRED
 Base SHA: 5b2e0de4ac1c9d79e3618cef82d420ae302401e7
-Implementation Head: NOT SET
+Implementation Head: 1a2383942aff3200f99c9c0560dec3e191ce611e
 Working Branch: main
-Development Authorization: TASK 58.2 IMPLEMENTATION AUTHORIZED
+Development Authorization: ORIGINAL TASK 58.2 CORRECTION SCOPE; B CORRECTION PLAN PENDING
 Risk: High
 Target Test Level: T4
-Next Action: SEE TASK.md
+Next Action: B PLANS TASK 58.2 CORRECTION FOR A58-01
 ```
 
 ## 授权与基线
@@ -141,3 +141,46 @@ Base 的 Compose 四服务经容器预检后执行 `mediaflow`。`final_cli.py` 
 结果，在 CI、样例校验与冒烟迁移到正式入口后完成门禁。A 核对完整 Base..Implementation Head
 和独立验收证据，关闭时同步现行要求、旅程、架构和交付指引。
 [测试等级与验收分工](docs/development-workflow.md#6-test-levels)
+
+B 验收了 Task 58.1 和 Task 58.2。原 Closure Packet 保存在
+`435a0b42904765820c85cc71cb904c14bf66f10e:TASK.md`。
+
+## A Final Review — FIX REQUIRED
+
+```text
+Review Date: 2026-11-23
+Reviewed Base: 5b2e0de4ac1c9d79e3618cef82d420ae302401e7
+Reviewed Implementation Head: 1a2383942aff3200f99c9c0560dec3e191ce611e
+B Closure Packet: 435a0b42904765820c85cc71cb904c14bf66f10e:TASK.md
+Decision: FIX REQUIRED
+Blocker: A58-01 / P1 — the restored database cannot use its published Active
+```
+
+A 核对完整 Base..Implementation Head 的 116 文件范围，包括四服务装配、主机发码、账号页面、
+备份和恢复、数据库适用性、CLI 专属分支退役、现行 Worker 和 Task 续作、制品、验收脚手架及交付
+指引。终审从干净的 `main` 开始，起始 HEAD 即 B 交接提交，从候选到该提交的差异仅含 `TASK.md`。
+B 原始日志确认空库与挂载 Compose、重启故障、发布安全、schema 11 拒绝，以及正式 Web 从 Base
+原 Task 显式续作的通过结果。A 独立复跑精确 wheel 的源码外安装冒烟，通过。B 的 Python 全量
+2320 通过、7 跳过，上轮原生整理夹具的 4 个失败继续保留在原验收包。
+
+**A58-01（P1），阻塞 RO-3 / AC-03。** A 使用 B 的精确候选镜像，在隔离 Compose 按正式媒体
+overlay 部署，经主机发码和现行 API 建号、发布 Active。资源库现有 Files API 返回 `200` 并列出
+测试文件。按发布指引停机、备份、校验，用新 bootstrap 把同一备份恢复到不存在的目标。恢复报告
+成功，原库 SHA-256 保持一致。按指引只启动恢复库 API，原会话与原配置记录可读，接着打开资源库
+却收到 `503 configuration_unavailable`（`runtime_invalid`）。原指引的普通 `compose up` 还卸掉了
+部署使用的两处媒体挂载。使用原 overlay 保留两处挂载重新启动恢复库 API 后，Files 仍返回同一错误。
+[发布恢复步骤](docs/release.md#offline-restore-procedure)
+
+该恢复步骤自 `58daac84` 起给出新数据库文件的 bootstrap。已发布快照仍包含原库定位，共享运行时
+加载器从原有 `dae27bda` 起要求快照内 `persistence.databasePath` 与当前 bootstrap 一致，因此该
+操作完成 SQLite 发布后，恢复的 Active 无法被业务运行时采用。Files 响应提示准备替换配置，而历史
+Task 仍需原 pin 对应的快照。[共享运行时加载器](mediaflow/infrastructure/runtime_configuration.py#L574)
+
+B 在[当前 Task 58.2](TASK.md)内规划修正。通过条件是按正式同版本停机恢复步骤，保留并可实际使用原
+Active 和已有合法 Task 的固定快照，核对原账号、任务、结果和审计。源码与 Compose 的正式指引都应
+可执行。已有媒体挂载的部署须保留原挂载，先从恢复库 API 核对实际 Files 可读及运行时采用，再在确认
+媒体效果后启用后台。复验须证明原库及源备份受保护、原 ID 和 digest/pin 一致、恢复零媒体变更、
+已完成和不确定效果零重放。原有配置发布及后台权限边界继续适用。
+
+A 复现脚本、日志和范围清单保存在本机
+`.git/validation-evidence/1a2383942aff3200f99c9c0560dec3e191ce611e/a-review/`。
