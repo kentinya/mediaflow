@@ -46,12 +46,21 @@ def inspect_wheel(wheel: Path) -> None:
     retired = sorted(
         name
         for name in names
-        if name in {"mediaflow/cli.py", "mediaflow/final_cli.py"}
+        if name
+        in {
+            "mediaflow/cli.py",
+            "mediaflow/final_cli.py",
+            "mediaflow/infrastructure/read_only_active_configuration.py",
+            "mediaflow/infrastructure/internal_key_store.py",
+        }
         or name.startswith("mediaflow/cli/")
         or name.startswith("mediaflow/final_cli/")
     )
     if retired:
-        raise ValueError(f"wheel still ships the retired general CLI: {', '.join(retired)}")
+        raise ValueError(
+            f"wheel still ships a retired CLI or its exclusive file-list modules: "
+            f"{', '.join(retired)}"
+        )
     forbidden = tuple(
         name
         for name in names
@@ -102,7 +111,12 @@ def smoke(wheel: Path, project: Path) -> None:
                 str(python),
                 "-c",
                 "import importlib\n"
-                "for name in ('mediaflow.cli', 'mediaflow.final_cli'):\n"
+                "for name in (\n"
+                "    'mediaflow.cli',\n"
+                "    'mediaflow.final_cli',\n"
+                "    'mediaflow.infrastructure.read_only_active_configuration',\n"
+                "    'mediaflow.infrastructure.internal_key_store',\n"
+                "):\n"
                 "    try:\n"
                 "        importlib.import_module(name)\n"
                 "    except ModuleNotFoundError:\n"

@@ -1,22 +1,14 @@
-"""Task47.3 round 5 — direct CLI and remote-ticket organizing share one recovery.
+"""Files organizing completes its recovery on one Task through the live surfaces.
 
-The two B blockers this round fixes:
-
-* a direct CLI / remote-ticket organize Task (``trigger=manual``, no Files
-  discovery) continues its own saved decision through the same kernel re-entry,
-  plan summary, explicit confirmation and same-Task execution the Scheduler due
-  / Run once journeys already use — the admission trigger never gates the
-  proved organizing work context;
-* the legacy ``jobs submit organize`` CLI entrance refuses new work bounded and
-  effect-free while naming the usable equivalents, and historical Jobs stay
-  readable.
-
-Both journeys run the real production composition end to end: one SQLite file
-holds the managed configuration revisions *and* the runtime work exactly like a
-deployment, the real API routes admit the Task, the real
-``resident_entry._automatic_task_runner`` (the resident Worker's automatic
-branch) advances it, and the real ``ManualTaskEngineWorker`` consumer settles
-the confirmed execution.  No synthetic route, no second engine, no user media.
+Every assertion starts from the real authenticated Files admission API
+(``POST /api/resource-libraries/{id}/files/discoveries``) that the Files page
+uses.  The production ``ManualTaskEngineWorker`` advances the admitted Task
+through the real bounded discovery, the real Task Center decision/continue
+routes and the real Preview confirmation; the confirmed work executes through
+``ManualOrganizeExecutionService`` and the real ``OrganizerExecutor``.  One
+SQLite file holds the managed configuration revisions and the runtime work, and
+only temporary Local Storage roots carry media.  No retired CLI, synthetic
+route or second engine establishes the work.
 """
 
 from __future__ import annotations
@@ -35,16 +27,19 @@ from unittest.mock import patch
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
+from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
+from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.metadata import MetadataProviderRegistry
-from mediaflow.application.organizer import OrganizerExecutor
+from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
-from mediaflow.domain.failure import decode_failure_explanation
+from mediaflow.application.task_scheduling import TaskSchedulingService
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.processing_checkpoint import CheckpointConfiguration, EffectCertainty
 from mediaflow.domain.security import ApiRole
-from mediaflow.domain.storage import StorageError, StorageErrorCode
-from mediaflow.domain.task_scheduling import TaskControl
+from mediaflow.domain.task_persistence import PersistentTaskStatus
+from mediaflow.domain.task_scheduling import TaskQueueState
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -55,6 +50,7 @@ from tests.account_fixtures import AccountSessions
 
 ADMIN_TOKEN = "entrance-recovery-admin"
 OPERATOR_TOKEN = "entrance-recovery-operator"
+REQUEST_ID = "11111111-1111-4111-8111-111111111111"
 
 
 class _Clock:
@@ -72,9 +68,7 @@ class _Clock:
 def entrance_journey(
     case,
     *,
-    media: str = "One.2001.mkv",
     movie_rule: bool = False,
-    capacity: int | None = None,
     candidates: tuple | None = None,
     organize_operation: str | None = None,
     recognition_rules: list[dict] | None = None,
@@ -82,12 +76,12 @@ def entrance_journey(
     viewer_token: str | None = None,
     max_provider_requests: int | None = None,
 ):
-    """One production-shaped managed layout for one entrance recovery journey.
+    """One production-shaped managed layout for one Files organizing journey.
 
     The managed revision store and the runtime work share one SQLite file and
-    the JSON bootstrap names exactly that database, so the real CLI ``--config``
-    resolution, the real pinned Worker reconstruction and the real API binding
-    refresh all read the same durable authority a deployment uses.
+    the JSON bootstrap names exactly that database, so the real API binding,
+    the pinned Worker services and the durable Task read back the same authority
+    a deployment uses.
     """
 
     root = case.root
@@ -125,8 +119,6 @@ def entrance_journey(
             "storagePath": "",
             "enabled": True,
             "extensions": ["mkv", "mp4"],
-            # The deployment's source display root: the direct CLI ``organize
-            # <path>`` entrance resolves its configured ResourceLibrary from it.
             "displayRootPath": str(source_root),
         }
     ]
@@ -150,14 +142,14 @@ def entrance_journey(
     if organize_operation is not None:
         # The policy the movie rule resolves to, when the journey needs a
         # specific real OrganizerExecutor operation (for example COPY to prove
-        # an unverified target write).
+        # an unverified target write keeps its source).
         document["organizePolicies"][0]["operation"] = organize_operation
     if recognition_rules is not None:
         document["recognitionRules"] = recognition_rules
     elif movie_rule:
-        # One legal movie rule over the whole library, so an organized run can
-        # reach the real planning/execution boundary instead of stopping at a
-        # waiting-recognition problem.
+        # One legal movie rule over the whole library, so the Files discovery
+        # resolves a type through the real rule engine instead of waiting for
+        # an operator decision.
         document["recognitionRules"] = [
             {
                 "id": "movies",
@@ -173,8 +165,6 @@ def entrance_journey(
                 "outputRecognitionType": "A",
             }
         ]
-    if capacity is not None:
-        document["automation"]["maximumActiveJobs"] = capacity
     if max_provider_requests is not None:
         for policy in document.get("metadataPolicies", ()):
             policy["maxProviderRequests"] = max_provider_requests
@@ -226,19 +216,57 @@ def entrance_journey(
             accounts.add("operator", (ApiRole.OPERATOR,))
             if viewer_token is not None:
                 accounts.add("viewer", (ApiRole.VIEWER,))
+            storages = {"source": source, "target": target}
             intents = ManualOrganizeIntentService(
                 repository,
                 managed,
                 runtime_resolver=lambda snapshot_id, digest: runtime,
-                storage_factory=lambda value, ids: {"source": source, "target": target},
+                storage_factory=lambda value, ids: dict(storages),
             )
             previews = ManualOrganizePreviewService(
                 repository,
                 intents,
                 configuration=runtime,
-                storages={"source": source, "target": target},
+                storages=dict(storages),
                 providers=provider_registry,
                 clock=case.clock,
+            )
+            executions = ManualOrganizeExecutionService(
+                repository,
+                previews,
+                intents,
+                checkpoint_service=ProcessingCheckpointService(repository),
+                configuration=runtime,
+                storages=dict(storages),
+                clock=case.clock,
+            )
+            discovery = MediaDiscoveryService(
+                repository,
+                intents,
+                configuration=runtime,
+                preview_service=previews,
+                runtime_resolver=lambda snapshot_id, digest: runtime,
+                storages=dict(storages),
+                clock=case.clock,
+            )
+            repository.register_worker(
+                "files-task-engine",
+                "Files task engine",
+                5.0,
+                ("manual_organize",),
+                None,
+                None,
+                SCHEMA_VERSION,
+                case.clock.now,
+            )
+            task_engine = ManualTaskEngineWorker(
+                repository,
+                TaskSchedulingService(repository, capacity=100),
+                discovery,
+                executions,
+                worker_id="files-task-engine",
+                clock=case.clock,
+                notice=lambda line: None,
             )
             api = MediaFlowApi(
                 repository,
@@ -247,6 +275,9 @@ def entrance_journey(
                 bootstrap_document=document,
                 manual_intent_service=intents,
                 manual_preview_service=previews,
+                manual_execution_service=executions,
+                media_discovery_service=discovery,
+                storage_adapters=dict(storages),
                 metadata_provider_registry_factory=lambda ids: provider_registry,
             )
             api._fixture_session_cookies = {
@@ -262,7 +293,12 @@ def entrance_journey(
                 runtime=runtime,
                 intents=intents,
                 previews=previews,
+                executions=executions,
+                discovery=discovery,
+                task_engine=task_engine,
                 clock=case.clock,
+                source=source,
+                target=target,
                 source_root=source_root,
                 target_root=target_root,
                 revision=revision,
@@ -272,7 +308,7 @@ def entrance_journey(
 
 
 class EntranceRecoveryJourneyTests(unittest.TestCase):
-    """The manual organizing entrances complete their own four-type recovery."""
+    """The Files organizing entrance completes its own recovery on one Task."""
 
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
@@ -294,139 +330,6 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         stamp = (self.clock.now - timedelta(hours=1)).timestamp()
         os.utime(path, (stamp, stamp))
         return path
-
-    def _run_organize(
-        self,
-        value,
-        *,
-        scope: str | None = None,
-        limit: int | None = None,
-        executor_patch=None,
-        on_disk_full=None,
-        max_passes: int = 12,
-    ):
-        """Admit and drive one organizing Task through the resident Worker.
-
-        The retired general CLI was the only caller of the synchronous direct
-        organize driver.  The admitted Task and the shared pipeline it ran are
-        now driven by the production Worker (``_automatic_task_runner`` and the
-        manual Task engine) — the same path Files, Automation and Run once
-        admissions use — so every assertion below reads the durable Task,
-        items, results and scheduling facts those surfaces publish.
-        """
-
-        from mediaflow.application.manual_organize_execution import (
-            ManualOrganizeExecutionService,
-        )
-        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
-        from mediaflow.application.task_scheduling import (
-            TaskSchedulingService,
-            build_scheduled_task_admission,
-        )
-        from mediaflow.domain.task_persistence import RunDisplayContext
-        from mediaflow.domain.task_scheduling import TaskControl, TaskTrigger
-        from mediaflow.infrastructure.local_storage import LocalStorage
-        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
-        from mediaflow.resident_entry import _automatic_task_runner
-
-        scheduling = TaskSchedulingService(value.repository, capacity=100)
-        task, state = build_scheduled_task_admission(
-            "organize",
-            execute_authorized=True,
-            trigger=TaskTrigger.MANUAL,
-            principal="operator",
-            scope_path=scope,
-            item_limit=limit,
-            configuration_snapshot_id=value.revision.revision_id,
-            configuration_snapshot_digest=value.revision.digest,
-            require_configuration_snapshot=True,
-            now=value.clock.now,
-        )
-        value.repository.admit_scheduled_task(
-            task,
-            state,
-            capacity=100,
-            display=RunDisplayContext(source_scope=scope, origin_kind="remote-organize"),
-        )
-        runner = _automatic_task_runner(value.repository, str(value.config), scheduling)
-        execution = ManualOrganizeExecutionService(
-            value.repository,
-            value.previews,
-            value.intents,
-            configuration=value.runtime,
-            storages={
-                "source": LocalStorage("source", value.source_root),
-                "target": LocalStorage("target", value.target_root),
-            },
-            clock=value.clock,
-        )
-        worker_id = f"organize-{task.task_id}"
-        value.repository.register_worker(
-            worker_id,
-            worker_id,
-            300.0,
-            ("organize",),
-            None,
-            None,
-            SCHEMA_VERSION,
-            value.clock.now,
-        )
-        engine = ManualTaskEngineWorker(
-            value.repository,
-            scheduling,
-            None,
-            execution,
-            worker_id=worker_id,
-            clock=value.clock,
-            automatic_runner=runner,
-        )
-        if on_disk_full is not None:
-            on_disk_full(lambda: scheduling.request_control(task.task_id, TaskControl.CANCEL))
-        try:
-            with (
-                patch(
-                    "mediaflow.resident_entry.metadata_provider_registry_from_environment",
-                    return_value=value.provider_registry,
-                ),
-                patch(
-                    "mediaflow.application.automation_definition_execution.OrganizerExecutor",
-                    executor_patch or OrganizerExecutor,
-                ),
-            ):
-                for _ in range(max_passes):
-                    current = value.repository.get_task(task.task_id)
-                    if current is not None and current.status.value in {
-                        "completed",
-                        "failed",
-                        "cancelled",
-                    }:
-                        break
-                    engine.run_next()
-        finally:
-            value.repository.stop_worker(worker_id, value.clock.now)
-        return value.repository.get_task(task.task_id)
-
-    def _target_disk_full(
-        self, target_root: Path, *, contains: str | None = None, on_disk_full=None
-    ):
-        """Inject one real ENOSPC at a target Storage write, never at business state."""
-
-        original_open = Path.open
-        root = target_root.resolve()
-
-        def disk_full(path, mode="r", *args, **kwargs):
-            candidate = Path(path)
-            if (
-                "w" in mode
-                and candidate.resolve().is_relative_to(root)
-                and (contains is None or contains in str(candidate))
-            ):
-                if on_disk_full is not None:
-                    on_disk_full()
-                raise OSError(errno.ENOSPC, "No space left on device", str(candidate))
-            return original_open(path, mode, *args, **kwargs)
-
-        return disk_full
 
     def request(self, value, method, path, body=None, *, token=ADMIN_TOKEN, headers=None):
         payload = b"" if body is None else json.dumps(body).encode("utf-8")
@@ -451,229 +354,164 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
         result = b"".join(value.api(environ, lambda status, _h: statuses.append(status)))
         return int(statuses[0].split()[0]), (json.loads(result) if result else {})
 
-    def _run_resident_worker(self, value, *, prefix: str):
-        """One real resident Worker pass over the production automatic routing.
+    def _admit_files(self, value, paths, *, request_id=REQUEST_ID):
+        """The real Files page admission of one bounded selection."""
 
-        The consumer is the production ``ManualTaskEngineWorker``; its automatic
-        branch is the production ``resident_entry._automatic_task_runner`` that
-        reconstructs the Task's admitted pin and routes remote/direct organize
-        admissions and continuation passes through the shared pipeline.
-        """
-
-        from mediaflow.application.manual_organize_execution import (
-            ManualOrganizeExecutionService,
-        )
-        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
-        from mediaflow.application.task_scheduling import TaskSchedulingService
-        from mediaflow.resident_entry import _automatic_task_runner
-
-        scheduling = TaskSchedulingService(value.repository, capacity=100)
-        runner = _automatic_task_runner(value.repository, str(value.config), scheduling)
-        execution = ManualOrganizeExecutionService(
-            value.repository,
-            value.previews,
-            value.intents,
-            configuration=value.runtime,
-            storages={
-                "source": LocalStorage("source", value.source_root),
-                "target": LocalStorage("target", value.target_root),
-            },
-            clock=value.clock,
-        )
-        worker_id = f"{prefix}-{len(value.repository.list_tasks())}"
-        value.repository.register_worker(
-            worker_id,
-            worker_id,
-            5.0,
-            ("organize",),
-            None,
-            None,
-            SCHEMA_VERSION,
-            value.clock.now,
-        )
-        worker = ManualTaskEngineWorker(
-            value.repository,
-            scheduling,
-            None,
-            execution,
-            worker_id=worker_id,
-            clock=value.clock,
-            automatic_runner=runner,
-        )
-        with (
-            patch(
-                "mediaflow.resident_entry.metadata_provider_registry_from_environment",
-                return_value=value.provider_registry,
-            ),
-        ):
-            settled = worker.run_next()
-        value.repository.stop_worker(worker_id, value.clock.now)
-        return settled
-
-    def _save_recognition_decision_and_continue(self, value, task_id, item_id):
-        """The real Task Center recovery chain over the live API routes."""
-
-        route = f"/api/tasks/{task_id}/items/{item_id}/recovery"
-        status, detail = self.request(value, "GET", route)
-        self.assertEqual(200, status, detail)
-        self.assertEqual("business_problem", detail["recoveryKind"])
-        status, decided = self.request(
+        return self.request(
             value,
             "POST",
-            route + "/decision",
-            {
-                "kind": "recognition",
-                "recognitionTypeId": "A",
-                "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
-            },
+            "/api/resource-libraries/library/files/discoveries",
+            {"paths": list(paths), "autoPrepare": True, "requestId": request_id},
         )
-        self.assertEqual(200, status, decided)
-        status, continued = self.request(
-            value,
-            "POST",
-            route + "/continue",
-            {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
-        )
-        return status, continued, decided, detail
 
-    def _confirm_ready_subset(self, value, task_id, item_id, *, actor_token=ADMIN_TOKEN):
-        status, detail = self.request(
-            value, "GET", f"/api/tasks/{task_id}/items/{item_id}/recovery"
-        )
-        self.assertEqual(200, status, detail)
-        preparation = detail["manualRecoveryPreparation"]
-        self.assertIsNotNone(preparation, detail)
-        self.assertEqual("prepared", preparation["status"])
+    def _drive(self, value, task_id, *, steps: int = 16):
+        """Advance the admitted Task through the production Worker until human wait."""
+
+        for _ in range(steps):
+            value.task_engine.run_next()
+            state = value.repository.get_task_scheduling(task_id)
+            discovery = value.repository.get_media_discovery_for_task(task_id)
+            if discovery is not None and state is not None:
+                if state.queue_state in {TaskQueueState.WAITING_HUMAN, TaskQueueState.SETTLED}:
+                    return discovery
+                task = value.repository.get_task(task_id)
+                if task is not None and task.status in {
+                    PersistentTaskStatus.COMPLETED,
+                    PersistentTaskStatus.FAILED,
+                    PersistentTaskStatus.CANCELLED,
+                }:
+                    return discovery
+        return value.repository.get_media_discovery_for_task(task_id)
+
+    def _decide_and_analyze(self, value, task_id, *, recognition_type_id="A"):
+        """Decide every waiting item, then re-run the same Task's analysis."""
+
+        discovery = self._drive(value, task_id)
+        self.assertIsNotNone(discovery, "the Files discovery never reached the worker")
+        for item in value.repository.list_items(task_id):
+            if item.status.value != "waiting_recognition":
+                continue
+            status, detail = self.request(
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual("business_problem", detail["recoveryKind"])
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "recognition",
+                    "recognitionTypeId": recognition_type_id,
+                    "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(202, status, continued)
+            self.assertEqual(task_id, continued["nativeAnalysis"]["taskId"])
+        return self._drive(value, task_id)
+
+    def _ready_preview(self, value, discovery):
         status, preview = self.request(
-            value, "GET", f"/api/operations/organize/previews/{preparation['preview_id']}"
+            value, "GET", f"/api/operations/organize/previews/{discovery.preview_id}"
         )
         self.assertEqual(200, status, preview)
         ready = [entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"]
-        self.assertEqual(1, len(ready), preview)
-        status, confirmed = self.request(
+        return preview, ready
+
+    def _execute(self, value, task_id, preview, item_ids, *, steps: int = 16):
+        status, admitted = self.request(
             value,
             "POST",
-            f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
+            f"/api/operations/organize/previews/{preview['previewId']}/execute",
             {
-                "preparationId": preparation["preparation_id"],
-                "itemIds": ready,
                 "confirmation": True,
+                "itemIds": list(item_ids),
                 "expectedIntentVersion": preview["intentVersion"],
                 "allowOverwrite": False,
                 "allowSourceCleanup": False,
             },
-            token=actor_token,
         )
-        return status, confirmed, preparation, ready
+        self.assertIn(status, (200, 202), admitted)
+        for _ in range(steps):
+            value.task_engine.run_next()
+            task = value.repository.get_task(task_id)
+            if task is not None and task.status in {
+                PersistentTaskStatus.COMPLETED,
+                PersistentTaskStatus.FAILED,
+                PersistentTaskStatus.CANCELLED,
+            }:
+                return task
+        return value.repository.get_task(task_id)
 
-    def test_admitted_organize_decision_completes_summary_confirm_execution_on_one_task(self):
-        """An admitted organizing Task's saved decision finishes on the same Task."""
+    def _target_disk_full(self, target_root: Path, *, contains: str | None = None):
+        """Inject one real ENOSPC at a target Storage write, never at business state."""
 
-        self.media("One.2001.mkv")
-        with entrance_journey(self) as value:
-            settled = self._run_organize(value, limit=5)
-            self.assertIsNotNone(settled)
-            (task,) = value.repository.list_tasks()
-            state = value.repository.get_task_scheduling(task.task_id)
-            self.assertEqual("manual", state.admission_trigger.value)
-            self.assertEqual("operator", state.admission_principal)
-            display = value.repository.get_run_display_context(task.task_id)
-            self.assertEqual("remote-organize", display.origin_kind)
-            (item,) = value.repository.list_items(task.task_id)
+        original_open = Path.open
+        root = target_root.resolve()
+
+        def disk_full(path, mode="r", *args, **kwargs):
+            candidate = Path(path)
+            if (
+                "w" in mode
+                and candidate.resolve().is_relative_to(root)
+                and (contains is None or contains in str(candidate))
+            ):
+                raise OSError(errno.ENOSPC, "No space left on device", str(candidate))
+            return original_open(path, mode, *args, **kwargs)
+
+        return disk_full
+
+    def test_files_decision_summary_confirmation_executes_on_one_task(self):
+        """The Files Task's saved decision finishes on the same Task."""
+
+        self.media("Movies/One.2001.mkv")
+        with entrance_journey(
+            self,
+            candidates=(MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),),
+        ) as value:
+            status, admitted = self._admit_files(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            self.assertEqual(1, len(value.repository.list_tasks()))
+
+            discovery = self._drive(value, task_id)
+            self.assertIsNotNone(discovery)
+            self.assertEqual(
+                "waiting_human", value.repository.get_task_scheduling(task_id).queue_state.value
+            )
+            (item,) = value.repository.list_items(task_id)
             self.assertEqual("waiting_recognition", item.status.value)
             self.assertEqual(1, len(value.repository.list_tasks()))
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertTrue((value.source_root / "One.2001.mkv").exists())
+            self.assertFalse((value.target_root / "Organized").exists())
 
-            status, continued, decided, _detail = self._save_recognition_decision_and_continue(
-                value, task.task_id, item.item_id
-            )
-            self.assertEqual(202, status, continued)
-            self.assertEqual(task.task_id, continued["nativeAnalysis"]["taskId"])
-            self.assertNotIn("discoveryId", continued["nativeAnalysis"])
-            state = value.repository.get_task_scheduling(task.task_id)
-            self.assertEqual("queued", state.queue_state.value)
-            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
-            self.assertEqual("admin", state.continuation_actor)
+            discovery = self._decide_and_analyze(value, task_id)
+            self.assertEqual(task_id, discovery.organize_task_id)
+            self.assertIsNotNone(discovery.preview_id)
+            preview, ready = self._ready_preview(value, discovery)
+            self.assertEqual(1, len(ready), preview)
             self.assertEqual(1, len(value.repository.list_tasks()))
-            self.assertTrue((value.source_root / "One.2001.mkv").exists())
             self.assertFalse(
                 any((value.target_root / "Organized").rglob("*.mkv")),
-                "the re-analysis must stay zero-mutation",
+                "the analysis must stay zero-mutation",
             )
 
-            # A duplicate continue while the analysis is queued changes nothing.
-            status, repeat = self.request(
-                value,
-                "POST",
-                f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery/continue",
-                {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
-            )
-            self.assertEqual(409, status, repeat)
-            self.assertEqual(1, value.repository.count_scheduled_capacity_use())
-
-            settled = self._run_resident_worker(value, prefix="cli-continuation")
-            self.assertIsNotNone(settled)
-            (item,) = value.repository.list_items(task.task_id)
-            self.assertEqual("waiting_confirm", item.status.value, item)
-            self.assertEqual("continuation_planned", item.stage)
-            state = value.repository.get_task_scheduling(task.task_id)
-            self.assertEqual("waiting_human", state.queue_state.value)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertTrue((value.source_root / "One.2001.mkv").exists())
-
-            status, detail = self.request(
-                value, "GET", f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery"
-            )
-            self.assertEqual(200, status, detail)
-            preparation = detail["manualRecoveryPreparation"]
-            self.assertIsNotNone(preparation, detail)
-            # The summary belongs to the authenticated operator who continued
-            # the analysis; the admission principal stays separate provenance.
-            self.assertEqual("admin", preparation["actor"])
-            self.assertEqual("operator", state.admission_principal)
-            self.assertTrue(detail["manualRecoveryAvailable"])
-
-            status, preview = self.request(
-                value,
-                "GET",
-                f"/api/operations/organize/previews/{preparation['preview_id']}",
-            )
-            self.assertEqual(200, status, preview)
-            status, refused = self.request(
-                value,
-                "POST",
-                f"/api/operations/organize/previews/{preparation['preview_id']}/execute",
-                {
-                    "preparationId": preparation["preparation_id"],
-                    "itemIds": ["any"],
-                    "confirmation": True,
-                    "expectedIntentVersion": preview["intentVersion"],
-                    "allowOverwrite": False,
-                    "allowSourceCleanup": False,
-                },
-                token=OPERATOR_TOKEN,
-            )
-            self.assertEqual(403, status, refused)
-            self.assertEqual("preparation_actor_mismatch", refused["error"]["code"])
-
-            status, confirmed, preparation, ready = self._confirm_ready_subset(
-                value, task.task_id, item.item_id
-            )
-            self.assertEqual(202, status, confirmed)
-            self.assertEqual(task.task_id, confirmed["taskId"], confirmed)
-            self.assertEqual(1, len(value.repository.list_tasks()))
-
-            settled = self._run_resident_worker(value, prefix="cli-execution")
+            settled = self._execute(value, task_id, preview, ready)
             self.assertIsNotNone(settled)
             self.assertEqual("completed", settled.status.value, settled.error)
-            self.assertFalse((value.source_root / "One.2001.mkv").exists())
+            self.assertFalse((value.source_root / "Movies/One.2001.mkv").exists())
             organized = list((value.target_root / "Organized" / "Movies").rglob("*.mkv"))
             self.assertEqual(1, len(organized), organized)
-            results = value.repository.list_results(task.task_id)
+            results = value.repository.list_results(task_id)
             self.assertEqual(1, len(results), results)
             self.assertEqual("SUCCESS", results[0].status)
-            state = value.repository.get_task_scheduling(task.task_id)
+            state = value.repository.get_task_scheduling(task_id)
             self.assertEqual("settled", state.queue_state.value)
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             self.assertEqual(1, len(value.repository.list_tasks()))
@@ -681,517 +519,105 @@ class EntranceRecoveryJourneyTests(unittest.TestCase):
             # The original execution facts survive the reload; the confirmed
             # summary reads back with its linked execution.
             status, detail = self.request(
-                value, "GET", f"/api/tasks/{task.task_id}/items/{item.item_id}/recovery"
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
             self.assertEqual(200, status, detail)
             confirmed_summary = detail["manualRecoveryPreparation"]
             self.assertIsNotNone(confirmed_summary, detail)
             self.assertEqual("confirmed", confirmed_summary["status"])
-            self.assertEqual(confirmed["executionId"], confirmed_summary["execution_id"])
 
-    def test_cli_unreadable_root_is_a_saved_flow_failure_without_any_file_work(self):
-        """A root that cannot be listed is a Task failure, never healthy empty.
+    def test_files_partial_target_write_keeps_unknown_effect_across_reopen(self):
+        """One real ENOSPC leaves a partial item whose effect is read back, not replayed."""
 
-        The real CLI passes the discovery failure to the shared settlement
-        boundary, so the persisted Task carries a readable reason and no file
-        was touched even though a media file exists inside the source root.
-        """
-
-        self.media("One.2001.mkv")
-        with entrance_journey(self, movie_rule=True) as value:
-            original_list = LocalStorage.list
-
-            def denied(storage, path):
-                if path.strip("/") == "":
-                    raise StorageError(
-                        StorageErrorCode.PERMISSION_DENIED,
-                        "list",
-                        path,
-                        "synthetic root permission denial",
-                    )
-                return original_list(storage, path)
-
-            with patch.object(LocalStorage, "list", denied):
-                settled = self._run_organize(value, scope=str(value.source_root))
-
-            self.assertEqual("failed", settled.status.value, settled.error)
-            (task,) = value.repository.list_tasks()
-            self.assertEqual("failed", task.status.value, task.error)
-            self.assertEqual((0, 0, 0), (task.total_items, task.completed_items, task.failed_items))
-            explanation = decode_failure_explanation(task.error)
-            self.assertIsNotNone(explanation, task.error)
-            self.assertIn("无法完整读取来源目录", explanation.message)
-            self.assertEqual("none", explanation.side_effects)
-            self.assertEqual((), value.repository.list_items(task.task_id))
-            self.assertTrue((value.source_root / "One.2001.mkv").exists())
-            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
-            state = value.repository.get_task_scheduling(task.task_id)
-            self.assertEqual("settled", state.queue_state.value)
-            self.assertFalse(state.mutation_in_flight)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-
-    def test_cli_unreadable_subtree_never_executes_the_readable_prefix(self):
-        """One unreadable subtree fails the flow before the first readable file."""
-
-        self.media("One.2001.mkv")
-        self.media("Blocked/Two.2002.mkv")
-        with entrance_journey(self, movie_rule=True) as value:
-            original_list = LocalStorage.list
-
-            def denied(storage, path):
-                if path.strip("/").startswith("Blocked"):
-                    raise StorageError(
-                        StorageErrorCode.PERMISSION_DENIED,
-                        "list",
-                        path,
-                        "synthetic subtree permission denial",
-                    )
-                return original_list(storage, path)
-
-            with patch.object(LocalStorage, "list", denied):
-                settled = self._run_organize(value, scope=str(value.source_root))
-
-            self.assertEqual("failed", settled.status.value, settled.error)
-            (task,) = value.repository.list_tasks()
-            self.assertEqual("failed", task.status.value, task.error)
-            self.assertEqual((0, 0, 0), (task.total_items, task.completed_items, task.failed_items))
-            self.assertEqual((), value.repository.list_items(task.task_id))
-            # The readable sibling keeps its bytes: an unproved scope never
-            # executes a readable prefix as if it were the whole admission.
-            self.assertTrue((value.source_root / "One.2001.mkv").exists())
-            self.assertTrue((value.source_root / "Blocked" / "Two.2002.mkv").exists())
-            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
-            state = value.repository.get_task_scheduling(task.task_id)
-            self.assertEqual("settled", state.queue_state.value)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-
-    def test_cli_healthy_empty_scope_still_completes_with_no_work(self):
-        """A genuinely empty readable scope keeps its completed no-work meaning."""
-
-        with entrance_journey(self, movie_rule=True) as value:
-            settled = self._run_organize(value, scope=str(value.source_root))
-
-            self.assertEqual("completed", settled.status.value, settled.error)
-            (task,) = value.repository.list_tasks()
-            self.assertEqual("completed", task.status.value, task.error)
-            self.assertEqual((0, 0, 0), (task.total_items, task.completed_items, task.failed_items))
-            self.assertIsNone(task.error)
-            self.assertEqual((), value.repository.list_items(task.task_id))
-            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-
-    def test_cli_disk_full_settles_partial_and_next_distinct_file_releases_slot(self):
-        """A finished CLI pass gives its slot back without rewriting its unknown Result."""
-
-        first = self.media("One.2001.mkv")
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
         candidates = (
             MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
             MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
         )
         with entrance_journey(
             self,
-            movie_rule=True,
             organize_operation="COPY",
-            capacity=1,
             candidates=candidates,
         ) as value:
-            with patch.object(Path, "open", self._target_disk_full(value.target_root)):
-                settled = self._run_organize(value, scope=str(first), limit=1)
+            status, admitted = self._admit_files(
+                value, ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"]
+            )
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
 
-            # The real target write failed, but the Worker pass finished
-            # cleanly: the durable Task carries its business failure and the
-            # uncertain effect instead of a settlement exception.
+            discovery = self._decide_and_analyze(value, task_id)
+            preview, ready = self._ready_preview(value, discovery)
+            self.assertEqual(2, len(ready), preview)
+
+            with patch.object(
+                Path, "open", self._target_disk_full(value.target_root, contains="Two (2002)")
+            ):
+                settled = self._execute(value, task_id, preview, ready)
+
+            self.assertIsNotNone(settled)
             self.assertEqual("completed", settled.status.value, settled.error)
-
-            (first_task,) = value.repository.list_tasks()
-            (first_item,) = value.repository.list_items(first_task.task_id)
-            (first_result,) = value.repository.list_results(first_task.task_id)
-            self.assertEqual("completed", first_task.status.value, first_task.error)
-            self.assertEqual("partial", first_item.status.value)
-            self.assertEqual("failed", first_item.stage)
-            self.assertTrue(first_item.error)
-            self.assertEqual("partial", first_result.status)
-            self.assertEqual("attempted_unverified", first_result.effect_certainty)
-            self.assertEqual(("CREATE_DIRECTORY",), first_result.completed_operations)
-            self.assertEqual(("mutation_outcome",), first_result.uncertain_effects)
-            first_state = value.repository.get_task_scheduling(first_task.task_id)
-            self.assertEqual("settled", first_state.queue_state.value)
-            self.assertFalse(first_state.mutation_in_flight)
+            items = {
+                Path(item.source_path).name: item for item in value.repository.list_items(task_id)
+            }
+            self.assertEqual("success", items["One.2001.mkv"].status.value)
+            self.assertEqual("partial", items["Two.2002.mkv"].status.value)
+            self.assertEqual("uncertain_effects", items["Two.2002.mkv"].stage)
+            self.assertTrue(items["Two.2002.mkv"].error)
+            results = {
+                Path(result.source_path).name: result
+                for result in value.repository.list_results(task_id)
+            }
+            self.assertEqual("verified_complete", results["One.2001.mkv"].effect_certainty)
+            self.assertEqual("attempted_unverified", results["Two.2002.mkv"].effect_certainty)
+            self.assertEqual(("CREATE_DIRECTORY",), results["Two.2002.mkv"].completed_operations)
+            self.assertEqual(("mutation_outcome",), results["Two.2002.mkv"].uncertain_effects)
+            state = value.repository.get_task_scheduling(task_id)
+            self.assertEqual("settled", state.queue_state.value)
+            self.assertFalse(state.mutation_in_flight)
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertTrue(first.exists())
-            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
-            self.assertEqual(
-                {"stopped"},
-                {worker.status.value for worker in value.repository.list_workers()},
-            )
+            # COPY keeps both sources in place; only the successful sibling
+            # published its target bytes.
+            self.assertTrue((value.source_root / "Movies/One.2001.mkv").exists())
+            self.assertTrue((value.source_root / "Movies/Two.2002.mkv").exists())
+            organized = list((value.target_root / "Organized" / "Movies").rglob("*.mkv"))
+            self.assertEqual(1, len(organized), organized)
 
-            # Removing the fault lets a genuinely different file through the
-            # same Worker and shared capacity; it is a new Task, not a replay
-            # of A.
-            second = self.media("Two.2002.mkv")
-            second_settled = self._run_organize(value, scope=str(second), limit=1)
-            self.assertEqual("completed", second_settled.status.value, second_settled.error)
-            tasks = value.repository.list_tasks()
-            self.assertEqual(2, len(tasks))
-            second_task = next(task for task in tasks if task.task_id != first_task.task_id)
-            self.assertEqual("completed", second_task.status.value, second_task.error)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertTrue(second.exists())
-            self.assertEqual(
-                1, len(list((value.target_root / "Organized" / "Movies").rglob("*.mkv")))
-            )
-            self.assertEqual((first_item,), value.repository.list_items(first_task.task_id))
-            self.assertEqual((first_result,), value.repository.list_results(first_task.task_id))
-
-            # Same-version reopen keeps the honest A/B endings and capacity.
+            # A same-version reopen keeps the honest A/B endings.  The uncertain
+            # effect is never converted into success and the settled Task is not
+            # claimed again.
             with SQLiteTaskRepository(value.runtime.database_path) as reopened:
-                # Slice 48: the partial file outcome is a file fact; the flow
-                # value stays completed across the reopen.
-                self.assertEqual("completed", reopened.get_task(first_task.task_id).status.value)
-                self.assertEqual((first_item,), reopened.list_items(first_task.task_id))
-                self.assertEqual((first_result,), reopened.list_results(first_task.task_id))
+                reopened_task = reopened.get_task(task_id)
+                self.assertEqual("completed", reopened_task.status.value)
                 self.assertEqual(
-                    "settled",
-                    reopened.get_task_scheduling(first_task.task_id).queue_state.value,
+                    {item.item_id: item.status for item in items.values()},
+                    {item.item_id: item.status for item in reopened.list_items(task_id)},
                 )
-                self.assertFalse(
-                    reopened.get_task_scheduling(first_task.task_id).mutation_in_flight
+                self.assertEqual(
+                    {
+                        record.source_path: (record.status, record.effect_certainty)
+                        for record in results.values()
+                    },
+                    {
+                        record.source_path: (record.status, record.effect_certainty)
+                        for record in reopened.list_results(task_id)
+                    },
                 )
-                self.assertEqual("completed", reopened.get_task(second_task.task_id).status.value)
+                reopened_state = reopened.get_task_scheduling(task_id)
+                self.assertEqual("settled", reopened_state.queue_state.value)
+                self.assertFalse(reopened_state.mutation_in_flight)
                 self.assertEqual(0, reopened.count_scheduled_capacity_use())
-
-    def test_cli_folder_mixed_terminal_outcomes_settle_one_task(self):
-        """One failed and one successful folder sibling settle independently at zero slots."""
-
-        self.media("One.2001.mkv")
-        self.media("Two.2002.mkv")
-        candidates = (
-            MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
-            MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
-        )
-        with entrance_journey(
-            self, movie_rule=True, organize_operation="COPY", capacity=1, candidates=candidates
-        ) as value:
-            with patch.object(
-                Path,
-                "open",
-                self._target_disk_full(value.target_root, contains="Two (2002)"),
-            ):
-                settled = self._run_organize(value, scope=str(value.source_root), limit=5)
-
-            self.assertEqual("completed", settled.status.value, settled.error)
-            (task,) = value.repository.list_tasks()
-            self.assertEqual("completed", task.status.value, task.error)
-            items = {
-                Path(item.source_path).name: item
-                for item in value.repository.list_items(task.task_id)
-            }
-            self.assertEqual("success", items["One.2001.mkv"].status.value)
-            self.assertEqual("partial", items["Two.2002.mkv"].status.value)
-            results = {
-                Path(result.source_path).name: result
-                for result in value.repository.list_results(task.task_id)
-            }
-            self.assertEqual("verified_complete", results["One.2001.mkv"].effect_certainty)
-            self.assertEqual("attempted_unverified", results["Two.2002.mkv"].effect_certainty)
-            state = value.repository.get_task_scheduling(task.task_id)
-            self.assertEqual("settled", state.queue_state.value)
-            self.assertFalse(state.mutation_in_flight)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertTrue((value.source_root / "One.2001.mkv").exists())
-            self.assertTrue((value.source_root / "Two.2002.mkv").exists())
-            self.assertEqual(
-                1, len(list((value.target_root / "Organized" / "Movies").rglob("*.mkv")))
-            )
-            self.assertEqual(
-                {"stopped"},
-                {worker.status.value for worker in value.repository.list_workers()},
-            )
-
-    def test_batch_root_files_parse_real_names_and_settle_mixed_outcomes(self):
-        """The real all-library batch parses Storage-relative names, not display identity."""
-
-        self.media("One.2001.mkv")
-        self.media("Two.2002.mkv")
-        candidates = (
-            MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),
-            MediaCandidate("tmdb", "2", MediaType.MOVIE, "Two", year=2002),
-        )
-
-        class _RecordingProvider(SyntheticMetadataProvider):
-            def __init__(self) -> None:
-                super().__init__(candidates)
-                self.queries: list[str] = []
-
-            def search_movie(self, query, policy=None, **kwargs):
-                self.queries.append(query.title_candidate)
-                return super().search_movie(query, policy, **kwargs)
-
-        with entrance_journey(
-            self, movie_rule=True, organize_operation="COPY", capacity=1, candidates=candidates
-        ) as value:
-            provider = _RecordingProvider()
-            value.provider_registry = MetadataProviderRegistry((provider,))
-            with patch.object(
-                Path,
-                "open",
-                self._target_disk_full(value.target_root, contains="Two (2002)"),
-            ):
-                settled = self._run_organize(value, limit=5)
-
-            self.assertEqual("completed", settled.status.value, settled.error)
-            self.assertEqual(["One", "Two"], provider.queries)
-            (task,) = value.repository.list_tasks()
-            self.assertEqual("completed", task.status.value, task.error)
-            items = {
-                Path(item.source_path).name: item
-                for item in value.repository.list_items(task.task_id)
-            }
-            self.assertEqual("success", items["One.2001.mkv"].status.value)
-            self.assertEqual("partial", items["Two.2002.mkv"].status.value)
-            results = {
-                Path(result.source_path).name: result
-                for result in value.repository.list_results(task.task_id)
-            }
-            self.assertEqual("source", results["One.2001.mkv"].source_storage_id)
-            self.assertEqual("source", results["Two.2002.mkv"].source_storage_id)
-            self.assertEqual("verified_complete", results["One.2001.mkv"].effect_certainty)
-            self.assertEqual("attempted_unverified", results["Two.2002.mkv"].effect_certainty)
-            state = value.repository.get_task_scheduling(task.task_id)
-            self.assertEqual("settled", state.queue_state.value)
-            self.assertFalse(state.mutation_in_flight)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertTrue((value.source_root / "One.2001.mkv").exists())
-            self.assertTrue((value.source_root / "Two.2002.mkv").exists())
-            self.assertEqual(
-                1, len(list((value.target_root / "Organized" / "Movies").rglob("*.mkv")))
-            )
-
-            with SQLiteTaskRepository(value.runtime.database_path) as reopened:
-                self.assertEqual(1, len(reopened.list_tasks()))
-                self.assertEqual(2, len(reopened.list_items(task.task_id)))
-                self.assertEqual(2, len(reopened.list_results(task.task_id)))
-                self.assertEqual(0, reopened.count_scheduled_capacity_use())
-
-    def test_batch_nested_colon_file_keeps_exact_storage_path_for_recognition(self):
-        """A subdirectory file is parsed by exact Storage-relative path, not a split display id."""
-
-        self.media("Movies/With: Colon.2003.mkv")
-        candidates = (MediaCandidate("tmdb", "3", MediaType.MOVIE, "With: Colon", year=2003),)
-        directory_rule = [
-            {
-                "id": "movies-directory",
-                "name": "Movies directory",
-                "priority": 100,
-                "score": 100,
-                "stopOnMatch": True,
-                "condition": {"field": "directory", "operator": "contains", "value": "Movies"},
-                "outputRecognitionType": "A",
-            }
-        ]
-
-        class _RecordingProvider(SyntheticMetadataProvider):
-            def __init__(self) -> None:
-                super().__init__(candidates)
-                self.queries: list[str] = []
-
-            def search_movie(self, query, policy=None, **kwargs):
-                self.queries.append(query.title_candidate)
-                return super().search_movie(query, policy, **kwargs)
-
-        with entrance_journey(
-            self,
-            organize_operation="COPY",
-            capacity=1,
-            candidates=candidates,
-            recognition_rules=directory_rule,
-        ) as value:
-            provider = _RecordingProvider()
-            value.provider_registry = MetadataProviderRegistry((provider,))
-            settled = self._run_organize(value, limit=5)
-
-            self.assertEqual("completed", settled.status.value, settled.error)
-            self.assertEqual(["With: Colon"], provider.queries)
-            (task,) = value.repository.list_tasks()
-            (item,) = value.repository.list_items(task.task_id)
-            self.assertEqual("success", item.status.value, item.error)
-            self.assertEqual("Movies/With: Colon.2003.mkv", item.source_path)
-            self.assertEqual("Movies/With: Colon.2003.mkv", item.source_storage_path)
-            self.assertEqual("source:Movies/With: Colon.2003.mkv", item.source_display)
-            (result,) = value.repository.list_results(task.task_id)
-            self.assertEqual("source", result.source_storage_id)
-            self.assertEqual("Movies/With: Colon.2003.mkv", result.source_path)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertEqual(
-                1, len(list((value.target_root / "Organized" / "Movies").rglob("*.mkv")))
-            )
-
-    def test_finished_pass_with_human_waiting_sibling_releases_the_slot(self):
-        """A completed Worker pass waits for its operator without keeping a queue slot."""
-
-        self.media("One.2001.mkv")
-        self.media("Two.2002.mkv")
-        with entrance_journey(
-            self,
-            movie_rule=True,
-            organize_operation="COPY",
-            capacity=1,
-            candidates=(MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),),
-        ) as value:
-            with patch.object(
-                Path,
-                "open",
-                self._target_disk_full(value.target_root, contains="One (2001)"),
-            ):
-                settled = self._run_organize(value, scope=str(value.source_root), limit=5)
-
-            self.assertIsNotNone(settled)
-            (task,) = value.repository.list_tasks()
-            items = {
-                Path(item.source_path).name: item
-                for item in value.repository.list_items(task.task_id)
-            }
-            self.assertEqual("partial", items["One.2001.mkv"].status.value)
-            self.assertTrue(items["Two.2002.mkv"].status.value.startswith("waiting_"))
-            self.assertEqual(
-                ("waiting_metadata_correction",),
-                tuple(
-                    item.status.value
-                    for item in items.values()
-                    if item.status.value.startswith("waiting_")
-                ),
-            )
-            state = value.repository.get_task_scheduling(task.task_id)
-            self.assertEqual("waiting_human", state.queue_state.value)
-            self.assertFalse(state.mutation_in_flight)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            (result,) = value.repository.list_results(task.task_id)
-            self.assertEqual("attempted_unverified", result.effect_certainty)
-            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
-            self.assertEqual(
-                {"stopped"},
-                {worker.status.value for worker in value.repository.list_workers()},
-            )
-
-    def test_cancel_after_disk_failure_settles_without_rewriting_partial(self):
-        """A cancel at the returned pass boundary keeps the recorded partial Result."""
-
-        source = self.media("One.2001.mkv")
-        cancel = {"requested": False}
-        with entrance_journey(
-            self,
-            movie_rule=True,
-            organize_operation="COPY",
-            capacity=1,
-            candidates=(MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),),
-        ) as value:
-            # The operator's accepted cancel arrives while the real target write
-            # is failing, so the pass returns at its own safe boundary with the
-            # partial Result already recorded.
-            cancel_request: dict[str, object] = {}
-
-            def fault_callback():
-                if not cancel["requested"]:
-                    cancel.update(requested=True)
-                    cancel_request["request"]()
-
-            with patch.object(
-                Path,
-                "open",
-                self._target_disk_full(value.target_root, on_disk_full=fault_callback),
-            ):
-                settled = self._run_organize(
-                    value,
-                    scope=str(source),
-                    limit=1,
-                    on_disk_full=lambda request_cancel: cancel_request.update(
-                        request=request_cancel
-                    ),
-                )
-
-            self.assertIsNotNone(settled)
-            (task,) = value.repository.list_tasks()
-            (item,) = value.repository.list_items(task.task_id)
-            (result,) = value.repository.list_results(task.task_id)
-            self.assertEqual("cancelled", task.status.value, task.error)
-            self.assertEqual("partial", item.status.value)
-            self.assertEqual("partial", result.status)
-            self.assertEqual("attempted_unverified", result.effect_certainty)
-            self.assertEqual(("mutation_outcome",), result.uncertain_effects)
-            state = value.repository.get_task_scheduling(task.task_id)
-            self.assertEqual("settled", state.queue_state.value)
-            self.assertIs(state.control_request, TaskControl.CANCEL)
-            self.assertFalse(state.mutation_in_flight)
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
-            self.assertTrue(source.exists())
-            self.assertEqual([], list(value.target_root.rglob("*.mkv")))
-            self.assertEqual(
-                {"stopped"},
-                {worker.status.value for worker in value.repository.list_workers()},
-            )
-
-    def test_retired_retry_failed_entrance_is_absent_with_zero_effects(self):
-        """The retired independent failure-retry entrance leaves no runtime path.
-
-        Slice 47 RO-6 removed ``tasks retry-failed``; Task 58.2 retired the
-        general CLI that carried it.  A genuine failed file outcome therefore
-        stays exactly as recorded: there is no command, dispatch or module that
-        could re-drive it, and new work starts from Files or a new admission.
-        """
-
-        source = self.media("One.2001.mkv")
-        with entrance_journey(
-            self,
-            movie_rule=True,
-            candidates=(MediaCandidate("tmdb", "1", MediaType.MOVIE, "One", year=2001),),
-        ) as value:
-
-            class _ExplodingExecutor(OrganizerExecutor):
-                def execute(self, plan, storages, **kwargs):
-                    raise RuntimeError("injected executor failure before any mutation")
-
-            # One real admitted execution fails before any mutation at the real
-            # OrganizerExecutor boundary, so a genuine failed Task exists.
-            settled = self._run_organize(
-                value, scope=str(source), limit=5, executor_patch=_ExplodingExecutor
-            )
-            self.assertIsNotNone(settled)
-            (failed_task,) = value.repository.list_tasks()
-            (failed_item,) = value.repository.list_items(failed_task.task_id)
-            self.assertEqual("failed", failed_item.status.value, failed_item)
-            self.assertEqual("completed", failed_task.status.value, failed_task)
-            (failed_result,) = value.repository.list_results(failed_task.task_id)
-            self.assertTrue(source.exists())
-
-            # The retired entrance has no runtime surface at all.
-            for module in ("mediaflow.cli", "mediaflow.final_cli"):
-                with self.subTest(module=module):
-                    with self.assertRaises(ModuleNotFoundError):
-                        __import__(module)
-
-            # Nothing was re-driven: one Task, the same item and Result, and no
-            # borrowed capacity.
+            self.assertIsNone(value.task_engine.run_next())
             self.assertEqual(1, len(value.repository.list_tasks()))
-            self.assertEqual(
-                (failed_item,),
-                value.repository.list_items(failed_task.task_id),
-                "the original failed item keeps its exact recorded state",
-            )
-            self.assertEqual(
-                (failed_result,),
-                value.repository.list_results(failed_task.task_id),
-                "the original failure record stays exactly once",
-            )
-            self.assertTrue(source.exists(), "the source file was never touched")
-            self.assertEqual(0, value.repository.count_scheduled_capacity_use())
+            self.assertEqual(2, len(value.repository.list_results(task_id)))
 
     def test_manual_task_without_organizing_origin_keeps_the_bounded_refusal(self):
         """A manual Task without a proved organizing origin is never continued.
 
         The kernel continuation is granted to a manual Task only when its durable
-        display origin proves a direct CLI or remote-ticket organize admission.
-        A missing or foreign origin keeps the bounded ``no_linked_preparation``
-        refusal instead of granting every manual Task a continuation.
+        display origin proves a supported organizing admission. A missing or
+        foreign origin keeps the bounded ``no_linked_preparation`` refusal
+        instead of granting every manual Task a continuation.
         """
 
         from mediaflow.application.manual_task_continuation import (

@@ -4,10 +4,10 @@
 
 ## Current V2 validation boundary
 
-当前公开入口为 Web `/` 和 API `/api/*`。当前支持全新初始化和同版本重开；启动只接受空库或本版本创建的数据库（包括本版本配置命令创建的仅配置库），其他版本创建的库在启动前拒绝并保留原文件，即使它只含当前编号的配置，部署者应使用新的空数据目录。通用跨版本升级与回滚、混合版本写入和旧任务迁移均在支持范围之外。Slice 56 的入口切换验证早于本版本的 runtime schema 变化，其 Base 数据仍作为历史验证记录，但不被当前版本作为可启动数据接受。
+当前公开入口为 Web `/` 和 API `/api/*`。当前支持全新初始化和同版本重开；启动只接受空库或本版本创建的数据库（包括本版本首次设置创建的仅配置库），其他版本创建的库在启动前拒绝并保留原文件，即使它只含当前编号的配置。需要旧数据的部署者用创建它的原版本处理原文件，本版本改用新的空数据目录；没有就地切换、降级或恢复入口。通用跨版本升级与回滚、混合版本写入和旧任务迁移均在支持范围之外。Slice 56 的入口切换验证早于本版本的 runtime schema 变化，其 Base 数据仍作为历史验证记录，但不被当前版本作为可启动数据接受。
 
 - Slice 57 终审覆盖 Base `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab` 至实施 `5d2f215fb7afaceeae677877fdb4990fc6815077`。验证了空库设置、管理员会话及恢复、令牌轮换、计划停用和同版本四服务重启。[验收记录](progress.md#latest-accepted-closure--slice57)
-- 当前 runtime schema 只接受空库或本版本创建的数据库；上一版本生成的库在启动前被拒绝，文件字节保持不变。仅配置库同样要求本版本的 store origin 标记；上一版本配置命令生成的仅配置库不会被启动流程补建 runtime。
+- 当前 runtime schema 只接受空库或本版本创建的数据库；上一版本生成的库在启动前被拒绝，文件字节保持不变。仅配置库同样要求本版本的 store origin 标记；上一版本首次设置生成的仅配置库不会被启动流程补建 runtime，也不会被恢复或切换。
 - 更早的结果、适用范围和测试限制可从验收账本和固定文档版本查阅。[验收账本](progress.md#closure-ledger) · [既往验证记录](https://github.com/kentinya/mediaflow/blob/a9f3022ab061c8379adfeda7d464498345e13000/docs/release.md#earlier-v2-validation)
 
 ## Quality gate
@@ -41,9 +41,14 @@ CI 使用只读仓库权限，运行 Python 质量与测试以及 wheel 检查�
 MediaFlow 进程。恢复命令会取得独占租约；租约被占用时启动服务会在打开数据库前退出，空目标
 保持为空。
 
-校验输出分别报告 SQLite 完整性、本版本能否使用，以及当前能否启动（`Cannot start yet` 及其处理
-途径）。待切换等当前不能启动的备份会被拒绝，目标保持不存在。若恢复目标或它的任一旁路文件已
-存在，恢复也会拒绝且不修改文件；另选一个同一数据目录内的新文件名并重新生成恢复用 bootstrap。
+校验输出分别报告 SQLite 完整性、本版本能否使用，以及不可使用时的具体原因。`Integrity: OK`
+与 `Usable by this version: YES` 表示可恢复；`Integrity: OK` 与
+`Usable by this version: NO` 表示文件完好但属于别的版本（例如配置 schema 11），本版本不能
+恢复或启动它：保留原文件，用创建它的原版本处理，另用新的空数据目录初始化本版本。原库不可读
+时 `verify` 在完整性阶段失败，按[原库不可读时](#原库不可读时从已保存的备份接续)处理。恢复
+只接受 `Usable by this version: YES` 的同版本备份；不适用的备份被拒绝，目标保持不存在。若
+恢复目标或它的任一旁路文件已存在，恢复也会拒绝且不修改文件；另选一个同一数据目录内的新文件名
+并重新生成恢复用 bootstrap。
 
 ### 源码安装
 
@@ -58,7 +63,9 @@ export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"
 ```
 
 1. 记录原库摘要并确认当前版本能否启动它。`verify` 只读地检查数据库，不改写库内容；原库
-   已损坏或校验失败时保持原文件原样，改走下面的[原库不可读时](#原库不可读时从已保存的备份接续)：
+   已损坏时保持原文件原样，改走下面的[原库不可读时](#原库不可读时从已保存的备份接续)。输出
+   `Usable by this version: NO`（例如 `Reason` 指出配置 schema 11）时，文件虽完好但属于原
+   版本：跳过恢复步骤，保留原文件并用创建它的原版本处理，本版本改用新的空数据目录。
 
    ```bash
    .venv/bin/python -m mediaflow.host_operations verify \
@@ -128,8 +135,9 @@ export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"
 
 #### 原库不可读时，从已保存的备份接续
 
-原库已损坏或第 1 步 `verify` 失败时，跳过第 2 步，不要对原库再执行 `backup`，也不要删除、
-改写或重命名原库及其旁路文件。从部署中已保存且此前校验通过的备份接续：
+原库已损坏、`verify` 在完整性检查阶段失败时，跳过第 2 步，不要对原库再执行 `backup`，也不要
+删除、改写或重命名原库及其旁路文件。`Usable by this version: NO` 的完好旧版本文件不属于
+这一分支，按第 1 步改用原版本或新数据目录。从部署中已保存且此前校验通过的备份接续：
 
 1. 记录原文件摘要，供恢复后核对原文件未变化。损坏的库无法通过 `verify`，但文件字节的
    SHA-256 仍可计算（macOS 用 `shasum -a 256`，Linux 用 `sha256sum`）：
@@ -138,8 +146,8 @@ export MEDIAFLOW_DATA_DIR="$PWD/.mediaflow"
    shasum -a 256 "$MEDIAFLOW_DATA_DIR/mediaflow.sqlite3"
    ```
 
-2. 校验已保存的备份；这份备份不可用时换用另一份此前校验通过的备份，两份都不可用就停止
-   并保留现场：
+2. 校验已保存的备份；`Integrity: OK` 与 `Usable by this version: YES` 才可作为恢复源。
+   这份备份不可用时换用另一份此前校验通过的备份，没有可用备份就停止并保留现场：
 
    ```bash
    .venv/bin/python -m mediaflow.host_operations verify \
@@ -168,8 +176,9 @@ cd /path/to/mediaflow
 docker compose stop
 ```
 
-1. 记录原库摘要并确认当前版本能否启动它；原库已损坏或校验失败时保持卷内文件原样，改走
-   下面的[原库不可读时](#原库不可读时从已保存的备份接续-1)：
+1. 记录原库摘要并确认当前版本能否启动它；原库已损坏时保持卷内文件原样，改走下面的
+   [原库不可读时](#原库不可读时从已保存的备份接续-1)。`Usable by this version: NO` 的完好
+   旧版本文件同样跳过恢复：保留原文件并用创建它的原版本处理，本版本改用新的空数据目录。
 
    ```bash
    docker compose run --rm --no-deps api host verify /data/mediaflow.sqlite3
@@ -229,8 +238,9 @@ docker compose stop
 
 #### 原库不可读时，从已保存的备份接续
 
-原库已损坏或第 1 步 `verify` 失败时，跳过第 2 步，不要对原库再执行 `backup`，也不要删除、
-改写或重命名卷内原库及其旁路文件。从已保存且此前校验通过的备份接续：
+原库已损坏、`verify` 在完整性检查阶段失败时，跳过第 2 步，不要对原库再执行 `backup`，也不要
+删除、改写或重命名卷内原库及其旁路文件。`Usable by this version: NO` 的完好旧版本文件不属于
+这一分支，按第 1 步改用原版本或新数据目录。从已保存且此前校验通过的备份接续：
 
 1. 把原库复制到主机上已被 Git 忽略的目录并记录摘要，供恢复后核对原文件未变化。不要把
    数据库复制到项目根目录等会被 Git 跟踪的位置（服务停止后 `compose cp` 仍可读取卷内
@@ -243,8 +253,8 @@ docker compose stop
    shasum -a 256 "$PWD/.mediaflow/mediaflow-original.sqlite3"
    ```
 
-2. 校验已保存的备份；这份备份不可用时换用另一份此前校验通过的备份，两份都不可用就停止
-   并保留现场：
+2. 校验已保存的备份；`Integrity: OK` 与 `Usable by this version: YES` 才可作为恢复源。
+   这份备份不可用时换用另一份此前校验通过的备份，没有可用备份就停止并保留现场：
 
    ```bash
    docker compose run --rm --no-deps api host verify /data/runtime-backup.sqlite3

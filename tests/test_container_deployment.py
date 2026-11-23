@@ -334,7 +334,12 @@ class ContainerEntrypointTests(unittest.TestCase):
         command at.
         """
 
-        for module in ("mediaflow.cli", "mediaflow.final_cli"):
+        for module in (
+            "mediaflow.cli",
+            "mediaflow.final_cli",
+            "mediaflow.infrastructure.read_only_active_configuration",
+            "mediaflow.infrastructure.internal_key_store",
+        ):
             with self.subTest(module=module):
                 with self.assertRaises(ModuleNotFoundError):
                     __import__(module)

@@ -4,7 +4,7 @@
 
 共享顶栏只提供账户入口。通过侧栏「通知」新建 Webhook 或打开投递记录，通过「存储管理」的类型卡片和分页查找存储。[通知与投递恢复](product-experience.md#notification-definitions-and-deliveries) · [存储管理](product-experience.md#storage-management-and-root-recovery)
 
-在「系统设置」初始化空配置或直接应用修改。部署支持纯净初始化和同版本重启。启动遇到不支持的数据库时，保留原库并使用新的空数据目录。只有通过数据库适用性检查且报告 `DATA_SWITCH_REQUIRED` 的 schema 11 配置库才走显式切换。[系统设置](configuration.md#system-settings-web) · [部署边界](deployment.md#boundary) · [配置数据切换](configuration.md#previous-store-data-switch)
+在「系统设置」初始化空配置或直接应用修改。部署支持纯净初始化和同版本重启。启动遇到不支持的数据库时，保留原文件：需要旧数据的操作者用创建它的原版本处理，本版本改用新的空数据目录。`verify` 对完好的上一版本文件仍报告 `Integrity: OK` 与 `Usable by this version: NO`，并给出原因；这不是可切换或可恢复的状态。[系统设置](configuration.md#system-settings-web) · [部署边界](deployment.md#boundary) · [数据库维护](deployment.md#backup-and-same-version-recovery)
 
 ## 使用和部署
 

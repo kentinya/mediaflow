@@ -79,9 +79,10 @@ class DatabaseApplicabilityError(ValueError):
         self.reason = reason
         super().__init__(
             f"the configured database is not usable by this MediaFlow version: {reason}. "
-            "The file was not modified; start a fresh deployment with a new empty data "
-            "directory, check the configured database path, or restore a backup created by "
-            "this MediaFlow version"
+            "The file was not modified; keep it for the version that created it if you "
+            "still need its data, start this version with a new empty data directory, check "
+            "the configured database path, or restore a backup created by this MediaFlow "
+            "version"
         )
 
 

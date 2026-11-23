@@ -653,8 +653,9 @@ are reconciled from durable identity before another explicit attempt; reads neve
 - **State:** management bootstrap provides setup and recovery. Current Active and historical published
   revisions show exact versions, digests, references, evidence and capability readiness. Only Active
   governs runtime. Settings synchronizes automatically, keeping edits in progress when published
-  values change. Configuration drafts are retired. For a schema-11 store, review the read-only
-  inspection and confirm the data switch before starting the current version.
+  values change. Configuration drafts are retired. A configuration schema 11 or other
+  previous-version store is refused before any write: keep the intact file for the version that
+  created it when its data is still needed, or start this version with a new empty data directory.
 - **Action:** edit typed settings or business objects and explicitly apply. The backend binds the
   current Active baseline, validates the candidate, runs the applicable read-only checks and publishes
   atomically. Advanced whole-document JSON and portable-package import use the same explicit check and

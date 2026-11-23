@@ -123,41 +123,19 @@ and `核对并应用`, and the recovery banner's `应用完整替换` when Setti
 Active needs recovery. The same publication is available to scoped integrations through
 `POST /api/configuration/publish` and `POST /api/configuration/packages`.
 
-The configuration schema 11 store and its `config status` / `config retire-unpublished` switch are
-retired with the general CLI. This version opens only an empty database or one it created
-(configuration schema 12, runtime schema 60): a schema 11 file is refused before any table, marker
-or account row is written, and the message names the versions found and expected. Keep that file
-for the version that created it, or start a fresh deployment with a new empty data directory. The
-retired `draft-import`, `draft-validate`, `activate` and `retire-unpublished` commands, aliases and
-parameters have no runtime surface at all.
+The configuration schema 11 store is retired together with the general CLI. This version opens only
+an empty database or one it created (configuration schema 12, runtime schema 60): a schema 11 file
+is refused before any table, marker or account row is written, and the message names the version
+found and the version expected. There is no in-place switch, downgrade path or CLI command. Keep
+the file byte-for-byte for the version that created it when you still need its data, or start this
+version in a new empty data directory. The retired `draft-import`, `draft-validate`, `activate` and
+`retire-unpublished` commands, aliases and parameters have no runtime surface at all.
 
-### Previous-store data switch
-
-The explicit switch applies to eligible configuration schema 11 stores. Eligibility requires an
-absent or current runtime schema and a successful database applicability check. Run `config status`
-to review the affected unpublished revisions, revision-bound evidence, audit rows and any admitted
-Tasks that pin those revisions. On `DATA_SWITCH_REQUIRED`, ordinary service startup, container
-preflight and configuration publication stop until the switch is applied. The host maintenance
-`verify` reports such a backup as supported but `Cannot start yet` with this scope, and `restore`
-refuses it; apply the switch on the source store, take a new backup and restore that. If preflight
-rejects the database as unsupported, keep it and use a new empty data directory or a supported
-same-version backup. [Deployment boundary](deployment.md#boundary)
-
-Review the reported scope, then apply it explicitly. Without `--confirm` the command only prints
-the same scope and changes nothing:
-
-```bash
-mediaflow --config config/mediaflow.json config status
-mediaflow --config config/mediaflow.json config retire-unpublished --confirm
-```
-
-One transaction removes only the listed unpublished revisions, their revision-bound evidence and
-their lifecycle audits, then advances the configuration marker to 12. Published Active and
-Superseded revisions keep their IDs, digests, audits, Task pins and results. A Task pin to an
-affected revision blocks the switch and is named with its Task ID; an SQLite failure rolls the
-transaction back and leaves the previous store intact. The same transaction also records this
-build's store origin marker, because it rewrites the supported previous store into the current
-layout. Start or restart the services after a successful switch.
+The same refusal applies to startup, the container probe, host code issuance and restore. The
+host-maintenance `verify` reads an intact previous-version file without modifying it and prints
+`Integrity: OK` together with `Usable by this version: NO` and a bounded `Reason`; that backup is
+not a same-version restore source. `Usable by this version: YES` means this version can start or
+restore the file. [Backup and same-version recovery](deployment.md#backup-and-same-version-recovery)
 
 Web settings, business forms and `系统设置` → `配置工具` → `导入配置` share the same direct
 publication services. The import entry accepts either the complete configuration JSON or a
@@ -571,10 +549,11 @@ Do not infer a feature or permission to rebuild user data from an old schema num
 Published V2 configurations and the supported Storage, library, rules, system settings, Automation
 and notification data retain their identities, relationships and digests. Existing Tasks keep their
 pins, results and audit history. Completed or uncertain effects retain their recorded outcomes.
-For an eligible configuration schema 11 store, follow the explicit data switch if `config status`
-reports `DATA_SWITCH_REQUIRED`. Preflight refuses another runtime schema and a previous
-configuration-only store at the current configuration schema without the required origin marker.
-[Explicit data switch](#previous-store-data-switch) · [Deployment boundary](deployment.md#boundary)
+For a configuration schema 11 store or any other previous-version file, no switch exists: keep it
+intact for the version that created it, or start this version in a new empty data directory.
+Preflight also refuses a previous configuration-only store at the current configuration schema
+without the required origin marker.
+[Backup and same-version recovery](deployment.md#backup-and-same-version-recovery)
 
 ## Current limitations
 

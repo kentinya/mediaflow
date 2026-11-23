@@ -57,7 +57,12 @@ class ReleaseValidationTests(unittest.TestCase):
                 ):
                     archive.writestr(name, "")
             inspect_wheel(valid)
-            for retired in ("mediaflow/cli.py", "mediaflow/final_cli.py"):
+            for retired in (
+                "mediaflow/cli.py",
+                "mediaflow/final_cli.py",
+                "mediaflow/infrastructure/read_only_active_configuration.py",
+                "mediaflow/infrastructure/internal_key_store.py",
+            ):
                 candidate = root / f"{Path(retired).name}.whl"
                 with zipfile.ZipFile(candidate, "w") as archive:
                     for name in (

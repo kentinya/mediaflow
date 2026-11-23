@@ -629,78 +629,40 @@ class DefinitionScopedExecutionService:
             enforce_source_ownership=True,
         )
         scope = (task.scope_path or "").strip() if isinstance(task.scope_path, str) else ""
-        try:
-            if not scope:
-                summary = service.process_all_libraries(
-                    self._configuration.resource_libraries,
+        if not scope:
+            summary = service.process_all_libraries(
+                self._configuration.resource_libraries,
+                execute=True,
+                limit=task.item_limit,
+                cancellation_check=workflow_stop,
+                require_readable_scope=True,
+            )
+        else:
+            library, display_root = self._resolve_direct_scope(scope)
+            from pathlib import Path
+
+            candidate = Path(scope).resolve(strict=False)
+            if candidate.is_file():
+                storage_path = _storage_relative_path(library.root_path, display_root, candidate)
+                item = service.process_file(
+                    candidate.as_posix(),
+                    resource_library=library,
+                    storage_path=storage_path,
+                    execute=True,
+                )
+                summary = MediaOrganizerBatchResult((item,))
+            else:
+                summary = service.process_library(
+                    library,
                     execute=True,
                     limit=task.item_limit,
                     cancellation_check=workflow_stop,
                     require_readable_scope=True,
                 )
-            else:
-                library, display_root = self._resolve_direct_scope(scope)
-                from pathlib import Path
-
-                candidate = Path(scope).resolve(strict=False)
-                if candidate.is_file():
-                    storage_path = _storage_relative_path(
-                        library.root_path, display_root, candidate
-                    )
-                    item = service.process_file(
-                        candidate.as_posix(),
-                        resource_library=library,
-                        storage_path=storage_path,
-                        execute=True,
-                    )
-                    summary = MediaOrganizerBatchResult((item,))
-                else:
-                    summary = service.process_library(
-                        library,
-                        execute=True,
-                        limit=task.item_limit,
-                        cancellation_check=workflow_stop,
-                        require_readable_scope=True,
-                    )
-        except IncompleteOrganizingScope as error:
-            # The admitted scope could not be read completely, so no prefix was
-            # executed and the flow itself failed.  The bounded explanation is
-            # persisted on the Task (stage, durable state, side effects and next
-            # action) instead of being replaced by a generic engine notice, so
-            # the operator reads the same answer whether they inspect it in the
-            # Task Center or in the Worker log.
-            self._settle_unproved_scope(task, scheduling, claim, error, clock=clock)
-            return task.task_id
         if cancellation_check():
             raise AutomationCancelled(task.task_id)
         coordinator.finish(task.task_id, summary)
         return task.task_id
-
-    def _settle_unproved_scope(self, task, scheduling, claim, error, *, clock=None) -> None:
-        """Publish one unproved organizing scope as a bounded Task failure."""
-
-        from mediaflow.domain.task_persistence import task_item_counts
-
-        now = (clock or (lambda: datetime.now(UTC)))()
-        items = self._repository.list_items(task.task_id)
-        total, completed, failed = task_item_counts(items)
-        failure = error.explanation()
-        scheduling.settle(
-            claim,
-            task=replace(
-                task,
-                status=PersistentTaskStatus.FAILED,
-                updated_at=now,
-                completed_at=now,
-                total_items=total,
-                completed_items=completed,
-                failed_items=failed,
-                error=failure.encode(),
-            ),
-            items=items,
-            now=now,
-            close_recorded_unknown_boundary=True,
-        )
 
     def _resolve_direct_scope(self, scope: str):
         """The pinned ResourceLibrary one direct organize scope belongs to."""

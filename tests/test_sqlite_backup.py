@@ -197,6 +197,8 @@ class SQLiteBackupTests(unittest.TestCase):
             self.assertIn("Usable by this version: NO", output)
             self.assertIn("found 11, expected 12", output)
             self.assertIn("Reason: the configured database is not usable", output)
+            self.assertIn("keep this intact file for the version that created it", output)
+            self.assertIn("Restore accepts only a same-version backup", output)
 
     def test_target_validation_and_cli(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

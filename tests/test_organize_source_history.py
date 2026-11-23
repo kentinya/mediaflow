@@ -41,12 +41,14 @@ from uuid import uuid4
 from mediaflow.application.automation_run_once import AutomationRunOnceService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
+from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.organize_source_history import (
     latest_applicable_outcome,
 )
+from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.application.task_scheduling import TaskSchedulingService
@@ -238,6 +240,15 @@ def history_journey(
                 providers=provider_registry,
                 clock=case.clock,
             )
+            executions = ManualOrganizeExecutionService(
+                repository,
+                previews,
+                intents,
+                checkpoint_service=ProcessingCheckpointService(repository),
+                configuration=runtime,
+                storages={"source": source, "target": target},
+                clock=case.clock,
+            )
             discovery = MediaDiscoveryService(
                 repository,
                 intents,
@@ -246,6 +257,25 @@ def history_journey(
                 runtime_resolver=lambda snapshot_id, digest: runtime,
                 storages={"source": source, "target": target},
                 clock=case.clock,
+            )
+            repository.register_worker(
+                "history-task-engine",
+                "history task engine",
+                5.0,
+                ("manual_organize",),
+                None,
+                None,
+                SCHEMA_VERSION,
+                case.clock.now,
+            )
+            task_engine = ManualTaskEngineWorker(
+                repository,
+                TaskSchedulingService(repository, capacity=100),
+                discovery,
+                executions,
+                worker_id="history-task-engine",
+                clock=case.clock,
+                notice=lambda line: None,
             )
             run_once = AutomationRunOnceService(discovery, previews, clock=case.clock)
             api = MediaFlowApi(
@@ -256,6 +286,7 @@ def history_journey(
                 manual_intent_service=intents,
                 manual_preview_service=previews,
                 media_discovery_service=discovery,
+                manual_execution_service=executions,
                 automation_run_once_service=run_once,
                 metadata_provider_registry_factory=lambda ids: provider_registry,
             )
@@ -270,7 +301,9 @@ def history_journey(
                 runtime=runtime,
                 intents=intents,
                 previews=previews,
+                executions=executions,
                 discovery=discovery,
+                task_engine=task_engine,
                 run_once=run_once,
                 clock=case.clock,
                 source=source,
@@ -803,85 +836,109 @@ class _SourceHistoryJourneyTests(unittest.TestCase):
         self.assertIsNotNone(finished)
         return value.repository.get_task(finished.task_id)
 
-    def organize_execute(self, value, path: Path):
-        """Admit and drive one organizing Task through the resident Worker.
+    def _touch_files_engine(self, value) -> None:
+        """Keep the fixture Worker's heartbeat current across the journey clock."""
 
-        The retired general CLI was the only caller of the synchronous direct
-        organize driver; the same admitted Task is now advanced by the
-        production Worker's automatic runner, which is the path every surviving
-        entrance shares.  Returns the settled Task so the caller reads the
-        durable result instead of CLI text.
-        """
-
-        from mediaflow.application.task_scheduling import (
-            TaskSchedulingService,
-            build_scheduled_task_admission,
-        )
-        from mediaflow.domain.task_persistence import RunDisplayContext
-        from mediaflow.domain.task_scheduling import TaskTrigger
-        from mediaflow.resident_entry import _automatic_task_runner
-
-        # Each admission is a distinct attempt in the shared source history; the
-        # journey's clock is frozen, so advance it to keep the durable attempt
-        # order unambiguous instead of tying on one admission timestamp.
-        value.clock.advance(60)
-        scheduling = TaskSchedulingService(value.repository, capacity=10)
-        task, state = build_scheduled_task_admission(
-            "organize",
-            execute_authorized=True,
-            trigger=TaskTrigger.MANUAL,
-            principal="operator",
-            scope_path=str(path),
-            item_limit=5,
-            configuration_snapshot_id=value.revision.revision_id,
-            configuration_snapshot_digest=value.revision.digest,
-            require_configuration_snapshot=True,
-            now=self.clock.now,
-        )
-        value.repository.admit_scheduled_task(
-            task,
-            state,
-            capacity=10,
-            display=RunDisplayContext(source_scope=str(path), origin_kind="remote-organize"),
-        )
-        runner = _automatic_task_runner(value.repository, str(value.config), scheduling)
-        worker_id = f"organize-{task.task_id}"
         value.repository.register_worker(
-            worker_id,
-            worker_id,
-            60.0,
-            ("organize",),
+            "history-task-engine",
+            "history task engine",
+            300.0,
+            ("manual_organize",),
             None,
             None,
             SCHEMA_VERSION,
-            self.clock.now,
+            value.clock.now,
         )
-        engine = ManualTaskEngineWorker(
-            value.repository,
-            scheduling,
-            None,
-            None,
-            worker_id=worker_id,
-            clock=self.clock,
-            automatic_runner=runner,
+
+    def _drive_files_task(self, value, task_id: str, *, steps: int = 16) -> None:
+        """Advance one admitted Files Task through the production Task engine."""
+
+        self._touch_files_engine(value)
+        for _ in range(steps):
+            current = value.repository.get_task(task_id)
+            if current is not None and current.status.value in {
+                "completed",
+                "failed",
+                "cancelled",
+            }:
+                return
+            state = value.repository.get_task_scheduling(task_id)
+            if state is not None and state.queue_state.value in {"waiting_human", "settled"}:
+                return
+            value.task_engine.run_next()
+
+    def organize_execute(self, value, path: Path):
+        """Admit one file through the live Files API and execute it explicitly.
+
+        The Files page admission creates the durable discovery and Task; the
+        operator decides any recognition blocker, reviews the summary and
+        confirms the exact subset.  The production Task engine advances both
+        the analysis and the confirmed execution, so the caller reads durable
+        Task/Item/Result facts instead of a retired direct-mode result.
+        """
+
+        value.clock.advance(60)
+        relative = path.relative_to(value.source_root).as_posix()
+        status, admitted = self.request(
+            value,
+            "POST",
+            "/api/resource-libraries/library/files/discoveries",
+            {"paths": [relative], "autoPrepare": True, "requestId": str(uuid4())},
         )
-        try:
-            with patch(
-                "mediaflow.resident_entry.metadata_provider_registry_from_environment",
-                return_value=value.provider_registry,
-            ):
-                for _ in range(8):
-                    current = value.repository.get_task(task.task_id)
-                    if current is not None and current.status.value in {
-                        "completed",
-                        "failed",
-                        "cancelled",
-                    }:
-                        break
-                    engine.run_next()
-        finally:
-            value.repository.stop_worker(worker_id, self.clock.now)
-        return value.repository.get_task(task.task_id)
+        self.assertEqual(202, status, admitted)
+        task_id = admitted["organizeTaskId"]
+        self._drive_files_task(value, task_id)
+
+        for item in value.repository.list_items(task_id):
+            if item.status.value != "waiting_recognition":
+                continue
+            status, detail = self.request(
+                value, "GET", f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
+            )
+            self.assertEqual(200, status, detail)
+            status, decided = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/decision",
+                {
+                    "kind": "recognition",
+                    "recognitionTypeId": "A",
+                    "expectedCheckpointVersion": detail["checkpoint"]["checkpoint_version"],
+                },
+            )
+            self.assertEqual(200, status, decided)
+            status, continued = self.request(
+                value,
+                "POST",
+                f"/api/tasks/{task_id}/items/{item.item_id}/recovery/continue",
+                {"expectedCheckpointVersion": decided["checkpoint"]["checkpoint_version"]},
+            )
+            self.assertEqual(202, status, continued)
+        self._drive_files_task(value, task_id)
+
+        discovery = value.repository.get_media_discovery_for_task(task_id)
+        self.assertIsNotNone(discovery.preview_id, discovery.error)
+        status, preview = self.request(
+            value, "GET", f"/api/operations/organize/previews/{discovery.preview_id}"
+        )
+        self.assertEqual(200, status, preview)
+        ready = [entry["itemId"] for entry in preview["items"] if entry["status"] == "previewed"]
+        self.assertEqual(1, len(ready), preview)
+        status, execution = self.request(
+            value,
+            "POST",
+            f"/api/operations/organize/previews/{preview['previewId']}/execute",
+            {
+                "confirmation": True,
+                "itemIds": ready,
+                "expectedIntentVersion": preview["intentVersion"],
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            },
+        )
+        self.assertIn(status, (200, 202), execution)
+        self._drive_files_task(value, task_id)
+        return value.repository.get_task(task_id)
 
 
 class RunOnceHistoryExclusionJourneyTests(_SourceHistoryJourneyTests):
@@ -1171,15 +1228,15 @@ class ManualHistoryWarningJourneyTests(_SourceHistoryJourneyTests):
                 def execute(self, plan, storages, **kwargs):
                     raise RuntimeError("injected executor failure before any mutation")
 
-            with patch(
-                "mediaflow.application.automation_definition_execution.OrganizerExecutor",
-                _ExplodingExecutor,
-            ):
+            with patch.object(value.executions, "_executor", _ExplodingExecutor()):
                 failed = self.organize_execute(value, one)
             self.assertEqual("completed", failed.status.value, failed.error)
             (failed_task,) = value.repository.list_tasks()
             (failed_item,) = value.repository.list_items(failed_task.task_id)
-            self.assertEqual(TaskItemStatus.FAILED, failed_item.status)
+            # The real executor fault stops before a verified effect; the
+            # Files execution boundary records that as an uncertain partial
+            # result, which is still the source's latest formal outcome.
+            self.assertEqual(TaskItemStatus.PARTIAL, failed_item.status)
             (failed_result,) = value.repository.list_results(failed_task.task_id)
 
             # The deliberate new manual request reaches the real plan summary:
@@ -1210,7 +1267,7 @@ class ManualHistoryWarningJourneyTests(_SourceHistoryJourneyTests):
             self.assertEqual(ManualPreviewItemStatus.PREVIEWED, item.status, item.error)
             history = (item.plan or {}).get("history")
             self.assertIsInstance(history, dict, item.plan)
-            self.assertEqual("failed", history["status"])
+            self.assertEqual("partial", history["status"])
             self.assertIn("请核对来源、目标与存储实际效果后再确认本次整理", history["warning"])
             self.assertEqual(failed_result.created_at.isoformat(), history["recordedAt"])
 
@@ -1224,7 +1281,7 @@ class ManualHistoryWarningJourneyTests(_SourceHistoryJourneyTests):
             (api_item,) = document["items"]
             api_history = (api_item.get("plan") or {}).get("history")
             self.assertIsInstance(api_history, dict, api_item.get("plan"))
-            self.assertEqual("failed", api_history["status"])
+            self.assertEqual("partial", api_history["status"])
             self.assertEqual(failed_result.created_at.isoformat(), api_history["recordedAt"])
             self.assertIn("请核对来源", api_history["warning"])
             self.assertTrue(api_history["versionApplicable"])

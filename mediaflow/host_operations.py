@@ -61,6 +61,12 @@ def render_backup(value, operation: str) -> str:
     ]
     if value.applicability_reason:
         lines.append(f"Reason: {value.applicability_reason}")
+    if not value.usable:
+        lines.append(
+            "Next action: keep this intact file for the version that created it when you "
+            "still need its data, or start this version with a new empty data directory. "
+            "Restore accepts only a same-version backup with 'Usable by this version: YES'."
+        )
     lines.append("")
     return "\n".join(lines)
 

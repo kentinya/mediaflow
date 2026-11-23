@@ -10,10 +10,12 @@ installation, health, restart, backup, restore and failure-recovery procedures.
 - The current `main` deployment supports fresh initialization and same-version
   reopen/restart. Ordinary startup accepts an empty database or a supported
   same-version store, including a configuration-only store written by this
-  version's first setup or configuration management. For a database rejected as
-  unsupported, keep the original file and start with a new empty data directory.
-  The explicit schema 11 configuration switch is available for eligible stores
-  that pass the applicability check and report `DATA_SWITCH_REQUIRED`.
+  version's first setup or configuration management. A configuration schema 11
+  file or any other previous-version database is refused before any write; the
+  file stays byte-for-byte unchanged. Keep an intact old file for the version
+  that created it when you still need its data, and start this version with a
+  new empty data directory. There is no in-place switch, downgrade or CLI
+  command for that file.
   [Database maintenance](#backup-and-same-version-recovery) · [Release](release.md#current-v2-validation-boundary)
 - One image runs the installed `mediaflow` package. The image runs as UID/GID
   `10001:10001` by default and never needs root.
@@ -445,21 +447,21 @@ paths, credentials, Storage or Providers.
 
 Current support covers fresh initialization and same-version reopen/restart. Startup accepts only
 an empty database or one created by this version, including a configuration-only store written by
-this version's configuration CLI. A database from an earlier MediaFlow version is refused before
+this version's first setup. A database from an earlier MediaFlow version is refused before
 the repository creates or rewrites any table; the file remains unchanged, even when it only holds
-configuration at the current schema number. Keep it for diagnosis or recovery with the version
-that created it, then use a new empty data directory for this version. General cross-version
-upgrade and rollback, mixed-version writers and old Task/Job migrations are deferred. See
+configuration at the current schema number or reports a schema 11 configuration marker. Keep an
+intact old file for diagnosis or recovery with the version that created it, then use a new empty
+data directory for this version. General cross-version upgrade and rollback, mixed-version writers
+and old Task/Job migrations are deferred. See
 [Current validation boundary](release.md#current-v2-validation-boundary).
 
-The configuration schema 11 store and its one-time switch are retired with the general CLI. This
-version accepts only an empty database or one it created: configuration schema 12 and runtime schema
-60. A schema 11 file is refused by startup, the container probe, code issuance and restore before any
-table, marker or account row is written, and the message names the version found and the version
-expected. Keep that file for the version that created it, or start this version with a new empty data
-directory; there is no in-place switch, downgrade path or CLI to run. Other cross-version transitions
-remain outside current support. See the
-[configuration guide](configuration.md#managed-lifecycle).
+This version accepts only an empty database or one it created: configuration schema 12 and runtime
+schema 60. A configuration schema 11 file is refused by startup, the container probe, code issuance
+and restore before any table, marker or account row is written, and the refusal names the version
+found and the version expected. There is no in-place switch, downgrade path or CLI to run. Keep an
+intact old file for the version that created it when you still need its data, or start this version
+with a new empty data directory. Other cross-version transitions remain outside current support.
+See the [configuration guide](configuration.md#managed-lifecycle).
 
 Stop the stack and retain a verified backup under `/data` before maintenance. The `host` argument is
 the fixed container-entrypoint maintenance mode; a direct source installation runs the same
@@ -475,11 +477,13 @@ docker compose run --rm --no-deps api \
 ```
 
 `verify` reports file integrity separately from whether this MediaFlow version can start the
-backup; both a current runtime store and a current configuration-only store are usable. A
-supported store that still waits for an explicit maintenance step reports `Cannot start yet` with
-the step and its scope, and a restore refuses it until that step is applied on the source store and
-a new backup is taken. Record the backup's schema, SHA-256 digest and age. Keep
-`/data/mediaflow.sqlite3` and its sidecars in place; never restore over the configured database.
+backup; both a current runtime store and a current configuration-only store are usable. An intact
+file from an earlier MediaFlow version reports `Integrity: OK` with
+`Usable by this version: NO` and a bounded `Reason`; `restore` refuses it. Keep that file for the
+version that created it and initialize this version in a new empty data directory. A corrupt file
+fails the same `verify` before a usability answer. Record the backup's schema, SHA-256 digest and
+age. Keep `/data/mediaflow.sqlite3` and its sidecars in place; never restore over the configured
+database.
 
 Same-version offline restore is an explicit, non-overwriting operation to a **new** database file in
 the same `mediaflow-data` volume. Create a bootstrap for that new locator with the same generator,
@@ -653,10 +657,13 @@ pinned context; those are distinct signals, not hidden failures.
   marker or delete the file.
 - **Previous configuration schema (11).** Container preflight, the probe, host
   code issuance and restore stop before any runtime table, marker or account row
-  is written, and the message reports the schema found and the schema expected.
-  The schema 11 switch and its CLI are retired, so there is nothing to apply in
-  place: keep the file for the version that created it, or start this version
-  with a new empty data directory. The original file stays unchanged.
+  is written, and the refusal names the schema found and the schema expected.
+  The schema 11 switch and its CLI are retired, so there is nothing to apply or
+  restore in place: keep the intact file for the version that created it when
+  you still need its data, or start this version with a new empty data
+  directory. Host `verify` on that file prints `Integrity: OK` with
+  `Usable by this version: NO` and a `Reason`; it is not a same-version restore
+  source. The original file stays unchanged.
 - **Inaccessible published media root:** the API container stays healthy and
   `/health` keeps answering. The Storage page's `运行只读检查` (or the
   authenticated storage-management check endpoint) reports `status: failed`
@@ -691,9 +698,9 @@ Container probes open the existing SQLite database read-only. An absent or incom
 not ready; probes never create a database or install tables. Use the backup and same-version
 recovery workflow above. A database created by another MediaFlow version is refused by preflight
 and probes, including a configuration-only store from an earlier build at the current configuration
-schema number; cross-version schema transitions are outside current support apart from the explicit
-configuration schema 11 to 12 data switch for a store whose runtime schema is absent or current,
-documented in the [configuration guide](configuration.md#previous-store-data-switch). Temporary database contention makes readiness
+schema number. Cross-version schema transitions are outside current support; an intact
+previous-version file has no in-place switch or restore path and stays for the version that created
+it. Temporary database contention makes readiness
 unavailable while resident processes keep polling safely; it does not requeue uncertain media work.
 The V2 Operations service-status section separates infrastructure health from configuration waiting
 and links to Settings for configuration recovery.

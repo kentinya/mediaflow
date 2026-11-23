@@ -25,6 +25,7 @@ from datetime import timedelta
 from os import utime
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
@@ -36,7 +37,6 @@ from mediaflow.domain.metadata import (
     MetadataError,
     MetadataErrorCode,
 )
-from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 from tests.test_automation_entrance_recovery import (
     ADMIN_TOKEN,
     _Clock,
@@ -206,73 +206,32 @@ class MetadataSearchYearTests(unittest.TestCase):
         utime(path, (stamp, stamp))
         return path
 
-    def _admit(self, value, *, limit: int) -> None:
-        """Admit one organizing Task through the current scheduling kernel.
+    def _admit(self, value) -> None:
+        """Admit the written files through the live Files page API.
 
-        The general CLI that used to admit and drive a direct organize run is
-        retired; the same admitted Task is now driven by the resident Worker
-        passes below, which is the production path every organizing entrance
-        (Files, Automation, Run once) shares.
+        The Files selection becomes one bounded discovery and one durable
+        organizing Task; the production Task engine below is the only Worker
+        that advances it.
         """
 
-        from tests.task_engine_test_helpers import admit_organize_task
-
-        admit_organize_task(
-            value.repository,
-            snapshot_id=value.revision.revision_id,
-            snapshot_digest=value.revision.digest,
-            limit=limit,
+        paths = sorted(
+            path.relative_to(value.source_root).as_posix()
+            for path in value.source_root.rglob("*")
+            if path.is_file()
         )
+        status, admitted = self.request(
+            value,
+            "POST",
+            "/api/resource-libraries/library/files/discoveries",
+            {"paths": paths, "autoPrepare": True, "requestId": str(uuid4())},
+        )
+        self.assertEqual(202, status, admitted)
+        self.assertTrue(admitted["organizeTaskId"])
 
     def _resident_pass(self, value, *, prefix: str):
-        from mediaflow.application.manual_organize_execution import (
-            ManualOrganizeExecutionService,
-        )
-        from mediaflow.application.manual_task_engine import ManualTaskEngineWorker
-        from mediaflow.application.task_scheduling import TaskSchedulingService
-        from mediaflow.infrastructure.local_storage import LocalStorage
-        from mediaflow.resident_entry import _automatic_task_runner
+        """One production Worker pass over the admitted Files Task."""
 
-        scheduling = TaskSchedulingService(value.repository, capacity=100)
-        runner = _automatic_task_runner(value.repository, str(value.config), scheduling)
-        execution = ManualOrganizeExecutionService(
-            value.repository,
-            value.previews,
-            value.intents,
-            configuration=value.runtime,
-            storages={
-                "source": LocalStorage("source", value.source_root),
-                "target": LocalStorage("target", value.target_root),
-            },
-            clock=value.clock,
-        )
-        worker_id = f"{prefix}-{len(value.repository.list_tasks())}"
-        value.repository.register_worker(
-            worker_id,
-            worker_id,
-            5.0,
-            ("organize",),
-            None,
-            None,
-            SCHEMA_VERSION,
-            value.clock.now,
-        )
-        worker = ManualTaskEngineWorker(
-            value.repository,
-            scheduling,
-            None,
-            execution,
-            worker_id=worker_id,
-            clock=value.clock,
-            automatic_runner=runner,
-        )
-        with patch(
-            "mediaflow.resident_entry.metadata_provider_registry_from_environment",
-            return_value=value.provider_registry,
-        ):
-            settled = worker.run_next()
-        value.repository.stop_worker(worker_id, value.clock.now)
-        return settled
+        return value.task_engine.run_next()
 
     @contextmanager
     def correction_journey(self, provider: RecordingYearProvider, *, tv: bool):
@@ -285,17 +244,18 @@ class MetadataSearchYearTests(unittest.TestCase):
             viewer_token=VIEWER_TOKEN,
         ) as value:
             self._write_media(value, media)
-            self._admit(value, limit=5)
+            self._admit(value)
             (task,) = value.repository.list_tasks()
-            # The first Worker pass runs the admitted analysis and publishes
-            # the Task's items; a settled item is then read back durably.
-            self._resident_pass(value, prefix="metadata-search")
-            (item,) = value.repository.list_items(task.task_id)
-            for _ in range(8):
-                if item.status.value == "waiting_metadata_correction":
-                    break
+            # The production Worker runs the admitted discovery and analysis in
+            # stages; the settled item is then read back durably.
+            items = ()
+            for _ in range(12):
                 self._resident_pass(value, prefix="metadata-search")
-                item = value.repository.get_item(item.item_id) or item
+                items = value.repository.list_items(task.task_id)
+                if items and items[0].status.value == "waiting_metadata_correction":
+                    break
+            self.assertEqual(1, len(items), items)
+            (item,) = items
             self.assertEqual(
                 "waiting_metadata_correction",
                 item.status.value,
@@ -690,48 +650,70 @@ class MetadataSearchYearTests(unittest.TestCase):
             for number in range(1, 9):
                 self._write_media(value, f"黑袍纠察队.2024.S04E{number:02d}.mkv")
             self._write_media(value, "未知剧.2024.S04E01.mkv")
-            self._admit(value, limit=20)
+            self._admit(value)
             (task,) = value.repository.list_tasks()
             self._resident_pass(value, prefix="the-boys-s04")
             items = value.repository.list_items(task.task_id)
-            for _ in range(20):
+            for _ in range(24):
                 settled = {
                     "waiting_confirm",
                     "waiting_metadata_correction",
                     "failed",
                 }
-                if all(item.status.value in settled for item in items):
+                if items and all(item.status.value in settled for item in items):
                     break
                 self._resident_pass(value, prefix="the-boys-s04")
                 items = value.repository.list_items(task.task_id)
             self.assertEqual(len(items), 9)
+            # The reviewed summary is the current surface for the verified
+            # subset; the unknown sibling stays its own correction blocker and
+            # analysis performed no media mutation.
+            discovery = value.repository.get_media_discovery_for_task(task.task_id)
+            self.assertIsNotNone(discovery.preview_id, discovery.error)
+            status, preview = self.request(
+                value, "GET", f"/api/operations/organize/previews/{discovery.preview_id}"
+            )
+            self.assertEqual(200, status, preview)
+            preview_record = value.repository.get_manual_preview(discovery.preview_id)
+            planned = {
+                item.source.path: item.plan["destination"]["path"]
+                for item in preview_record.items
+                if item.status.value == "previewed"
+            }
+            self.assertEqual(8, len(planned), preview)
+            self.assertEqual(
+                [], [path for path in value.target_root.rglob("*.mkv") if path.is_file()]
+            )
             by_title = {}
             for item in items:
-                evidence = value.repository.list_evidence_for_item(item.item_id, limit=4)
-                metadata = next(
+                plan = next(
                     (
-                        section.value
-                        for record in evidence
-                        if (section := record.section("metadata")).available
-                        and section.value is not None
+                        value.plan
+                        for value in preview_record.items
+                        if value.source.path == item.source_path and value.plan is not None
                     ),
-                    {},
+                    None,
                 )
-                by_title[item.source_path] = (item, metadata)
+                by_title[item.source_path] = (item, plan)
             for number in range(1, 9):
                 name = f"黑袍纠察队.2024.S04E{number:02d}.mkv"
-                item, metadata = by_title[name]
-                self.assertEqual("success", item.status.value, (name, item))
-                self.assertIn(f"S04E{number:02d}", str(item.destination_path), item)
-                self.assertEqual("2019", metadata.get("providerId"), (name, metadata))
-                self.assertEqual(4, metadata.get("season"), (name, metadata))
-                self.assertEqual([number], metadata.get("episodes"), (name, metadata))
+                item, plan = by_title[name]
+                self.assertEqual("waiting_confirm", item.status.value, (name, item))
+                self.assertIn(f"S04E{number:02d}", planned[item.source_path], (name, item))
+                analysis = plan["analysis"]["metadata"]
+                identity = analysis["identity"]
+                self.assertEqual("2019", identity.get("providerId"), (name, identity))
+                self.assertEqual(4, identity.get("season"), (name, identity))
+                self.assertEqual([number], identity.get("episodes"), (name, identity))
                 self.assertIn(
                     f"Season 4 episodes {number} verified",
-                    " ".join(metadata.get("matchReasons") or ()),
-                    (name, metadata),
+                    " ".join(analysis["match"]["reasons"]),
+                    (name, analysis),
                 )
-            unknown, unknown_metadata = by_title["未知剧.2024.S04E01.mkv"]
+            unknown, unknown_plan = by_title["未知剧.2024.S04E01.mkv"]
+            self.assertIsNone(unknown_plan["destination"])
+            self.assertEqual("not_found", unknown_plan["analysis"]["metadata"]["status"])
+            self.assertEqual(unknown.item_id, unknown_plan["problemTaskItemId"])
             self.assertEqual("waiting_metadata_correction", unknown.status.value)
             status, detail = self.request(
                 value,
@@ -743,10 +725,6 @@ class MetadataSearchYearTests(unittest.TestCase):
             self.assertIn("No compatible candidates", detail["decision"]["reason"])
             self.assertEqual(unknown.item_id, detail["item_id"])
             self.assertEqual([None] * 9, provider.search_years)
-            self.assertEqual(
-                8,
-                len([path for path in value.target_root.rglob("*.mkv") if path.is_file()]),
-            )
             self.assertFalse(
                 any(
                     "未知剧" in path.name for path in value.target_root.rglob("*") if path.is_file()
@@ -839,21 +817,20 @@ class MetadataSearchYearTests(unittest.TestCase):
             viewer_token=VIEWER_TOKEN,
         ) as value:
             self._write_media(value, TV_MEDIA)
-            self._admit(value, limit=5)
+            self._admit(value)
             (task,) = value.repository.list_tasks()
-            # The first Worker pass runs the admitted analysis and publishes
-            # the Task's items; a settled item is then read back durably.
-            self._resident_pass(value, prefix="metadata-search")
-            (item,) = value.repository.list_items(task.task_id)
-            for _ in range(8):
-                if item.status.value in {
+            items = ()
+            for _ in range(12):
+                self._resident_pass(value, prefix="metadata-search")
+                items = value.repository.list_items(task.task_id)
+                if items and items[0].status.value in {
                     "waiting_metadata",
                     "waiting_metadata_correction",
                     "waiting_confirm",
                 }:
                     break
-                self._resident_pass(value, prefix="candidate-start")
-                item = value.repository.get_item(item.item_id)
+            self.assertEqual(1, len(items), items)
+            (item,) = items
             self.assertEqual("waiting_metadata", item.status.value, item)
 
             status, detail = self.request(
@@ -939,17 +916,16 @@ class MetadataSearchYearTests(unittest.TestCase):
             max_provider_requests=2,
         ) as value:
             self._write_media(value, TV_MEDIA)
-            self._admit(value, limit=5)
+            self._admit(value)
             (task,) = value.repository.list_tasks()
-            # The first Worker pass runs the admitted analysis and publishes
-            # the Task's items; a settled item is then read back durably.
-            self._resident_pass(value, prefix="metadata-search")
-            (item,) = value.repository.list_items(task.task_id)
-            for _ in range(8):
-                if item.status.value == "waiting_metadata":
+            items = ()
+            for _ in range(12):
+                self._resident_pass(value, prefix="metadata-search")
+                items = value.repository.list_items(task.task_id)
+                if items and items[0].status.value == "waiting_metadata":
                     break
-                self._resident_pass(value, prefix="candidate-reopen")
-                item = value.repository.get_item(item.item_id)
+            self.assertEqual(1, len(items), items)
+            (item,) = items
             self.assertEqual("waiting_metadata", item.status.value, item)
             first_review = value.repository.get_metadata_review_for_item(item.item_id)
             self.assertIsNotNone(first_review)
