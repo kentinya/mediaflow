@@ -1,6 +1,6 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: DEVELOPER COMPLETES NOTIFICATION CONSUMER CUTOVER
+Next Action: B REVIEWS TASK 58.2 CANCELLATION NOTIFICATION FIX
 
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -8,7 +8,7 @@ Next Action: DEVELOPER COMPLETES NOTIFICATION CONSUMER CUTOVER
 Task ID: 58.2
 Task Type: SLICE
 Parent Slice: 58
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
 Reviewed Head: f7de678a2e4e0384b89b8de991726ba756ce9f86
 Difficulty: High
@@ -16,6 +16,33 @@ Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: ORIGINAL TASK 58.2 CORRECTION SCOPE — A58-01
 ```
+
+## Developer 交接 — 取消通知与投递恢复使用已发布快照
+
+```text
+Candidate: 1be61cff
+Scope: MediaFlowApi 的 Active Webhook 发布与通知中心投递恢复目标加载
+```
+
+- `_active_webhook_definitions` 和 `_notification_recovery_targets` 改用
+  `ManagedConfigurationService.load_published_runtime`，保留 Active 完整性校验、启用及密钥过滤和现有投递目标摘要校验。
+  任务中心取消在持久化终态后生成一条投递；死信详情与重排恢复按原投递 ID 工作，重排后的投递仍由原 Active Webhook 定义投递。
+- 通知工作区证明脚本同步改用同一加载器；仓库内不再有 `_load_for_runtime` 调用。
+
+本轮实际运行（仓库根目录）：
+
+- 修复前复现 `PYTHONPATH=tests .venv/bin/python -m unittest test_notifications.TerminalTaskNotificationTests.test_queued_cancellation_publishes_one_event_without_media_effect`
+  → 失败，0 条投递（`ValueError: not enough values to unpack (expected 1, got 0)`）。修复后同一用例通过：
+  任务已取消、源媒体仍在、恰好一条 `task.cancelled` 投递；重复取消返回 409 且仍为一条。
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_notifications test_v2_notification_operations`
+  → 43 项通过；`test_notification_delivery_management` → 9 项通过。
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` 无输出；改动文件
+  `ruff format --check`、`ruff check`、`compileall` 通过。
+
+剩余风险与待 B 验收：
+
+- 本轮未启动 Web/Worker 或 Compose；任务中心取消通知的浏览器入口、通知中心死信恢复页面及 T4 全量仍由 B 复跑。
+- 其余 Slice 58 验收边界不变。
 
 ## B 复审 — FIX REQUIRED
 
