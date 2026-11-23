@@ -1,6 +1,6 @@
 # Task 58.2 — 通用 CLI 与配置 schema 11 退出
 
-Next Action: DEVELOPER IMPLEMENTS THE A58-01 CORRECTION
+Next Action: DEVELOPER FIXES RULES COMPLETE-FLOW AFTER RESTORE
 
 [Slice 58 合同](SLICE.md#required-outcomes-and-surfaces) · [开发工作流](docs/development-workflow.md)
 
@@ -10,14 +10,37 @@ Task Type: SLICE
 Parent Slice: 58
 Status: FIX REQUIRED
 Task Base: 307eaaf8b006527a11fa2514de839a5528e6c202
-Reviewed Head: 1a2383942aff3200f99c9c0560dec3e191ce611e
+Reviewed Head: 2c05bc195c73fb59fba809474c52d04e7ba4d36e
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Implementation Authorization: ORIGINAL TASK 58.2 CORRECTION SCOPE — A58-01
 ```
 
-## 目标与 B 复核
+## B 复审 — FIX REQUIRED
+
+**A58-01（P1，RO-3 / AC-03）仍未完成。** B 从原 Task Base 核对候选范围，并用候选镜像执行正式
+Compose 停机、备份、校验、恢复和 API-only 启动。原库摘要一致，两处媒体挂载保留，原 Files 条目可读，
+系统设置保存和四服务启动均通过。
+
+B 通过「规则总览 → 完整流程检查」使用的正式 API，在原库以管理员身份选择资源库并提交离线样例
+`电影/Example.Movie.2024.mkv`，生成了完整整理计划。恢复后只启动 API，用同一 Active ID、digest 和样例再运行，
+得到「配置图无法加载，完整流程不可用」。`_load_runtime_for_analysis` 仍按新配置候选的规则比较原路径和恢复路径。
+[配置加载入口](mediaflow/application/configuration_objects.py#L3577) · [规则旅程](docs/product-experience.md#object-scoped-tests-and-complete-flow-checks)
+
+### 本轮返工开发指导
+
+1. 让「完整流程检查」用现有已发布快照加载入口读取本次检查指向的 Active，按恢复部署路径构造运行时。
+   保留这次检查的原快照 ID、digest、样例和只读结果。配置发布继续用已有的候选校验。
+2. 在现有恢复夹具加入同一条正式 Rules API 回归。在恢复前后使用同一份配置和离线样例，两次均生成同一计划，
+   均为零媒体变更。用 `PYTHONPATH=tests .venv/bin/python -m unittest test_sqlite_restore
+   test_v2_rules_object_analysis` 运行受影响模块。交接时记录候选 SHA 和实际结果。
+
+B 本轮两次 Compose 检查共约 67 秒。治理、差异检查、镜像内改动的 Python 文件与候选提交的摘要比对通过。
+证据见 `.git/validation-evidence/2c05bc195c73fb59fba809474c52d04e7ba4d36e/b-review/`。
+T4 全量和原任务 Web 接续验收待修正候选。RO-1、RO-2 和 RO-4 的既有证据见下表，RO-3 仍阻塞交回 A。
+
+## A58-01 目标与首次复现
 
 **FIX REQUIRED — A58-01（P1，RO-3 / AC-03）。** B 在原候选镜像用正式 Compose 和媒体 overlay
 建立隔离实例。原资源库可打开。按发布指引停机、备份、校验并恢复到新文件，命令报告恢复成功，原库摘要一致。
@@ -96,7 +119,7 @@ git diff --check
 | --- | --- |
 | RO-1 / AC-01 | 原候选四服务、空库和媒体挂载启动、整理与传输、调度与通知的验收证据保留。修正候选复验四服务采用配置。 |
 | RO-2 / AC-02 | 原候选首次建号、忘记密码及权限的验收证据保留。修正候选复验既有账号与权限的同库连续性。 |
-| RO-3 / AC-03 | **未达到。** 恢复后原 Active 无法用于实际文件读取。正式指引还需保留已配置的 Compose 媒体挂载。 |
+| RO-3 / AC-03 | **未达到。** 修正后的 Compose 指引保留原挂载，Files 已可读。规则总览的完整流程检查仍无法使用原 Active。 |
 | RO-4 / AC-04、AC-05 | 原候选旧 CLI 和 schema 11 退出及固定 Base 同库续作的证据保留。修正涉及共享 Active/pin 消费，精确候选复验同库接续。 |
 
 本轮范围限于合同内的同版本停机恢复及实际继续使用。跨版本迁移、媒体备份、Web 备份管理和新的维护入口属于合同
