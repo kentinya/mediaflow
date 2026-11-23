@@ -48,6 +48,7 @@ from docker_harness import (
     compose_environment,
     free_port,
     json_request,
+    temporary_directory,
     wait_for_api,
     wait_for_services_healthy,
     wait_until,
@@ -361,7 +362,7 @@ def assert_zero_mutation(source_root: Path, target_root: Path) -> None:
 
 def transfer_impact_smoke(project: str, image: str, keep: bool) -> None:
     api_port = free_port()
-    with tempfile.TemporaryDirectory(prefix="mediaflow-transfer-impact-") as directory:
+    with temporary_directory(prefix="mediaflow-transfer-impact-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
         (

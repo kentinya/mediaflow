@@ -20,6 +20,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -28,6 +29,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_PREFIX = "mediaflow-smoke"
+
+
+def temporary_directory(prefix: str):
+    """Return a temporary root the Docker daemon can bind-mount.
+
+    ``MEDIAFLOW_SMOKE_TEMP_DIR`` overrides the platform default for a daemon
+    whose mount namespace excludes the default temporary directory.
+    """
+
+    override = os.environ.get("MEDIAFLOW_SMOKE_TEMP_DIR")
+    if override:
+        Path(override).mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix=prefix, dir=override)
 
 
 def run(command: list[str], *, environment: dict[str, str] | None = None, check: bool = True):

@@ -17,7 +17,6 @@ import json
 import os
 import secrets
 import shutil
-import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,6 +34,7 @@ from docker_harness import (
     free_port,
     json_request,
     service_records,
+    temporary_directory,
     wait_for_api,
     wait_for_services_healthy,
     wait_until,
@@ -244,7 +244,7 @@ def lifecycle(project: str, image: str, keep: bool) -> None:
     server = ThreadingHTTPServer(("0.0.0.0", openlist_port), handler_for(state))
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
-    with tempfile.TemporaryDirectory(prefix="mediaflow-transfer-lifecycle-") as directory:
+    with temporary_directory(prefix="mediaflow-transfer-lifecycle-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
         config, activation_file, env_file, source_root, target_root, override = prepare(

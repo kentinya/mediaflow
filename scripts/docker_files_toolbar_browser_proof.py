@@ -36,7 +36,6 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -53,6 +52,7 @@ from docker_harness import (
     bootstrap_account_session,
     compose_environment,
     free_port,
+    temporary_directory,
     wait_for_api,
     wait_for_services_healthy,
 )
@@ -699,7 +699,7 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
     # default temporary root is daemon-visible this is a no-op; otherwise the
     # harness names the concrete requirement instead of silently mounting an
     # empty directory.
-    with tempfile.TemporaryDirectory(prefix="mediaflow-files-toolbar-docker-") as directory:
+    with temporary_directory(prefix="mediaflow-files-toolbar-docker-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
         config, activation_file, env_file, source_root, target_root = prepare(root)
