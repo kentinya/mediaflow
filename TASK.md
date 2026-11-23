@@ -51,12 +51,13 @@ Scope: mediaflow/resident_entry.py 的 Files discovery 装配 + 真实常驻 Wor
 - `git diff --check` 无输出；`ruff check` 与 `ruff format --check` 对改动文件通过。
 - 正式 Compose 固定 Slice Base → 候选接续：Base 镜像
   `mediaflow:b-task582-slice-base-5b2e0de4`（`sha256:349198a6fbbf...`），候选镜像
-  `mediaflow:b-task582-fix-c1626335`（`sha256:8590dbbe3fbf...`，由 `git archive HEAD` 构建）。
-  Base Run once 完成并投递；Base Files 记录 `attempted_unverified` 写入；Base 待识别 Task 等待。
-  同一数据库卷切到候选后，原管理员与只读令牌权限、Active、审计、三个 Task／Item／Result 与固定 pin
-  读回一致。候选接受决定与续作，精确摘要确认只完成原条目：已完成及效果不确定项零重放，已有效果
-  不变且只新增该条目一份原字节 COPY。原始输出与结果在
-  `.git/validation-evidence/c1626335/developer/`。
+  `mediaflow:b-task582-fix-dc23775f`（`sha256:8709f491f867...`，按同一 `git archive HEAD`
+  构建；源码检查点 `dc23775f` 的首次同源复跑结果在 `c1626335/developer/`）。Base Run once
+  完成并投递；Base Files 记录 `attempted_unverified` 写入；Base 待识别 Task 等待。同一数据库卷
+  切到候选后，原管理员与只读令牌权限、Active、审计、三个 Task／Item／Result 与固定 pin 读回一致。
+  候选接受决定与续作，精确摘要确认只完成原条目：已完成及效果不确定项零重放，已有效果不变且只新增
+  该条目一份原字节 COPY。两次原始输出与结果在
+  `.git/validation-evidence/dc23775f/developer/` 与 `.git/validation-evidence/c1626335/developer/`。
 
 剩余风险与待 B 验收：
 
