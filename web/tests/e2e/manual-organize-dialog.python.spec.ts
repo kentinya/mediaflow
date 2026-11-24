@@ -282,8 +282,11 @@ async function expectReadableBatch(
   await expect(impact).toBeVisible();
   await expect(impact).toContainText("移动");
   await expect(impact).toContainText("来源位置不再保留");
-  await card.locator(".mf-organize-dialog-body").evaluate((element) => {
-    element.scrollTop = 0;
+  // The batch review now leads with its confirmation-status card and scope
+  // counts. In a short window the one body scroller brings the summary and
+  // impact into view; no second scrolling region may appear.
+  await card.locator(".mf-organize-batch-summary").evaluate((element) => {
+    element.scrollIntoView({ block: "start" });
   });
 
   const metrics = await page.evaluate(() => {
@@ -1701,8 +1704,8 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
   // The later analyses publish a new exact plan for the four resolved
   // siblings; the already-settled conflict is not part of that newer plan.
   expect(countFacts).toMatchObject({
-    待处理: "0",
-    已纳入: "4",
+    "已选 / 可确认": "4 / 4",
+    需要处理: "0",
   });
 
   // Before the single confirmation, no media changed beyond the explicit
@@ -1829,9 +1832,9 @@ test("Task59.1 follows the completed walk into the same preparation's linked pla
 
   // The completed walk is not the end of the preparation: the card keeps
   // reading the same durable record instead of settling on a stale state.
-  await expect(card.getByText("正在准备", { exact: true })).toBeVisible({
-    timeout: 10_000,
-  });
+  await expect(card.getByText("正在生成整理方案", { exact: true })).toBeVisible(
+    { timeout: 10_000 },
+  );
   // The backend advertises the preparation's own analysis action only at the
   // Task's human-waiting boundary.  While the Worker still owns the freeze the
   // same work is pending, so the card offers no second analysis to click.
@@ -1900,7 +1903,7 @@ test("keeps the compact first-plan preparation while the linked summary response
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(card.getByText("正在准备", { exact: true })).toBeVisible();
+  await expect(card.locator(".mf-organize-status-card")).toBeVisible();
   await expect(card.getByText("1 个文件", { exact: true })).toBeVisible();
   await expect(card.getByText(/每次复核一个主文件/)).toHaveCount(0);
 
@@ -1939,7 +1942,9 @@ test("keeps the compact first-plan preparation while the linked summary response
     // The same compact preparation stays mounted until the real summary is
     // readable; the source and admitted scope never disappear behind an empty
     // review shell, and the first file is never shown early.
-    await expect(card.getByText("正在准备", { exact: true })).toBeVisible();
+    await expect(
+      card.getByText("正在读取整理方案", { exact: true }),
+    ).toBeVisible();
     await expect(card.getByText("来源资源库", { exact: true })).toBeVisible();
     await expect(card.getByText("受理范围", { exact: true })).toBeVisible();
     await expect(card.getByText(/每次复核一个主文件/)).toHaveCount(0);
@@ -2068,7 +2073,7 @@ test("ends the first-plan preparation when the selected folder has no primary fi
   await expect(page).toHaveURL(/organizeDiscovery=/);
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
-  await expect(card.getByText("正在准备", { exact: true })).toBeVisible();
+  await expect(card.locator(".mf-organize-status-card")).toBeVisible();
 
   const settledRead = page.waitForResponse(async (response) => {
     if (
@@ -3013,9 +3018,8 @@ test("Task59.1 Files opens the same preparation dialog as an overview, enters on
       .filter({ hasText: term });
     return (await row.locator("dd").textContent()) ?? "";
   };
-  expect(await fact("待处理")).toBe("0");
-  expect(await fact("可确认")).toBe("0");
-  expect(await fact("已纳入")).toBe("1");
+  expect(await fact("已选 / 可确认")).toBe("1 / 1");
+  expect(await fact("需要处理")).toBe("0");
   expect(await fact("已有记录")).toBe("0");
   const row = overview
     .getByRole("button", { name: `查看 ${READABILITY_DIALOG_FILE}` })
@@ -3297,7 +3301,14 @@ test("Task59.1 A59-02 manual organize readability: a 100-file batch shows 90 sel
   await expect(unmatchedOverviewRow).toContainText("需要处理作品搜索修正");
   await expect(unmatchedOverviewRow).not.toContainText("已不在当前方案中");
 
-  await openOverviewFile(card, /第 1 \/ 100 个/);
+  const readyOpen = card
+    .getByRole("region", { name: "就绪文件" })
+    .getByRole("button", { name: /^查看 / })
+    .first();
+  await readyOpen.click();
+  await expect(
+    card.getByRole("heading", { name: /第 1 \/ 100 个/ }),
+  ).toBeVisible({ timeout: 30_000 });
 
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByRole("region", { name: "整批复核" })).toBeVisible();
@@ -3344,7 +3355,7 @@ test("Task59.1 A59-02 manual organize readability: a 100-file batch shows 90 sel
   );
   await skipped.click();
   await expect(card.locator(".mf-organize-skipped")).toContainText(
-    "本方案中该文件已失效；返回逐项复核查看原因",
+    "需要处理作品搜索修正",
   );
   for (let index = 1; index <= READABILITY_UNMATCHED; index += 1) {
     await expect(

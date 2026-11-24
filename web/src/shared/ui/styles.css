@@ -9735,7 +9735,8 @@ tr[aria-selected="true"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mf-organize-preparation-spinner {
+  .mf-organize-preparation-spinner,
+  .mf-organize-status-spinner {
     animation: none;
     border-color: #1268f5;
   }
@@ -9985,6 +9986,282 @@ tr[aria-selected="true"] {
   overflow-wrap: anywhere;
 }
 
+/* Files status region: preparation, overview and batch review share one
+   readable status card, then their own counts and grouped rows. */
+.mf-organize-status-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid #dbe4f3;
+  border-radius: 12px;
+  background: #f7faff;
+}
+
+.mf-organize-status-card-green {
+  border-color: #cde5d5;
+  background: #f4fbf6;
+}
+
+.mf-organize-status-card-amber {
+  border-color: #efd9a9;
+  background: #fffaf0;
+}
+
+.mf-organize-status-card-red {
+  border-color: #efc7c7;
+  background: #fff7f7;
+}
+
+.mf-organize-status-card-neutral {
+  border-color: #e2e7ef;
+  background: #f8f9fb;
+}
+
+.mf-organize-status-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(20, 34, 60, 0.08);
+  color: #1268f5;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.mf-organize-status-card-green .mf-organize-status-icon {
+  color: #1d6b3b;
+}
+
+.mf-organize-status-card-amber .mf-organize-status-icon {
+  color: #8a5a00;
+}
+
+.mf-organize-status-card-red .mf-organize-status-icon {
+  color: #a12626;
+}
+
+.mf-organize-status-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mf-organize-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: #52627a;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.mf-organize-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.mf-organize-status-title {
+  margin: 0;
+  color: #0e1728;
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.mf-organize-status-title:focus {
+  outline: 2px solid #1268f5;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.mf-organize-status-text {
+  margin: 0;
+  color: #52627a;
+  font-size: 13.5px;
+  line-height: 21px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-status-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid #d9e4f7;
+  border-top-color: #1268f5;
+  border-radius: 50%;
+  animation: mf-organize-preparation-spin 0.9s linear infinite;
+}
+
+/* The Files preparation is a left-aligned state card followed by one aligned
+   facts table. Its real phase supplies the title, so an unknown count never
+   becomes a percentage or a generic "preparing" word. */
+.mf-organize-files-preparation {
+  display: grid;
+  gap: 14px;
+  padding: 0;
+}
+
+.mf-organize-files-preparation .mf-organize-preparation-facts {
+  width: 100%;
+  margin: 0;
+  border: 1px solid #e2e9f2;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.mf-organize-files-preparation .mf-organize-preparation-facts > div {
+  grid-template-columns: minmax(90px, 120px) minmax(0, 1fr);
+  padding: 10px 14px;
+}
+
+.mf-organize-files-preparation .mf-organize-preparation-facts > div:last-child {
+  border-bottom: 0;
+}
+
+.mf-organize-files-preparation .mf-organize-preparation-note,
+.mf-organize-files-preparation .mf-organize-preparation-action {
+  width: 100%;
+  margin: 0;
+}
+
+.mf-organize-overview-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.mf-organize-overview-group {
+  display: grid;
+  gap: 6px;
+}
+
+.mf-organize-overview-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mf-organize-overview-group-head h4 {
+  margin: 0;
+  color: #14223c;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.mf-organize-overview-group-head span {
+  color: #5f6b7d;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.mf-organize-overview-item {
+  padding: 9px 12px;
+  border: 1px solid #e8edf4;
+  border-radius: 9px;
+  background: #ffffff;
+}
+
+.mf-organize-overview-group .mf-organize-overview-list {
+  display: grid;
+  gap: 6px;
+}
+
+.mf-organize-overview-group .mf-organize-overview-item:last-child {
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mf-organize-overview-route > summary {
+  cursor: pointer;
+  color: #52627a;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.mf-organize-overview-route > p {
+  margin: 4px 0 0;
+  color: #52627a;
+  font-size: 12.5px;
+  line-height: 19px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-overview-item-ready .mf-organize-overview-reason,
+.mf-organize-overview-item-included .mf-organize-overview-reason {
+  color: #52627a;
+}
+
+.mf-organize-overview-item-recorded .mf-organize-overview-reason {
+  color: #52627a;
+}
+
+.mf-organize-footer-action {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.mf-organize-footer-action .mf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0;
+}
+
+.mf-organize-footer-action .mf-button {
+  white-space: nowrap;
+}
+
+.mf-organize-batch-effect {
+  grid-column: 1 / -1;
+  min-width: 0;
+  color: #5f6b7d;
+  font-size: 12.5px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .mf-organize-status-card {
+    padding: 13px 14px;
+    gap: 10px;
+  }
+
+  .mf-organize-status-icon {
+    width: 32px;
+    height: 32px;
+    font-size: 15px;
+  }
+
+  .mf-organize-status-title {
+    font-size: 18px;
+    line-height: 25px;
+  }
+
+  .mf-organize-footer-action {
+    flex-basis: 100%;
+  }
+
+  .mf-organize-footer-action .mf-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .mf-organize-footer-action .mf-button {
+    flex: 1 1 auto;
+  }
+}
+
 .mf-organize-file-head {
   margin: 0 0 12px;
   padding: 2px 0 12px;
@@ -10006,13 +10283,17 @@ tr[aria-selected="true"] {
 
 .mf-organize-file-head h3 {
   margin: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 2px 8px;
   color: #0e1728;
   font-size: 18px;
   line-height: 25px;
+}
+
+.mf-organize-file-head h3 .mf-organize-file-eyebrow {
+  grid-column: 1 / -1;
 }
 
 .mf-organize-file-head h3 .mf-status-badge {
@@ -10492,13 +10773,10 @@ tr[aria-selected="true"] {
 
 .mf-organize-batch-list li {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(118px, 0.55fr) minmax(
-      0,
-      1.5fr
-    );
-  gap: 4px 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 14px;
   align-items: start;
-  padding: 8px 0;
+  padding: 9px 0;
   border-bottom: 1px solid #eef2f7;
   font-size: 13.5px;
   line-height: 20px;
@@ -10516,15 +10794,17 @@ tr[aria-selected="true"] {
 
 .mf-organize-batch-operation {
   min-width: 0;
+  justify-self: end;
   color: #52627a;
   font-size: 12.5px;
   line-height: 20px;
+  text-align: right;
   overflow-wrap: anywhere;
 }
 
 .mf-organize-batch-target {
+  grid-column: 1 / -1;
   min-width: 0;
-  flex: none;
 }
 
 .mf-organize-batch-source,
@@ -10759,7 +11039,9 @@ tr[aria-selected="true"] {
   }
 
   .mf-organize-batch-operation {
+    justify-self: start;
     color: #5f6b7d;
+    text-align: left;
   }
 
   .mf-organize-batch-target {

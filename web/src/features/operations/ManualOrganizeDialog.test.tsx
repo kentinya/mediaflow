@@ -114,6 +114,8 @@ function makeBackend() {
     // analysis authority, exactly like the backend's conflict decision.
     conflictProblem: false as boolean,
     conflictResolved: false as boolean,
+    // The backend saved the skip but its response never reaches the browser.
+    loseConflictDecisionResponse: false as boolean,
     failMetadataDecision: false as boolean,
     failMetadataContinue: false as boolean,
     recoveryAnalysisQueued: false as boolean,
@@ -1254,6 +1256,9 @@ function makeBackend() {
         state.recoveryAnalysisQueued = false;
         if (state.conflictProblem) {
           state.conflictResolved = true;
+          if (state.loseConflictDecisionResponse) {
+            throw new TypeError("response lost after the durable skip");
+          }
           return jsonResponse(conflictRecovery(true));
         }
         if (state.metadataCandidateProblem) {
@@ -1658,7 +1663,7 @@ async function openDialog(
   if (entry === "file") {
     await enterFirstOverviewFile(
       user,
-      new RegExp(`第 1 \\/ ${selection?.length ?? FILE_COUNT} 个`),
+      new RegExp(`第 \\d+ \\/ ${selection?.length ?? FILE_COUNT} 个`),
     );
   }
   if (entry === "overview") {
@@ -2466,10 +2471,10 @@ describe("ManualOrganizeDialog", () => {
       [filename(0)],
     );
 
-    expect(await screen.findByText("正在准备")).toBeVisible();
     expect(
-      card().querySelector(".mf-organize-preparation-spinner"),
-    ).not.toBeNull();
+      await screen.findByText("申请已受理，正在排队等待处理"),
+    ).toBeVisible();
+    expect(card().querySelector(".mf-organize-status-spinner")).not.toBeNull();
     // The shared title is the only header copy during first-plan preparation.
     expect(
       within(card()).queryByText(/每次复核一个主文件及其关联附件/),
@@ -2478,11 +2483,10 @@ describe("ManualOrganizeDialog", () => {
     expect(card()).toHaveTextContent("library");
     expect(card()).toHaveTextContent("受理范围");
     expect(card()).toHaveTextContent("1 个文件");
-    expect(card()).not.toHaveTextContent("整理进度");
-    expect(card()).not.toHaveTextContent("已找到");
-    // The baseline stage card, counts, diagnostics and Worker box are gone.
+    expect(card()).toHaveTextContent("准备进度");
+    expect(card()).toHaveTextContent("尚未产生主文件数量");
+    // The baseline stage card, diagnostics and Worker box are gone.
     expect(card().querySelector(".mf-organize-stage-copy")).toBeNull();
-    expect(screen.queryByText(/准备进度/)).toBeNull();
     expect(screen.queryByText(/准备诊断/)).toBeNull();
     expect(screen.queryByText(/处理 Worker 暂不可用/)).toBeNull();
     expect(screen.queryByRole("region", { name: "排除与等待原因" })).toBeNull();
@@ -2592,7 +2596,9 @@ describe("ManualOrganizeDialog", () => {
       [refusedName, admittedName],
     );
 
-    expect(await screen.findByText("正在准备")).toBeVisible();
+    expect(
+      await screen.findByText("申请已受理，正在排队等待处理"),
+    ).toBeVisible();
     expect(card()).toHaveTextContent("1 个文件");
     expect(card()).toHaveTextContent("未受理 1 项");
     expect(card()).toHaveTextContent(
@@ -2637,7 +2643,9 @@ describe("ManualOrganizeDialog", () => {
       [filename(0), filename(1)],
     );
 
-    await screen.findByRole("heading", { name: /第 1 \/ 2 个/ });
+    // A stale tail is grouped under "待处理" before the ready file, so the
+    // first overview row is that pending exact item, not array position one.
+    await screen.findByRole("heading", { name: /第 2 \/ 2 个/ });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     expect(within(card()).getByText("本次方案暂不能整体确认")).toBeVisible();
@@ -2660,7 +2668,9 @@ describe("ManualOrganizeDialog", () => {
       within(card()).getByText("未纳入本次确认的文件(1 项)");
     await user.click(skippedSummary);
     expect(
-      within(card()).getByText(/本方案中该文件已失效；返回逐项复核查看原因/),
+      within(card()).getByText(
+        /该文件已不在当前方案中；需要重新分析后才能再次核对或纳入/,
+      ),
     ).toBeVisible();
     await user.click(
       within(card()).getByRole("button", { name: `查看 ${filename(1)}` }),
@@ -2683,7 +2693,7 @@ describe("ManualOrganizeDialog", () => {
       [filename(0), filename(1)],
     );
 
-    await screen.findByRole("heading", { name: /第 1 \/ 2 个/ });
+    await screen.findByRole("heading", { name: /第 2 \/ 2 个/ });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     expect(within(card()).getByText("摘要已不是当前方案")).toBeVisible();
@@ -2704,9 +2714,9 @@ describe("ManualOrganizeDialog", () => {
     // The first read is an honest waiting state, and the interval keeps
     // reading the same unchanged document without needing a render.  The
     // discovered primary count is real, while no unknown percentage is shown.
-    await screen.findByText("正在准备");
-    expect(await screen.findByText("整理进度")).toBeVisible();
-    expect(screen.getByText("已找到 10 个主文件")).toBeVisible();
+    await screen.findByText("正在等待来源文件稳定");
+    expect(await screen.findByText("准备进度")).toBeVisible();
+    expect(screen.getByText(/已找到 10 个主文件/)).toBeVisible();
     expect(card()).not.toHaveTextContent("%");
     await enterFirstOverviewFile(user, /第 1 \/ 10 个/);
     expect(within(card()).getAllByText("Movie.01.mkv").length).toBeGreaterThan(
@@ -2723,7 +2733,7 @@ describe("ManualOrganizeDialog", () => {
       value.state.frozenOnlyReads = 3;
     });
 
-    await screen.findByText("正在准备");
+    await screen.findByText("准备已完成，等待后台生成方案");
     // The completed walk has not frozen an intent yet: the analysis action is
     // not advertised, and the card must keep reading instead of settling here.
     expect(
@@ -2852,7 +2862,11 @@ describe("ManualOrganizeDialog", () => {
     });
 
     expect(await screen.findByText("后台暂不可用")).toBeVisible();
-    expect(screen.getByText("请求已保存，请联系管理员。")).toBeVisible();
+    expect(
+      screen.getByText(
+        "原请求已保存，当前没有可用后台；联系管理员恢复后即可继续读取这次准备。",
+      ),
+    ).toBeVisible();
     expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
     expect(card().querySelector(".mf-organize-stage-copy")).toBeNull();
     expect(screen.queryByText(/处理 Worker 暂不可用/)).toBeNull();
@@ -3253,9 +3267,8 @@ describe("ManualOrganizeDialog", () => {
         .closest("div") as HTMLElement;
       return row.querySelector("dd")?.textContent ?? "";
     };
-    expect(count("待处理")).toBe("0");
-    expect(count("可确认")).toBe("0");
-    expect(count("已纳入")).toBe("1");
+    expect(count("已选 / 可确认")).toBe("1 / 1");
+    expect(count("需要处理")).toBe("0");
     expect(count("已有记录")).toBe("0");
     expect(overview).toHaveTextContent(`source:Movies/${filename(0)}`);
 
@@ -3281,9 +3294,8 @@ describe("ManualOrganizeDialog", () => {
         .closest("div") as HTMLElement;
       return row.querySelector("dd")?.textContent ?? "";
     };
-    expect(returnedCount("待处理")).toBe("0");
-    expect(returnedCount("可确认")).toBe("1");
-    expect(returnedCount("已纳入")).toBe("0");
+    expect(returnedCount("已选 / 可确认")).toBe("0 / 1");
+    expect(returnedCount("需要处理")).toBe("0");
 
     // The exact batch review names the source, destination, operation and
     // attachments; entering it is still zero-mutation, zero-execute.
@@ -3354,8 +3366,8 @@ describe("ManualOrganizeDialog", () => {
         .closest("div") as HTMLElement;
       return row.querySelector("dd")?.textContent ?? "";
     };
-    expect(count("待处理")).toBe("1");
-    expect(count("已纳入")).toBe("1");
+    expect(count("需要处理")).toBe("1");
+    expect(count("已选 / 可确认")).toBe("1 / 1");
 
     const failedRow = within(overview)
       .getByRole("button", { name: `查看 ${filename(0)}` })
@@ -3384,8 +3396,8 @@ describe("ManualOrganizeDialog", () => {
     expect(card()).not.toHaveTextContent("Storage failure");
     expect(within(card()).queryByRole("radio", { name: /候选/ })).toBeNull();
     expect(
-      within(card()).getByRole("button", { name: "保存并重新分析" }),
-    ).toBeDisabled();
+      within(card()).queryByRole("button", { name: "保存并重新分析" }),
+    ).toBeNull();
     expect(backend.calls.executePosts).toHaveLength(0);
 
     await user.click(screen.getByRole("button", { name: "返回概览" }));
@@ -4022,6 +4034,122 @@ describe("ManualOrganizeDialog", () => {
     ).toBeNull();
     expect(backend.calls.recoveryDecisionPosts).toHaveLength(1);
     expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("A59-01 uses the exact skipped result in the overview, footer and batch omission", async () => {
+    const user = userEvent.setup();
+    await openDialog(
+      user,
+      (value) => {
+        value.state.conflictProblem = true;
+      },
+      [filename(0), filename(1)],
+      "overview",
+    );
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    await user.click(
+      within(overview).getByRole("button", { name: "查看 Movie.01.mkv" }),
+    );
+    await user.click(await screen.findByRole("radio", { name: /跳过此条目/ }));
+    await user.click(
+      within(card()).getByRole("button", { name: "保存并重新分析" }),
+    );
+
+    const returned = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    const count = (term: string): string => {
+      const row = within(returned)
+        .getByText(term, { selector: "dt" })
+        .closest("div") as HTMLElement;
+      return row.querySelector("dd")?.textContent ?? "";
+    };
+    expect(count("已选 / 可确认")).toBe("1 / 1");
+    expect(count("需要处理")).toBe("0");
+    expect(count("已有记录")).toBe("1");
+    // The footer and the overview read the same exact rows: no stale pending
+    // item remains after the durable skip, and the ready sibling is untouched.
+    expect(
+      within(card()).getByText(/已选 1 项 · 需要处理 0 项 · 已有记录 1 项/),
+    ).toBeVisible();
+    const row = within(returned).getByText("Movie.01.mkv").closest("li");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("已有记录")).toBeVisible();
+    expect(
+      within(row as HTMLElement).getByText(/已跳过 · 来源保留/),
+    ).toBeVisible();
+    expect(
+      within(row as HTMLElement).queryAllByText(/移动|来源不保留/),
+    ).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    await screen.findByRole("region", { name: "整批复核" });
+    await user.click(screen.getByText("未纳入本次确认的文件(1 项)"));
+    expect(
+      within(card()).getByText(/该文件已按当前决定跳过，未纳入本次整理/),
+    ).toBeVisible();
+    expect(within(card()).queryAllByText(/本方案中该文件已失效/)).toHaveLength(
+      0,
+    );
+    expect(screen.getByRole("button", { name: "确认整理 1 项" })).toBeEnabled();
+  }, 30_000);
+
+  it("A59-01 returns to the overview from a durable skip whose response was lost", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.conflictProblem = true;
+        value.state.loseConflictDecisionResponse = true;
+      },
+      [filename(0), filename(1)],
+      "overview",
+    );
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    await user.click(
+      within(overview).getByRole("button", { name: "查看 Movie.01.mkv" }),
+    );
+    await user.click(await screen.findByRole("radio", { name: /跳过此条目/ }));
+    await user.click(
+      within(card()).getByRole("button", { name: "保存并重新分析" }),
+    );
+
+    await waitFor(() =>
+      expect(backend.calls.recoveryDecisionPosts).toHaveLength(1),
+    );
+    // The same-item recovery read saw the durable skip; the lost response is
+    // not treated as a refusal and no analysis is requested.
+    const returned = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    const row = within(returned).getByText("Movie.01.mkv").closest("li");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("已有记录")).toBeVisible();
+    expect(
+      within(row as HTMLElement).getByText(/已跳过 · 来源保留/),
+    ).toBeVisible();
+    expect(
+      within(card()).getByText(/已选 1 项 · 需要处理 0 项 · 已有记录 1 项/),
+    ).toBeVisible();
+    const skippedButton = within(returned).getByRole("button", {
+      name: "查看 Movie.01.mkv",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(skippedButton));
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(1);
+    expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(backend.state.conflictResolved).toBe(true);
+
+    await user.click(
+      within(returned).getByRole("button", { name: "查看 Movie.01.mkv" }),
+    );
+    expect(await screen.findByText("此文件已跳过")).toBeVisible();
   }, 30_000);
 
   it("A59-01 keeps the operator's new file and draft when the skip result lands late", async () => {

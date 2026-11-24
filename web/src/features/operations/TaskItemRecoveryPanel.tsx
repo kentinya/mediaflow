@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
@@ -359,6 +360,12 @@ export interface TaskItemRecoveryPanelProps {
    */
   readonly mode?: "full" | "decision";
   /**
+   * The Files dialog's fixed footer action slot. In decision mode the one
+   * legal save action is portaled there so the same submit handler,
+   * validation and busy state stay authoritative while the body scrolls.
+   */
+  readonly actionBarTargetId?: string;
+  /**
    * Called before this exact item's analysis continuation is sent. The Files
    * card captures the item facts that existed when the operator acted, so an
    * accepted response, an explicit refusal and a lost response all keep the
@@ -416,6 +423,7 @@ export function TaskItemRecoveryPanel({
   runId,
   active,
   mode = "full",
+  actionBarTargetId,
   onAnalysisStarted,
   onAnalysisRequested,
   onDecisionStarted,
@@ -426,6 +434,20 @@ export function TaskItemRecoveryPanel({
   hostedDiagnostics = false,
 }: TaskItemRecoveryPanelProps) {
   const decisionMode = mode === "decision";
+  const [actionBarTarget, setActionBarTarget] = useState<HTMLElement | null>(
+    null,
+  );
+  useEffect(() => {
+    const target =
+      actionBarTargetId === undefined
+        ? null
+        : document.getElementById(actionBarTargetId);
+    if (target === actionBarTarget) return;
+    // The Files footer is a sibling of this body; its DOM node exists only
+    // after the parent commit, so this effect is the portal-target lookup.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setActionBarTarget(target);
+  }, [actionBarTargetId, actionBarTarget]);
   const token = useAuthToken();
   const queryClient = useQueryClient();
   const query = useQuery(
@@ -504,6 +526,20 @@ export function TaskItemRecoveryPanel({
   const [allowCleanupConfirm, setAllowCleanupConfirm] = useState(false);
   const model = query.data?.ok === true ? query.data.model : null;
   const checkpoint = model?.checkpoint ?? null;
+  /**
+   * A decision/ignore command started in this panel may end the exact item
+   * even when its response is lost. The same-item durable read is the only
+   * authority that may then publish the terminal skipped/ignored result.
+   */
+  const decisionSettlementRef = useRef(false);
+  useEffect(() => {
+    if (!decisionSettlementRef.current || checkpoint === null) return;
+    if (checkpoint.status !== "skipped" && checkpoint.status !== "ignored") {
+      return;
+    }
+    decisionSettlementRef.current = false;
+    onDecisionSettled?.({ status: checkpoint.status });
+  }, [checkpoint, onDecisionSettled]);
   const decision = model?.decision ?? null;
   // The durable summary the current authenticated principal may read is the
   // single read authority for this journey.  A locally prepared summary is
@@ -943,6 +979,7 @@ export function TaskItemRecoveryPanel({
     // This explicit save starts a new decision/analysis attempt for the exact
     // current checkpoint; an older analysis observation cannot describe it.
     updateRecoverySession({ analysis: null });
+    decisionSettlementRef.current = true;
     onDecisionStarted?.();
     beginAction("decision");
     try {
@@ -957,6 +994,9 @@ export function TaskItemRecoveryPanel({
         },
       );
       if (!result.ok) {
+        if (!isUnknown(result.status, result.code)) {
+          decisionSettlementRef.current = false;
+        }
         await reportUnknown(result.code, result.status);
         refreshLinkedReads();
         return;
@@ -980,6 +1020,7 @@ export function TaskItemRecoveryPanel({
         ),
       );
       if (updated.checkpoint.permittedActionIds.includes("retry")) {
+        decisionSettlementRef.current = false;
         await continueAt(updated.checkpoint.checkpointVersion, false);
       } else {
         // A skip/ignore decision ends this exact item; there is no analysis to
@@ -988,7 +1029,10 @@ export function TaskItemRecoveryPanel({
           updated.checkpoint.status === "skipped" ||
           updated.checkpoint.status === "ignored"
         ) {
+          decisionSettlementRef.current = false;
           onDecisionSettled?.({ status: updated.checkpoint.status });
+        } else {
+          decisionSettlementRef.current = false;
         }
         updateRecoverySession({
           message:
@@ -1003,6 +1047,7 @@ export function TaskItemRecoveryPanel({
 
   const ignoreDecision = async () => {
     if (checkpoint === null || busy || repeatLocked) return;
+    decisionSettlementRef.current = true;
     onDecisionStarted?.();
     beginAction("ignore");
     try {
@@ -1020,14 +1065,19 @@ export function TaskItemRecoveryPanel({
         if (onDecisionSettled !== undefined) {
           const readBack = await query.refetch({ cancelRefetch: false });
           if (
+            decisionSettlementRef.current &&
             readBack.data?.ok === true &&
             readBack.data.model.checkpoint.status === "ignored"
           ) {
+            decisionSettlementRef.current = false;
             onDecisionSettled({ status: "ignored" });
           }
         }
         refreshLinkedReads();
       } else {
+        if (!isUnknown(result.status, result.code)) {
+          decisionSettlementRef.current = false;
+        }
         await reportUnknown(result.code, result.status);
         refreshLinkedReads();
       }
@@ -1759,6 +1809,7 @@ export function TaskItemRecoveryPanel({
             permitted={permitted}
             busy={busy}
             presentation="dialog"
+            actionsTarget={actionBarTarget}
           />
         )}
         {owesRecoveryAction &&
@@ -2076,6 +2127,8 @@ function DecisionForm(props: {
   readonly busy: boolean;
   /** `dialog` uses the current-file wording; Task Center keeps its own copy. */
   readonly presentation?: "full" | "dialog";
+  /** The Files footer slot; when present the one save group moves there. */
+  readonly actionsTarget?: HTMLElement | null;
 }) {
   const { decision } = props;
   const dialog = props.presentation === "dialog";
@@ -2087,6 +2140,28 @@ function DecisionForm(props: {
           (props.conflictStrategy !== "overwrite" || props.confirmOverwrite)
         : props.selectedChoice !== "";
   const actionId = `resolve_${decision.kind}`;
+  const actionGroup = (
+    <div className="mf-actions">
+      <button
+        type="button"
+        className="mf-button"
+        disabled={props.disabled || !canSave || !props.permitted.has(actionId)}
+        onClick={props.onSave}
+      >
+        {props.busy ? "正在保存并重新分析…" : "保存并重新分析"}
+      </button>
+      {props.canIgnore && (
+        <button
+          type="button"
+          className="mf-button mf-button-secondary"
+          disabled={props.disabled}
+          onClick={props.onIgnore}
+        >
+          忽略此条目
+        </button>
+      )}
+    </div>
+  );
   const optionName = dialog
     ? `organize-${decision.kind}-choice`
     : "recovery-choice";
@@ -2576,28 +2651,9 @@ function DecisionForm(props: {
         </details>
       ) : null}
 
-      <div className="mf-actions">
-        <button
-          type="button"
-          className="mf-button"
-          disabled={
-            props.disabled || !canSave || !props.permitted.has(actionId)
-          }
-          onClick={props.onSave}
-        >
-          {props.busy ? "正在保存并重新分析…" : "保存并重新分析"}
-        </button>
-        {props.canIgnore && (
-          <button
-            type="button"
-            className="mf-button mf-button-secondary"
-            disabled={props.disabled}
-            onClick={props.onIgnore}
-          >
-            忽略此条目
-          </button>
-        )}
-      </div>
+      {props.actionsTarget === null || props.actionsTarget === undefined
+        ? actionGroup
+        : createPortal(actionGroup, props.actionsTarget)}
       <p className={dialog ? "mf-organize-decision-hint" : "mf-dashboard-meta"}>
         保存只记录当前文件的选择并请求零变更分析，不会执行整理，也不会修改任何文件。
         分析使用此 Task 的固定配置并由常驻 Worker 处理。
