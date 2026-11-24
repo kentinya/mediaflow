@@ -1034,7 +1034,7 @@ test("PATCH-20261113-1 keeps equal-status attempts as two complete history entri
         result_id: "result-later-attempt",
         created_at: "2026-08-22T12:07:00+00:00",
       };
-      document.results = [original, later];
+      document.results = [later, original];
       document.item.attempts = 2;
       document.checkpoint.attempts = 2;
       document.checkpoint.latest_result = later;
@@ -1056,14 +1056,16 @@ test("PATCH-20261113-1 keeps equal-status attempts as two complete history entri
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await detail.getByRole("button", { name: "查看证据" }).first().click();
   const evidence = detail.getByRole("region", { name: "条目证据" });
-  const history = evidence.getByRole("list", { name: "逐次执行历史" });
-  const entries = history.locator(":scope > li");
-  await expect(entries).toHaveCount(2);
-  for (const [index, instant] of [
-    "2026-08-22T12:05:00+00:00",
-    "2026-08-22T12:07:00+00:00",
+  const current = evidence.getByRole("region", { name: "执行记录" });
+  const history = evidence.getByRole("list", { name: "此前执行记录" });
+  await expect(history).toBeHidden();
+  await evidence.getByText("此前尝试（1 次）", { exact: true }).click();
+  const prior = history.locator(":scope > li");
+  await expect(prior).toHaveCount(1);
+  for (const [index, { entry, instant }] of [
+    { entry: current, instant: "2026-08-22T12:07:00+00:00" },
+    { entry: prior, instant: "2026-08-22T12:05:00+00:00" },
   ].entries()) {
-    const entry = entries.nth(index);
     await expect(
       entry.getByText(
         `执行记录 ${index + 1}（${localRunTime(instant)}）：已完成`,
@@ -1093,8 +1095,9 @@ test("PATCH-20261113-1 attributes different next steps within one file diagnosis
   await openCenterRun(page, "task-001");
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await detail
-    .getByRole("row")
-    .filter({ hasText: "movies/Inception (2010).mkv" })
+    .getByRole("region", { name: "主条目" })
+    .getByRole("listitem")
+    .filter({ hasText: "Inception (2010).mkv" })
     .getByRole("button", { name: "查看证据" })
     .click();
   const evidence = detail.getByRole("region", { name: "条目证据" });
