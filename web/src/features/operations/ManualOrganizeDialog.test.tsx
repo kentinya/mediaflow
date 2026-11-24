@@ -97,6 +97,9 @@ function makeBackend() {
     analyzeShowsAnalyzing: false as boolean,
     rejectAnalysisOnce: false as boolean,
     manualAnalysisRecovery: false as boolean,
+    // The linked preparation still advertises its exact zero-mutation
+    // re-analysis at the human-waiting boundary.
+    reanalysisAvailable: false as boolean,
     discoveryReads: 0 as number,
     // A real no-candidate problem on the first file, plus the durable
     // metadata-correction decision the same TaskItem exposes after analysis.
@@ -295,7 +298,13 @@ function makeBackend() {
       actions: {
         cancel: discoveryAction(),
         finalize: discoveryAction(),
-        prepare: discoveryAction(),
+        prepare: state.reanalysisAvailable
+          ? {
+              ...discoveryAction(),
+              available: true,
+              path: `/api/operations/organize/discoveries/${DISCOVERY_ID}/analyze`,
+            }
+          : discoveryAction(),
       },
       sources: [],
       nextAction: "open the linked exact plan summary",
@@ -1750,7 +1759,7 @@ describe("ManualOrganizeDialog", () => {
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     expect(screen.getByRole("region", { name: "整批复核" })).toHaveTextContent(
-      /将整理\s*10\s*项/,
+      /本次确认\s*10\s*项/,
     );
 
     const confirm = screen.getByRole("button", { name: "确认整理 10 项" });
@@ -2401,10 +2410,10 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.executePosts).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const region = await screen.findByRole("region", { name: "整批复核" });
-    expect(region).toHaveTextContent(/将整理\s*10\s*项/);
+    expect(region).toHaveTextContent(/本次确认\s*10\s*项/);
 
     // Browse-only steps are still zero-execute even on the confirm step.
-    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
     await screen.findByRole("region", { name: "本次整理概览" });
     expect(backend.calls.executePosts).toHaveLength(0);
 
@@ -2428,7 +2437,7 @@ describe("ManualOrganizeDialog", () => {
     // Deselect the remaining files one page at a time; the count follows the
     // exact subset and drops to an explicit, disabled 0 state.
     for (let index = 1; index < FILE_COUNT; index += 1) {
-      await user.click(screen.getByRole("button", { name: "返回概览" }));
+      await user.click(screen.getByRole("button", { name: "返回整理概览" }));
       await screen.findByRole("region", { name: "本次整理概览" });
       // Each pass opens exactly the file this pass excludes.
       await user.click(
@@ -2530,17 +2539,16 @@ describe("ManualOrganizeDialog", () => {
 
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const region = await screen.findByRole("region", { name: "整批复核" });
-    expect(region).toHaveTextContent(/将整理\s*1\s*项/);
+    expect(region).toHaveTextContent(/本次确认\s*1\s*项/);
     expect(region).toHaveTextContent(/未纳入\s*0\s*项/);
-    expect(region).toHaveTextContent("移动 1 项：整理成功后来源位置不再保留");
-    expect(region).toHaveTextContent("包含覆盖已有目标 1 个（需单独授权）");
+    expect(card()).toHaveTextContent("来源影响：移动成功后原位置不再保留");
     const planDiagnostics = within(region)
       .getByText(/方案 preview-1/)
       .closest("details");
     expect(planDiagnostics).toHaveClass("mf-organize-plan-diagnostics");
 
     const batchList = await screen.findByRole("region", {
-      name: "本次确认的文件",
+      name: "来源与目标",
     });
     expect(
       within(batchList).getByRole("button", { name: "查看 Movie.01.mkv" }),
@@ -2624,9 +2632,8 @@ describe("ManualOrganizeDialog", () => {
       within(summary)
         .getByText(term, { selector: "dt" })
         .closest("div") as HTMLElement;
-    expect(fact("将整理")).toHaveTextContent("1 项");
+    expect(fact("本次确认")).toHaveTextContent("1 项");
     expect(fact("未纳入")).toHaveTextContent("0 项");
-    expect(fact("未受理")).toHaveTextContent("1 项");
     expect(within(card()).getByText("未受理的所选条目(1 项)")).toBeVisible();
     expect(backend.calls.executePosts).toHaveLength(0);
     expect(backend.calls.analyzePosts).toHaveLength(0);
@@ -3110,10 +3117,8 @@ describe("ManualOrganizeDialog", () => {
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     expect(screen.getByRole("region", { name: "整批复核" })).toHaveTextContent(
-      /将整理\s*1\s*项/,
+      /本次确认\s*1\s*项/,
     );
-    expect(screen.getByText(/包含覆盖已有目标/)).toBeVisible();
-
     const overwrite = screen.getByRole("checkbox", {
       name: "我确认允许按已审阅方案替换现有目标文件",
     });
@@ -3171,7 +3176,7 @@ describe("ManualOrganizeDialog", () => {
 
     // The untouched sibling is corrected (RecognitionType C) and re-analyzed:
     // a newer exact summary appears while the original request stays unknown.
-    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
     await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(
       screen.getByRole("button", { name: `查看 ${filename(1)}` }),
@@ -3270,12 +3275,18 @@ describe("ManualOrganizeDialog", () => {
     expect(count("已选 / 可确认")).toBe("1 / 1");
     expect(count("需要处理")).toBe("0");
     expect(count("已有记录")).toBe("0");
-    expect(overview).toHaveTextContent(`source:Movies/${filename(0)}`);
+    const readyRow = within(overview)
+      .getByRole("button", { name: `查看 ${filename(0)}` })
+      .closest("li") as HTMLElement;
+    expect(within(readyRow).getByText("移动 · One")).toBeVisible();
+    expect(within(readyRow).queryByText("查看精确路径与方案")).toBeNull();
+    expect(within(readyRow).queryByText(/无关联附件/)).toBeNull();
 
     await user.click(
       within(overview).getByRole("button", { name: `查看 ${filename(0)}` }),
     );
     await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    expect(card()).toHaveTextContent(`source:Movies/${filename(0)}`);
     await user.click(
       screen.getByRole("checkbox", { name: `纳入 ${filename(0)}` }),
     );
@@ -3294,18 +3305,18 @@ describe("ManualOrganizeDialog", () => {
         .closest("div") as HTMLElement;
       return row.querySelector("dd")?.textContent ?? "";
     };
-    expect(returnedCount("已选 / 可确认")).toBe("0 / 1");
+    expect(returnedCount("已选 / 可确认")).toBe("0 / 0");
     expect(returnedCount("需要处理")).toBe("0");
 
     // The exact batch review names the source, destination, operation and
     // attachments; entering it is still zero-mutation, zero-execute.
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const confirm = await screen.findByRole("region", { name: "整批复核" });
-    expect(confirm).toHaveTextContent(/将整理\s*0\s*项/);
+    expect(confirm).toHaveTextContent(/本次确认\s*0\s*项/);
     expect(screen.queryByRole("button", { name: /确认整理 [1-9]/ })).toBeNull();
     expect(backend.calls.executePosts).toHaveLength(0);
 
-    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
     await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(
       screen.getByRole("button", { name: `查看 ${filename(0)}` }),
@@ -3315,7 +3326,7 @@ describe("ManualOrganizeDialog", () => {
     );
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const listed = await screen.findByRole("region", {
-      name: "本次确认的文件",
+      name: "来源与目标",
     });
     expect(listed).toHaveTextContent(`来源 source:Movies/${filename(0)}`);
     expect(listed).toHaveTextContent("附件 2 个");
@@ -3404,7 +3415,7 @@ describe("ManualOrganizeDialog", () => {
     await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const listed = await screen.findByRole("region", {
-      name: "本次确认的文件",
+      name: "来源与目标",
     });
     expect(listed).toHaveTextContent(filename(1));
     expect(listed).not.toHaveTextContent(filename(0));
@@ -3682,7 +3693,7 @@ describe("ManualOrganizeDialog", () => {
       name: "本次整理概览",
     });
     expect(overview).toHaveTextContent("明确跳过文件操作");
-    expect(overview).toHaveTextContent("不执行文件操作，来源保留");
+    expect(overview).toHaveTextContent("跳过 · One");
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
@@ -4034,6 +4045,63 @@ describe("ManualOrganizeDialog", () => {
     ).toBeNull();
     expect(backend.calls.recoveryDecisionPosts).toHaveLength(1);
     expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("A59-01 keeps a settled skip on a stale plan and offers its preparation re-analysis", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.conflictProblem = true;
+        value.state.previewCurrent = false;
+        value.state.previewStaleTail = 1;
+        value.state.reanalysisAvailable = true;
+      },
+      [filename(0)],
+      "overview",
+    );
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    await expect(
+      within(overview).getByText(/本次方案有 1 个文件未就绪或已失效/),
+    ).toBeVisible();
+    await user.click(
+      within(overview).getByRole("button", { name: `查看 ${filename(0)}` }),
+    );
+    await user.click(await screen.findByRole("radio", { name: /跳过此条目/ }));
+    await user.click(
+      within(card()).getByRole("button", { name: "保存并重新分析" }),
+    );
+
+    const returned = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    // The settled item is not asked to be handled a second time. The plan
+    // still needs one exact refresh, and its original preparation advertises
+    // that zero-mutation analysis.
+    await expect(
+      within(returned).getByText(/本次方案因 1 个已结束文件需要更新/),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    const batch = await screen.findByRole("region", { name: "整批复核" });
+    await expect(
+      within(batch).getByText(/本次方案因 1 个已结束文件需要更新/),
+    ).toBeVisible();
+    await expect(
+      screen.getByRole("button", { name: "确认整理 0 项" }),
+    ).toBeDisabled();
+    await user.click(screen.getByText("未纳入本次确认的文件(1 项)"));
+    expect(card()).toHaveTextContent(/该文件已按当前决定跳过/);
+    expect(within(card()).queryAllByText(/该文件未就绪/)).toHaveLength(0);
+    const reanalysis = within(batch).getByRole("button", {
+      name: "重新分析同一准备",
+    });
+    await user.click(reanalysis);
+    await waitFor(() => expect(backend.calls.analyzePosts).toHaveLength(1));
+    expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
   it("A59-01 uses the exact skipped result in the overview, footer and batch omission", async () => {

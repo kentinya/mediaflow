@@ -5376,6 +5376,34 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
     reviewDialog.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible({ timeout: 30_000 });
   await expect(reviewDialog.getByText("Two.2002.mkv").first()).toBeVisible();
+  // The in-place continuation keeps the Slice Base body: its current-file
+  // header, the source-library fact and the "current plan" section, not the
+  // Files overview layout.
+  await expect(
+    reviewDialog.getByText("当前文件", { exact: true }),
+  ).toBeVisible();
+  await expect(reviewDialog.getByText(/来源库：/)).toBeVisible();
+  await expect(
+    reviewDialog.getByRole("region", { name: "当前方案" }),
+  ).toBeVisible();
+  await expect(reviewDialog.getByText("整理方案", { exact: true })).toHaveCount(
+    0,
+  );
+  await reviewDialog.getByRole("button", { name: /整批复核/ }).click();
+  const originalBatch = reviewDialog.getByRole("region", {
+    name: "整批复核",
+  });
+  await expect(
+    originalBatch.getByRole("heading", { name: "整批复核" }),
+  ).toBeVisible();
+  await expect(
+    originalBatch.getByText("确认受理前不修改任何文件"),
+  ).toBeVisible();
+  await expect(originalBatch.getByText("附件", { exact: true })).toHaveCount(0);
+  await reviewDialog.getByRole("button", { name: "返回逐项复核" }).click();
+  await expect(
+    reviewDialog.getByRole("heading", { name: /第 1 \/ 1 个/ }),
+  ).toBeVisible();
 
   // The main path never leaves the task center: same route, exact Task and
   // no independent receiving-page content or intermediate frame.

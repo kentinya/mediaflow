@@ -976,6 +976,77 @@ export function ManualOrganizeDialog({
     return { taskItemId: fact.itemId, status };
   };
   /**
+   * Every settled result this exact summary's linked TaskItems prove. The
+   * Files host keeps this read authoritative: when a decision response is
+   * lost, the panel that made the request may already be replaced by this
+   * item's terminal row. The retained dialog read must still update that row
+   * and, if the operator is still on the same file, return to the overview.
+   */
+  const filesDurableSettlementKey = filesProblemItems
+    .map((value) => {
+      const status = taskItemSettledStatus(
+        filesTaskItemFacts.get(value.itemId),
+      );
+      return status === null
+        ? ""
+        : `${value.itemId}:${value.taskItemId}:${status}`;
+    })
+    .filter((value) => value !== "")
+    .sort()
+    .join("|");
+  const filesDurableSettlementsSeen = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!filesHost || filesDurableSettlementKey === "") return;
+    const fresh: {
+      readonly itemId: string;
+      readonly taskItemId: string;
+      readonly status: "skipped" | "ignored";
+    }[] = [];
+    for (const value of filesProblemItems) {
+      const status = taskItemSettledStatus(
+        filesTaskItemFacts.get(value.itemId),
+      );
+      if (status === null) continue;
+      const key = `${value.itemId}:${value.taskItemId}:${status}`;
+      if (filesDurableSettlementsSeen.current.has(key)) continue;
+      filesDurableSettlementsSeen.current.add(key);
+      fresh.push({
+        itemId: value.itemId,
+        taskItemId: value.taskItemId,
+        status,
+      });
+    }
+    if (fresh.length === 0) return;
+    // The durable result is this row's own outcome, never a sibling's. It is
+    // recorded even when the operator has moved elsewhere, so a later
+    // confirmation can never include a just-settled item.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFilesDecisionResults((previous) => {
+      const next = { ...previous };
+      for (const row of fresh) {
+        next[row.itemId] = {
+          taskItemId: row.taskItemId,
+          status: row.status,
+        };
+      }
+      return next;
+    });
+    const action = filesDecisionAction.current;
+    if (action === null) return;
+    const matched = fresh.find(
+      (row) =>
+        row.itemId === action.itemId && row.taskItemId === action.taskItemId,
+    );
+    if (matched === undefined) return;
+    // The existing settlement effect applies the exact position, draft and
+    // review guards and then returns to the overview with focus on this row.
+    setFilesSettledDecision(matched);
+    void previewQuery.refetch({ cancelRefetch: false });
+    // The status key changes exactly when a durable result appears or ends;
+    // the objects it was derived from are the same render's exact reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filesDurableSettlementKey, filesHost]);
+  /**
    * The native problems this exact summary currently exposes. A stored
    * decision draft whose TaskItem is no longer part of it belongs to a
    * superseded analysis and must never pin the close prompt by itself.
@@ -1046,6 +1117,20 @@ export function ManualOrganizeDialog({
   });
   const filesOverviewCount = (status: OrganizeOverviewStatus) =>
     filesOverviewRows.filter((row) => row.status === status).length;
+  /**
+   * The exact rows that still need one operator decision. A settled skip or
+   * ignore is never counted here: its TaskItem already ended, even if the
+   * persisted plan has not been re-analysed yet.
+   */
+  const filesLivePendingRows = filesOverviewRows.filter(
+    (row) => row.status === "pending" && row.settled === null,
+  );
+  const filesStaleSettledRows = filesOverviewRows.filter(
+    (row) => !row.item.current && row.settled !== null,
+  );
+  const filesStaleLiveRows = filesOverviewRows.filter(
+    (row) => !row.item.current && row.settled === null,
+  );
 
   // ---- render-time synchronisation of identity-keyed state ------------
   // A new exact summary supersedes the earlier one: the reviewed selection
@@ -1650,12 +1735,48 @@ export function ManualOrganizeDialog({
         nextAction: "关闭后从资源库文件页重新选择发起。",
       };
     }
+    if (preparationStatusRunning) {
+      return {
+        reason: "后台 Worker 仍在准备或分析同一方案。",
+        nextAction: "等待当前阶段完成并自动更新后确认。",
+      };
+    }
+    if (previewQuery.isFetching) {
+      return {
+        reason: "正在读取决定后的当前方案状态。",
+        nextAction: "读取完成后再确认。",
+      };
+    }
     if (!preview.current) {
       if (previewSupersededByNewerPlan) {
         return {
           reason: "此计划摘要已被更新取代，当前摘要不能确认。",
           nextAction: "返回逐项复核，保存修正后重新分析生成当前方案。",
         };
+      }
+      if (filesHost) {
+        const livePending = filesLivePendingRows.length;
+        const settledStale = filesStaleSettledRows.length;
+        if (livePending === 0 && settledStale > 0) {
+          const prepare = preparation?.actions.prepare;
+          return {
+            reason: `本次方案因 ${settledStale} 个已结束文件需要更新。`,
+            nextAction:
+              prepare?.available === true
+                ? "重新分析同一准备生成当前方案后，再确认其余就绪项；已结束项不会重放。"
+                : (prepare?.nextAction ??
+                  "关闭后从资源库文件页重新选择发起新的整理；已结束项不会重放。"),
+          };
+        }
+        if (livePending > 0) {
+          return {
+            reason: `本次方案有 ${livePending} 个文件未就绪或已失效${
+              settledStale > 0 ? `，另有 ${settledStale} 个已结束` : ""
+            }。`,
+            nextAction:
+              "先返回逐项复核处理这些文件，再重新分析生成当前方案；已结束项不会重放。",
+          };
+        }
       }
       return {
         reason:
@@ -1678,12 +1799,6 @@ export function ManualOrganizeDialog({
       return {
         reason: preview.executeAction.reason ?? "后端未提供执行操作。",
         nextAction: preview.executeAction.nextAction ?? "",
-      };
-    }
-    if (preparationStatusRunning) {
-      return {
-        reason: "后台 Worker 仍在准备或分析同一方案。",
-        nextAction: "等待当前阶段完成并自动更新后确认。",
       };
     }
     if (executionHistoryQuery.isFetching) {
@@ -1724,6 +1839,20 @@ export function ManualOrganizeDialog({
     }
     return null;
   })();
+  /** The exact selected items this summary can confirm right now. */
+  const filesConfirmableCount =
+    confirmationBlocker === null ? activeSelection.length : 0;
+  /** A settled-only stale summary may be refreshed by its original preparation. */
+  const filesReanalysisEligible =
+    filesHost &&
+    preview !== undefined &&
+    !organizeFlowEnded &&
+    !preparationStatusRunning &&
+    preview.current === false &&
+    filesLivePendingRows.length === 0 &&
+    filesStaleLiveRows.length === 0 &&
+    filesStaleSettledRows.length > 0 &&
+    preparation?.actions.prepare.available === true;
 
   // ---- close protection ----------------------------------------------
   const closeLocked =
@@ -2058,6 +2187,17 @@ export function ManualOrganizeDialog({
       taskItemId,
       status: result.status,
     });
+    // A skip/ignore changes the reviewed input behind the persisted plan. The
+    // exact plan must be re-read so the overview and batch never present the
+    // superseded confirmation eligibility as if the decision changed nothing.
+    const action = filesDecisionAction.current;
+    if (
+      action !== null &&
+      action.itemId === itemId &&
+      action.taskItemId === taskItemId
+    ) {
+      void previewQuery.refetch({ cancelRefetch: false });
+    }
   };
 
   type AnalysisReadOutcome = "accepted" | "refused" | "unreadable" | "stale";
@@ -3342,23 +3482,53 @@ export function ManualOrganizeDialog({
     return renderFirstPlanPreparation();
   };
 
+  /** The original preparation's advertised re-analysis, used only when the
+   *  persisted plan is stale because its remaining unresolved rows are settled. */
+  const filesReanalysisAction = () =>
+    filesReanalysisEligible ? (
+      <div className="mf-actions mf-organize-reanalysis-action">
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={saveMutation.isPending}
+          onClick={() =>
+            saveMutation.mutate({ itemId: "", onlyAnalysis: true })
+          }
+        >
+          {saveMutation.isPending && saveMutation.variables?.itemId === ""
+            ? "正在请求分析…"
+            : "重新分析同一准备"}
+        </Button>
+        <span className="mf-dashboard-meta">
+          只重新运行零变更分析；不执行任何整理。
+        </span>
+      </div>
+    ) : null;
+
   const renderFilesOverview = () => {
     if (preview === undefined) return null;
     const pendingCount = filesOverviewCount("pending");
-    const readyCount = filesOverviewCount("ready");
     const includedCount = filesOverviewCount("included");
     const recordedCount = filesOverviewCount("recorded");
-    const readyTotal = readyCount + includedCount;
-    const tag =
-      pendingCount > 0 ? "复核中" : readyTotal > 0 ? "准备就绪" : "复核结果";
-    const copy =
-      pendingCount > 0
-        ? "可先处理下列文件，也可以只确认已就绪且已纳入的文件。"
-        : readyTotal > 0
-          ? includedCount > 0
-            ? "核对逐项去向后，统一确认本次要整理的文件。"
-            : "打开任一就绪文件并选择纳入，才可以确认整理。"
-          : "本次没有可确认的文件，仍可查看每项的当前状态。";
+    const blocker = confirmationBlocker;
+    const tag = preparationStatusRunning
+      ? "分析中"
+      : blocker !== null
+        ? "暂不能确认"
+        : filesConfirmableCount > 0
+          ? "可确认"
+          : "复核中";
+    const copy = preparationStatusRunning
+      ? "后台正在重新分析同一准备；新的当前方案就绪前，以下内容只供核对，不能确认。"
+      : blocker !== null
+        ? `${blocker.reason}${
+            blocker.nextAction === "" ? "" : ` ${blocker.nextAction}`
+          }`
+        : filesConfirmableCount > 0
+          ? "核对逐项去向，统一确认本次要整理的文件；确认前不会修改任何文件。"
+          : includedCount === 0
+            ? "当前没有纳入任何文件；打开任一就绪文件并选择纳入。"
+            : "本次没有可确认的文件，仍可查看每项的当前状态。";
     const renderRow = ({
       item,
       settled,
@@ -3384,88 +3554,131 @@ export function ManualOrganizeDialog({
             : status === "included"
               ? "已纳入本次整理；打开后可继续核对或暂不纳入。"
               : "可确认；打开后可将该文件纳入本次整理。";
+      const compact = status === "ready" || status === "included";
+      const summaryLine =
+        item.operation === null
+          ? "方案尚未生成"
+          : `${operationLabel(item.operation)}${
+              item.title === null ? "" : ` · ${item.title}`
+            }`;
       return (
         <li
           key={`overview-${item.itemId}`}
           className={`mf-organize-overview-item mf-organize-overview-item-${status}`}
+          onClick={
+            compact
+              ? (event) => {
+                  if (
+                    (event.target as HTMLElement).closest("button") !== null
+                  ) {
+                    return;
+                  }
+                  // eslint-disable-next-line react-hooks/refs
+                  openFilesOverviewItem(item.itemId);
+                }
+              : undefined
+          }
         >
           <div className="mf-organize-overview-row">
-            <button
-              type="button"
-              className="mf-link-button mf-organize-overview-file"
-              data-organize-overview-item={item.itemId}
-              aria-label={`查看 ${itemName}`}
-              // Opening a row retires any in-flight readback for the
-              // previous file; this is an event handler, not render.
-              // eslint-disable-next-line react-hooks/refs
-              onClick={() => openFilesOverviewItem(item.itemId)}
-            >
-              {itemName}
-            </button>
-            <span
-              className={`mf-organize-overview-status mf-organize-overview-status-${status}`}
-            >
-              {OVERVIEW_STATUS_LABELS[status]}
-            </span>
+            <div className="mf-organize-overview-main">
+              <span
+                className="mf-organize-overview-file-icon"
+                aria-hidden="true"
+              >
+                ▤
+              </span>
+              <div className="mf-organize-overview-file-copy">
+                <button
+                  type="button"
+                  className="mf-link-button mf-organize-overview-file"
+                  data-organize-overview-item={item.itemId}
+                  aria-label={`查看 ${itemName}`}
+                  // Opening a row retires any in-flight readback for the
+                  // previous file; this is an event handler, not render.
+                  onClick={() => openFilesOverviewItem(item.itemId)}
+                >
+                  {itemName}
+                </button>
+                {compact ? (
+                  <p className="mf-organize-overview-summary">{summaryLine}</p>
+                ) : null}
+              </div>
+            </div>
+            <div className="mf-organize-overview-side">
+              <span
+                className={`mf-organize-overview-status mf-organize-overview-status-${status}`}
+              >
+                {OVERVIEW_STATUS_LABELS[status]}
+              </span>
+              {compact ? (
+                <span className="mf-organize-overview-enter" aria-hidden="true">
+                  ›
+                </span>
+              ) : null}
+            </div>
           </div>
-          <p className="mf-organize-overview-reason" role="status">
-            {nextStep}
-          </p>
-          {settled !== null ? (
-            <p className="mf-organize-overview-facts">
-              {settled.status === "skipped" ? "已跳过" : "已忽略"} · 来源保留 ·
-              未纳入本次整理 · 无媒体变更
-            </p>
-          ) : status === "pending" &&
-            (!item.current || !executableIds.includes(item.itemId)) ? (
-            <p className="mf-organize-overview-facts">
-              当前方案未就绪
-              {item.attachments.length > 0
-                ? ` · 附件 ${item.attachments.length} 个`
-                : " · 无关联附件"}
-            </p>
-          ) : (
-            <p className="mf-organize-overview-facts">
-              {item.operation === null
-                ? "方案尚未生成"
-                : `${operationLabel(item.operation)}${
-                    retention !== null ? ` · ${retention}` : ""
-                  }`}
-              {item.attachments.length > 0
-                ? ` · 附件 ${item.attachments.length} 个`
-                : " · 无关联附件"}
-            </p>
-          )}
-          <details className="mf-organize-overview-route">
-            <summary>查看精确路径与方案</summary>
-            <p className="mf-exact-identity">
-              来源 {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
-            </p>
-            {settled === null ? (
-              <>
-                <p className="mf-exact-identity">
-                  目标{" "}
-                  {target === null
-                    ? "尚未生成"
-                    : `${item.targetStorageId ?? "—"}:${target}`}
-                </p>
-                {impact !== null ? <p>来源影响：{impact}。</p> : null}
-              </>
-            ) : (
-              <p>
-                目标保持原状；该条目已结束为
-                {settled.status === "skipped" ? "已跳过" : "已忽略"}，没有执行
-                文件操作。
+          {compact ? null : (
+            <>
+              <p className="mf-organize-overview-reason" role="status">
+                {nextStep}
               </p>
-            )}
-            <p>
-              方案 {preview.previewId}
-              {preview.intentVersion !== null
-                ? ` · 版本 ${preview.intentVersion}`
-                : ""}
-              {preview.current ? " · 当前方案" : " · 非当前方案"}
-            </p>
-          </details>
+              {settled !== null ? (
+                <p className="mf-organize-overview-facts">
+                  {settled.status === "skipped" ? "已跳过" : "已忽略"} ·
+                  来源保留 · 未纳入本次整理 · 无媒体变更
+                </p>
+              ) : status === "pending" &&
+                (!item.current || !executableIds.includes(item.itemId)) ? (
+                <p className="mf-organize-overview-facts">
+                  当前方案未就绪
+                  {item.attachments.length > 0
+                    ? ` · 附件 ${item.attachments.length} 个`
+                    : " · 无关联附件"}
+                </p>
+              ) : (
+                <p className="mf-organize-overview-facts">
+                  {item.operation === null
+                    ? "方案尚未生成"
+                    : `${operationLabel(item.operation)}${
+                        retention !== null ? ` · ${retention}` : ""
+                      }`}
+                  {item.attachments.length > 0
+                    ? ` · 附件 ${item.attachments.length} 个`
+                    : " · 无关联附件"}
+                </p>
+              )}
+              <details className="mf-organize-overview-route">
+                <summary>查看精确路径与方案</summary>
+                <p className="mf-exact-identity">
+                  来源 {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
+                </p>
+                {settled === null ? (
+                  <>
+                    <p className="mf-exact-identity">
+                      目标{" "}
+                      {target === null
+                        ? "尚未生成"
+                        : `${item.targetStorageId ?? "—"}:${target}`}
+                    </p>
+                    {impact !== null ? <p>来源影响：{impact}。</p> : null}
+                  </>
+                ) : (
+                  <p>
+                    目标保持原状；该条目已结束为
+                    {settled.status === "skipped" ? "已跳过" : "已忽略"}
+                    ，没有执行 文件操作。
+                  </p>
+                )}
+                <p>
+                  方案 {preview.previewId}
+                  {preview.intentVersion !== null
+                    ? ` · 版本 ${preview.intentVersion}`
+                    : ""}
+                  {preview.current ? " · 当前方案" : " · 非当前方案"}
+                </p>
+              </details>
+            </>
+          )}
         </li>
       );
     };
@@ -3501,7 +3714,14 @@ export function ManualOrganizeDialog({
           tag={tag}
           title="本次整理概览"
           copy={copy}
-          tone={pendingCount > 0 ? "blue" : readyTotal > 0 ? "green" : "blue"}
+          tone={
+            blocker !== null
+              ? "amber"
+              : filesConfirmableCount > 0
+                ? "green"
+                : "blue"
+          }
+          busy={preparationStatusRunning}
           headingId="mf-organize-overview-title"
           headingRef={overviewHeadingRef}
         />
@@ -3527,7 +3747,7 @@ export function ManualOrganizeDialog({
           <div>
             <dt>已选 / 可确认</dt>
             <dd>
-              {includedCount} / {readyTotal}
+              {includedCount} / {filesConfirmableCount}
             </dd>
           </div>
           <div>
@@ -3539,11 +3759,7 @@ export function ManualOrganizeDialog({
             <dd>{recordedCount}</dd>
           </div>
         </dl>
-        <p className="mf-organize-overview-copy" role="status">
-          已纳入 {includedCount} 项，需要处理 {pendingCount} 项
-          {recordedCount > 0 ? `，已有记录 ${recordedCount} 项` : ""}。
-          打开任一文件可核对当前决定、来源、目标与附件；核对与翻页不会修改文件。
-        </p>
+        {filesReanalysisAction()}
         {preview.truncated ? (
           <p className="mf-organize-overview-note" role="status">
             该方案摘要曾被截断，不能作为执行依据；请缩小范围后重新准备。
@@ -3643,38 +3859,70 @@ export function ManualOrganizeDialog({
       void intentQuery.refetch();
       void previewQuery.refetch();
     };
-    const reviewHeader = () => (
-      <header className="mf-organize-file-head">
-        <div className="mf-organize-file-title">
-          <h3>
-            <span className="mf-organize-file-eyebrow">
-              第 {pageInfo + 1} / {items.length} 个文件
-            </span>
-            <span className="mf-organize-file-name mf-exact-identity">
-              {filename}
-            </span>
-            <span className="mf-status-badge">
-              {settledDecision !== null
-                ? settledDecision.status === "skipped"
-                  ? "已跳过"
-                  : "已忽略"
-                : admittedItemIds.has(item.itemId)
-                  ? "已受理执行"
-                  : organizeFlowEnded
-                    ? "只读历史"
-                    : !executableIds.includes(item.itemId)
-                      ? "未就绪"
-                      : isIncluded
-                        ? "纳入本次整理"
-                        : "暂不纳入"}
-            </span>
-          </h3>
-          <p className="mf-organize-file-path mf-dashboard-meta">
-            {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
-          </p>
-        </div>
-      </header>
+    const reviewStatusBadge = (
+      <span className="mf-status-badge">
+        {settledDecision !== null
+          ? settledDecision.status === "skipped"
+            ? "已跳过"
+            : "已忽略"
+          : admittedItemIds.has(item.itemId)
+            ? "已受理执行"
+            : organizeFlowEnded
+              ? "只读历史"
+              : !executableIds.includes(item.itemId)
+                ? "未就绪"
+                : isIncluded
+                  ? "纳入本次整理"
+                  : "暂不纳入"}
+      </span>
     );
+    /**
+     * Files owns the compact file header approved for its overview journey.
+     * The in-place Task Center continuation keeps the Slice Base header, its
+     * source-library fact and its own section names unchanged.
+     */
+    const reviewHeader = () =>
+      filesHost ? (
+        <header className="mf-organize-file-head mf-organize-files-file-head">
+          <div className="mf-organize-file-title">
+            <h3>
+              <span className="mf-organize-file-eyebrow">
+                第 {pageInfo + 1} / {items.length} 个文件
+              </span>
+              <span className="mf-organize-file-name mf-exact-identity">
+                {filename}
+              </span>
+              {reviewStatusBadge}
+            </h3>
+            <p className="mf-organize-file-path mf-dashboard-meta">
+              {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
+            </p>
+          </div>
+        </header>
+      ) : (
+        <header className="mf-organize-file-head">
+          <div className="mf-organize-file-title">
+            <p className="mf-organize-file-eyebrow">当前文件</p>
+            <h3>
+              第 {pageInfo + 1} / {items.length} 个{reviewStatusBadge}
+            </h3>
+            <p className="mf-organize-file-name mf-exact-identity">
+              {filename}
+            </p>
+            <p className="mf-organize-file-path mf-dashboard-meta">
+              来源库：{item.resourceLibraryId ?? "—"}
+              {hasGeneratedScheme ? null : (
+                <>
+                  {" · "}
+                  <span className="mf-exact-identity">
+                    {item.sourcePath ?? "—"}
+                  </span>
+                </>
+              )}
+            </p>
+          </div>
+        </header>
+      );
 
     if (settledDecision !== null && filesHost) {
       // A skip/ignore ended this exact item without another plan. Its body
@@ -3850,6 +4098,9 @@ export function ManualOrganizeDialog({
                   beginFilesDecisionSettle(item.itemId, problemTaskItemId);
                 }}
                 onDecisionSettled={(settled) => {
+                  // The retained dialog read owns the same-row fallback even
+                  // when this panel is replaced before its own effect runs.
+                  // eslint-disable-next-line react-hooks/refs
                   recordFilesDecisionSettled(
                     item.itemId,
                     problemTaskItemId,
@@ -3926,10 +4177,22 @@ export function ManualOrganizeDialog({
 
         <section
           className="mf-organize-section"
-          aria-label={hasGeneratedScheme ? "整理方案" : "当前决定"}
+          aria-label={
+            filesHost
+              ? hasGeneratedScheme
+                ? "整理方案"
+                : "当前决定"
+              : "当前方案"
+          }
         >
           <div className="mf-organize-section-head">
-            <h4>{hasGeneratedScheme ? "整理方案" : "当前决定"}</h4>
+            <h4>
+              {filesHost
+                ? hasGeneratedScheme
+                  ? "整理方案"
+                  : "当前决定"
+                : "当前方案"}
+            </h4>
             {!hasGeneratedScheme ? (
               <span className="mf-organize-section-note">
                 {metadataTechnicalFailure
@@ -4427,54 +4690,140 @@ export function ManualOrganizeDialog({
               ? `包含清理来源目录 ${cleanupCount} 个（需单独授权）`
               : "无来源清理"
           }。`;
+    const batchAttachments = (item: (typeof selectedItems)[number]) =>
+      item.attachments.length === 0 ? null : (
+        <details className="mf-organize-batch-attachments-details">
+          <summary>
+            附件 {item.attachments.length} 个 · 展开核对来源、目标、操作与原因
+          </summary>
+          <ul className="mf-preview-attachments">
+            {item.attachments.map((attachment, position) => (
+              <li key={`selected-attachment-${item.itemId}-${position}`}>
+                {attachment.type ?? "附件"}
+                {attachment.language != null
+                  ? `(${attachment.language})`
+                  : ""}{" "}
+                · {operationLabel(attachment.operation)}
+                {attachment.source !== null ||
+                attachment.destination !== null ? (
+                  <span className="mf-exact-identity">
+                    {" "}
+                    {attachment.source?.storageId ?? "—"}:
+                    {attachment.source?.path ?? "—"} →{" "}
+                    {attachment.destination?.storageId ?? "—"}:
+                    {attachment.destination?.path ?? "—"}
+                  </span>
+                ) : null}
+                {attachment.blockedReason ? (
+                  <span role="status">
+                    {" "}
+                    排除原因：{attachment.blockedReason}
+                  </span>
+                ) : null}
+                {attachment.nextAction ? (
+                  <span role="status">
+                    {" "}
+                    异常/下一步：{attachment.nextAction}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      );
     return (
       <>
         <section aria-label="整批复核" className="mf-organize-batch-review">
-          <FilesStatusCard
-            tag={confirmationBlocker !== null ? "暂不能确认" : "等待明确确认"}
-            title="整批复核"
-            copy="提交前不修改任何文件；确认后只提交下列已选文件。目标路径、操作和对来源的影响以本页所示方案为准。"
-            tone={confirmationBlocker !== null ? "amber" : "blue"}
-          />
+          {filesHost ? (
+            <FilesStatusCard
+              tag={confirmationBlocker !== null ? "暂不能确认" : "等待明确确认"}
+              title="整批复核"
+              copy={
+                confirmationBlocker !== null
+                  ? `${confirmationBlocker.reason}${
+                      confirmationBlocker.nextAction === ""
+                        ? ""
+                        : ` ${confirmationBlocker.nextAction}`
+                    }`
+                  : "提交前不修改任何文件；确认后只提交下列已选文件。目标路径、操作和对来源的影响以本页所示方案为准。"
+              }
+              tone={
+                confirmationBlocker !== null
+                  ? "amber"
+                  : filesConfirmableCount > 0
+                    ? "green"
+                    : "blue"
+              }
+            />
+          ) : (
+            <div className="mf-organize-section-head">
+              <h3>整批复核</h3>
+              <span className="mf-organize-section-note">
+                确认受理前不修改任何文件
+              </span>
+            </div>
+          )}
           <dl
-            className="mf-organize-batch-summary"
+            className={`mf-organize-batch-summary${
+              filesHost ? " mf-organize-files-batch-summary" : ""
+            }`}
             aria-label="整批复核计数与范围"
           >
-            <div>
-              <dt>将整理</dt>
-              <dd>{activeSelection.length} 项</dd>
-            </div>
-            <div>
-              <dt>未纳入</dt>
-              <dd>{skippedItems.length} 项</dd>
-            </div>
-            {preparation !== undefined &&
-            preparation.selection.refused.length > 0 ? (
-              <div>
-                <dt>未受理</dt>
-                <dd>{preparation.selection.refused.length} 项</dd>
-              </div>
-            ) : null}
-            <div>
-              <dt>操作</dt>
-              <dd>{operations === "" ? "—" : operations}</dd>
-            </div>
-            <div>
-              <dt>目标</dt>
-              <dd>{targets.length} 个位置</dd>
-            </div>
-            <div>
-              <dt>附件</dt>
-              <dd>{attachmentCount} 个</dd>
-            </div>
+            {filesHost ? (
+              <>
+                <div>
+                  <dt>本次确认</dt>
+                  <dd>{activeSelection.length} 项</dd>
+                </div>
+                <div>
+                  <dt>未纳入</dt>
+                  <dd>{skippedItems.length} 项</dd>
+                </div>
+                <div>
+                  <dt>关联附件</dt>
+                  <dd>{attachmentCount} 个</dd>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <dt>将整理</dt>
+                  <dd>{activeSelection.length} 项</dd>
+                </div>
+                <div>
+                  <dt>未纳入</dt>
+                  <dd>{skippedItems.length} 项</dd>
+                </div>
+                {preparation !== undefined &&
+                preparation.selection.refused.length > 0 ? (
+                  <div>
+                    <dt>未受理</dt>
+                    <dd>{preparation.selection.refused.length} 项</dd>
+                  </div>
+                ) : null}
+                <div>
+                  <dt>操作</dt>
+                  <dd>{operations === "" ? "—" : operations}</dd>
+                </div>
+                <div>
+                  <dt>目标</dt>
+                  <dd>{targets.length} 个位置</dd>
+                </div>
+              </>
+            )}
           </dl>
-          <p className="mf-organize-impact" role="status">
-            <strong>实际影响：</strong>
-            {impactText}
-          </p>
-          <p className="mf-organize-section-note">
-            仅所选就绪项进入执行;未选、已受理、未就绪及历史不确定的兄弟项保持独立，不会被重放。
-          </p>
+          {filesHost ? null : (
+            <>
+              <p className="mf-organize-impact" role="status">
+                <strong>实际影响：</strong>
+                {impactText}
+              </p>
+              <p className="mf-organize-section-note">
+                仅所选就绪项进入执行;未选、已受理、未就绪及历史不确定的兄弟项保持独立，不会被重放。
+              </p>
+            </>
+          )}
+          {filesReanalysisAction()}
           <details className="mf-organize-diagnostics mf-organize-plan-diagnostics">
             <summary>方案标识与诊断</summary>
             <p className="mf-dashboard-meta">
@@ -4483,28 +4832,34 @@ export function ManualOrganizeDialog({
                 ? ` · 版本 ${preview.intentVersion}`
                 : ""}
             </p>
-            <dl>
-              <dt>入选条目</dt>
-              <dd>{selectedItems.length}</dd>
-              <dt>未纳入条目</dt>
-              <dd>{skippedItems.length}</dd>
-              <dt>目标位置</dt>
-              <dd>{targets.length}</dd>
-            </dl>
+            {filesHost ? null : (
+              <dl>
+                <dt>入选条目</dt>
+                <dd>{selectedItems.length}</dd>
+                <dt>未纳入条目</dt>
+                <dd>{skippedItems.length}</dd>
+                <dt>目标位置</dt>
+                <dd>{targets.length}</dd>
+              </dl>
+            )}
           </details>
         </section>
 
         <section
           className="mf-organize-section mf-organize-batch-list-section"
-          aria-label="本次确认的文件"
+          aria-label={filesHost ? "来源与目标" : "本次确认的文件"}
         >
           <div className="mf-organize-section-head">
-            <h4>本次确认的文件</h4>
+            <h4>{filesHost ? "来源与目标" : "本次确认的文件"}</h4>
             <span className="mf-organize-section-note">
               共 {selectedItems.length} 项
             </span>
           </div>
-          <ul className="mf-organize-review-list mf-organize-batch-list">
+          <ul
+            className={`mf-organize-review-list mf-organize-batch-list${
+              filesHost ? " mf-organize-files-batch-list" : ""
+            }`}
+          >
             {selectedItems.map((item) => {
               const retention = operationRetentionLabel(item.operation);
               return (
@@ -4524,78 +4879,43 @@ export function ManualOrganizeDialog({
                   >
                     {item.sourceFilename ?? item.itemId}
                   </button>
-                  <span className="mf-organize-batch-operation">
-                    {operationLabel(item.operation)}
-                    {retention !== null ? ` · ${retention}` : ""}
-                  </span>
-                  {filesHost ? (
-                    <span className="mf-organize-batch-source mf-exact-identity">
-                      来源 {item.sourceStorageId ?? "—"}:
-                      {item.sourcePath ?? "—"}
-                    </span>
-                  ) : null}
-                  <span className="mf-organize-batch-target mf-exact-identity">
-                    目标 {item.targetStorageId ?? "—"}:
-                    {item.targetPath ??
-                      item.destination?.storageRelativePath ??
-                      "—"}
-                  </span>
-                  <span className="mf-organize-batch-effect">
-                    来源影响：
-                    {operationImpactLabel(item.operation) ??
-                      "按当前操作核对，尚未生成"}
-                  </span>
                   {filesHost ? (
                     <>
-                      {item.attachments.length === 0 ? (
-                        <span className="mf-organize-batch-attachments">
-                          无关联附件
-                        </span>
-                      ) : (
-                        <details className="mf-organize-batch-attachments-details">
-                          <summary>
-                            附件 {item.attachments.length} 个 ·
-                            展开核对来源、目标、操作与原因
-                          </summary>
-                          <ul className="mf-preview-attachments">
-                            {item.attachments.map((attachment, position) => (
-                              <li
-                                key={`selected-attachment-${item.itemId}-${position}`}
-                              >
-                                {attachment.type ?? "附件"}
-                                {attachment.language != null
-                                  ? `(${attachment.language})`
-                                  : ""}{" "}
-                                · {operationLabel(attachment.operation)}
-                                {attachment.source !== null ||
-                                attachment.destination !== null ? (
-                                  <span className="mf-exact-identity">
-                                    {" "}
-                                    {attachment.source?.storageId ?? "—"}:
-                                    {attachment.source?.path ?? "—"} →{" "}
-                                    {attachment.destination?.storageId ?? "—"}:
-                                    {attachment.destination?.path ?? "—"}
-                                  </span>
-                                ) : null}
-                                {attachment.blockedReason ? (
-                                  <span role="status">
-                                    {" "}
-                                    排除原因：{attachment.blockedReason}
-                                  </span>
-                                ) : null}
-                                {attachment.nextAction ? (
-                                  <span role="status">
-                                    {" "}
-                                    异常/下一步：{attachment.nextAction}
-                                  </span>
-                                ) : null}
-                              </li>
-                            ))}
-                          </ul>
-                        </details>
-                      )}
+                      <span className="mf-organize-batch-source mf-exact-identity">
+                        来源 {item.sourceStorageId ?? "—"}:
+                        {item.sourcePath ?? "—"}
+                      </span>
+                      <span className="mf-organize-batch-target mf-exact-identity">
+                        目标 {item.targetStorageId ?? "—"}:
+                        {item.targetPath ??
+                          item.destination?.storageRelativePath ??
+                          "—"}
+                      </span>
+                      <span className="mf-organize-batch-effect">
+                        来源影响：
+                        {operationImpactLabel(item.operation) ??
+                          "按当前操作核对，尚未生成"}
+                      </span>
+                      {batchAttachments(item)}
+                      <span className="mf-organize-batch-operation">
+                        {operationLabel(item.operation)}
+                        {retention !== null ? ` · ${retention}` : ""}
+                      </span>
                     </>
-                  ) : null}
+                  ) : (
+                    <>
+                      <span className="mf-organize-batch-operation">
+                        {operationLabel(item.operation)}
+                        {retention !== null ? ` · ${retention}` : ""}
+                      </span>
+                      <span className="mf-organize-batch-target mf-exact-identity">
+                        {item.targetStorageId ?? "—"}:
+                        {item.targetPath ??
+                          item.destination?.storageRelativePath ??
+                          "—"}
+                      </span>
+                    </>
+                  )}
                 </li>
               );
             })}
@@ -4623,29 +4943,38 @@ export function ManualOrganizeDialog({
                     {item.sourceFilename ?? item.itemId}
                   </button>{" "}
                   —{" "}
-                  {filesSettledDecisionFor(item) !== null
-                    ? settledDecisionReason(
-                        filesSettledDecisionFor(item)?.status ?? "skipped",
-                      )
+                  {filesHost
+                    ? filesSettledDecisionFor(item) !== null
+                      ? settledDecisionReason(
+                          filesSettledDecisionFor(item)?.status ?? "skipped",
+                        )
+                      : admittedItemIds.has(item.itemId)
+                        ? "已受理执行,保持独立进度"
+                        : excluded.has(item.itemId)
+                          ? "你选择了暂不纳入(不是持久忽略)；来源与现有目标保持原状。"
+                          : item.current === false
+                            ? overviewPendingReason(
+                                item,
+                                filesOrganizeTaskId,
+                                filesTaskItemFacts.get(item.itemId),
+                                organizeFlowEnded,
+                              )
+                            : item.failure !== null
+                              ? previewItemTechnicalStage(item) === "metadata"
+                                ? metadataTechnicalFailureSummary(
+                                    preparation?.organizeTaskId ?? null,
+                                    false,
+                                  )
+                                : item.failure.message
+                              : "未就绪"
                     : admittedItemIds.has(item.itemId)
                       ? "已受理执行,保持独立进度"
-                      : excluded.has(item.itemId)
-                        ? "你选择了暂不纳入(不是持久忽略)；来源与现有目标保持原状。"
-                        : item.current === false
-                          ? overviewPendingReason(
-                              item,
-                              filesOrganizeTaskId,
-                              filesTaskItemFacts.get(item.itemId),
-                              organizeFlowEnded,
-                            )
+                      : item.current === false
+                        ? "本方案中该文件已失效；返回逐项复核查看原因"
+                        : excluded.has(item.itemId)
+                          ? "你选择了暂不纳入(不是持久忽略)"
                           : item.failure !== null
-                            ? filesHost &&
-                              previewItemTechnicalStage(item) === "metadata"
-                              ? metadataTechnicalFailureSummary(
-                                  preparation?.organizeTaskId ?? null,
-                                  false,
-                                )
-                              : item.failure.message
+                            ? item.failure.message
                             : "未就绪"}
                 </li>
               ))}
@@ -4683,6 +5012,19 @@ export function ManualOrganizeDialog({
               <p>
                 此计划摘要已被更新的分析取代;失效摘要不能确认。请回到逐项复核,
                 保存修正后重新分析生成当前方案。
+              </p>
+            ) : filesHost ? (
+              <p>
+                {filesLivePendingRows.length > 0
+                  ? `本次分析有 ${filesLivePendingRows.length} 个文件未就绪或已失效，方案整体暂不能确认。${
+                      filesStaleSettledRows.length > 0
+                        ? `另有 ${filesStaleSettledRows.length} 个已结束项保留自己的结果，不会重放。`
+                        : ""
+                    }`
+                  : filesStaleSettledRows.length > 0
+                    ? `本次方案因 ${filesStaleSettledRows.length} 个已结束文件需要更新；已结束项保留自己的结果，不会重放。`
+                    : `本次分析有 ${stalePlanItemCount} 个文件未就绪或已失效，方案整体暂不能确认。`}{" "}
+                请在下方「未纳入本次确认的文件」查看原因。
               </p>
             ) : (
               <p>
@@ -4888,6 +5230,7 @@ export function ManualOrganizeDialog({
           {filesOverviewCount("recorded") > 0
             ? ` · 已有记录 ${filesOverviewCount("recorded")} 项`
             : ""}
+          {` · 此刻可确认 ${filesConfirmableCount} 项`}
         </span>
         <span className="mf-modal-footer-spacer" />
         <Button
@@ -4999,17 +5342,19 @@ export function ManualOrganizeDialog({
             else setStep("review");
           }}
         >
-          {filesHost ? "返回概览" : "返回逐项复核"}
+          {filesHost ? "返回整理概览" : "返回逐项复核"}
         </Button>
         <span className="mf-modal-footer-spacer" />
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={closeLocked}
-          onClick={attemptClose}
-        >
-          关闭
-        </Button>
+        {filesHost ? null : (
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={closeLocked}
+            onClick={attemptClose}
+          >
+            关闭
+          </Button>
+        )}
         <div className="mf-organize-confirm-submit">
           {confirmationBlocker !== null ? (
             <span className="mf-organize-confirm-blocker" role="status">
@@ -5021,7 +5366,7 @@ export function ManualOrganizeDialog({
           ) : null}
           <Button
             type="button"
-            disabled={executeDisabled}
+            disabled={executeDisabled || confirmationBlocker !== null}
             aria-busy={executeMutation.isPending}
             onClick={() => {
               if (preview === undefined) return;

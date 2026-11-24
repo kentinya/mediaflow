@@ -9825,11 +9825,11 @@ tr[aria-selected="true"] {
 }
 
 .mf-organize-overview-counts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 22px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
   margin: 0;
-  padding: 10px 12px;
+  padding: 0;
   border: 1px solid #dbe4f3;
   border-radius: 10px;
   background: #f8faff;
@@ -9837,9 +9837,15 @@ tr[aria-selected="true"] {
 
 .mf-organize-overview-counts > div {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
   min-width: 0;
+  padding: 9px 12px;
+}
+
+.mf-organize-overview-counts > div + div {
+  border-left: 1px solid #e2e9f2;
 }
 
 .mf-organize-overview-counts dt {
@@ -9898,6 +9904,47 @@ tr[aria-selected="true"] {
   gap: 10px;
 }
 
+.mf-organize-overview-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mf-organize-overview-file-icon {
+  flex: 0 0 auto;
+  color: #7f8da3;
+  font-size: 16px;
+  line-height: 20px;
+}
+
+.mf-organize-overview-file-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mf-organize-overview-summary {
+  margin: 0;
+  color: #5f6b7d;
+  font-size: 12.5px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-overview-side {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.mf-organize-overview-enter {
+  color: #8a97a8;
+  font-size: 18px;
+  line-height: 1;
+}
+
 .mf-organize-overview-file {
   min-width: 0;
   color: #0f4ca8;
@@ -9912,6 +9959,11 @@ tr[aria-selected="true"] {
   outline: 2px solid #1268f5;
   outline-offset: 2px;
   border-radius: 3px;
+}
+
+.mf-organize-overview-item-ready,
+.mf-organize-overview-item-included {
+  cursor: pointer;
 }
 
 .mf-organize-overview-status {
@@ -10202,6 +10254,12 @@ tr[aria-selected="true"] {
   color: #52627a;
 }
 
+.mf-organize-reanalysis-action {
+  margin: 0;
+  align-items: center;
+  gap: 10px 14px;
+}
+
 .mf-organize-footer-action {
   display: flex;
   flex: 0 1 auto;
@@ -10283,16 +10341,22 @@ tr[aria-selected="true"] {
 
 .mf-organize-file-head h3 {
   margin: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 2px 8px;
+  gap: 8px;
+  flex-wrap: wrap;
   color: #0e1728;
   font-size: 18px;
   line-height: 25px;
 }
 
-.mf-organize-file-head h3 .mf-organize-file-eyebrow {
+.mf-organize-files-file-head h3 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+}
+
+.mf-organize-files-file-head h3 .mf-organize-file-eyebrow {
   grid-column: 1 / -1;
 }
 
@@ -10734,6 +10798,24 @@ tr[aria-selected="true"] {
   background: #f8faff;
 }
 
+.mf-organize-files-batch-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  padding: 0;
+}
+
+.mf-organize-files-batch-summary > div {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 9px 12px;
+}
+
+.mf-organize-files-batch-summary > div + div {
+  border-left: 1px solid #e2e9f2;
+}
+
 .mf-organize-batch-summary > div {
   display: flex;
   align-items: baseline;
@@ -10773,13 +10855,22 @@ tr[aria-selected="true"] {
 
 .mf-organize-batch-list li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 3px 14px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(118px, 0.55fr) minmax(
+      0,
+      1.5fr
+    );
+  gap: 4px 14px;
   align-items: start;
-  padding: 9px 0;
+  padding: 8px 0;
   border-bottom: 1px solid #eef2f7;
   font-size: 13.5px;
   line-height: 20px;
+}
+
+.mf-organize-files-batch-list li {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 14px;
+  padding: 9px 0;
 }
 
 .mf-organize-batch-list li:last-child {
@@ -10794,17 +10885,27 @@ tr[aria-selected="true"] {
 
 .mf-organize-batch-operation {
   min-width: 0;
-  justify-self: end;
   color: #52627a;
   font-size: 12.5px;
   line-height: 20px;
-  text-align: right;
   overflow-wrap: anywhere;
 }
 
+.mf-organize-files-batch-list .mf-organize-batch-operation {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  justify-self: end;
+  text-align: right;
+}
+
 .mf-organize-batch-target {
-  grid-column: 1 / -1;
   min-width: 0;
+  flex: none;
+}
+
+.mf-organize-files-batch-list .mf-organize-batch-target {
+  grid-column: 1 / -1;
 }
 
 .mf-organize-batch-source,
@@ -11039,8 +11140,11 @@ tr[aria-selected="true"] {
   }
 
   .mf-organize-batch-operation {
-    justify-self: start;
     color: #5f6b7d;
+  }
+
+  .mf-organize-files-batch-list .mf-organize-batch-operation {
+    justify-self: start;
     text-align: left;
   }
 

@@ -787,6 +787,12 @@ def build_managed_fixture(
     (dialog_root / "DialogSkipSibling.2045.mkv").write_bytes(
         b"slice59 skip sibling synthetic media"
     )
+    (dialog_root / "DialogLostResponse.2046.mkv").write_bytes(
+        b"slice59 lost skip response synthetic media"
+    )
+    (dialog_root / "DialogLostSibling.2047.mkv").write_bytes(
+        b"slice59 lost skip sibling synthetic media"
+    )
     (dialog_root / "DialogClassify.2040.mkv").write_bytes(
         b"slice59 live classification decision synthetic media"
     )
@@ -816,6 +822,8 @@ def build_managed_fixture(
     os.utime(dialog_root / "DialogRecognize.2043.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogCandidate.2044.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSkipSibling.2045.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogLostResponse.2046.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogLostSibling.2047.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogClassify.2040.mkv", (conflict_time, conflict_time))
     # PATCH-20261120-2 browser fixture: one dedicated directory with exactly
     # 101 eligible primaries.  Its walk stops at the durable primary bound; one
@@ -1175,7 +1183,8 @@ def build_managed_fixture(
                         "operator": "regex",
                         "value": (
                             r"^Dialog(?:Search\.2039|Skip\.2041|Mixed\.2042"
-                            r"|Candidate\.2044|SkipSibling\.2045)\.mkv$"
+                            r"|Candidate\.2044|SkipSibling\.2045"
+                            r"|LostResponse\.2046|LostSibling\.2047)\.mkv$"
                         ),
                     },
                 ],
@@ -1904,6 +1913,24 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogSkipSibling",
                         year=2045,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "728",
+                        MediaType.MOVIE,
+                        "DialogLostResponse",
+                        year=2046,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "729",
+                        MediaType.MOVIE,
+                        "DialogLostSibling",
+                        year=2047,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -4910,6 +4937,8 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Dialog/DialogRecognize.2043.mkv",
         "Dialog/DialogCandidate.2044.mkv",
         "Dialog/DialogSkipSibling.2045.mkv",
+        "Dialog/DialogLostResponse.2046.mkv",
+        "Dialog/DialogLostSibling.2047.mkv",
         "YearProbe/DialogYear.2025.mkv",
         f"SeasonProbe/{_SEASON_PROBE_TITLE}.2024.S04E01.mkv",
     )

@@ -526,20 +526,6 @@ export function TaskItemRecoveryPanel({
   const [allowCleanupConfirm, setAllowCleanupConfirm] = useState(false);
   const model = query.data?.ok === true ? query.data.model : null;
   const checkpoint = model?.checkpoint ?? null;
-  /**
-   * A decision/ignore command started in this panel may end the exact item
-   * even when its response is lost. The same-item durable read is the only
-   * authority that may then publish the terminal skipped/ignored result.
-   */
-  const decisionSettlementRef = useRef(false);
-  useEffect(() => {
-    if (!decisionSettlementRef.current || checkpoint === null) return;
-    if (checkpoint.status !== "skipped" && checkpoint.status !== "ignored") {
-      return;
-    }
-    decisionSettlementRef.current = false;
-    onDecisionSettled?.({ status: checkpoint.status });
-  }, [checkpoint, onDecisionSettled]);
   const decision = model?.decision ?? null;
   // The durable summary the current authenticated principal may read is the
   // single read authority for this journey.  A locally prepared summary is
@@ -979,7 +965,6 @@ export function TaskItemRecoveryPanel({
     // This explicit save starts a new decision/analysis attempt for the exact
     // current checkpoint; an older analysis observation cannot describe it.
     updateRecoverySession({ analysis: null });
-    decisionSettlementRef.current = true;
     onDecisionStarted?.();
     beginAction("decision");
     try {
@@ -994,9 +979,6 @@ export function TaskItemRecoveryPanel({
         },
       );
       if (!result.ok) {
-        if (!isUnknown(result.status, result.code)) {
-          decisionSettlementRef.current = false;
-        }
         await reportUnknown(result.code, result.status);
         refreshLinkedReads();
         return;
@@ -1020,7 +1002,6 @@ export function TaskItemRecoveryPanel({
         ),
       );
       if (updated.checkpoint.permittedActionIds.includes("retry")) {
-        decisionSettlementRef.current = false;
         await continueAt(updated.checkpoint.checkpointVersion, false);
       } else {
         // A skip/ignore decision ends this exact item; there is no analysis to
@@ -1029,10 +1010,7 @@ export function TaskItemRecoveryPanel({
           updated.checkpoint.status === "skipped" ||
           updated.checkpoint.status === "ignored"
         ) {
-          decisionSettlementRef.current = false;
           onDecisionSettled?.({ status: updated.checkpoint.status });
-        } else {
-          decisionSettlementRef.current = false;
         }
         updateRecoverySession({
           message:
@@ -1047,7 +1025,6 @@ export function TaskItemRecoveryPanel({
 
   const ignoreDecision = async () => {
     if (checkpoint === null || busy || repeatLocked) return;
-    decisionSettlementRef.current = true;
     onDecisionStarted?.();
     beginAction("ignore");
     try {
@@ -1065,19 +1042,14 @@ export function TaskItemRecoveryPanel({
         if (onDecisionSettled !== undefined) {
           const readBack = await query.refetch({ cancelRefetch: false });
           if (
-            decisionSettlementRef.current &&
             readBack.data?.ok === true &&
             readBack.data.model.checkpoint.status === "ignored"
           ) {
-            decisionSettlementRef.current = false;
             onDecisionSettled({ status: "ignored" });
           }
         }
         refreshLinkedReads();
       } else {
-        if (!isUnknown(result.status, result.code)) {
-          decisionSettlementRef.current = false;
-        }
         await reportUnknown(result.code, result.status);
         refreshLinkedReads();
       }
