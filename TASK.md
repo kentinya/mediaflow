@@ -1,12 +1,12 @@
 # Task 59.1 — Files 手动整理流程
 
-Next Action: DEVELOPER ALIGNS THE FILES OVERVIEW AND BATCH CONFIRMATION WITH AC-06
+Next Action: B REVIEWS THE FILES OVERVIEW AND BATCH CONFIRMATION CORRECTIONS
 
 ```text
 Task ID: 59.1
 Task Type: SLICE
 Parent Slice: 59
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
 Reviewed Implementation Head: c109e403cc1733baebf20853d618d170c263d338
 Difficulty: High
@@ -15,66 +15,40 @@ Planner / Reviewer: B
 Implementation Authorization: ORIGINAL TASK 59.1 CORRECTION SCOPE
 ```
 
-## B 复核与 Slice 59 交接
+## Developer 修正交接 — READY FOR B REVIEW
 
-**Task 59.1 — FIX REQUIRED。** 从 Files 批量整理两个就绪文件，打开第二项取消纳入，回到概览。
-批准预览和实页的上方均显示 `1 / 2`，实页底部又显示已选、需要处理、可确认三组数字。在
-390 × 520 的浏览器里，两排底部内容占用了原本可见的第一条就绪文件。继续点「整批复核」，
-实际范围正确，只包含第一项。底部的「返回整理概览」和「确认整理 1 项」上下排列，首屏仅读到
-确认状态和计数，需滚动才能看到「来源与目标」。同一可确认状态的批准预览在底部同一行左右
-放置两项操作，首屏显示「来源与目标」。在 390 × 844 上也可见两个按钮上下排列，桌面已左右分置。
-实页还把「方案标识与诊断」放在三栏计数与所选文件之间。这些差异属于 A59-03 的 Files 正常路径。
-[Slice AC-06](SLICE.md#acceptance-criteria)
+候选：`bf02484162ae9982d697825698ba541646665e02`（父提交
+`9c0b9921d792966aeed1ca87d2e839939e44afb0`，Task Base
+`3bc9ad99137e5a2f8ff53add92041185ceb8ebbf`）。本轮只改 Files 整理弹窗、共享样式和直接受影响
+测试；上一轮 B 复核记录、原 Task 59.2 证据及更早交接保留在 `9c0b9921:TASK.md` 与 Git。
 
-审查从 `main` 的 `c6c253a8894d2616103e0bc3b888784e456907e2` 开始，工作区与暂存区干净。
-独立核对完整 Task `3bc9ad99137e5a2f8ff53add92041185ceb8ebbf..c109e403cc1733baebf20853d618d170c263d338`
-与完整 Slice `212acdef5d97c14a01353b22c103d44b911d6147..c109e403cc1733baebf20853d618d170c263d338`。
-`c6c253a8` 是交接文档，B 的 `a7b8f0c8056cbd3154547705157d89d1578a76b2` 只更新两个浏览器
-用例的界面入口和断言，产品源码和构建相同。原计划与 Developer 实跑交接见 `c6c253a8:TASK.md`，
-原 Task 59.2 的功能验收和历史证据见 `aa20989a:TASK.md`。
+- **概览唯一计数。** 删除 Files 概览固定区的已选、需要处理、已有记录和可确认文本。正文三栏继续
+  显示「已选 / 可确认」「需要处理」「已有记录」，「整批复核(已选 N 项)」继续读取精确
+  `activeSelection`。组件与两次确认用例改在概览同一三栏和该按钮核对 `2 / 2 → 1 / 2`、
+  `90 / 0`、A59-01 的 `1 / 1` 与已有记录 `1`，并断言旧底部文案不再出现。
+- **整批正文顺序。** Files 状态卡与三栏之后直接是「来源与目标」；所选文件、未纳入文件和未受理
+  原因之后才显示适用的「重新分析同一准备」与可展开「方案标识与诊断」。来源、目标、操作、实际
+  来源影响、附件行、拒绝原因、授权和提交核对未改；非 Files 的 Task Center 整批正文保持原顺序。
+  组件断言诊断位于「来源与目标」之后。
+- **正常确认底栏。** 仅在 `filesHost && confirmationBlocker === null` 时以
+  `mf-organize-confirm-submit-inline` 取消窄窗整行回退，让「返回整理概览」与「确认整理 N 项」
+  在底部同一行分居左右。存在 `confirmationBlocker` 的长原因状态仍使用原有整行布局；焦点、
+  键盘、reduced-motion 及 Task Center 原位续作分支未改。390 × 520 下两项操作在视口内，正文
+  首屏露出「来源与目标」，长路径继续使用原单正文滚动。
+- **真实视口断言。** 在现有单文件 Files 入口增加真实浏览器检查：1280 × 900、390 × 844、
+  390 × 520 分别核对「来源与目标」首屏位置、两项操作同排且在视口内；截图保存于
+  `.git/validation-evidence/bf02484162ae9982d697825698ba541646665e02/developer-task59.1-files/`。
 
-- **RO-1（AC-01/05/06）。** 读取方案仍在同一准备卡展示后端阶段、来源、范围和进度，读取失败后可重读。
-  100 项目录保持 `90 / 0` 和真实的作品搜索修正提示，第 101 项按原规则停止。就绪子集计数修正已通过，
-  概览底部的重复计数仍占用窄屏正文。
-- **RO-2（AC-02）。** 真实混合批次完成识别、候选、作品搜索、分类与冲突处理。普通及丢回包的冲突
-  跳过均读回已跳过，返回概览并保留兄弟结果和选择。十项逐项决定最后只确认一次。
-- **RO-3（AC-03/06）。** 两个就绪文件默认 `2 / 2`，暂不纳入一个后为 `1 / 2`。首次只提交第一项，
-  真实 Worker 处理后兄弟文件留在原处。从同一任务继续第二项，核对第二次提交的丢回包与实际效果。
-  正常整批复核的布局与诊断顺序仍需修正。
-- **RO-4（AC-04/05/06）。** 原位「继续整理」、原详情页签与筛选、四类同任务恢复、跨页证据在本轮
-  原生回归通过。最终任务详情正文的同状态视觉对照属于原 Task 59.2，等 Files 修正通过后接续。
-  Slice 59 仍为 FIX REQUIRED。
+实际验证（`web/`，候选 `bf024841`）：`npm run typecheck`、`npm run build`、改动文件 ESLint 与
+Prettier、`check_governance.py`、`git diff --check` 通过。组件
+`ManualOrganizeDialog.test.tsx` 最终 **56/56** 通过（32.1s）；首跑 54/56，两项旧断言仍按诊断和
+重分析旧位置查找，已随真实顺序更新。原生 `library-files` 同页子集 **1/1**（1.5s）；Python
+两次确认、双屏计数、单文件、十文件和 100 项组 **5/5**（28.3s）；Task Center 原位续作 **1/1**
+（18.9s）；加入视口断言后的单文件复跑 **1/1**（4.9s）。测试墙钟约 2 分钟，低于本轮用时 30%。
 
-受影响组件 **179 项**、Files 与 Task Center 布局 **64 项**、OpenList **1 项**通过。构建、类型检查、
-改动文件 ESLint 和 Prettier、治理与差异检查通过。完整原生 Files 首跑 **22/24**，两项旧断言分别
-在三栏计数里找「未受理」、在当前界面找旧返回或关闭标签。B 保留两轮原始失败，按现有 UI 验证
-展开的未受理文件、拒绝原因、精确范围与零变更；技术失败旅程沿实际按钮返回概览、整批读原因并
-重新进入单文件只读原计划。两项更新后 **2/2** 通过，其余 22 项输入相同。另有 **11 项**原生任务中心
-用例通过。测试使用真实 API、SQLite、Worker 及临时媒体根和隔离 Provider。
-
-本机证据在 `.git/validation-evidence/c109e403cc1733baebf20853d618d170c263d338/b-task59.1-review/`。
-`candidate-screens/` 为三个视口的准备、概览、冲突决定和正常整批复核，`current-readability/` 为
-100 项真实阻塞。批准预览文件的 SHA-256 已核对。`approved-screens/subset-*.png` 由本轮从批准预览
-的「标准整理」同样取消一项后截取，其他同状态预览也保存在该目录。预览和实页均有一项纳入、一项
-未纳入，实页按真实方案显示零附件，预览样例所选文件带一份字幕。冲突选项按各自方案权限显示。
-
-## 目标与 Developer 开发指导
-
-操作者从 Files 在概览确认范围，打开整批后先看到确认状态、三栏数字和所选文件，在固定操作区返回
-或提交。范围限 Files 概览和整批复核正文样式。
-
-1. 在 `ManualOrganizeDialog.tsx` 的 Files 概览固定区去掉重复的已选、待处理、已有记录和可确认数字。
-   保留正文唯一的三栏以及「整批复核」按钮里的精确已选数量。真实方案阻塞和下一步继续由现有状态卡
-   说明。原来检查底部同一计数的用例改在概览同一个三栏上核对，保留 `2 / 2 → 1 / 2`、
-   `90 / 0` 和已跳过、已有结果的真实计数。
-2. 把 Files 整批的「方案标识与诊断」放到所选文件和未纳入原因之后，继续可展开。三栏之后直接
-   阅读「来源与目标」。保留准确的来源、目标、操作、实际来源影响和确有的附件，保留原位拒绝、
-   授权、重新分析及提交核对。
-3. 在 Files 正常可确认状态，让返回与确认在底部同一行分居左右。现有窄窗 CSS 把确认区设成整行，
-   将正常 Files 确认和需要显示较长原因的状态按现有 `confirmationBlocker` 区分布局。在 390 × 520
-   保持两项操作可见，让正文首屏露出「来源与目标」，长路径使用现有单正文滚动。保留焦点、键盘、
-   reduced-motion 和 Task Center 原位续作的正文。
-   [整理弹窗](web/src/features/operations/ManualOrganizeDialog.tsx) · [样式](web/src/shared/ui/styles.css)
+剩余风险：长阻塞原因的整行底栏沿用原布局，本轮未单独截图，B 应在 100 项真实阻塞状态复核；
+完整原生 Files、Task Center 布局和 Slice Base..Head 仍属 B 的 T3 验收。Task Center 正文本次
+未改，原位续作入口回归通过。
 
 ## 验收与测试
 
