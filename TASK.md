@@ -1,6 +1,6 @@
 # Task 59.1 — 文件入口的手动整理弹窗与整批确认
 
-Next Action: DEVELOPER CORRECTS TASK 59.1 AND RESUBMITS FOR B REVIEW
+Next Action: B REVIEWS THE TASK 59.1 CORRECTION CANDIDATE
 
 用户已授权激活 Task 59.1。Developer 开始实施时将状态从 `PLANNED` 转为
 `IN PROGRESS`。原 Task ID、Base、范围和验收条件沿用。A 代 B 的授权限于本 Task 的规划，
@@ -11,7 +11,7 @@ B 独立复核实施候选，A 负责 Slice 终审。
 Task ID: 59.1
 Task Type: SLICE
 Parent Slice: 59
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
 Difficulty: High
 Test Level: T3
@@ -444,3 +444,51 @@ Web 64 项通过。原生整理全文件套件 16 项通过、1 项来源占用�
 Slice 重评：RO-1 的主要入口、预览回读与 100/101 项边界已有通过证据。RO-2 的原位回落
 已验证，本轮技术失败指引阻塞。RO-3 的附件、精确子集及原请求交接已有通过证据，组合
 验收继续。RO-4 任务详情正文仍待交付。修正继续在 Task 59.1。
+
+
+### Developer Correction Report (metadata stage and source separation)
+
+已按 B 的修正指引完成候选 `b59c86b7b8b74534e63544e8e9da003b5f6a4500`（含
+`2ee98c1e`），范围仍限 Task 59.1。
+
+- Files 概览与文件详情统一从条目的已发布证据得出当前结论：只有真实的识别、元数据
+  候选/修正、分类或冲突问题才提示保存决定；`analysis.metadata.status=provider_error`
+  显示「元数据服务技术失败」，说明元数据阶段未完成、没有可用候选与候选恢复表单、
+  当前文件不可纳入且未修改任何文件，并提供 Metadata Provider 排查及任务中心原整理准备
+  任务的结果查看方式。详情不再显示与元数据证据矛盾的 Storage failure 分类，方案区也
+  不再写成仍在等待分析。Task Center 原位/历史继续沿用含 stage 的 Base 问题判定，
+Files 才只读取已发布的业务证据。
+- 概览的迟到分析回落不再把 Worker 重规划期间可读的、已被取代的旧摘要当作本次分析结果；
+  只有新摘要中的该条目仍是当前事实，或出现明确业务问题/可执行方案时，才改变页面或
+  释放等待。该保护修复了去掉 stage 猜测后暴露的旧摘要回退，不改变既有同条目劝阻、
+  兄弟摘要和迟到读回边界。
+- 原生夹具新增 `ProviderFailure/ProviderFail.2011.mkv`（本地测试 Provider 连接失败）
+  与 `ProviderReady.2011.mkv`（就绪兄弟），经真实 Files 批量入口、真实 API/Worker
+  产生摘要；概览与详情显示元数据技术失败，就绪兄弟仍独立纳入，核对和整批复核期间
+  Execute 为 0。
+- 概览焦点用例改用独立来源 `ReadabilityDialog/ReadableDialog.2011.mkv`，不再与单文件
+  来源/目标可读性用例串用 `ReadabilityOne/ReadableOne.2011.mkv`；两条用例同次原生
+  运行通过。
+
+实际命令与结果（cwd `web/`）：
+
+- `npm run typecheck` — 通过。
+- `npx eslint src/features/operations/ManualOrganizeDialog.tsx src/features/operations/ManualOrganizeDialog.test.tsx tests/e2e/manual-organize-dialog.python.spec.ts` — 通过。
+- `npx prettier --check` 同上 — 通过。
+- `npm run test -- run` 六个受影响单测文件 — 6 files / 157 tests passed（最终候选）。
+- `npm run test -- run src/features/operations/OperationsInventory.test.tsx -t "Task59.1 reads a lost in-place analysis|Task59.1 releases an in-place analysis wait"` —
+  2 passed，最终候选的原位 Base 判定无回归。
+- `npm run build` — 通过；当前入口 `dist/index.html` SHA-256
+  `eaa6a96c189d736da1ca4ef45520a10fa312124f4ebb35d90a329579c30ee23e`。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts --grep 'Task59[.]1|unknown original submission|100-file batch|101-file directory'` —
+  19 passed（2.1 分钟），在 `2ee98c1e` 上包含新增 Provider 故障旅程、共享来源两用例、
+  100/101 项边界；最终候选另复跑供应商故障与元数据候选对照 2 passed，隔离仅恢复
+  Task Center 的 Base 回落。
+- 仓库根 `python3 scripts/check_governance.py`、`.venv/bin/ruff check/format --check
+  scripts/operations_inventory_harness.py`、`git diff --check` — 均通过。
+
+已知限制/风险：Provider 故障由隔离夹具的本地测试 Provider 注入，生产 TMDB 的真实连接
+故障留给 B 的完整 T3；本轮只把已发布的 `provider_error` 识别为元数据技术阶段，其他技术
+阶段沿用原受限失败文案。若被取代的旧摘要是唯一可读状态且整理流程仍未结束，同文件等待
+保持锁定，结束后的只读历史仍由既有结束流程展示。B 的完整原生/Web 门禁与桌面、390 px、
+矮窗证据仍需在修正候选上执行；未推送或发布。
