@@ -50,6 +50,7 @@ import {
   type RunItemsPage,
   type RunPlanEvidence,
   type RunProgress,
+  type RunProgressAvailable,
   type RunRecord,
   type RunRecordKind,
   type RunRecordsPage,
@@ -1016,6 +1017,26 @@ function ProgressCard({ progress }: { readonly progress: RunProgress | null }) {
 }
 
 /**
+ * The success cell names the accounting basis of the published count: only an
+ * organize/transfer/direct read model proves a verified Storage effect, while
+ * an analysis completion or a disposition-only run never borrows that claim.
+ */
+function confirmedSuccessLabel(progress: RunProgressAvailable): string {
+  switch (progress.kind) {
+    case "analysis":
+      return "分析完成";
+    case "organize":
+      return "已验证成功";
+    case "transfer":
+      return "已验证传输";
+    case "direct":
+      return "已验证操作";
+    default:
+      return "已记录成功";
+  }
+}
+
+/**
  * The file result distribution that follows the processed range (V2-UX-006).
  *
  * Success, partial success and failure are independent durable facets of the
@@ -1031,21 +1052,30 @@ function RunFileResultsCard({
   readonly results: RunFileResults | null | undefined;
   readonly progress: RunProgress | null;
 }) {
+  // A published progress read splits success into confirmed and uncertain
+  // facts. The run-row `success_items` count is only the durable recorded
+  // status, so it is labelled as such when no progress model exists.
+  const published = progress !== null && progress.available ? progress : null;
   const extras =
-    progress !== null && progress.available
+    published !== null
       ? (["skipped", "ignored", "cancelled"] as const)
           .map((disposition) => ({
             disposition,
-            count: progress.dispositions[disposition],
+            count: published.dispositions[disposition],
           }))
           .filter((entry) => entry.count > 0)
       : [];
-  const known =
-    results !== null &&
-    results !== undefined &&
-    (results.success !== null ||
-      results.partial !== null ||
-      results.failed !== null);
+  const success =
+    published !== null
+      ? published.confirmedSuccess
+      : (results?.success ?? null);
+  const successLabel =
+    published !== null
+      ? confirmedSuccessLabel(published)
+      : "成功（已记录状态）";
+  const partial = results?.partial ?? null;
+  const failed = results?.failed ?? null;
+  const known = success !== null || partial !== null || failed !== null;
   const uncertain = results?.uncertain ?? 0;
   const missingResult = results?.missingResult ?? 0;
   // An unknown effect or a settled attempt without a Result is a real file
@@ -1059,21 +1089,21 @@ function RunFileResultsCard({
       <h4>文件结果</h4>
       {(known || extras.length > 0) && (
         <ul className="mf-file-result-grid">
-          {results?.success !== null && results?.success !== undefined && (
+          {success !== null && (
             <li>
-              <span className="mf-file-result-value">{results.success}</span>
-              <span className="mf-file-result-label">成功</span>
+              <span className="mf-file-result-value">{success}</span>
+              <span className="mf-file-result-label">{successLabel}</span>
             </li>
           )}
-          {results?.partial !== null && results?.partial !== undefined && (
+          {partial !== null && (
             <li>
-              <span className="mf-file-result-value">{results.partial}</span>
+              <span className="mf-file-result-value">{partial}</span>
               <span className="mf-file-result-label">部分成功</span>
             </li>
           )}
-          {results?.failed !== null && results?.failed !== undefined && (
+          {failed !== null && (
             <li>
-              <span className="mf-file-result-value">{results.failed}</span>
+              <span className="mf-file-result-value">{failed}</span>
               <span className="mf-file-result-label">失败</span>
             </li>
           )}
@@ -1434,14 +1464,16 @@ function RunItemsSection({
 
 // -- One item's evidence ----------------------------------------------------
 
-/** The durable item statuses that mean the file's processing attempt ended. */
-const TERMINAL_ITEM_STATUSES = new Set([
+/** A settled processing attempt that owes a durable Result row. */
+const RESULT_OWING_ITEM_STATUSES = new Set(["success", "partial", "failed"]);
+
+/** A terminal status whose replay restriction is technical, not a current task. */
+const NO_REPLAY_ITEM_STATUSES = new Set([
   "success",
-  "partial",
-  "failed",
   "skipped",
-  "cancelled",
   "ignored",
+  "cancelled",
+  "dry_run",
 ]);
 
 /** Chinese labels for the persisted Result row status values. */
@@ -1471,25 +1503,23 @@ const STORAGE_STEP_LABELS: Readonly<Record<string, string>> = {
   source_deletion: "删除来源",
 };
 
-/** Business names for the four current decision blockers. */
-const BLOCKER_LABELS: Readonly<Record<string, string>> = {
-  recognition_review: "等待识别决定",
-  metadata_review: "等待元数据决定",
-  metadata_correction: "等待元数据修正",
-  classification_review: "等待分类决定",
-  conflict_review: "等待冲突处理",
-  conflict: "等待冲突处理",
-};
-
-/** The concrete thing still unresolved behind each current blocker. */
+/**
+ * The concrete thing still unresolved behind each current blocker, using the
+ * exact checkpoint kinds the backend publishes (recognition, metadata,
+ * metadata_correction, classification, conflict).
+ */
 const BLOCKER_REASONS: Readonly<Record<string, string>> = {
-  recognition_review: "识别结果需要确认",
-  metadata_review: "元数据候选需要确认",
-  metadata_correction: "元数据内容需要修正",
-  classification_review: "分类目标需要确认",
-  conflict_review: "目标冲突需要处理",
+  recognition: "识别结果需要确认",
+  metadata: "元数据候选需要确认",
+  metadata_correction: "元数据搜索需要修正",
+  classification: "分类目标需要确认",
   conflict: "目标冲突需要处理",
 };
+
+/** A persisted effect that still cannot be treated as a confirmed result. */
+function effectUnconfirmed(certainty: string | null | undefined): boolean {
+  return certainty === "attempted_unverified" || certainty === "unknown";
+}
 
 function storageStepLabel(step: string): string {
   const label =
@@ -1544,10 +1574,11 @@ function itemOutcome(evidence: RunItemEvidence): {
 } {
   const status = evidence.item.status;
   const certainty = evidence.checkpoint.effectCertainty;
-  if (evidence.results.length === 0 && TERMINAL_ITEM_STATUSES.has(status)) {
+  const resultOwing = RESULT_OWING_ITEM_STATUSES.has(status);
+  if (evidence.results.length === 0 && resultOwing) {
     return { text: "文件处理已结束，结果未记录", tone: "warning" };
   }
-  if (certainty === "attempted_unverified") {
+  if (resultOwing && effectUnconfirmed(certainty)) {
     return { text: "目标文件结果尚未确认", tone: "warning" };
   }
   if (status === "success") {
@@ -1585,9 +1616,12 @@ function itemRowReading(item: RunItemsPage["items"][number]): {
   readonly reason: string;
   readonly tone: "normal" | "warning" | "error";
 } {
+  const status = item.status;
+  const certainty = item.checkpoint?.effectCertainty ?? null;
+  const unconfirmed = effectUnconfirmed(certainty);
   const disposition =
-    RUN_ITEM_STATUS_LABELS[item.status] ??
-    (item.status === "dry_run" ? "分析完成" : item.status);
+    RUN_ITEM_STATUS_LABELS[status] ??
+    (status === "dry_run" ? "分析完成" : status);
   const blocker = item.checkpoint?.blockerKind ?? null;
   if (blocker !== null) {
     return {
@@ -1597,31 +1631,70 @@ function itemRowReading(item: RunItemsPage["items"][number]): {
     };
   }
   if (item.failure !== null) {
+    // A failed attempt whose Storage effect stayed unknown keeps both facts:
+    // the failure explanation is the reason, the unconfirmed effect is the
+    // result.
     return {
-      disposition,
+      disposition: unconfirmed ? `${disposition}（效果未确认）` : disposition,
       reason: taskFailureReason(item.failure.category) ?? "处理未完成",
-      tone: "error",
+      tone: unconfirmed ? "warning" : "error",
     };
   }
-  if (item.checkpoint?.effectCertainty === "attempted_unverified") {
+  if (status === "success") {
+    if (certainty === "verified_complete") {
+      return { disposition: "已验证成功", reason: "—", tone: "normal" };
+    }
+    if (unconfirmed) {
+      return {
+        disposition: "效果未确认",
+        reason: "查看证据核对目标与已记录效果",
+        tone: "warning",
+      };
+    }
+    return { disposition, reason: "—", tone: "normal" };
+  }
+  if (status === "partial") {
     return {
-      disposition,
-      reason: "目标文件结果尚未确认",
+      disposition: unconfirmed ? "部分完成（效果未确认）" : "部分完成",
+      reason: unconfirmed
+        ? "部分文件或附件未完成；目标效果需核对"
+        : "部分文件或附件未完成",
       tone: "warning",
     };
   }
-  if (item.checkpoint?.refusalReason != null) {
+  if (status === "failed") {
+    if (unconfirmed) {
+      return {
+        disposition: "失败（效果未确认）",
+        reason: "查看证据核对目标与已记录效果",
+        tone: "warning",
+      };
+    }
+    return { disposition: "失败", reason: "—", tone: "error" };
+  }
+  if (status === "skipped") {
+    return { disposition: "已跳过", reason: "—", tone: "normal" };
+  }
+  if (status === "ignored") {
+    return { disposition: "已忽略", reason: "—", tone: "normal" };
+  }
+  if (status === "cancelled") {
+    return { disposition: "已取消", reason: "—", tone: "normal" };
+  }
+  if (status === "dry_run") {
+    return { disposition: "分析完成", reason: "—", tone: "normal" };
+  }
+  if (
+    !NO_REPLAY_ITEM_STATUSES.has(status) &&
+    item.checkpoint?.refusalReason != null
+  ) {
     return {
       disposition,
       reason: refusalReasonLabel(item.checkpoint.refusalReason),
       tone: "warning",
     };
   }
-  return {
-    disposition,
-    reason: item.status === "partial" ? "部分文件或附件未完成" : "—",
-    tone: item.status === "partial" ? "warning" : "normal",
-  };
+  return { disposition, reason: "—", tone: "normal" };
 }
 
 function RunEvidenceSection({
@@ -1703,10 +1776,15 @@ function RunEvidenceSection({
             failure === null
               ? null
               : (taskFailureReason(failure.category) ?? "处理未完成");
+          const unconfirmedEffect =
+            RESULT_OWING_ITEM_STATUSES.has(item.status) &&
+            (evidence.results.length > 0 ||
+              checkpoint.completedOperations.length > 0) &&
+            effectUnconfirmed(checkpoint.effectCertainty);
           const needsAttention =
             failure !== null ||
             checkpoint.blockerKind !== null ||
-            checkpoint.effectCertainty === "attempted_unverified" ||
+            unconfirmedEffect ||
             checkpoint.uncertainEffects.length > 0;
           // The checkpoint projects the same durable failure's next action.
           // Keep one row only when the two sources agree; otherwise each
@@ -1850,10 +1928,11 @@ function RunEvidenceSection({
                   {checkpoint.blockerKind !== null && (
                     <p>
                       当前阻塞：
-                      {BLOCKER_LABELS[checkpoint.blockerKind] ?? "等待处理决定"}
+                      {BLOCKER_REASONS[checkpoint.blockerKind] ??
+                        "需要人工处理决定"}
                     </p>
                   )}
-                  {checkpoint.effectCertainty === "attempted_unverified" && (
+                  {unconfirmedEffect && (
                     <p>
                       执行已尝试，目标文件结果尚未确认；请先核对，不要直接重放。
                     </p>

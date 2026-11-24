@@ -1959,7 +1959,7 @@ describe("Operations run inventory landing", () => {
       within(results)
         .getAllByRole("listitem")
         .map((item) => item.textContent),
-    ).toEqual(["7成功", "2部分成功", "1失败"]);
+    ).toEqual(["6已验证成功", "2部分成功", "1失败"]);
     expect(
       within(results).getByText(/目标文件结果尚未确认 1 个/),
     ).toBeVisible();

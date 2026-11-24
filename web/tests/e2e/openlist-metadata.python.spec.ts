@@ -219,7 +219,7 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
     .getByRole("button", { name: "刷新", exact: true })
     .first()
     .click();
-  await expect(detail.getByText("2成功", { exact: true })).toBeVisible({
+  await expect(detail.getByText("2已验证成功", { exact: true })).toBeVisible({
     timeout: 15_000,
   });
 

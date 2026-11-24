@@ -159,7 +159,9 @@ test("a mixed file population completes the flow with independent file facts", a
   // the file-failure count stays independently readable.
   await expect(detail.getByText(/已处理 2 \/ 2 个主条目/)).toBeVisible();
   const fileResults = detail.getByRole("region", { name: "文件结果" });
-  await expect(fileResults.getByText("1成功", { exact: true })).toBeVisible();
+  await expect(
+    fileResults.getByText("1已验证成功", { exact: true }),
+  ).toBeVisible();
   await expect(fileResults.getByText("1失败", { exact: true })).toBeVisible();
 
   // The Automation execution record reads the exact same flow outcome for the
@@ -218,7 +220,7 @@ test("a mixed file population completes the flow with independent file facts", a
     name: "文件结果",
   });
   await expect(
-    reopenedResults.getByText("1成功", { exact: true }),
+    reopenedResults.getByText("1已验证成功", { exact: true }),
   ).toBeVisible();
   await expect(
     reopenedResults.getByText("1失败", { exact: true }),

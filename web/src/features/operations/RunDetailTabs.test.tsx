@@ -143,7 +143,7 @@ const WAITING_ITEM = itemRow({
     status: "waiting_metadata",
     stage: "waiting",
     raw_stage: "metadata",
-    blocker_kind: "metadata_review",
+    blocker_kind: "metadata",
     blocker_id: "review-1",
     effect_certainty: "unknown",
     retry_safety: "unknown",
@@ -456,7 +456,7 @@ function evidenceDocument(overrides: Record<string, unknown> = {}) {
       prior_results: [],
       blockers: [],
       blocker: {
-        kind: "metadata_review",
+        kind: "metadata",
         id: "review-1",
         status: "pending",
         task_id: "task-001",
@@ -1141,7 +1141,7 @@ describe("selected-run detail tabs", () => {
     const results = await within(detail).findByRole("region", {
       name: "文件结果",
     });
-    expect(within(results).getByText("成功")).toBeVisible();
+    expect(within(results).getByText("已验证成功")).toBeVisible();
     expect(within(results).getByText("部分成功")).toBeVisible();
     expect(within(results).getByText("失败")).toBeVisible();
     expect(
@@ -1181,7 +1181,7 @@ describe("selected-run detail tabs", () => {
     const results = await within(detail).findByRole("region", {
       name: "文件结果",
     });
-    await within(results).findByText("成功");
+    await within(results).findByText("已验证成功");
     // The first screen reads top-down: flow state, processed range, then the
     // independent file outcomes.
     expect(
@@ -1252,7 +1252,7 @@ describe("selected-run detail tabs", () => {
     ).toBeTruthy();
   });
 
-  it("Task59.2 publishes unknown and missing file effects without primary counts", async () => {
+  it("Task59.2 reads the progress success split and its unknown or missing caveats", async () => {
     stubDetailJourney([], {
       overview: overviewDocument({
         success_items: null,
@@ -1269,15 +1269,20 @@ describe("selected-run detail tabs", () => {
     const results = await within(detail).findByRole("region", {
       name: "文件结果",
     });
-    // Neither caveat is folded into a fabricated success/failure count and
-    // neither disappears when the three primary counts are unknown.
+    // The published progress split supplies the verified success even when
+    // the run row's status counts are unknown; neither caveat is folded into
+    // a fabricated success/failure count or hidden.
+    expect(
+      within(results)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["1已验证成功"]);
     expect(
       within(results).getByText(/目标文件结果尚未确认 2 个/),
     ).toBeVisible();
     expect(
       within(results).getByText(/文件处理已结束，结果未记录 1 个/),
     ).toBeVisible();
-    expect(within(results).queryByText("成功")).toBeNull();
     expect(within(results).queryByText("部分成功")).toBeNull();
     expect(within(results).queryByText("失败")).toBeNull();
   });
@@ -1346,6 +1351,124 @@ describe("selected-run detail tabs", () => {
       .getByText(/技术诊断/)
       .click();
     expect(within(evidence).getByText("metadata")).toBeVisible();
+  });
+
+  it("Task59.2 reads verified, unconfirmed and skipped file results from their checkpoints", async () => {
+    const user = userEvent.setup();
+    const checkpoint = (overrides: Record<string, unknown>) => ({
+      status: "success",
+      stage: "completed",
+      raw_stage: "completed",
+      blocker_kind: null,
+      blocker_id: null,
+      effect_certainty: "verified_complete",
+      retry_safety: "unsafe",
+      refusal_reason: "replay_not_offered: item has a terminal outcome",
+      checkpoint_version: "v1",
+      permitted_action_ids: [],
+      ...overrides,
+    });
+    const verifiedItem = itemRow({
+      item_id: "item-3",
+      source_path: "movies/verified.mkv",
+      checkpoint: checkpoint({}),
+    });
+    const unconfirmedItem = itemRow({
+      item_id: "item-1",
+      checkpoint: checkpoint({
+        effect_certainty: "attempted_unverified",
+      }),
+    });
+    const skippedItem = itemRow({
+      item_id: "item-4",
+      status: "skipped",
+      source_path: "movies/skipped.mkv",
+      destination_path: null,
+      checkpoint: checkpoint({
+        status: "skipped",
+        effect_certainty: "unknown",
+      }),
+    });
+    const unconfirmedEvidence = manualExecutionEvidenceDocument({
+      results: [
+        evidenceResultRow({
+          effect_certainty: "attempted_unverified",
+          uncertain_effects: ["mutation_outcome"],
+        }),
+      ],
+    });
+    (unconfirmedEvidence.checkpoint as Record<string, unknown>)["effects"] = {
+      certainty: "attempted_unverified",
+      completed_operations: ["MOVE"],
+      uncertain_effects: ["mutation_outcome"],
+    };
+    const base = stubDetailJourney([], {
+      evidenceItem1: unconfirmedEvidence,
+    });
+    stubFetch(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
+        return jsonResponse(
+          itemsPageDocument({
+            items: [verifiedItem, unconfirmedItem, skippedItem],
+          }),
+        );
+      }
+      return (
+        base as unknown as (
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ) => Promise<Response>
+      )(input, init);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    await within(items).findByText(/movies\/verified\.mkv/);
+    const verifiedRow = within(items)
+      .getByText(/movies\/verified\.mkv/)
+      .closest("tr");
+    const unconfirmedRow = within(items)
+      .getByText(/movies\/a\.mkv/)
+      .closest("tr");
+    const skippedRow = within(items)
+      .getByText(/movies\/skipped\.mkv/)
+      .closest("tr");
+    expect(verifiedRow).not.toBeNull();
+    expect(unconfirmedRow).not.toBeNull();
+    expect(skippedRow).not.toBeNull();
+    // A verified success, an attempted-but-unconfirmed effect and a normal
+    // skip each read as their own durable result; the terminal replay
+    // restriction stays in diagnostics instead of the attention column.
+    expect(within(verifiedRow!).getByText("已验证成功")).toBeVisible();
+    expect(within(unconfirmedRow!).getByText("效果未确认")).toBeVisible();
+    expect(
+      within(unconfirmedRow!).getByText("查看证据核对目标与已记录效果"),
+    ).toBeVisible();
+    expect(within(skippedRow!).getByText("已跳过")).toBeVisible();
+    for (const row of [verifiedRow!, unconfirmedRow!, skippedRow!]) {
+      expect(within(row).queryByText(/已结束的条目不再提供重放/)).toBeNull();
+    }
+
+    await user.click(
+      within(unconfirmedRow!).getByRole("button", { name: "查看证据" }),
+    );
+    const evidence = await findInlineEvidence(detail);
+    await within(evidence).findByText("文件证据：a.mkv");
+    expect(within(evidence).getByText("目标文件结果尚未确认")).toBeVisible();
+    expect(
+      within(
+        within(evidence).getByRole("region", { name: "来源与目标" }),
+      ).getByText("Movies/Two (2002)/Two (2002).mkv"),
+    ).toBeVisible();
+    expect(within(evidence).getByText("效果：已尝试,未验证")).toBeVisible();
+    expect(
+      within(evidence).getByText(
+        /执行已尝试，目标文件结果尚未确认；请先核对，不要直接重放。/,
+      ),
+    ).toBeVisible();
   });
 
   it("Task59.2 keeps the records failure reason and re-reads it in place", async () => {
@@ -1882,7 +2005,7 @@ describe("selected-run detail tabs", () => {
     // The readable body names the concrete blocker and the file's own result
     // instead of surfacing the raw review tokens as the primary facts.
     expect(within(evidence).getByText(/当前阻塞/)).toBeVisible();
-    expect(within(evidence).getByText(/等待元数据决定/)).toBeVisible();
+    expect(within(evidence).getByText(/元数据候选需要确认/)).toBeVisible();
     // The technical next action, refusal token and fixed configuration stay
     // reachable inside the collapsed diagnostics instead of the readable body.
     await user.click(within(evidence).getByText(/技术诊断/));

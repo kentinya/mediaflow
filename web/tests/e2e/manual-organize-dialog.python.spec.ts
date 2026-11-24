@@ -1131,6 +1131,31 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   const originalTarget = copied.destinationTargets[0] ?? "";
   expect(originalTarget).not.toBe("");
 
+  // The finished Worker's verified effect reads as a verified success in the
+  // exact run detail: the row never presents the ordinary terminal replay
+  // restriction as an attention reason.
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(
+    detail
+      .getByRole("region", { name: "文件结果" })
+      .getByText("1已验证成功", { exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  const items = detail.getByRole("region", { name: "主条目" });
+  const copiedRow = items.getByRole("row").filter({ hasText: conflictFile });
+  await expect(copiedRow.getByText("已验证成功")).toBeVisible();
+  await expect(copiedRow.getByText(/已结束的条目不再提供重放/)).toHaveCount(0);
+  await copiedRow.getByRole("button", { name: "查看证据" }).click();
+  const copiedEvidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(copiedEvidence.getByText("文件已整理")).toBeVisible();
+  await expect(
+    copiedEvidence
+      .getByRole("region", { name: "来源与目标" })
+      .getByText(originalTarget, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    copiedEvidence.getByText("效果：已验证完成", { exact: true }),
+  ).toBeVisible();
+
   await page.getByRole("button", { name: "关闭详情" }).click();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
 

@@ -560,10 +560,39 @@ async function runNativeRecoveryJourney(
 ): Promise<NativeRecoverySeed> {
   const seeded = await seedNativeRecovery(request, kind, options.variant);
   await openNativeRecovery(page, seeded);
-  const recovery = page
-    .getByRole("dialog", { name: "运行详情" })
-    .getByRole("region", { name: "条目审核与恢复" });
+  const nativeDetail = page.getByRole("dialog", { name: "运行详情" });
+  const recovery = nativeDetail.getByRole("region", {
+    name: "条目审核与恢复",
+  });
   await expect(recovery.getByRole("heading", { name: heading })).toBeVisible();
+  // The exact file row names the checkpoint kind the backend really returned
+  // and keeps the same concrete reason as its expanded evidence.
+  const problemReason: Readonly<Record<NativeRecoveryKind, string>> = {
+    recognition: "识别结果需要确认",
+    metadata: "元数据候选需要确认",
+    metadata_correction: "元数据搜索需要修正",
+    classification: "分类目标需要确认",
+    conflict: "目标冲突需要处理",
+    conflict_overwrite: "目标冲突需要处理",
+  };
+  const nativeItems = nativeDetail.getByRole("region", { name: "主条目" });
+  // The open evidence row also contains the source path, so read the first
+  // matching row: the item row itself.
+  const nativeRow = nativeItems
+    .getByRole("row")
+    .filter({ hasText: seeded.sourcePath })
+    .first();
+  await expect(nativeRow).toBeVisible();
+  await expect(nativeRow.getByText(problemReason[kind])).toBeVisible();
+  await expect(
+    nativeRow.getByRole("button", { name: "查看证据" }),
+  ).toBeVisible();
+  await expect(
+    nativeDetail
+      .getByRole("region", { name: "条目证据" })
+      .getByRole("region", { name: "需处理原因" })
+      .getByText(problemReason[kind]),
+  ).toBeVisible();
   const metadataSearches: string[] = [];
   page.on("request", (requestValue) => {
     const url = new URL(requestValue.url());
@@ -975,8 +1004,14 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   const progress = detail.getByRole("region", { name: "处理进度" });
   await expect(progress.getByText("已处理 5 / 6 个主条目")).toBeVisible();
   const fileResults = detail.getByRole("region", { name: "文件结果" });
-  await expect(fileResults.getByText("2成功", { exact: true })).toBeVisible();
+  // The success cell is the progress read model's confirmed split, not the
+  // recorded success status count: one verified file beside one unconfirmed
+  // success, one failure and one normal skip.
+  await expect(
+    fileResults.getByText("1已验证成功", { exact: true }),
+  ).toBeVisible();
   await expect(fileResults.getByText("1失败", { exact: true })).toBeVisible();
+  await expect(fileResults.getByText("1跳过", { exact: true })).toBeVisible();
   await expect(
     fileResults.getByText(/目标文件结果尚未确认 1 个/),
   ).toBeVisible();
@@ -994,6 +1029,42 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   await expect(items.getByText("Arrival.2016.2160p.mkv")).toBeVisible();
   await expect(items.getByText("Dune.2021.2160p.mkv")).toBeVisible();
   await expect(items.getByText("共 6 条")).toBeVisible();
+
+  // Each row reads its own durable checkpoint effect. A verified success, a
+  // success whose attempt stayed unverified, and an ordinary skip never show
+  // the terminal replay restriction as an attention reason.
+  const arrivalRow = items
+    .getByRole("row")
+    .filter({ hasText: "Arrival.2016.2160p.mkv" });
+  const uncertainRow = items
+    .getByRole("row")
+    .filter({ hasText: "Blade.Runner.1982.1080p.mkv" });
+  const skippedRow = items
+    .getByRole("row")
+    .filter({ hasText: "Sample.2020.WEB-DL.mkv" });
+  await expect(arrivalRow.getByText("已验证成功")).toBeVisible();
+  await expect(uncertainRow.getByText("效果未确认")).toBeVisible();
+  await expect(
+    uncertainRow.getByText("查看证据核对目标与已记录效果"),
+  ).toBeVisible();
+  await expect(skippedRow.getByText("已跳过")).toBeVisible();
+  for (const row of [arrivalRow, uncertainRow, skippedRow]) {
+    await expect(row.getByText(/已结束的条目不再提供重放/)).toHaveCount(0);
+  }
+
+  // An ordinary skip is its own settled result, not a missing Result row.
+  await skippedRow.getByRole("button", { name: "查看证据" }).click();
+  const skippedEvidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(
+    skippedEvidence.getByRole("heading", {
+      name: "文件证据：Sample.2020.WEB-DL.mkv",
+    }),
+  ).toBeVisible();
+  await expect(
+    skippedEvidence
+      .getByRole("region", { name: "处理结果" })
+      .getByText("已跳过"),
+  ).toBeVisible();
 
   // A status filter is submitted to the server and kept in the URL, while
   // the whole-run totals stay page- and filter-independent.
@@ -1044,6 +1115,29 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   await evidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
   await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
   await expect(evidence.getByText("精确关联日志(1)")).toBeVisible();
+
+  // The historical unconfirmed success keeps its own attempt and target in
+  // the same evidence host instead of being read as a confirmed success.
+  await uncertainRow.getByRole("button", { name: "查看证据" }).click();
+  const uncertainEvidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(
+    uncertainEvidence.getByRole("heading", {
+      name: "文件证据：Blade.Runner.1982.1080p.mkv",
+    }),
+  ).toBeVisible();
+  await expect(
+    uncertainEvidence
+      .getByRole("region", { name: "处理结果" })
+      .getByText("目标文件结果尚未确认"),
+  ).toBeVisible();
+  await expect(
+    uncertainEvidence
+      .getByRole("region", { name: "来源与目标" })
+      .getByText("Movies/Blade Runner 1982/Blade Runner 1982.mkv"),
+  ).toBeVisible();
+  await expect(
+    uncertainEvidence.getByText("效果：已尝试,未验证"),
+  ).toBeVisible();
 
   // 操作记录 pages exactly-linked records on the server: the seeded
   // operational log, both Results and the captured evidence row.

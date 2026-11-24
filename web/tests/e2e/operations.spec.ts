@@ -668,7 +668,7 @@ test("the selected run detail reads flow, processed range and independent file r
   // The independent file outcomes follow, including the settled attempt with
   // no recorded result. The removed accounting/tutorial copy stays gone.
   const results = detail.getByRole("region", { name: "文件结果" });
-  await expect(results.getByText("1成功", { exact: true })).toBeVisible();
+  await expect(results.getByText("1已验证成功", { exact: true })).toBeVisible();
   await expect(results.getByText("1失败", { exact: true })).toBeVisible();
   await expect(
     results.getByText(/文件处理已结束，结果未记录 1 个/),
@@ -882,7 +882,7 @@ test("PATCH-20261107-1 keeps the mixed completed run and its independent file ou
       .getByText("已处理 2 / 2 个主条目"),
   ).toBeVisible();
   const results = detail.getByRole("region", { name: "文件结果" });
-  await expect(results.getByText("1成功", { exact: true })).toBeVisible();
+  await expect(results.getByText("1已验证成功", { exact: true })).toBeVisible();
   await expect(results.getByText("1失败", { exact: true })).toBeVisible();
   await expect(
     results.getByText(/文件处理已结束，结果未记录 1 个/),
