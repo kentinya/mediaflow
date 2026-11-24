@@ -1228,7 +1228,9 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
       .getByText("1已验证成功", { exact: true }),
   ).toBeVisible({ timeout: 30_000 });
   const items = detail.getByRole("region", { name: "主条目" });
-  const copiedRow = items.getByRole("row").filter({ hasText: conflictFile });
+  const copiedRow = items
+    .locator(".mf-run-item-row")
+    .filter({ hasText: conflictFile });
   await expect(copiedRow.getByText("已验证成功")).toBeVisible();
   await expect(copiedRow.getByText(/已结束的条目不再提供重放/)).toHaveCount(0);
   await copiedRow.getByRole("button", { name: "查看证据" }).click();

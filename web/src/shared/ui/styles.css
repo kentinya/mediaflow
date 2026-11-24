@@ -5204,24 +5204,96 @@ tr[aria-selected="true"] {
 }
 /* The item's technical identity reads as its own line under the full source
    path, so the path and the id never share one broken token run. */
-.mf-run-detail-card .mf-run-table-wrap .mf-run-identity {
-  display: block;
+/* Slice 59 A59-03: the detail body reads as one status card, then the
+   independent result counts, then compact per-file rows. Full paths and
+   technical identity remain in the exact file evidence. */
+.mf-run-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 13px 14px;
+  border: 1px solid var(--line, #e2e7ef);
+  border-radius: 10px;
+  background: #f6f9ff;
+}
+
+.mf-run-status-card-pending,
+.mf-run-status-card-running {
+  background: #f6f9ff;
+}
+
+.mf-run-status-card-attention {
+  border-color: #f1e5ce;
+  background: #fffbf2;
+}
+
+.mf-run-status-card-success {
+  border-color: #dcefe5;
+  background: #f2faf6;
+}
+
+.mf-run-status-card-failure {
+  border-color: #f4dadd;
+  background: #fff5f5;
+}
+
+.mf-run-status-card-neutral {
+  background: #f8fafc;
+}
+
+.mf-run-flow-status {
+  align-items: center;
+}
+
+.mf-run-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: #eef3fb;
+  color: #30456b;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.mf-run-status-pill-running,
+.mf-run-status-pill-pending {
+  background: #e9f1ff;
+  color: #0b4c9c;
+}
+
+.mf-run-status-pill-attention {
+  background: #fdf1db;
+  color: #8a4b0f;
+}
+
+.mf-run-status-pill-success {
+  background: #e6f5ec;
+  color: #176b3a;
+}
+
+.mf-run-status-pill-failure {
+  background: #fde8e8;
+  color: #b42318;
+}
+
+.mf-run-status-title {
+  margin: 2px 0 0;
+  color: #0e1728;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
-.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-source {
-  width: 30%;
-}
-.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-outcome {
-  width: 13%;
-}
-.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-reason {
-  width: 23%;
-}
-.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-target {
-  width: 23%;
-}
-.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-actions {
-  width: 11%;
+
+.mf-run-status-copy {
+  margin: 0;
+  color: #53698e;
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
 }
 
 /* Readable fact hierarchy inside the card: the flow/status strip first,
@@ -5234,11 +5306,8 @@ tr[aria-selected="true"] {
 .mf-run-fact-flow {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 14px;
-  border: 1px solid var(--line, #e2e7ef);
-  border-radius: 8px;
-  background: #f8fafd;
+  gap: 5px;
+  min-width: 0;
 }
 .mf-run-fact-flow p {
   margin: 0;
@@ -5348,10 +5417,8 @@ tr[aria-selected="true"] {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--line, #e2e7ef);
-  border-radius: 8px;
-  background: #f8fafd;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--line, #e2e7ef);
 }
 
 .mf-run-current-actions h4 {
@@ -5365,10 +5432,11 @@ tr[aria-selected="true"] {
 }
 
 .mf-run-progress {
-  background: var(--panel, #fff);
-  border: 1px solid var(--line, #e2e7ef);
-  border-radius: 8px;
-  padding: 12px 14px;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line, #e2e7ef);
+  border-radius: 0;
+  padding: 10px 0 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -5515,35 +5583,213 @@ tr[aria-selected="true"] {
   margin: 2px 0 0;
 }
 
-/* PATCH-20261111-4: evidence opens directly under its own item.  The expanded
-   table cell spans all eight columns, while the inner card sticks to the
-   wrapper's left edge so the readable body and its close action never move
-   behind the table's minimum-width horizontal scroll.  The table keeps that
-   bounded scroll; the page/card itself is not widened. */
-.mf-run-detail-card .mf-run-evidence-row > td {
+/* Slice 59 A59-03: one compact file row per durable item, with its one
+   evidence region opening directly beneath that same row. */
+.mf-run-item-list {
+  list-style: none;
+  margin: 8px 0 0;
   padding: 0;
+  border: 1px solid var(--line, #e2e7ef);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.mf-run-item-row {
+  background: #fff;
+  min-width: 0;
+}
+
+.mf-run-item-row + .mf-run-item-row {
+  border-top: 1px solid #e9edf5;
+}
+
+.mf-run-item-row-open {
   background: #f8fafd;
 }
 
-.mf-run-detail-card .mf-run-evidence-row:hover {
-  background: #f8fafd;
+.mf-run-item-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
 }
 
-.mf-run-detail-card .mf-run-evidence-embed {
-  position: sticky;
-  left: 0;
-  box-sizing: border-box;
-  width: min(100%, calc(100vw - 48px));
-  max-width: 100%;
-  padding: 12px 14px 14px;
-  border-top: 1px solid var(--line, #e2e7ef);
+.mf-run-item-tile {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #edf1f8;
+  color: #526d9c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mf-run-item-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mf-run-item-name {
+  margin: 0;
+  color: #14223c;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.mf-run-item-summary {
+  margin: 0;
+  color: #53698e;
+  font-size: 12.5px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.mf-run-item-side {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+}
+
+.mf-run-item-status {
+  color: #176b3a;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.mf-run-item-row-warning .mf-run-item-status {
+  color: #8a4b0f;
+}
+
+.mf-run-item-row-error .mf-run-item-status {
+  color: #b42318;
+}
+
+.mf-run-item-row-muted .mf-run-item-status {
+  color: #53698e;
+}
+
+.mf-run-item-evidence-action {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: #0b63ce;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mf-run-item-evidence-action:focus-visible {
+  outline: 2px solid #0b63ce;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.mf-run-item-evidence {
+  padding: 10px 12px 12px;
+  border-top: 1px solid #e9edf5;
   background: #f8fafd;
   overflow-wrap: anywhere;
 }
 
-.mf-run-detail-card .mf-run-evidence-embed > .mf-count-section,
+.mf-run-item-evidence > .mf-count-section,
 .mf-run-detail-card .mf-run-evidence-standalone > .mf-count-section {
   margin: 0;
+}
+
+.mf-run-items-empty,
+.mf-run-records-empty {
+  margin: 10px 0 0;
+  color: var(--muted);
+}
+
+.mf-run-current-result p {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.mf-run-basis,
+.mf-run-history {
+  margin-bottom: 10px;
+}
+
+/* Compact, wrappable operation records: time/type first, then the summary and
+   the exact original item entry when the server linked one. */
+.mf-run-record-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  border: 1px solid var(--line, #e2e7ef);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.mf-run-record {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 12px;
+  background: #fff;
+  overflow-wrap: anywhere;
+}
+
+.mf-run-record + .mf-run-record {
+  border-top: 1px solid #e9edf5;
+}
+
+.mf-run-record-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: #53698e;
+  font-size: 12px;
+}
+
+.mf-run-record-kind {
+  color: #30456b;
+  font-weight: 600;
+}
+
+.mf-run-record-summary {
+  margin: 0;
+  color: #14223c;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.mf-run-record-item {
+  align-self: flex-start;
+  font-size: 12.5px;
+}
+
+@media (max-width: 520px) {
+  .mf-run-item-main {
+    flex-wrap: wrap;
+  }
+
+  .mf-run-item-side {
+    width: 100%;
+    justify-content: space-between;
+    padding-left: 38px;
+  }
+
+  .mf-run-item-name,
+  .mf-run-item-summary {
+    overflow-wrap: anywhere;
+  }
 }
 
 .mf-run-evidence-standalone {

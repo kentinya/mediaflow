@@ -576,14 +576,17 @@ async function runNativeRecoveryJourney(
     conflict_overwrite: "目标冲突需要处理",
   };
   const nativeItems = nativeDetail.getByRole("region", { name: "主条目" });
-  // The open evidence row also contains the source path, so read the first
-  // matching row: the item row itself.
+  // The compact row names the file; its full source path stays in evidence.
+  const nativeFileName =
+    seeded.sourcePath.split("/").at(-1) ?? seeded.sourcePath;
   const nativeRow = nativeItems
-    .getByRole("row")
-    .filter({ hasText: seeded.sourcePath })
+    .locator(".mf-run-item-row")
+    .filter({ hasText: nativeFileName })
     .first();
   await expect(nativeRow).toBeVisible();
-  await expect(nativeRow.getByText(problemReason[kind])).toBeVisible();
+  await expect(
+    nativeRow.getByText(problemReason[kind], { exact: true }),
+  ).toBeVisible();
   await expect(
     nativeRow.getByRole("button", { name: "查看证据" }),
   ).toBeVisible();
@@ -1025,22 +1028,22 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   // The primary-item table renders every seeded durable item, with the
   // server-reported page-independent population totals beneath it.
   const items = detail.getByRole("region", { name: "主条目" });
-  await expect(items.getByRole("row")).toHaveCount(7); // header + six items
+  await expect(items.locator(".mf-run-item-row")).toHaveCount(6);
   await expect(items.getByText("Arrival.2016.2160p.mkv")).toBeVisible();
   await expect(items.getByText("Dune.2021.2160p.mkv")).toBeVisible();
   await expect(items.getByText("共 6 条")).toBeVisible();
 
-  // Each row reads its own durable checkpoint effect. A verified success, a
-  // success whose attempt stayed unverified, and an ordinary skip never show
-  // the terminal replay restriction as an attention reason.
+  // Each compact row reads its own durable checkpoint effect. A verified
+  // success, a success whose attempt stayed unverified, and an ordinary skip
+  // never show the terminal replay restriction as an attention reason.
   const arrivalRow = items
-    .getByRole("row")
+    .locator(".mf-run-item-row")
     .filter({ hasText: "Arrival.2016.2160p.mkv" });
   const uncertainRow = items
-    .getByRole("row")
+    .locator(".mf-run-item-row")
     .filter({ hasText: "Blade.Runner.1982.1080p.mkv" });
   const skippedRow = items
-    .getByRole("row")
+    .locator(".mf-run-item-row")
     .filter({ hasText: "Sample.2020.WEB-DL.mkv" });
   await expect(arrivalRow.getByText("已验证成功")).toBeVisible();
   await expect(uncertainRow.getByText("效果未确认")).toBeVisible();
@@ -1080,7 +1083,7 @@ test("the selected run detail reads progress, filtered items, evidence and recor
         ).length,
     )
     .toBeGreaterThan(0);
-  await expect(items.getByRole("row")).toHaveCount(3); // header + two successes
+  await expect(items.locator(".mf-run-item-row")).toHaveCount(2);
   await expect(items.getByText("匹配 2 / 共 6 条")).toBeVisible();
 
   // One exact item's durable evidence: the checkpoint facts, its persisted
@@ -1150,18 +1153,18 @@ test("the selected run detail reads progress, filtered items, evidence and recor
     name: "操作记录",
     exact: true,
   });
-  await expect(records.getByRole("row")).toHaveCount(6); // header + five records
+  await expect(records.locator(".mf-run-record")).toHaveCount(5);
   await expect(records.getByText("organizer.execution_result")).toBeVisible();
   // The kind labels also exist as options of the type filter, so the proof
-  // names the rendered table cells, not the hidden option nodes.
+  // names the rendered record rows, not the hidden option nodes.
   await expect(
-    records.getByRole("cell", { name: "运行日志" }).first(),
+    records.locator(".mf-run-record-kind", { hasText: "运行日志" }).first(),
   ).toBeVisible();
   await expect(
-    records.getByRole("cell", { name: "执行结果" }).first(),
+    records.locator(".mf-run-record-kind", { hasText: "执行结果" }).first(),
   ).toBeVisible();
   await expect(
-    records.getByRole("cell", { name: "分析与计划" }).first(),
+    records.locator(".mf-run-record-kind", { hasText: "分析与计划" }).first(),
   ).toBeVisible();
   await expect(records.getByText(/共 5 条记录/)).toBeVisible();
 
@@ -1410,7 +1413,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });
-  await expect(items.getByRole("row")).toHaveCount(2); // header + one item
+  await expect(items.locator(".mf-run-item-row")).toHaveCount(1);
   await expect(items.getByText("One.2001.mkv")).toBeVisible();
 
   const evidenceResponse = page.waitForResponse(
@@ -1572,7 +1575,9 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   // any operational log was emitted for this manual execution.
   await detail.getByRole("button", { name: "操作记录" }).click();
   const records = detail.getByRole("region", { name: "操作记录", exact: true });
-  await expect(records.getByRole("cell", { name: "执行结果" })).toBeVisible();
+  await expect(
+    records.locator(".mf-run-record-kind", { hasText: "执行结果" }).first(),
+  ).toBeVisible();
   await expect(records.getByText(/^共 1 条记录 · 结果 1/)).toBeVisible();
   await detail.getByRole("button", { name: "任务详情" }).click();
   const restoredItems = detail.getByRole("region", { name: "主条目" });
@@ -1909,7 +1914,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   const evidence = detail.getByRole("region", { name: "条目证据" });
   const openEvidence = async (filename: string) => {
     await items
-      .getByRole("row")
+      .locator(".mf-run-item-row")
       .filter({ hasText: filename })
       .getByRole("button", { name: "查看证据" })
       .click();
@@ -2486,8 +2491,10 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await expect(detail).toBeVisible();
 
   const items = detail.getByRole("region", { name: "主条目" });
-  await expect(items.getByRole("row")).toHaveCount(2); // header + one item
-  await expect(items.getByText(run.sourcePath)).toBeVisible();
+  await expect(items.locator(".mf-run-item-row")).toHaveCount(1);
+  await expect(
+    items.getByText(run.sourcePath.split("/").at(-1) ?? run.sourcePath),
+  ).toBeVisible();
 
   // The same bounded, side-effect-free item-evidence read — no provider,
   // planner or Storage re-run — carries the durable step lists.
@@ -2817,7 +2824,8 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   await expect(
     restored
       .getByRole("region", { name: "主条目" })
-      .getByRole("cell", { name: /^source-storage:Four\.2004\.mkv / }),
+      .locator(".mf-run-item-row")
+      .getByText("Four.2004.mkv"),
   ).toBeVisible();
 
   // Privacy and bounded reads: no raw token or temp path appears, and the
@@ -2930,9 +2938,9 @@ test("a mixed run never offers its technical or unknown-era siblings for batch r
   await runRow.getByRole("button").first().click();
   const detail = page.getByRole("dialog", { name: "运行详情" });
   const items = detail.getByRole("region", { name: "主条目" });
-  const technicalRow = items
-    .getByRole("row")
-    .filter({ hasText: "TaskCenter/Mixed/Broken.mkv" });
+  const technicalRow = items.locator(
+    `.mf-run-item-row[data-run-item="${seeded.mixedFailureItemId}"]`,
+  );
   await expect(technicalRow).toHaveCount(1);
   await expect(
     technicalRow.getByLabel(
@@ -3097,9 +3105,9 @@ test("the exact undecided batch item is reachable read-only without a generic re
   await expect(items).toBeVisible();
   // The exact item's durable technical failure is inspectable, and its panel is
   // read-only: no continue/retry affordance, no batch control.
-  const itemRow = items
-    .getByRole("row")
-    .filter({ hasText: seeded.batchEligibleItemId });
+  const itemRow = items.locator(
+    `.mf-run-item-row[data-run-item="${seeded.batchEligibleItemId}"]`,
+  );
   await expect(itemRow).toHaveCount(1);
   await itemRow.getByRole("button", { name: "查看证据" }).click();
   // The interrupted analysis is factual technical history: read-only, with its

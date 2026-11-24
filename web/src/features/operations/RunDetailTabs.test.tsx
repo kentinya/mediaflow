@@ -1088,39 +1088,40 @@ function stubDetailJourney(
 }
 
 async function findInlineEvidence(detail: HTMLElement) {
+  // The exact evidence first renders standalone while the item page is
+  // unresolved, then moves under its own compact row once that page arrives.
+  // Waiting for the final row containment returns the element that survives
+  // that move, never the discarded standalone host.
   await waitFor(() => {
     const region = within(detail).getByRole("region", { name: "条目证据" });
-    expect(region.closest("table")).not.toBeNull();
+    expect(region.closest(".mf-run-item-row")).not.toBeNull();
   });
   return within(detail).getByRole("region", { name: "条目证据" });
 }
 
 describe("selected-run detail tabs", () => {
-  it("renders the item table with its reading-area column hooks (B50.2-03)", async () => {
+  it("renders compact item rows with one exact evidence entry per file (Slice 59 AC-06)", async () => {
     stubDetailJourney();
     authStore.setToken(TOKEN);
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
-    await within(items).findByText(/source:movies\/a.mkv/);
-    // The detail card's fixed-layout table assigns each readable item column
-    // its own reading area; these classes are the CSS hooks that keep a long
-    // source path inside the source column instead of painting over the
-    // outcome/reason neighbors (B50.2-03). The raw stage, attempts and
-    // failure code live in the evidence diagnostics. The geometry itself is
-    // proved against the real browser in task-center-layout.spec.ts.
-    for (const className of [
-      "mf-run-item-col-source",
-      "mf-run-item-col-outcome",
-      "mf-run-item-col-reason",
-      "mf-run-item-col-target",
-      "mf-run-item-col-actions",
-    ]) {
-      expect(
-        document.querySelector(`.mf-run-detail-card th.${className}`),
-      ).not.toBeNull();
-    }
+    await within(items).findByText("a.mkv");
+    // The wide source/target table is replaced by compact rows: filename,
+    // served disposition and reason, then the exact evidence entry. The full
+    // storage path and item identity stay behind the row's own evidence.
+    const rows = items.querySelectorAll(".mf-run-item-row");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0] as HTMLElement).getByText("a.mkv")).toBeVisible();
+    expect(within(rows[0] as HTMLElement).getByText("成功")).toBeVisible();
+    expect(
+      within(rows[0] as HTMLElement).getByRole("button", {
+        name: "查看证据",
+      }),
+    ).toBeVisible();
+    expect(items.querySelector("table")).toBeNull();
+    expect(rows[0]!.textContent).not.toContain("source:movies/a.mkv");
   });
   it("reads flow status, processed range and independent file results without standing tutorials", async () => {
     stubDetailJourney();
@@ -1325,17 +1326,17 @@ describe("selected-run detail tabs", () => {
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
-    await within(items).findByText(/source:movies\/c\.mkv/);
+    await within(items).findByText("c.mkv");
     const waitingRow = within(items)
-      .getByText(/source:movies\/b\.mkv/)
-      .closest("tr");
+      .getByText("b.mkv")
+      .closest(".mf-run-item-row") as HTMLElement | null;
     expect(waitingRow).not.toBeNull();
     expect(within(waitingRow!).getByText("等待元数据决策")).toBeVisible();
     expect(within(waitingRow!).getByText("元数据候选需要确认")).toBeVisible();
     expect(within(waitingRow!).queryByText("metadata")).toBeNull();
     const failedRow = within(items)
-      .getByText(/source:movies\/c\.mkv/)
-      .closest("tr");
+      .getByText("c.mkv")
+      .closest(".mf-run-item-row") as HTMLElement | null;
     expect(failedRow).not.toBeNull();
     expect(within(failedRow!).getByText("失败")).toBeVisible();
     expect(within(failedRow!).getByText("元数据服务未完成查询")).toBeVisible();
@@ -1426,16 +1427,16 @@ describe("selected-run detail tabs", () => {
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
-    await within(items).findByText(/movies\/verified\.mkv/);
+    await within(items).findByText("verified.mkv");
     const verifiedRow = within(items)
-      .getByText(/movies\/verified\.mkv/)
-      .closest("tr");
+      .getByText("verified.mkv")
+      .closest(".mf-run-item-row") as HTMLElement | null;
     const unconfirmedRow = within(items)
-      .getByText(/movies\/a\.mkv/)
-      .closest("tr");
+      .getByText("a.mkv")
+      .closest(".mf-run-item-row") as HTMLElement | null;
     const skippedRow = within(items)
-      .getByText(/movies\/skipped\.mkv/)
-      .closest("tr");
+      .getByText("skipped.mkv")
+      .closest(".mf-run-item-row") as HTMLElement | null;
     expect(verifiedRow).not.toBeNull();
     expect(unconfirmedRow).not.toBeNull();
     expect(skippedRow).not.toBeNull();
@@ -1811,8 +1812,9 @@ describe("selected-run detail tabs", () => {
     // merged execution history.
     expect(within(evidence).getByText(/执行记录 1（.*）：成功/)).toBeVisible();
 
-    // Recognition, metadata, naming and classification are readable without
-    // opening the raw plan or querying current configuration.
+    // Recognition, metadata, naming and classification stay in this item's
+    // processing basis, opened in place without querying current configuration.
+    await userEvent.setup().click(within(evidence).getByText("处理依据"));
     expect(
       within(evidence).getByText("从文件名识别为《One》 (2001)；识别类型 C"),
     ).toBeVisible();
@@ -1870,7 +1872,7 @@ describe("selected-run detail tabs", () => {
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await within(detail).findAllByText("a.mkv");
 
     // The unfiltered read states one population count, not two equal numbers.
     expect(await screen.findByText(/共 4 条/)).toBeVisible();
@@ -1891,7 +1893,7 @@ describe("selected-run detail tabs", () => {
     // The filter narrows the page; the count names both the matches and the
     // whole-run population.
     expect(await screen.findByText(/匹配 1 \/ 共 4 条/)).toBeVisible();
-    expect(await screen.findByText(/movies\/b\.mkv/)).toBeVisible();
+    expect(await screen.findByText("b.mkv")).toBeVisible();
     // The filter state is in the URL so refresh/history/reconnect restore it.
     const detailRequest = requested.find((url) =>
       url.includes("status=waiting"),
@@ -1912,7 +1914,7 @@ describe("selected-run detail tabs", () => {
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await within(detail).findAllByText("a.mkv");
     await user.click(
       within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
     );
@@ -1934,9 +1936,7 @@ describe("selected-run detail tabs", () => {
     // The filtered server page still contains this exact file, so the panel
     // moves back under its own row without dropping the unsaved title.
     const inline = await findInlineEvidence(detail);
-    expect(inline.closest("tr")!.previousElementSibling).toHaveTextContent(
-      "movies/b.mkv",
-    );
+    expect(inline.closest(".mf-run-item-row")).toHaveTextContent("b.mkv");
     expect(within(inline).getByLabelText("搜索标题")).toHaveValue(
       "Operator edited metadata title",
     );
@@ -1993,7 +1993,7 @@ describe("selected-run detail tabs", () => {
     const { router } = renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await within(detail).findAllByText("a.mkv");
     const inspectButtons = within(detail).getAllByRole("button", {
       name: "查看证据",
     });
@@ -2044,11 +2044,13 @@ describe("selected-run detail tabs", () => {
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
-    const table = await within(items).findByRole("table");
-    const rows = within(table).getAllByRole("row");
-    expect(rows).toHaveLength(3);
-    const firstRow = rows[1]!;
-    const secondRow = rows[2]!;
+    await within(items).findByText("a.mkv");
+    const rows = Array.from(
+      items.querySelectorAll<HTMLElement>(".mf-run-item-row"),
+    );
+    expect(rows).toHaveLength(2);
+    const firstRow = rows[0]!;
+    const secondRow = rows[1]!;
     const firstTrigger = within(firstRow).getByRole("button", {
       name: "查看证据",
     });
@@ -2057,11 +2059,10 @@ describe("selected-run detail tabs", () => {
       name: "条目证据",
     });
     await within(firstEvidence).findByText("文件证据：a.mkv");
-    const firstEvidenceRow = firstEvidence.closest("tr");
-    expect(firstEvidenceRow).not.toBeNull();
-    expect(firstEvidenceRow!.previousElementSibling).toBe(firstRow);
-    expect(firstEvidenceRow!.children).toHaveLength(1);
-    expect(firstEvidenceRow!.children[0]).toHaveAttribute("colspan", "5");
+    const firstEvidenceRow = firstEvidence.closest(
+      ".mf-run-item-row",
+    ) as HTMLElement | null;
+    expect(firstEvidenceRow).toBe(firstRow);
     expect(firstTrigger).toHaveAttribute("aria-expanded", "true");
     expect(firstTrigger).toHaveAttribute("aria-controls", firstEvidence.id);
     expect(
@@ -2076,9 +2077,10 @@ describe("selected-run detail tabs", () => {
       name: "条目证据",
     });
     await within(secondEvidence).findByText("文件证据：b.mkv");
-    const secondEvidenceRow = secondEvidence.closest("tr");
-    expect(secondEvidenceRow).not.toBeNull();
-    expect(secondEvidenceRow!.previousElementSibling).toBe(secondRow);
+    const secondEvidenceRow = secondEvidence.closest(
+      ".mf-run-item-row",
+    ) as HTMLElement | null;
+    expect(secondEvidenceRow).toBe(secondRow);
     expect(secondTrigger).toHaveAttribute("aria-expanded", "true");
     expect(firstTrigger).toHaveAttribute("aria-expanded", "false");
     expect(within(items).queryByText("文件证据：a.mkv")).toBeNull();
@@ -2126,22 +2128,26 @@ describe("selected-run detail tabs", () => {
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
-    const table = await within(items).findByRole("table");
+    const itemList = await waitFor(() => {
+      const list = items.querySelector(".mf-run-item-list");
+      expect(list).not.toBeNull();
+      return list as HTMLElement;
+    });
     const notice = await within(items).findByText(/所选条目不在当前列表页/);
     const evidence = await within(items).findByRole("region", {
       name: "条目证据",
     });
     await within(evidence).findByText("文件证据：standalone.mkv");
-    expect(evidence.closest("table")).toBeNull();
+    expect(evidence.closest(".mf-run-item-list")).toBeNull();
     expect(
-      evidence.compareDocumentPosition(table) &
+      evidence.compareDocumentPosition(itemList) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
       notice.compareDocumentPosition(evidence) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(within(items).getAllByRole("row")).toHaveLength(2);
+    expect(items.querySelectorAll(".mf-run-item-row")).toHaveLength(1);
     expect(requested).toContain("/api/operations/runs/task-001/items/item-9");
   });
 
@@ -2178,15 +2184,16 @@ describe("selected-run detail tabs", () => {
     });
     await within(evidence).findByText("文件证据：b.mkv");
     expect(within(items).getByText(/条目列表正在加载/)).toBeVisible();
-    expect(evidence.closest("table")).toBeNull();
+    expect(evidence.closest(".mf-run-item-row")).toBeNull();
+    expect(items.querySelector(".mf-run-item-row")).toBeNull();
 
     await act(async () => {
       releaseItems?.(jsonResponse(itemsPageDocument()));
     });
-    const table = await within(items).findByRole("table");
+    await within(items).findByText("a.mkv");
     await waitFor(() => {
       const moved = within(items).getByRole("region", { name: "条目证据" });
-      expect(moved.closest("table")).toBe(table);
+      expect(moved.closest(".mf-run-item-row")).not.toBeNull();
       expect(within(moved).getByText("文件证据：b.mkv")).toBeVisible();
     });
     expect(
@@ -2256,10 +2263,12 @@ describe("selected-run detail tabs", () => {
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
-    const table = await within(items).findByRole("table");
-    const rows = within(table).getAllByRole("row");
+    await within(items).findByText("a.mkv");
+    const rows = Array.from(
+      items.querySelectorAll<HTMLElement>(".mf-run-item-row"),
+    );
     await user.click(
-      within(rows[1]!).getByRole("button", { name: "查看证据" }),
+      within(rows[0]!).getByRole("button", { name: "查看证据" }),
     );
     const loading = await within(items).findByRole("region", {
       name: "条目证据",
@@ -2267,7 +2276,7 @@ describe("selected-run detail tabs", () => {
     expect(within(loading).getByText(/正在加载条目证据/)).toBeVisible();
 
     await user.click(
-      within(rows[2]!).getByRole("button", { name: "查看证据" }),
+      within(rows[1]!).getByRole("button", { name: "查看证据" }),
     );
     const current = await within(items).findByRole("region", {
       name: "条目证据",
@@ -2280,7 +2289,7 @@ describe("selected-run detail tabs", () => {
       expect(within(current).queryByText("文件证据：a.mkv")).toBeNull(),
     );
     expect(within(current).getByText("文件证据：b.mkv")).toBeVisible();
-    expect(current.closest("tr")!.previousElementSibling).toBe(rows[2]);
+    expect(current.closest(".mf-run-item-row")).toBe(rows[1]);
     expect(
       within(items).getAllByRole("region", { name: "条目证据" }),
     ).toHaveLength(1);
@@ -2311,7 +2320,7 @@ describe("selected-run detail tabs", () => {
       within(table).getByRole("button", { name: "Movies，整理详情" }),
     );
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await within(detail).findAllByText("a.mkv");
     await user.click(
       within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
     );
@@ -2342,7 +2351,7 @@ describe("selected-run detail tabs", () => {
       within(table).getByRole("button", { name: "Movies，整理详情" }),
     );
     const reopened = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(reopened).findAllByText(/source:movies\/a\.mkv/);
+    await within(reopened).findAllByText("a.mkv");
     await user.click(
       within(reopened).getAllByRole("button", { name: "查看证据" })[1]!,
     );
@@ -2403,7 +2412,7 @@ describe("selected-run detail tabs", () => {
       within(table).getByRole("button", { name: "Movies，整理详情" }),
     );
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await within(detail).findAllByText("a.mkv");
     await user.click(
       within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
     );
@@ -2429,7 +2438,7 @@ describe("selected-run detail tabs", () => {
       within(table).getByRole("button", { name: "Movies，整理详情" }),
     );
     const reopened = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(reopened).findAllByText(/source:movies\/a\.mkv/);
+    await within(reopened).findAllByText("a.mkv");
     await user.click(
       within(reopened).getAllByRole("button", { name: "查看证据" })[1]!,
     );
@@ -2527,7 +2536,7 @@ describe("selected-run detail tabs", () => {
       within(table).getByRole("button", { name: "Movies，整理详情" }),
     );
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await within(detail).findAllByText("a.mkv");
     await user.click(
       within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
     );
@@ -2597,7 +2606,7 @@ describe("selected-run detail tabs", () => {
       within(table).getByRole("button", { name: "Movies，整理详情" }),
     );
     const reopened = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(reopened).findAllByText(/source:movies\/a\.mkv/);
+    await within(reopened).findAllByText("a.mkv");
     await user.click(
       within(reopened).getAllByRole("button", { name: "查看证据" })[1]!,
     );
@@ -2624,7 +2633,7 @@ describe("selected-run detail tabs", () => {
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await within(detail).findAllByText("a.mkv");
     const inspectButtons = within(detail).getAllByRole("button", {
       name: "查看证据",
     });
@@ -2765,6 +2774,9 @@ describe("selected-run detail tabs", () => {
     // attempts stay as separate merged history entries with their own time,
     // result, operation, steps, cleanup and exceptions.
     expect(within(evidence).getByText(/执行记录 1（/)).toBeVisible();
+    await userEvent
+      .setup()
+      .click(within(evidence).getByText(/此前尝试（1 次）/));
     expect(within(evidence).getByText(/执行记录 2（/)).toBeVisible();
     expect(
       within(evidence).getByText(
@@ -2920,7 +2932,7 @@ describe("selected-run detail tabs", () => {
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await within(detail).findAllByText("a.mkv");
     await user.click(
       await within(detail).findByRole("button", { name: "操作记录" }),
     );

@@ -982,9 +982,7 @@ describe("Operations run inventory landing", () => {
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     expect(await within(detail).findByText("失败／准备阶段超限")).toBeVisible();
     expect(
-      within(detail).getByText(
-        /准备阶段超限：本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。/,
-      ),
+      within(detail).getByText("准备阶段超限，本次未执行整理"),
     ).toBeVisible();
     expect(
       within(detail).queryByRole("region", { name: "文件整理准备" }),
@@ -2256,7 +2254,7 @@ describe("Operations run inventory landing", () => {
       name: "运行详情",
     });
     expect(
-      await within(recoveredDetail).findByText(/已完成（恢复成功）/),
+      await within(recoveredDetail).findByText("本次流程已完成（恢复成功）"),
     ).toBeVisible();
     expect(
       within(recoveredDetail).getByText(

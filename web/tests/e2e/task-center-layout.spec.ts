@@ -587,12 +587,12 @@ for (const viewport of [
 }
 
 /**
- * B50.2-03 regression: the detail card's fixed-layout item table must keep
- * every column's text inside its own reading area. An unbreakable source path
- * used to overflow its cell and paint over the status/stage neighbors on
- * narrow viewports. The fake's items stay read-only; this spec substitutes
- * one representative long source path on the existing items read, exactly
- * like the source_scope substitutions above. No endpoint is invented.
+ * Slice 59 A59-03 regression: the compact file row must keep a long file
+ * identity readable and leave the complete source path to that file's own
+ * evidence. The fake's items stay read-only; this spec substitutes one
+ * representative long source path on the existing item list and evidence
+ * reads, exactly like the source_scope substitutions above. No endpoint is
+ * invented.
  */
 const LONG_ITEM_SOURCE =
   "Movies/" +
@@ -621,23 +621,29 @@ async function installLongItemSource(page: Page): Promise<void> {
       await route.fulfill({ response, json: payload });
     },
   );
+  await page.route(
+    /\/api\/operations\/runs\/[^/]+\/items\/[^/?]+(?:\?|$)/,
+    async (route) => {
+      const response = await route.fetch();
+      if (!response.ok()) {
+        await route.fulfill({ response });
+        return;
+      }
+      const payload = (await response.json()) as {
+        item?: { source_path?: unknown };
+      };
+      if (
+        payload.item !== undefined &&
+        typeof payload.item.source_path === "string"
+      ) {
+        payload.item.source_path = LONG_ITEM_SOURCE;
+      }
+      await route.fulfill({ response, json: payload });
+    },
+  );
 }
 
-/** Cells whose content spills past their own box would paint over neighbors. */
-async function overflowingCells(page: Page, regionName: string) {
-  return page.evaluate((name) => {
-    const region = document.querySelector(`section[aria-label="${name}"]`);
-    if (!region) return null;
-    return Array.from(region.querySelectorAll("th, td"))
-      .map((cell) => ({
-        text: (cell.textContent ?? "").slice(0, 40),
-        overflow: cell.scrollWidth - cell.clientWidth,
-      }))
-      .filter((entry) => entry.overflow > 1);
-  }, regionName);
-}
-
-test("the detail card item table keeps every column in its own reading area", async ({
+test("the detail card keeps a long file identity readable in its compact row", async ({
   page,
 }, testInfo) => {
   await installRepresentativeScopes(page);
@@ -652,47 +658,52 @@ test("the detail card item table keeps every column in its own reading area", as
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });
-  await expect(items.getByText(LONG_ITEM_SOURCE)).toBeVisible();
-  await expect(
-    page.locator(".mf-run-detail-card th.mf-run-item-col-source"),
-  ).toHaveCount(1);
-  expect(await overflowingCells(page, "主条目")).toEqual([]);
+  const fileName = "Blade.Runner.2049.2160p.UHD.BluRay.HEVC.DTS-HD.MA.5.1.mkv";
+  await expect(items.getByText(fileName)).toBeVisible();
+  // The row names the file and keeps the full source identity in its title;
+  // the complete path is read in this file's evidence instead of a wide table.
+  const row = items.locator(".mf-run-item-row").first();
+  expect(await row.getByText(fileName).getAttribute("title")).toContain(
+    LONG_ITEM_SOURCE,
+  );
+  expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
   await items.scrollIntoViewIfNeeded();
   await page.screenshot({
     path: testInfo.outputPath("item-reading-area-1536.png"),
   });
 
-  // Narrow viewport: no cell spills into its neighbor, the bounded wrap
-  // scrolls internally, and the card never widens the page.
+  // Narrow viewport: the compact row wraps inside its own card and never
+  // widens the page.
   await page.setViewportSize({ width: 390, height: 844 });
   await items.scrollIntoViewIfNeeded();
-  expect(await overflowingCells(page, "主条目")).toEqual([]);
-  const wrap = await items.evaluate(() => {
-    const element = document.querySelector(
-      'section[aria-label="主条目"] .mf-run-table-wrap',
-    );
-    return element
-      ? {
-          scrollWidth: element.scrollWidth,
-          clientWidth: element.clientWidth,
-        }
-      : null;
+  const geometry = await row.evaluate((element) => {
+    const region = element.closest('section[aria-label="主条目"]');
+    return {
+      rowWidth: element.getBoundingClientRect().width,
+      regionWidth: region?.getBoundingClientRect().width ?? null,
+    };
   });
-  expect(wrap).not.toBeNull();
-  expect(wrap!.scrollWidth).toBeGreaterThan(wrap!.clientWidth);
+  expect(geometry.regionWidth).not.toBeNull();
+  expect(geometry.rowWidth).toBeLessThanOrEqual(
+    (geometry.regionWidth ?? 0) + 1,
+  );
   expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
   await page.screenshot({
     path: testInfo.outputPath("item-reading-area-390.png"),
   });
 
-  // In-table scrolling reaches the per-item evidence action and the card
-  // still closes afterwards.
+  // The same row opens one evidence entry with the complete source path and
+  // the card still closes afterwards.
   const evidenceButton = items
     .getByRole("button", { name: "查看证据" })
     .first();
   await evidenceButton.scrollIntoViewIfNeeded();
   await evidenceButton.click();
-  await expect(detail.getByRole("region", { name: "条目证据" })).toBeVisible();
+  const evidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(evidence).toBeVisible();
+  await expect(
+    evidence.getByRole("region", { name: "来源与目标" }),
+  ).toContainText(LONG_ITEM_SOURCE);
   await page.screenshot({
     path: testInfo.outputPath("item-evidence-1536.png"),
   });
@@ -720,9 +731,8 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
   const evidence = detail.getByRole("region", { name: "条目证据" });
   await expect(evidence).toBeVisible();
   await expect(evidenceTrigger).toHaveAttribute("aria-expanded", "true");
-  // The table itself may still scroll horizontally, but the evidence card and
-  // its close action stick to the wrapper's left edge and stay inside the
-  // viewport horizontally.
+  // The evidence region and its close action stay inside the compact row and
+  // the viewport horizontally.
   const closeHorizontal = await evidence
     .getByRole("button", { name: "关闭证据" })
     .evaluate((button) => {
@@ -738,15 +748,15 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
     closeHorizontal.viewport + 1,
   );
   const evidenceBounds = await evidence.evaluate((region) => {
-    const wrap = region.closest(".mf-run-table-wrap");
+    const row = region.closest(".mf-run-item-row");
     return {
       regionWidth: region.getBoundingClientRect().width,
-      wrapWidth: wrap?.clientWidth ?? null,
+      rowWidth: row?.getBoundingClientRect().width ?? null,
     };
   });
-  expect(evidenceBounds.wrapWidth).not.toBeNull();
+  expect(evidenceBounds.rowWidth).not.toBeNull();
   expect(evidenceBounds.regionWidth).toBeLessThanOrEqual(
-    (evidenceBounds.wrapWidth ?? 0) + 1,
+    (evidenceBounds.rowWidth ?? 0) + 1,
   );
   // The readable body is present and bounded on the narrow card.
   await expect(

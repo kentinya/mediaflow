@@ -749,6 +749,10 @@ export interface RunFileResults {
   readonly missingResult: number | null;
 }
 
+/** The visual tone shared by the status card and its badge. */
+export type RunDetailStatusTone =
+  "pending" | "running" | "attention" | "success" | "failure" | "neutral";
+
 export interface RunDetailTabsProps {
   /** The exact canonical run identity from the overview read. */
   readonly runId: string;
@@ -757,13 +761,15 @@ export interface RunDetailTabsProps {
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
   /** Poll the detail reads while the selected run is non-terminal. */
   readonly active: boolean;
+  /** The status card tone derived from this exact run's durable facts. */
+  readonly statusTone?: RunDetailStatusTone;
   /** The run's flow status/stage/problems, read before progress and results. */
   readonly flow?: ReactNode;
-  /** The independent per-file outcome counts shown after the progress range. */
+  /** The independent per-file outcome counts shown after the status card. */
   readonly results?: RunFileResults | null;
   /** Secondary run facts rendered after the file results. */
   readonly facts?: ReactNode;
-  /** The backend-advertised task operations rendered beside the export. */
+  /** The backend-advertised task operations rendered inside the status card. */
   readonly actions?: ReactNode;
 }
 
@@ -773,6 +779,7 @@ export function RunDetailTabs({
   state,
   onStateChange,
   active,
+  statusTone = "neutral",
   flow,
   results,
   facts,
@@ -882,9 +889,14 @@ export function RunDetailTabs({
       </nav>
       {state.tab === "detail" ? (
         <div className="mf-run-tab-panel">
-          {flow}
-          <ProgressCard progress={progress} />
-          <RunCurrentActions actions={actions} />
+          <section
+            className={`mf-run-status-card mf-run-status-card-${statusTone}`}
+            aria-label="状态与流程"
+          >
+            {flow}
+            <ProgressCard progress={progress} />
+            <RunCurrentActions actions={actions} />
+          </section>
           <RunFileResultsCard results={results} progress={progress} />
           <RunItemsSection
             key={JSON.stringify([
@@ -1297,7 +1309,7 @@ function RunItemsSection({
   return (
     <section className="mf-count-section" aria-label="主条目">
       <div className="mf-run-items-head">
-        <h4>文件与待处理项</h4>
+        <h4>条目</h4>
         <label htmlFor="run-item-status">状态筛选</label>
         <select
           id="run-item-status"
@@ -1357,98 +1369,86 @@ function RunItemsSection({
           }
           return (
             <>
-              <div className="mf-run-table-wrap" style={{ overflowX: "auto" }}>
-                <table>
-                  <caption className="mf-visually-hidden">运行主条目</caption>
-                  <thead>
-                    <tr>
-                      {/* B50.2-03: these column classes give the detail card's
-                        fixed-layout table its own reading areas, so a long
-                        source path stays inside the source column instead of
-                        painting over the status/reason neighbors. The raw
-                        stage, attempts and failure code stay in the item's
-                        diagnostics instead of competing with the readable
-                        disposition. */}
-                      <th className="mf-run-item-col-source">源文件</th>
-                      <th className="mf-run-item-col-outcome">处理结果</th>
-                      <th className="mf-run-item-col-reason">需处理原因</th>
-                      <th className="mf-run-item-col-target">目标</th>
-                      <th className="mf-run-item-col-actions">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {page.items.map((item) => {
-                      const expanded = evidenceItem === item.itemId;
-                      const reading = itemRowReading(item);
-                      return (
-                        <Fragment key={item.itemId}>
-                          <tr>
-                            <td>
-                              {/* B50.2-03: break after the storage prefix so
-                                the full source path wraps inside its own
-                                column. */}
-                              {item.storageId}:<wbr />
-                              {item.sourcePath}
-                              <span className="mf-run-identity">
-                                {item.itemId}
-                              </span>
-                            </td>
-                            <td>
-                              <span
-                                className={
-                                  reading.tone === "normal"
-                                    ? "mf-status-badge"
-                                    : `mf-status-badge mf-run-outcome-${reading.tone}`
-                                }
-                              >
-                                {reading.disposition}
-                              </span>
-                            </td>
-                            <td>{reading.reason}</td>
-                            <td>{item.destinationPath ?? "—"}</td>
-                            <td>
-                              <button
-                                type="button"
-                                className="mf-button mf-button-secondary"
-                                data-evidence-item={item.itemId}
-                                aria-expanded={expanded}
-                                aria-controls={
-                                  expanded ? evidencePanelId : undefined
-                                }
-                                onClick={() => onInspectItem(item.itemId)}
-                              >
-                                查看证据
-                              </button>
-                            </td>
-                          </tr>
-                          {expanded && evidence !== null && (
-                            <tr className="mf-run-evidence-row">
-                              <td colSpan={5}>
-                                <div className="mf-run-evidence-embed">
-                                  {evidence}
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <DetailPager
-                previousCursor={page.previousCursor}
-                nextCursor={page.nextCursor}
-                truncated={page.truncated}
-                direction={state.itemDirection}
-                onCursor={(cursor, next) =>
-                  onStateChange({
-                    itemCursor: cursor,
-                    itemDirection: next,
-                  })
-                }
-                label="条目"
-              />
+              {page.items.length === 0 ? (
+                <p className="mf-run-items-empty">当前筛选没有条目。</p>
+              ) : (
+                <ul className="mf-run-item-list" aria-label="任务条目">
+                  {page.items.map((item) => {
+                    const expanded = evidenceItem === item.itemId;
+                    const reading = itemRowReading(item);
+                    const summary =
+                      reading.reason === "—"
+                        ? itemRowSummary(item)
+                        : reading.reason;
+                    return (
+                      <li
+                        key={item.itemId}
+                        className={`mf-run-item-row mf-run-item-row-${reading.tone}${expanded ? " mf-run-item-row-open" : ""}`}
+                        data-run-item={item.itemId}
+                      >
+                        <div className="mf-run-item-main">
+                          <span className="mf-run-item-tile" aria-hidden="true">
+                            ▷
+                          </span>
+                          <div className="mf-run-item-copy">
+                            <p
+                              className="mf-run-item-name"
+                              title={`${item.storageId}:${item.sourcePath}`}
+                            >
+                              {fileNameOf(item.sourcePath)}
+                            </p>
+                            <p className="mf-run-item-summary">{summary}</p>
+                          </div>
+                          <div className="mf-run-item-side">
+                            <span
+                              className={
+                                reading.tone === "normal"
+                                  ? "mf-run-item-status"
+                                  : `mf-run-item-status mf-run-outcome-${reading.tone}`
+                              }
+                            >
+                              {reading.disposition}
+                            </span>
+                            <button
+                              type="button"
+                              className="mf-link-button mf-run-item-evidence-action"
+                              data-evidence-item={item.itemId}
+                              aria-expanded={expanded}
+                              aria-controls={
+                                expanded ? evidencePanelId : undefined
+                              }
+                              title={`${item.storageId}:${item.sourcePath} · ${item.itemId}`}
+                              onClick={() => onInspectItem(item.itemId)}
+                            >
+                              查看证据
+                            </button>
+                          </div>
+                        </div>
+                        {expanded && evidence !== null && (
+                          <div className="mf-run-item-evidence">{evidence}</div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {(page.previousCursor !== null ||
+                page.nextCursor !== null ||
+                page.truncated) && (
+                <DetailPager
+                  previousCursor={page.previousCursor}
+                  nextCursor={page.nextCursor}
+                  truncated={page.truncated}
+                  direction={state.itemDirection}
+                  onCursor={(cursor, next) =>
+                    onStateChange({
+                      itemCursor: cursor,
+                      itemDirection: next,
+                    })
+                  }
+                  label="条目"
+                />
+              )}
               <p className="mf-dashboard-meta">
                 {page.statusFilter === null
                   ? `共 ${page.total} 条`
@@ -1614,7 +1614,7 @@ function itemOutcome(evidence: RunItemEvidence): {
 function itemRowReading(item: RunItemsPage["items"][number]): {
   readonly disposition: string;
   readonly reason: string;
-  readonly tone: "normal" | "warning" | "error";
+  readonly tone: "normal" | "warning" | "error" | "muted";
 } {
   const status = item.status;
   const certainty = item.checkpoint?.effectCertainty ?? null;
@@ -1673,16 +1673,16 @@ function itemRowReading(item: RunItemsPage["items"][number]): {
     return { disposition: "失败", reason: "—", tone: "error" };
   }
   if (status === "skipped") {
-    return { disposition: "已跳过", reason: "—", tone: "normal" };
+    return { disposition: "已跳过", reason: "—", tone: "muted" };
   }
   if (status === "ignored") {
-    return { disposition: "已忽略", reason: "—", tone: "normal" };
+    return { disposition: "已忽略", reason: "—", tone: "muted" };
   }
   if (status === "cancelled") {
-    return { disposition: "已取消", reason: "—", tone: "normal" };
+    return { disposition: "已取消", reason: "—", tone: "muted" };
   }
   if (status === "dry_run") {
-    return { disposition: "分析完成", reason: "—", tone: "normal" };
+    return { disposition: "分析完成", reason: "—", tone: "muted" };
   }
   if (
     !NO_REPLAY_ITEM_STATUSES.has(status) &&
@@ -1694,7 +1694,100 @@ function itemRowReading(item: RunItemsPage["items"][number]): {
       tone: "warning",
     };
   }
-  return { disposition, reason: "—", tone: "normal" };
+  if (status.startsWith("waiting")) {
+    return { disposition, reason: "—", tone: "warning" };
+  }
+  return {
+    disposition,
+    reason: "—",
+    tone: status === "pending" || status === "processing" ? "muted" : "normal",
+  };
+}
+
+/**
+ * The compact row's second line when there is no current reason to act. It
+ * names the file's own served effect, never a recomputed operation or a
+ * standing explanation of the result statistics. Full paths and execution
+ * history stay in the exact item evidence.
+ */
+function itemRowSummary(item: RunItemsPage["items"][number]): string {
+  const certainty = item.checkpoint?.effectCertainty ?? null;
+  if (item.status === "success") {
+    return certainty === "verified_complete"
+      ? "目标效果已验证；完整路径与执行记录见证据。"
+      : "成功状态已记录；目标效果与执行记录见证据。";
+  }
+  if (item.status === "partial") {
+    return "部分文件或附件未完成；结果与执行记录见证据。";
+  }
+  if (item.status === "failed") {
+    return "处理失败；完整路径与失败记录见证据。";
+  }
+  if (item.status === "skipped") {
+    return "已记录跳过决定；来源与目标保持原状。";
+  }
+  if (item.status === "ignored") {
+    return "已按允许的决定忽略；来源文件未变更。";
+  }
+  if (item.status === "cancelled") {
+    return "未开始的操作已停止；已完成效果保留。";
+  }
+  if (item.status === "dry_run") {
+    return "分析完成；未执行文件操作。";
+  }
+  return "等待处理；完整路径与执行记录见证据。";
+}
+
+function ResultAttemptDetails({
+  result,
+  index,
+}: {
+  readonly result: RunItemEvidence["results"][number];
+  readonly index: number;
+}) {
+  return (
+    <>
+      <p>
+        <strong>
+          执行记录 {index + 1}（{formatDateTime(result.createdAt)}）：
+          {resultStatusLabel(result.status)}
+        </strong>
+        {result.operation !== null &&
+          ` · ${storageStepLabel(result.operation)}`}
+      </p>
+      {result.failure !== null && (
+        <p>
+          失败原因：
+          {taskFailureReason(result.failure.category) ?? "处理未完成"}
+        </p>
+      )}
+      <p>
+        效果：
+        {RUN_EFFECT_CERTAINTY_LABELS[result.effectCertainty] ??
+          result.effectCertainty}
+      </p>
+      <p>
+        {result.completedOperations.length === 0
+          ? "没有已完成的存储步骤"
+          : `已完成：${result.completedOperations
+              .map(storageStepLabel)
+              .join("、")}`}
+      </p>
+      {result.cleanupStatus !== null && (
+        <p>源目录：{cleanupStatusLabel(result.cleanupStatus)}</p>
+      )}
+      {result.uncertainEffects.length > 0 && (
+        <p>
+          未确认效果：
+          {result.uncertainEffects.map(storageStepLabel).join("、")}
+        </p>
+      )}
+      <AttachmentResults
+        primaryCompleted={result.primaryCompleted}
+        results={result.attachmentResults ?? []}
+      />
+    </>
+  );
 }
 
 function RunEvidenceSection({
@@ -1760,6 +1853,11 @@ function RunEvidenceSection({
           const checkpoint = evidence.checkpoint;
           const outcome = itemOutcome(evidence);
           const processingBasisRows = planProcessingRows(evidence.planEvidence);
+          // Results are served newest-first. The newest persisted attempt is
+          // this file's current operation and effect; the remaining attempts
+          // stay in the same item's expandable history.
+          const latestResult = evidence.results[0] ?? null;
+          const priorResults = evidence.results.slice(1);
           const destinations = Array.from(
             new Set(
               evidence.results
@@ -1822,17 +1920,14 @@ function RunEvidenceSection({
                 </dl>
               </section>
               {processingBasisRows.length > 0 && (
-                <section
-                  className="mf-run-evidence-block"
-                  aria-label="处理依据"
-                >
-                  <h5>处理依据</h5>
+                <details className="mf-run-fact-diagnostics mf-run-basis">
+                  <summary>处理依据</summary>
                   <PlanProcessingSummary evidence={evidence.planEvidence} />
-                </section>
+                </details>
               )}
               <section className="mf-run-evidence-block" aria-label="执行记录">
-                <h5>执行记录</h5>
-                {evidence.results.length === 0 ? (
+                <h5>实际操作与效果</h5>
+                {latestResult === null ? (
                   <>
                     <p className="mf-dashboard-meta">
                       该文件还没有持久执行结果。
@@ -1864,58 +1959,9 @@ function RunEvidenceSection({
                     )}
                   </>
                 ) : (
-                  <ul className="mf-run-result-list" aria-label="逐次执行历史">
-                    {evidence.results.map((result, index) => (
-                      <li key={result.resultId}>
-                        <p>
-                          <strong>
-                            执行记录 {index + 1}（
-                            {formatDateTime(result.createdAt)}）：
-                            {resultStatusLabel(result.status)}
-                          </strong>
-                          {result.operation !== null &&
-                            ` · ${storageStepLabel(result.operation)}`}
-                        </p>
-                        {result.failure !== null && (
-                          <p>
-                            失败原因：
-                            {taskFailureReason(result.failure.category) ??
-                              "处理未完成"}
-                          </p>
-                        )}
-                        <p>
-                          效果：
-                          {RUN_EFFECT_CERTAINTY_LABELS[
-                            result.effectCertainty
-                          ] ?? result.effectCertainty}
-                        </p>
-                        <p>
-                          {result.completedOperations.length === 0
-                            ? "没有已完成的存储步骤"
-                            : `已完成：${result.completedOperations
-                                .map(storageStepLabel)
-                                .join("、")}`}
-                        </p>
-                        {result.cleanupStatus !== null && (
-                          <p>
-                            源目录：{cleanupStatusLabel(result.cleanupStatus)}
-                          </p>
-                        )}
-                        {result.uncertainEffects.length > 0 && (
-                          <p>
-                            未确认效果：
-                            {result.uncertainEffects
-                              .map(storageStepLabel)
-                              .join("、")}
-                          </p>
-                        )}
-                        <AttachmentResults
-                          primaryCompleted={result.primaryCompleted}
-                          results={result.attachmentResults ?? []}
-                        />
-                      </li>
-                    ))}
-                  </ul>
+                  <div className="mf-run-current-result">
+                    <ResultAttemptDetails result={latestResult} index={0} />
+                  </div>
                 )}
               </section>
               {needsAttention && (
@@ -1955,6 +2001,21 @@ function RunEvidenceSection({
                 decisionDraft={decisionDraft}
                 onDecisionDraftChange={onDecisionDraftChange}
               />
+              {priorResults.length > 0 && (
+                <details className="mf-run-fact-diagnostics mf-run-history">
+                  <summary>此前尝试（{priorResults.length} 次）</summary>
+                  <ul className="mf-run-result-list" aria-label="此前执行记录">
+                    {priorResults.map((result, index) => (
+                      <li key={result.resultId}>
+                        <ResultAttemptDetails
+                          result={result}
+                          index={index + 1}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
               <details className="mf-run-fact-diagnostics">
                 <summary>
                   技术诊断（检查点、计划、日志与审计；{evidence.evidence.length}{" "}
@@ -2233,56 +2294,53 @@ function RunRecordsSection({
           const page: RunRecordsPage = data.model;
           return (
             <>
-              <div className="mf-run-table-wrap" style={{ overflowX: "auto" }}>
-                <table>
-                  <caption className="mf-visually-hidden">运行操作记录</caption>
-                  <thead>
-                    <tr>
-                      <th>时间</th>
-                      <th>类型</th>
-                      <th>摘要</th>
-                      <th>关联条目</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {page.records.map((record) => (
-                      <tr key={record.recordId}>
-                        <td>{formatDateTime(record.occurredAt)}</td>
-                        <td>{record.kindLabel}</td>
-                        <td>{recordSummary(record)}</td>
-                        <td>{record.itemId ?? "—"}</td>
-                        <td>
-                          {record.itemId !== null ? (
-                            <button
-                              type="button"
-                              className="mf-button mf-button-secondary"
-                              onClick={() => onInspectItem(record.itemId ?? "")}
-                            >
-                              查看条目
-                            </button>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <DetailPager
-                previousCursor={page.previousCursor}
-                nextCursor={page.nextCursor}
-                truncated={page.truncated}
-                direction={state.recordDirection}
-                onCursor={(cursor, next) =>
-                  onStateChange({
-                    recordCursor: cursor,
-                    recordDirection: next,
-                  })
-                }
-                label="记录"
-              />
+              {page.records.length === 0 ? (
+                <p className="mf-run-records-empty">当前筛选没有记录。</p>
+              ) : (
+                <ul className="mf-run-record-list" aria-label="操作记录条目">
+                  {page.records.map((record) => (
+                    <li key={record.recordId} className="mf-run-record">
+                      <div className="mf-run-record-head">
+                        <span className="mf-run-record-time">
+                          {formatDateTime(record.occurredAt)}
+                        </span>
+                        <span className="mf-run-record-kind">
+                          {record.kindLabel}
+                        </span>
+                      </div>
+                      <p className="mf-run-record-summary">
+                        {recordSummary(record)}
+                      </p>
+                      {record.itemId !== null && (
+                        <button
+                          type="button"
+                          className="mf-link-button mf-run-record-item"
+                          onClick={() => onInspectItem(record.itemId ?? "")}
+                        >
+                          查看条目
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {(page.previousCursor !== null ||
+                page.nextCursor !== null ||
+                page.truncated) && (
+                <DetailPager
+                  previousCursor={page.previousCursor}
+                  nextCursor={page.nextCursor}
+                  truncated={page.truncated}
+                  direction={state.recordDirection}
+                  onCursor={(cursor, next) =>
+                    onStateChange({
+                      recordCursor: cursor,
+                      recordDirection: next,
+                    })
+                  }
+                  label="记录"
+                />
+              )}
               <p className="mf-dashboard-meta">
                 {page.kindFilter === null
                   ? `共 ${page.matchingTotal} 条记录 · 结果 ${page.kindCounts.result} · 证据 ${page.kindCounts.evidence} · 日志 ${page.kindCounts.log} · 审计 ${page.kindCounts.audit}`

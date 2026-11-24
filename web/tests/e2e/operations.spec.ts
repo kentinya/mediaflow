@@ -209,8 +209,8 @@ test("the center's own run detail separates the aggregate from items and results
   const items = page.getByRole("region", { name: "主条目" });
   await expect(items).toBeVisible();
   // A successful sibling stays visible next to the failed one.
-  await expect(items.getByText("item-001")).toBeVisible();
-  await expect(items.getByText("item-002")).toBeVisible();
+  await expect(items.locator('[data-run-item="item-001"]')).toBeVisible();
+  await expect(items.locator('[data-run-item="item-002"]')).toBeVisible();
 
   // 操作记录 shows the exactly-linked durable results and logs separately.
   await page.getByRole("button", { name: "操作记录" }).click();
@@ -218,10 +218,10 @@ test("the center's own run detail separates the aggregate from items and results
   const records = page.getByRole("region", { name: "操作记录", exact: true });
   await expect(records).toBeVisible();
   await expect(
-    records.getByRole("cell", { name: "执行结果" }).first(),
+    records.locator(".mf-run-record-kind", { hasText: "执行结果" }).first(),
   ).toBeVisible();
   await expect(
-    records.getByRole("cell", { name: "运行日志" }).first(),
+    records.locator(".mf-run-record-kind", { hasText: "运行日志" }).first(),
   ).toBeVisible();
 });
 
@@ -715,7 +715,7 @@ test("item and record filters page on the server and survive a reload", async ({
 
   await page.getByLabel("状态筛选").selectOption("success");
   await expect(page).toHaveURL(/istat=success/);
-  await expect(detail.getByText("item-001")).toBeVisible();
+  await expect(detail.locator('[data-run-item="item-001"]')).toBeVisible();
 
   // The records kind filter is likewise server-side.
   await detail.getByRole("button", { name: "操作记录" }).click();
@@ -759,7 +759,7 @@ test("one item's evidence opens through exact links and closes again", async ({
     .click();
   const detail = page.getByRole("dialog", { name: "运行详情" });
   const items = detail.getByRole("region", { name: "主条目" });
-  await expect(items.getByText("item-001")).toBeVisible();
+  await expect(items.locator('[data-run-item="item-001"]')).toBeVisible();
 
   const evidenceTrigger = items
     .getByRole("button", { name: "查看证据" })
@@ -774,26 +774,22 @@ test("one item's evidence opens through exact links and closes again", async ({
     (await evidence.getAttribute("id")) ?? "",
   );
   const placement = await evidenceTrigger.evaluate((button) => {
-    const row = button.closest("tr");
+    const row = button.closest(".mf-run-item-row");
     const region = document.querySelector('section[aria-label="条目证据"]');
-    const evidenceRow = region?.closest("tr");
     return {
-      previousIsSelected: evidenceRow?.previousElementSibling === row,
-      evidenceCellCount: evidenceRow?.children.length ?? 0,
-      evidenceColSpan:
-        evidenceRow?.firstElementChild?.getAttribute("colspan") ?? null,
+      insideSelectedRow: region?.closest(".mf-run-item-row") === row,
       evidenceRegions: document.querySelectorAll(
         'section[aria-label="条目证据"]',
       ).length,
       insideTable: region?.closest("table") !== null,
+      insideList: region?.closest(".mf-run-item-list") !== null,
     };
   });
   expect(placement).toEqual({
-    previousIsSelected: true,
-    evidenceCellCount: 1,
-    evidenceColSpan: "8",
+    insideSelectedRow: true,
     evidenceRegions: 1,
-    insideTable: true,
+    insideTable: false,
+    insideList: true,
   });
   await page.screenshot({
     path: testInfo.outputPath("inline-evidence-1536.png"),

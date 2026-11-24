@@ -1770,6 +1770,7 @@ function RunDetailPanel({
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
+                statusTone={runStatusTone(run)}
                 flow={
                   <>
                     <RunFlowSummary run={run} />
@@ -1839,44 +1840,158 @@ function RunDetailPanel({
  * are deliberately absent: they reuse the shared auth boundary copy so a
  * rejected or forbidden read follows the shared recovery everywhere.
  */
+/** The visual tone of the one status-and-progress card. */
+type RunStatusTone =
+  "pending" | "running" | "attention" | "success" | "failure" | "neutral";
+
 /**
- * The selected run's readable fact hierarchy (Slice50 RO-1 / V2-UX-006).
+ * The card tone comes only from the durable flow status and its independent
+ * file facts. A completed flow with mixed or unconfirmed files is not painted
+ * as an all-success card; a failed/cancelled flow never turns green.
+ */
+function runStatusTone(run: RunSummary): RunStatusTone {
+  if (run.status === "failed") return "failure";
+  if (run.status === "cancelled") return "attention";
+  if (run.status === "running") return "running";
+  if (run.status === "waiting" || run.attention) return "attention";
+  if (run.status === "pending") return "pending";
+  if (run.status === "completed") {
+    if (run.recoveredCompletion) return "success";
+    if (
+      (run.partialItems ?? 0) > 0 ||
+      (run.failedOnlyItems ?? 0) > 0 ||
+      (run.uncertainEffectItems ?? 0) > 0 ||
+      (run.missingResultItems ?? 0) > 0 ||
+      run.problemTypes.length > 0
+    ) {
+      return "attention";
+    }
+    if ((run.successItems ?? 0) > 0) return "success";
+  }
+  return "neutral";
+}
+
+/** The card title and its one-sentence truthful explanation. */
+function runStatusHeadline(run: RunSummary): {
+  readonly title: string;
+  readonly copy: string;
+} {
+  const success = run.successItems ?? 0;
+  const partial = run.partialItems ?? 0;
+  const failed = run.failedOnlyItems ?? 0;
+  const uncertain = run.uncertainEffectItems ?? 0;
+  const missing = run.missingResultItems ?? 0;
+  switch (run.status) {
+    case "completed":
+      if (run.recoveredCompletion) {
+        return {
+          title: "本次流程已完成（恢复成功）",
+          copy: "每个必要条目都有精确关联的真实成功证据；原失败尝试与结果保持原样。",
+        };
+      }
+      if (uncertain > 0) {
+        return {
+          title: "本次流程已完成，文件效果待核对",
+          copy: "执行已尝试但目标效果尚未确认；请先核对，不要直接重放。",
+        };
+      }
+      if (missing > 0) {
+        return {
+          title: "本次流程已完成，有文件结果缺失",
+          copy: "正式结果缺失的文件保留最后已知状态，可查看逐文件证据。",
+        };
+      }
+      if (partial > 0 || failed > 0) {
+        return {
+          title: "本次流程已完成，文件结果不一",
+          copy: "成功、部分成功与失败分别保留逐文件结果。",
+        };
+      }
+      if (success > 0) {
+        return {
+          title: "本次整理已完成",
+          copy: "所示成功来自已验证的文件操作。",
+        };
+      }
+      if (run.problemTypes.length > 0) {
+        return {
+          title: "本次流程已完成，仍有待处理项",
+          copy: "同一任务的问题保留在对应文件中，可逐项处理。",
+        };
+      }
+      return {
+        title: "本次流程已完成",
+        copy:
+          run.totalItems === 0
+            ? "该任务没有需要处理的文件。"
+            : "该任务没有记录成功的文件操作。",
+      };
+    case "failed":
+      return run.filesPreparationPrimaryLimit
+        ? {
+            title: "准备阶段超限，本次未执行整理",
+            copy: "最多支持 100 个主文件，请缩小选择范围后重新发起。",
+          }
+        : {
+            title: "任务流程失败",
+            copy: "流程在结束前失败；各文件已验证的效果仍可查阅。",
+          };
+    case "cancelled":
+      return {
+        title: "任务已取消",
+        copy: "未开始的操作已停止，已完成的文件效果继续保留。",
+      };
+    case "running":
+      return {
+        title: "正在处理文件",
+        copy: "执行已受理，文件结果由后端独立记录。",
+      };
+    case "waiting":
+      return {
+        title: "等待处理",
+        copy: "同一任务仍有文件需要决定或确认。",
+      };
+    case "pending":
+      return {
+        title: "已受理，等待执行",
+        copy: "后台尚未开始处理；文件结果将在执行后独立记录。",
+      };
+    default:
+      return {
+        title: "任务状态证据不足",
+        copy: "当前读取没有足够的流程证据，已记录的文件结果仍可查阅。",
+      };
+  }
+}
+
+/**
+ * The selected run's readable status card (Slice50 RO-1 / V2-UX-006,
+ * Slice59 AC-06).
  *
  * The first block answers "流程到哪一步、有什么要处理": the durable flow status
- * with its honesty annotations, the bounded current stage and the run's real
- * business problems. The bounded facts list keeps the scope/time/item
- * evidence; the technical identifiers (Worker, fixed configuration snapshot)
- * collapse into a bounded diagnostics group.
+ * with its honesty annotations, the run's current title, the bounded current
+ * stage and its real business problems. Progress and applicable actions are
+ * rendered by `RunDetailTabs` inside this same card; the bounded facts list
+ * keeps the scope/time/item evidence, and the technical identifiers (Worker,
+ * fixed configuration snapshot) collapse into a bounded diagnostics group.
  */
 function RunFlowSummary({ run }: { readonly run: RunSummary }) {
+  const headline = runStatusHeadline(run);
   return (
-    <section className="mf-run-fact-flow" aria-label="状态与流程">
-      <p className="mf-run-flow-line">
+    <div className="mf-run-fact-flow">
+      <p className="mf-run-flow-line mf-run-flow-status">
         <span className="mf-run-flow-label">流程状态</span>
         <span
-          className={
-            run.attention
-              ? "mf-run-flow-value mf-run-attention"
-              : "mf-run-flow-value"
-          }
+          className={`mf-run-status-pill mf-run-status-pill-${runStatusTone(run)}`}
         >
           {run.recoveredCompletion ? "已完成（恢复成功）" : runStatusLabel(run)}
         </span>
-        {run.recoveredCompletion && (
-          <span className="mf-run-flow-note">
-            ：每个必要条目都有精确关联的真实成功证据；原失败尝试与结果保持原样。
-          </span>
-        )}
         {run.status === "unknown" && (
           <span className="mf-run-flow-note">（证据不足）</span>
         )}
       </p>
-      {run.status === "failed" && run.filesPreparationPrimaryLimit && (
-        <p className="mf-run-flow-line" role="status">
-          准备阶段超限：本次未执行整理。最多支持 100
-          个主文件，请缩小选择范围后重新发起。
-        </p>
-      )}
+      <h3 className="mf-run-status-title">{headline.title}</h3>
+      <p className="mf-run-status-copy">{headline.copy}</p>
       {run.currentStage !== null && (
         <p className="mf-run-flow-line">
           <span className="mf-run-flow-label">当前阶段</span>
@@ -1894,7 +2009,7 @@ function RunFlowSummary({ run }: { readonly run: RunSummary }) {
           </span>
         </p>
       )}
-    </section>
+    </div>
   );
 }
 
