@@ -1,6 +1,6 @@
 # Task 59.1 — 文件入口的手动整理弹窗与整批确认
 
-Next Action: DEVELOPER CORRECTS TASK 59.1 AND RESUBMITS FOR B REVIEW
+Next Action: B REVIEWS THE TASK 59.1 METADATA-STAGE CORRECTION CANDIDATE
 
 用户已授权激活 Task 59.1。Developer 开始实施时将状态从 `PLANNED` 转为
 `IN PROGRESS`。原 Task ID、Base、范围和验收条件沿用。A 代 B 的授权限于本 Task 的规划，
@@ -11,7 +11,7 @@ B 独立复核实施候选，A 负责 Slice 终审。
 Task ID: 59.1
 Task Type: SLICE
 Parent Slice: 59
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
 Difficulty: High
 Test Level: T3
@@ -533,3 +533,53 @@ B 使用已经提交的 Provider 故障夹具和正常 Files 批量整理入口�
 
 Slice 重评：RO-1 的主要入口与准备边界已验证。RO-2 的故障原因和下一步、RO-3 的未纳入原因须
 在同一 Files 旅程内统一。RO-4 任务详情正文仍待交付。修正继续在 Task 59.1。
+
+### Developer Correction Report (metadata stage across batch and ended reads)
+
+已按 B 的修正指引完成候选 `ea5a198a38d92719c0813ca0bbcb7844aa9c5298`，范围仍限
+Task 59.1：
+
+- Files 概览、文件详情、整批「未纳入本次确认的文件」及结束后的「只读原计划摘要」现在
+  共用同一份元数据技术失败结论。`analysis.metadata.status=provider_error` 显示元数据阶段
+  未完成、没有可保存的候选决定或可确认方案、没有修改任何文件；不再把该条目的通用
+  `failure.message` 当作 Storage failure 展示。
+- 技术失败的下一步改为当前可走的动作：仍在进行中的准备显示检查已配置 Metadata Provider
+  的连接、凭据与可用性，并指明关闭弹窗后在任务中心核对原整理准备任务的阶段与结果；
+  已结束的准备在只读摘要中说明整理工作已结束，需关闭弹窗后从资源库文件页重新选择该文件
+  发起新的整理。移除了没有可执行入口的「重新分析同一准备」承诺。
+- 文件详情的「当前方案」和「纳入本次整理」说明只描述技术失败的实际影响，不再写成等待
+  用户选择候选或修改识别类型的任务。现有识别/候选修正入口、活动范围、权限和确认入口
+  未改变；Task Center 原位/历史仍沿用 Base 呈现，未新增 API、schema、Worker 或技术重试
+  入口。
+- 原生 Provider 故障用例扩为同一入口的完整往返：混合批次打开概览、故障详情和整批未纳入
+  行，核对相同原因与下一步、就绪兄弟仍可确认且确认前零执行；随后用独立来源
+  `ProviderFailure/ProviderFail.2035.mkv` 只选故障文件，真实 Task 结束后核对只读摘要的
+  同一原因、Files 重新发起动作及无确认入口。夹具新增该独立故障来源并复用现有本地测试
+  Provider；未触碰生产 Provider。
+- 新增 `Task59.1` 单测覆盖活动整批未纳入行和结束只读摘要，并验证技术失败不再出现
+  Storage failure 或无入口的重新分析承诺。
+
+实际命令与结果（cwd `web/`）：
+
+- `npm run typecheck` — 通过。
+- `npx eslint` 触及的 1 个源文件、1 个测试文件和 1 个 E2E 文件 — 通过。
+- `npx prettier --check` 同上 — 通过。
+- `npm run test -- run` 六个受影响单测文件 — 6 files / 158 tests passed（42.63 秒），
+  含新增活动整批未纳入和结束只读摘要用例。
+- `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx -t
+  "metadata provider technical failure|metadata technical failure"` — 2 passed（2.03 秒）。
+- `npm run build` — 通过；当前入口 `dist/index.html` SHA-256
+  `831352a625c85550b1ab9a1e0577f1c0e72cd8d7dce5f2d77188e6042f6f9481`。
+- `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/manual-organize-dialog.python.spec.ts --grep
+  'Task59[.]1|unknown original submission|100-file batch|101-file directory'` —
+  19 passed（2.2 分钟），包含扩展后的 Provider 故障旅程、100 项与第 101 项边界、
+  未知原提交和既有冲突/直连丢包旅程。
+- 仓库根 `python3 scripts/check_governance.py`、`.venv/bin/ruff check/format --check
+  scripts/operations_inventory_harness.py`、`git diff --check` — 均通过。
+
+已知限制/风险：Provider 故障仍由隔离夹具的本地测试 Provider 注入，生产 TMDB 的真实连接
+故障留给 B 的完整 T3；本轮只把已发布的 `provider_error` 识别为元数据技术阶段，其他技术
+阶段沿用原失败文案。结束只读摘要的 Files 重新发起动作是既有资源库入口，没有在弹窗内新增
+技术重试控制。B 的完整原生/Web 门禁、桌面/390 px/矮窗截图和 Task Center 原行为仍需在
+本候选上执行；未推送或发布。
