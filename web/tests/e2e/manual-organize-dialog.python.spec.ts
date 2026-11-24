@@ -1292,8 +1292,27 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
       return;
     }
     lostAnalysisResponses += 1;
-    await route.fetch();
+    const accepted = await route.fetch();
+    expect(accepted.status()).toBe(202);
     await route.abort("failed");
+  });
+  const lostAnalysis = page.waitForEvent(
+    "requestfailed",
+    (failed) =>
+      failed.method() === "POST" &&
+      /\/recovery\/continue$/.test(new URL(failed.url()).pathname),
+  );
+  const durableAnalysis = page.waitForResponse(async (response) => {
+    if (
+      response.request().method() !== "GET" ||
+      new URL(response.url()).pathname !==
+        `/api/operations/organize/discoveries/${secondDiscoveryId}` ||
+      !response.ok()
+    ) {
+      return false;
+    }
+    const work = (await response.json()) as { readonly status: string };
+    return work.status === "analyzing";
   });
   const decision = page.waitForResponse(
     (response) =>
@@ -1302,8 +1321,10 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   );
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   expect((await decision).ok()).toBe(true);
+  await lostAnalysis;
+  await durableAnalysis;
   await expect(
-    card.getByRole("heading", { name: "分析请求结果未知" }),
+    card.getByRole("heading", { name: "零变更分析正在等待" }),
   ).toBeVisible({ timeout: 30_000 });
   await expect(card).toBeVisible();
   // Saving the decision and re-analyzing has changed no media effect yet.
@@ -3174,9 +3195,7 @@ test("Task59.1 an unknown original submission is reconciled under a newer siblin
   // The newer summary is visible for the current review and the original
   // request is still unknown: no second Execute exists.
   await card.getByRole("button", { name: /整批复核/ }).click();
-  const planDiagnostics = card
-    .getByRole("region", { name: "整批复核" })
-    .locator("details.mf-organize-plan-diagnostics");
+  const planDiagnostics = card.locator("details.mf-organize-plan-diagnostics");
   await planDiagnostics.getByText("方案标识与诊断", { exact: true }).click();
   await expect(planDiagnostics.getByText(`方案 ${newerPreviewId}`)).toBeVisible(
     { timeout: 30_000 },
