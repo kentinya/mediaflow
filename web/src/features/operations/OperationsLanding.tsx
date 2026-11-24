@@ -69,6 +69,7 @@ import {
 import { runItemsQueryKey, runRecordsQueryKey } from "./run-detail-query";
 import {
   RunLifecycleControls,
+  hasRunLifecycleContent,
   isUnknownLifecycleOutcome,
 } from "./RunLifecycleControls";
 import type { LifecycleAction } from "../../entities/operations/lifecycle";
@@ -1743,6 +1744,16 @@ function RunDetailPanel({
             );
           }
           const run = data.model;
+          const lifecycleVisible =
+            run.lifecycle !== null &&
+            hasRunLifecycleContent({
+              projection: run.lifecycle,
+              pendingAction,
+              result: controlResult,
+              locked,
+            });
+          const preparationVisible =
+            run.filesPreparation !== null && run.filesPreparation.continuable;
           return (
             <>
               {/* The admitted preparation's first read and a failed read are
@@ -1759,7 +1770,12 @@ function RunDetailPanel({
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
-                flow={<RunFlowSummary run={run} />}
+                flow={
+                  <>
+                    <RunFlowSummary run={run} />
+                    <RunRetainedSubmissionNotice run={run} />
+                  </>
+                }
                 results={{
                   success: run.successItems,
                   partial: run.partialItems,
@@ -1767,26 +1783,47 @@ function RunDetailPanel({
                   uncertain: run.uncertainEffectItems,
                   missingResult: run.missingResultItems,
                 }}
-                facts={
-                  <RunDetailFacts
-                    run={run}
-                    preparationLinkSearch={preparationLinkSearch}
-                  />
-                }
+                facts={<RunDetailFacts run={run} />}
                 actions={
-                  run.lifecycle === null ? null : (
-                    <RunLifecycleControls
-                      projection={run.lifecycle}
-                      pendingAction={pendingAction}
-                      result={controlResult}
-                      locked={locked}
-                      reconciling={reconciling}
-                      onReconcile={reconcile}
-                      onInvoke={(action, expectedVersion) =>
-                        void invokeLifecycle(action, expectedVersion)
-                      }
-                    />
-                  )
+                  lifecycleVisible || preparationVisible ? (
+                    <>
+                      {lifecycleVisible && run.lifecycle !== null && (
+                        <RunLifecycleControls
+                          projection={run.lifecycle}
+                          pendingAction={pendingAction}
+                          result={controlResult}
+                          locked={locked}
+                          reconciling={reconciling}
+                          onReconcile={reconcile}
+                          onInvoke={(action, expectedVersion) =>
+                            void invokeLifecycle(action, expectedVersion)
+                          }
+                        />
+                      )}
+                      {preparationVisible && (
+                        <section
+                          className="mf-run-fact-preparation"
+                          aria-label="文件整理准备"
+                        >
+                          <h4>文件整理准备</h4>
+                          <p>查看整理摘要，确认后执行。</p>
+                          <div className="mf-actions">
+                            <Link
+                              className="mf-button mf-button-secondary"
+                              to="/operations"
+                              search={preparationLinkSearch}
+                              // Opening the card is not a list visit: the task
+                              // center background stays at its exact scroll
+                              // position behind it.
+                              resetScroll={false}
+                            >
+                              继续整理
+                            </Link>
+                          </div>
+                        </section>
+                      )}
+                    </>
+                  ) : null
                 }
               />
             </>
@@ -1861,55 +1898,32 @@ function RunFlowSummary({ run }: { readonly run: RunSummary }) {
   );
 }
 
-function RunDetailFacts({
-  run,
-  preparationLinkSearch,
-}: {
-  readonly run: RunSummary;
-  /** The same-route continue search: exact Task plus the hosted marker. */
-  readonly preparationLinkSearch: Record<string, RunSearchValue>;
-}) {
+function RunDetailFacts({ run }: { readonly run: RunSummary }) {
   const hasDiagnostics =
     run.workerId !== null || run.configurationSnapshotId !== null;
   return (
     <div className="mf-run-facts">
-      <dl className="mf-dashboard-facts">
-        <div>
-          <dt>触发方式</dt>
-          <dd>{RUN_TRIGGER_LABELS[run.trigger]}</dd>
-        </div>
-        <div>
-          <dt>目标范围</dt>
-          <dd>{run.targetScope ?? "历史目标范围证据不可用"}</dd>
-        </div>
-        <div>
-          <dt>创建时间</dt>
-          <dd>{formatDate(run.createdAt)}</dd>
-        </div>
-        <div>
-          <dt>更新时间</dt>
-          <dd>{formatDate(run.updatedAt)}</dd>
-        </div>
-      </dl>
-      {run.filesPreparation !== null && run.filesPreparation.continuable && (
-        <section className="mf-run-fact-preparation" aria-label="文件整理准备">
-          <h4>文件整理准备</h4>
-          <p>查看整理摘要，确认后执行。</p>
-          <div className="mf-actions">
-            <Link
-              className="mf-button mf-button-secondary"
-              to="/operations"
-              search={preparationLinkSearch}
-              // Opening the card is not a list visit: the task center
-              // background stays at its exact scroll position behind it.
-              resetScroll={false}
-            >
-              继续整理
-            </Link>
+      <section className="mf-run-fact-meta" aria-label="任务信息">
+        <h4>任务信息</h4>
+        <dl className="mf-dashboard-facts">
+          <div>
+            <dt>触发方式</dt>
+            <dd>{RUN_TRIGGER_LABELS[run.trigger]}</dd>
           </div>
-        </section>
-      )}
-      <RunRetainedSubmissionNotice run={run} />
+          <div>
+            <dt>目标范围</dt>
+            <dd>{run.targetScope ?? "历史目标范围证据不可用"}</dd>
+          </div>
+          <div>
+            <dt>创建时间</dt>
+            <dd>{formatDate(run.createdAt)}</dd>
+          </div>
+          <div>
+            <dt>更新时间</dt>
+            <dd>{formatDate(run.updatedAt)}</dd>
+          </div>
+        </dl>
+      </section>
       {hasDiagnostics && (
         <details className="mf-run-fact-diagnostics">
           <summary>技术诊断</summary>

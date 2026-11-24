@@ -148,6 +148,29 @@ export interface RunLifecycleControlsProps {
   readonly reconciling?: boolean;
 }
 
+/** Whether this exact lifecycle projection renders any operator-facing content. */
+export function hasRunLifecycleContent({
+  projection,
+  pendingAction,
+  result,
+  locked,
+}: Pick<
+  RunLifecycleControlsProps,
+  "projection" | "pendingAction" | "result" | "locked"
+>): boolean {
+  const available = projection.actions.some((item) => item.available);
+  const cancellationRequested =
+    projection.cancellationRequested === true &&
+    projection.state !== "cancelled";
+  return (
+    available ||
+    cancellationRequested ||
+    pendingAction !== null ||
+    result !== null ||
+    locked
+  );
+}
+
 export function RunLifecycleControls({
   projection,
   onInvoke,
@@ -167,12 +190,7 @@ export function RunLifecycleControls({
   // Nothing actionable, nothing in flight, no stored request and no recorded
   // outcome: this task has no operation area at all. An ended run must not
   // leave an empty block, a permission code or a withheld-control list.
-  if (
-    available.length === 0 &&
-    !cancellationRequested &&
-    result === null &&
-    !locked
-  ) {
+  if (!hasRunLifecycleContent({ projection, pendingAction, result, locked })) {
     return null;
   }
 

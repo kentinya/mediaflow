@@ -877,14 +877,14 @@ export function RunDetailTabs({
         >
           操作记录
         </button>
-        <RunExportAction runId={runId} progress={progress} actions={actions} />
+        <RunExportAction runId={runId} progress={progress} />
       </nav>
       {state.tab === "detail" ? (
         <div className="mf-run-tab-panel">
           {flow}
           <ProgressCard progress={progress} />
+          <RunCurrentActions actions={actions} />
           <RunFileResultsCard results={results} progress={progress} />
-          {facts}
           <RunItemsSection
             key={JSON.stringify([
               runId,
@@ -901,6 +901,7 @@ export function RunDetailTabs({
             evidenceDecisionDrafts={evidenceDecisionDrafts}
             onEvidenceDecisionDraftChange={updateEvidenceDecisionDraft}
           />
+          {facts}
         </div>
       ) : (
         <div className="mf-run-tab-panel">
@@ -914,6 +915,24 @@ export function RunDetailTabs({
           />
         </div>
       )}
+    </section>
+  );
+}
+
+/**
+ * The run's current applicable actions, read directly after the flow and its
+ * progress. It renders only when the backend advertises a lifecycle action,
+ * a cancellation request/outcome, or a continuable exact preparation link;
+ * a terminal run with nothing left to do keeps no empty control block.
+ */
+function RunCurrentActions({ actions }: { readonly actions?: ReactNode }) {
+  if (actions === null || actions === undefined) {
+    return null;
+  }
+  return (
+    <section className="mf-run-current-actions" aria-label="当前操作">
+      <h4>当前操作</h4>
+      {actions}
     </section>
   );
 }
@@ -1027,53 +1046,55 @@ function RunFileResultsCard({
     (results.success !== null ||
       results.partial !== null ||
       results.failed !== null);
-  if (!known && extras.length === 0) {
+  const uncertain = results?.uncertain ?? 0;
+  const missingResult = results?.missingResult ?? 0;
+  // An unknown effect or a settled attempt without a Result is a real file
+  // outcome. It stays visible even when the three primary counts are not
+  // published, instead of leaving a run with no result summary at all.
+  if (!known && extras.length === 0 && uncertain === 0 && missingResult === 0) {
     return null;
   }
   return (
     <section className="mf-run-results" aria-label="文件结果">
       <h4>文件结果</h4>
-      {known &&
-        (results?.success !== null ||
-          results?.partial !== null ||
-          results?.failed !== null) && (
-          <ul className="mf-file-result-grid">
-            {results?.success !== null && results?.success !== undefined && (
-              <li>
-                <span className="mf-file-result-value">{results.success}</span>
-                <span className="mf-file-result-label">成功</span>
-              </li>
-            )}
-            {results?.partial !== null && results?.partial !== undefined && (
-              <li>
-                <span className="mf-file-result-value">{results.partial}</span>
-                <span className="mf-file-result-label">部分成功</span>
-              </li>
-            )}
-            {results?.failed !== null && results?.failed !== undefined && (
-              <li>
-                <span className="mf-file-result-value">{results.failed}</span>
-                <span className="mf-file-result-label">失败</span>
-              </li>
-            )}
-            {extras.map((entry) => (
-              <li key={entry.disposition}>
-                <span className="mf-file-result-value">{entry.count}</span>
-                <span className="mf-file-result-label">
-                  {RUN_DISPOSITION_LABELS[entry.disposition]}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      {(results?.uncertain ?? 0) > 0 && (
+      {(known || extras.length > 0) && (
+        <ul className="mf-file-result-grid">
+          {results?.success !== null && results?.success !== undefined && (
+            <li>
+              <span className="mf-file-result-value">{results.success}</span>
+              <span className="mf-file-result-label">成功</span>
+            </li>
+          )}
+          {results?.partial !== null && results?.partial !== undefined && (
+            <li>
+              <span className="mf-file-result-value">{results.partial}</span>
+              <span className="mf-file-result-label">部分成功</span>
+            </li>
+          )}
+          {results?.failed !== null && results?.failed !== undefined && (
+            <li>
+              <span className="mf-file-result-value">{results.failed}</span>
+              <span className="mf-file-result-label">失败</span>
+            </li>
+          )}
+          {extras.map((entry) => (
+            <li key={entry.disposition}>
+              <span className="mf-file-result-value">{entry.count}</span>
+              <span className="mf-file-result-label">
+                {RUN_DISPOSITION_LABELS[entry.disposition]}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {uncertain > 0 && (
         <p className="mf-run-outcome mf-run-outcome-warning">
-          目标文件结果尚未确认 {results?.uncertain} 个
+          目标文件结果尚未确认 {uncertain} 个
         </p>
       )}
-      {(results?.missingResult ?? 0) > 0 && (
+      {missingResult > 0 && (
         <p className="mf-run-outcome mf-run-outcome-warning">
-          文件处理已结束，结果未记录 {results?.missingResult} 个
+          文件处理已结束，结果未记录 {missingResult} 个
         </p>
       )}
     </section>
@@ -1246,7 +1267,7 @@ function RunItemsSection({
   return (
     <section className="mf-count-section" aria-label="主条目">
       <div className="mf-run-items-head">
-        <h4>条目</h4>
+        <h4>文件与待处理项</h4>
         <label htmlFor="run-item-status">状态筛选</label>
         <select
           id="run-item-status"
@@ -1314,20 +1335,21 @@ function RunItemsSection({
                       {/* B50.2-03: these column classes give the detail card's
                         fixed-layout table its own reading areas, so a long
                         source path stays inside the source column instead of
-                        painting over the status/stage neighbors. */}
+                        painting over the status/reason neighbors. The raw
+                        stage, attempts and failure code stay in the item's
+                        diagnostics instead of competing with the readable
+                        disposition. */}
                       <th className="mf-run-item-col-source">源文件</th>
-                      <th className="mf-run-item-col-status">状态</th>
-                      <th className="mf-run-item-col-stage">阶段</th>
-                      <th className="mf-run-item-col-attempts">尝试</th>
+                      <th className="mf-run-item-col-outcome">处理结果</th>
+                      <th className="mf-run-item-col-reason">需处理原因</th>
                       <th className="mf-run-item-col-target">目标</th>
-                      <th className="mf-run-item-col-failure">失败证据</th>
                       <th className="mf-run-item-col-actions">操作</th>
-                      <th className="mf-run-item-col-batch">批量分析</th>
                     </tr>
                   </thead>
                   <tbody>
                     {page.items.map((item) => {
                       const expanded = evidenceItem === item.itemId;
+                      const reading = itemRowReading(item);
                       return (
                         <Fragment key={item.itemId}>
                           <tr>
@@ -1342,31 +1364,18 @@ function RunItemsSection({
                               </span>
                             </td>
                             <td>
-                              <span className="mf-status-badge">
-                                {RUN_ITEM_STATUS_LABELS[item.status] ??
-                                  item.status}
+                              <span
+                                className={
+                                  reading.tone === "normal"
+                                    ? "mf-status-badge"
+                                    : `mf-status-badge mf-run-outcome-${reading.tone}`
+                                }
+                              >
+                                {reading.disposition}
                               </span>
-                              {item.checkpoint?.blockerKind && (
-                                <span className="mf-run-kind">
-                                  (阻塞:
-                                  <wbr />
-                                  {BLOCKER_LABELS[
-                                    item.checkpoint.blockerKind
-                                  ] ?? "等待处理决定"}
-                                  )
-                                </span>
-                              )}
                             </td>
-                            <td>
-                              <TechnicalToken value={item.stage} />
-                            </td>
-                            <td>{item.attempts}</td>
+                            <td>{reading.reason}</td>
                             <td>{item.destinationPath ?? "—"}</td>
-                            <td>
-                              {item.failure
-                                ? `${item.failure.category}: ${item.failure.message}`
-                                : "—"}
-                            </td>
                             <td>
                               <button
                                 type="button"
@@ -1381,11 +1390,10 @@ function RunItemsSection({
                                 查看证据
                               </button>
                             </td>
-                            <td></td>
                           </tr>
                           {expanded && evidence !== null && (
                             <tr className="mf-run-evidence-row">
-                              <td colSpan={8}>
+                              <td colSpan={5}>
                                 <div className="mf-run-evidence-embed">
                                   {evidence}
                                 </div>
@@ -1554,6 +1562,56 @@ function itemOutcome(evidence: RunItemEvidence): {
     return { text: "分析完成（未执行整理）", tone: "normal" };
   }
   return { text: RUN_ITEM_STATUS_LABELS[status] ?? status, tone: "normal" };
+}
+
+/**
+ * The readable per-file disposition and the one reason the operator may need
+ * to act. It reads only the item summary's persisted status, checkpoint and
+ * failure explanation; the raw stage, attempt count and policy identifiers
+ * stay in the item's technical diagnostics.
+ */
+function itemRowReading(item: RunItemsPage["items"][number]): {
+  readonly disposition: string;
+  readonly reason: string;
+  readonly tone: "normal" | "warning" | "error";
+} {
+  const disposition =
+    RUN_ITEM_STATUS_LABELS[item.status] ??
+    (item.status === "dry_run" ? "分析完成" : item.status);
+  const blocker = item.checkpoint?.blockerKind ?? null;
+  if (blocker !== null) {
+    return {
+      disposition,
+      reason: BLOCKER_LABELS[blocker] ?? "等待处理决定",
+      tone: "warning",
+    };
+  }
+  if (item.failure !== null) {
+    return {
+      disposition,
+      reason: taskFailureReason(item.failure.category) ?? "处理未完成",
+      tone: "error",
+    };
+  }
+  if (item.checkpoint?.effectCertainty === "attempted_unverified") {
+    return {
+      disposition,
+      reason: "目标文件结果尚未确认",
+      tone: "warning",
+    };
+  }
+  if (item.checkpoint?.refusalReason != null) {
+    return {
+      disposition,
+      reason: refusalReasonLabel(item.checkpoint.refusalReason),
+      tone: "warning",
+    };
+  }
+  return {
+    disposition,
+    reason: "—",
+    tone: item.status === "partial" ? "warning" : "normal",
+  };
 }
 
 function RunEvidenceSection({
@@ -2075,6 +2133,11 @@ function RunRecordsSection({
             return (
               <StatusBanner variant="error" title={data.failure.title}>
                 <p>{data.failure.nextAction}</p>
+                <div className="mf-actions">
+                  <RefreshControl
+                    onRefresh={() => query.refetch({ cancelRefetch: false })}
+                  />
+                </div>
               </StatusBanner>
             );
           }
@@ -2168,11 +2231,9 @@ type ExportNotice = {
 function RunExportAction({
   runId,
   progress,
-  actions,
 }: {
   readonly runId: string;
   readonly progress: RunProgress | null;
-  readonly actions?: ReactNode;
 }) {
   const token = useAuthToken();
   const [pending, setPending] = useState(false);
@@ -2240,7 +2301,6 @@ function RunExportAction({
 
   return (
     <div className="mf-run-tab-actions">
-      {actions}
       <button
         type="button"
         className="mf-button mf-button-secondary"

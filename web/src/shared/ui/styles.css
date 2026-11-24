@@ -5209,28 +5209,19 @@ tr[aria-selected="true"] {
   overflow-wrap: anywhere;
 }
 .mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-source {
-  width: 24%;
+  width: 30%;
 }
-.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-status {
-  width: 11%;
+.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-outcome {
+  width: 13%;
 }
-.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-stage {
-  width: 10%;
-}
-.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-attempts {
-  width: 5%;
+.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-reason {
+  width: 23%;
 }
 .mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-target {
-  width: 16%;
-}
-.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-failure {
-  width: 13%;
+  width: 23%;
 }
 .mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-actions {
   width: 11%;
-}
-.mf-run-detail-card .mf-run-table-wrap .mf-run-item-col-batch {
-  width: 10%;
 }
 
 /* Readable fact hierarchy inside the card: the flow/status strip first,
@@ -5276,6 +5267,7 @@ tr[aria-selected="true"] {
   font-weight: 600;
 }
 .mf-run-fact-continuation h4,
+.mf-run-fact-meta h4,
 .mf-run-fact-preparation h4 {
   margin: 0 0 4px;
 }
@@ -5348,6 +5340,28 @@ tr[aria-selected="true"] {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* Current applicable actions read directly after the flow and progress. An
+   empty or terminal action area is not rendered at all. */
+.mf-run-current-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line, #e2e7ef);
+  border-radius: 8px;
+  background: #f8fafd;
+}
+
+.mf-run-current-actions h4 {
+  margin: 0;
+}
+
+.mf-run-current-actions .mf-run-fact-preparation {
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .mf-run-progress {

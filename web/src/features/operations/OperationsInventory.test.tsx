@@ -2053,6 +2053,86 @@ describe("Operations run inventory landing", () => {
     ).toBeNull();
   });
 
+  it("Task59.2 reads the advertised task action before results and run facts after the items", async () => {
+    const overview = runDocument({
+      lifecycle: lifecycleDocument(),
+      progress: {
+        available: true,
+        kind: "organize",
+        unit: "主条目",
+        unit_key: "task_items",
+        basis: "整理计数:成功表示已验证的存储操作结果。",
+        success_means: "已验证的存储操作成功",
+        known_total: 4,
+        indeterminate: false,
+        processed: 1,
+        dispositions: {
+          pending: 3,
+          active: 0,
+          waiting: 0,
+          success: 1,
+          skipped: 0,
+          failed_partial: 0,
+          ignored: 0,
+          cancelled: 0,
+        },
+        confirmed_success: 1,
+        uncertain_success: 0,
+        scan_errors: null,
+        scan_discovery_complete: null,
+        scan_progress: {},
+        attachment_steps: 0,
+        effect_counts: { verified_complete: 1, attempted_unverified: 0 },
+        results_total: 1,
+        results_complete: true,
+        sideEffects: "none",
+      },
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
+      ) {
+        return jsonResponse(pageDocument({ items: [overview] }));
+      }
+      if (url === "/api/operations/runs/task-001") {
+        return jsonResponse(overview);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const progress = await within(detail).findByRole("region", {
+      name: "处理进度",
+    });
+    const actions = await within(detail).findByRole("region", {
+      name: "当前操作",
+    });
+    expect(
+      within(actions).getByRole("button", { name: "取消运行" }),
+    ).toBeVisible();
+    const results = within(detail).getByRole("region", { name: "文件结果" });
+    const items = within(detail).getByRole("region", { name: "主条目" });
+    const facts = within(detail).getByRole("region", { name: "任务信息" });
+    expect(
+      progress.compareDocumentPosition(actions) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      actions.compareDocumentPosition(results) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      results.compareDocumentPosition(items) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      items.compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("renders an honest scan-error run instead of rejecting the page", async () => {
     const requested: string[] = [];
     stubInventoryJourney(

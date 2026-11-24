@@ -950,6 +950,8 @@ interface DetailJourneyOptions {
     input: RequestInfo | URL,
     init?: RequestInit,
   ) => Promise<Response>;
+  /** An exact overview document when a test needs its action/result facts. */
+  readonly overview?: Record<string, unknown>;
 }
 
 /** One fetch stub covering the whole selected-run detail journey. */
@@ -983,7 +985,7 @@ function stubDetailJourney(
     }
     if (url.startsWith("/api/operations/runs?")) {
       return jsonResponse({
-        items: [overviewDocument()],
+        items: [options.overview ?? overviewDocument()],
         limit: 20,
         status: null,
         command: null,
@@ -1002,7 +1004,7 @@ function stubDetailJourney(
       });
     }
     if (url === "/api/operations/runs/task-001") {
-      return jsonResponse(overviewDocument());
+      return jsonResponse(options.overview ?? overviewDocument());
     }
     if (url.startsWith("/api/operations/runs/task-001/items/item-2")) {
       return jsonResponse(evidenceDocument());
@@ -1102,20 +1104,18 @@ describe("selected-run detail tabs", () => {
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
     await within(items).findByText(/source:movies\/a.mkv/);
-    // The detail card's fixed-layout table assigns each of the eight item
-    // columns its own reading area; these classes are the CSS hooks that keep
-    // a long source path inside the source column instead of painting over
-    // the status/stage neighbors (B50.2-03). The geometry itself is proved
-    // against the real browser in task-center-layout.spec.ts.
+    // The detail card's fixed-layout table assigns each readable item column
+    // its own reading area; these classes are the CSS hooks that keep a long
+    // source path inside the source column instead of painting over the
+    // outcome/reason neighbors (B50.2-03). The raw stage, attempts and
+    // failure code live in the evidence diagnostics. The geometry itself is
+    // proved against the real browser in task-center-layout.spec.ts.
     for (const className of [
       "mf-run-item-col-source",
-      "mf-run-item-col-status",
-      "mf-run-item-col-stage",
-      "mf-run-item-col-attempts",
+      "mf-run-item-col-outcome",
+      "mf-run-item-col-reason",
       "mf-run-item-col-target",
-      "mf-run-item-col-failure",
       "mf-run-item-col-actions",
-      "mf-run-item-col-batch",
     ]) {
       expect(
         document.querySelector(`.mf-run-detail-card th.${className}`),
@@ -1204,6 +1204,187 @@ describe("selected-run detail tabs", () => {
     expect(
       within(detail).queryByText(/口径:|成功含义:|非成功率|单独计数/),
     ).toBeNull();
+  });
+
+  it("Task59.2 reads current actions before file results and run facts after the items", async () => {
+    stubDetailJourney([], {
+      overview: overviewDocument({
+        filesPreparation: {
+          discoveryId: "discovery-1",
+          resourceLibraryId: "movies",
+          continuable: true,
+        },
+      }),
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const actions = await within(detail).findByRole("region", {
+      name: "当前操作",
+    });
+    const preparation = within(actions).getByRole("region", {
+      name: "文件整理准备",
+    });
+    expect(
+      within(preparation).getByRole("link", { name: "继续整理" }),
+    ).toBeVisible();
+    const results = within(detail).getByRole("region", { name: "文件结果" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    const facts = within(detail).getByText("触发方式");
+    // The first screen reads flow → progress → current action, then the file
+    // results and their items; the trigger/range facts follow the main result.
+    expect(
+      actions.compareDocumentPosition(results) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      results.compareDocumentPosition(items) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      items.compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // The technical diagnostics live with the facts, after the items.
+    const diagnostics = within(detail).getByText("技术诊断");
+    expect(
+      items.compareDocumentPosition(diagnostics) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("Task59.2 publishes unknown and missing file effects without primary counts", async () => {
+    stubDetailJourney([], {
+      overview: overviewDocument({
+        success_items: null,
+        partial_items: null,
+        failed_items: null,
+        uncertain_effect_items: 2,
+        missing_result_items: 1,
+      }),
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const results = await within(detail).findByRole("region", {
+      name: "文件结果",
+    });
+    // Neither caveat is folded into a fabricated success/failure count and
+    // neither disappears when the three primary counts are unknown.
+    expect(
+      within(results).getByText(/目标文件结果尚未确认 2 个/),
+    ).toBeVisible();
+    expect(
+      within(results).getByText(/文件处理已结束，结果未记录 1 个/),
+    ).toBeVisible();
+    expect(within(results).queryByText("成功")).toBeNull();
+    expect(within(results).queryByText("部分成功")).toBeNull();
+    expect(within(results).queryByText("失败")).toBeNull();
+  });
+
+  it("Task59.2 reads a file's disposition and reason before the raw diagnostics", async () => {
+    const user = userEvent.setup();
+    const failedItem = itemRow({
+      item_id: "item-3",
+      status: "failed",
+      stage: "metadata",
+      source_path: "movies/c.mkv",
+      failure: {
+        category: "provider_failure",
+        message: "provider request failed",
+        durableState: "no file was moved",
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction: "check the metadata provider",
+      },
+    });
+    // The default journey's item page carries the success and waiting rows;
+    // this exact read adds the failed sibling needed for the readable reason.
+    const base = stubDetailJourney();
+    stubFetch(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
+        return jsonResponse(
+          itemsPageDocument({ items: [itemRow(), WAITING_ITEM, failedItem] }),
+        );
+      }
+      return (
+        base as unknown as (
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ) => Promise<Response>
+      )(input, init);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    await within(items).findByText(/source:movies\/c\.mkv/);
+    const waitingRow = within(items)
+      .getByText(/source:movies\/b\.mkv/)
+      .closest("tr");
+    expect(waitingRow).not.toBeNull();
+    expect(within(waitingRow!).getByText("等待元数据决策")).toBeVisible();
+    expect(within(waitingRow!).getByText("等待元数据决定")).toBeVisible();
+    expect(within(waitingRow!).queryByText("metadata")).toBeNull();
+    const failedRow = within(items)
+      .getByText(/source:movies\/c\.mkv/)
+      .closest("tr");
+    expect(failedRow).not.toBeNull();
+    expect(within(failedRow!).getByText("失败")).toBeVisible();
+    expect(within(failedRow!).getByText("元数据服务未完成查询")).toBeVisible();
+    expect(within(failedRow!).queryByText("provider_failure")).toBeNull();
+    // The raw stage/attempt/failure code remain available in the item's one
+    // diagnostics entry once its evidence is opened.
+    await user.click(
+      within(waitingRow!).getByRole("button", { name: "查看证据" }),
+    );
+    const evidence = await findInlineEvidence(detail);
+    await within(evidence).findByText("文件证据：b.mkv");
+    await within(evidence)
+      .getByText(/技术诊断/)
+      .click();
+    expect(within(evidence).getByText("metadata")).toBeVisible();
+  });
+
+  it("Task59.2 keeps the records failure reason and re-reads it in place", async () => {
+    const user = userEvent.setup();
+    let recordsFail = true;
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/operations/runs/task-001") {
+        return jsonResponse(overviewDocument());
+      }
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
+        return jsonResponse(itemsPageDocument());
+      }
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
+        return recordsFail
+          ? jsonResponse({ error: { code: "unavailable" } }, 503)
+          : jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001&tab=records");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const records = await within(detail).findByRole("region", {
+      name: "操作记录",
+    });
+    expect(
+      await within(records).findByText("Operations unavailable"),
+    ).toBeVisible();
+    expect(
+      within(records).getByText(/Reload the current Active runtime/),
+    ).toBeVisible();
+    recordsFail = false;
+    const refresh = within(records).getAllByRole("button", {
+      name: "刷新",
+    })[0];
+    await user.click(refresh);
+    expect(await within(records).findByText(/共 4 条记录/)).toBeVisible();
   });
 
   it("PATCH-20261107-1 keeps a successful main file and a failed subtitle as independent results", async () => {
@@ -1757,7 +1938,7 @@ describe("selected-run detail tabs", () => {
     expect(firstEvidenceRow).not.toBeNull();
     expect(firstEvidenceRow!.previousElementSibling).toBe(firstRow);
     expect(firstEvidenceRow!.children).toHaveLength(1);
-    expect(firstEvidenceRow!.children[0]).toHaveAttribute("colspan", "8");
+    expect(firstEvidenceRow!.children[0]).toHaveAttribute("colspan", "5");
     expect(firstTrigger).toHaveAttribute("aria-expanded", "true");
     expect(firstTrigger).toHaveAttribute("aria-controls", firstEvidence.id);
     expect(
