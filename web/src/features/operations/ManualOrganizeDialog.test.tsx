@@ -109,6 +109,11 @@ function makeBackend() {
     // error and no candidate/problem TaskItem, so the Files body must not
     // instruct the operator to pick a candidate.
     metadataProviderFailure: false as boolean,
+    // A real destination conflict on item-1 whose exact TaskItem can be
+    // skipped. Resolved means the durable read reports `skipped` with no
+    // analysis authority, exactly like the backend's conflict decision.
+    conflictProblem: false as boolean,
+    conflictResolved: false as boolean,
     failMetadataDecision: false as boolean,
     failMetadataContinue: false as boolean,
     recoveryAnalysisQueued: false as boolean,
@@ -680,6 +685,36 @@ function makeBackend() {
         unselectedItemIds: ["item-1"],
       };
     }
+    if (state.conflictProblem) {
+      const problem = (value["items"] as Json[]).find(
+        (item) => item["itemId"] === "item-1",
+      );
+      if (problem !== undefined) {
+        problem["status"] = "blocked";
+        problem["executionState"] = "not_available_in_this_task";
+        problem["stage"] = "conflict";
+        problem["failure"] = null;
+        const plan = problem["plan"] as Json;
+        plan["problemTaskItemId"] = "problem-item-1";
+        plan["executionState"] = "not_available_in_this_task";
+        plan["conflicts"] = [
+          {
+            type: "DESTINATION_EXISTS",
+            source: `source:Movies/${filename(0)}`,
+            destination: "target:Movies/Movie.01 (2001)/Movie.01.mkv",
+            details: "the destination already exists",
+          },
+        ];
+      }
+      value["executionCandidateItemIds"] = (
+        (value["executionCandidateItemIds"] as string[]) ?? []
+      ).filter((itemId) => itemId !== "item-1");
+      const selection = value["selection"] as Json;
+      selection["selectedItemIds"] = (
+        selection["selectedItemIds"] as string[]
+      ).filter((itemId) => itemId !== "item-1");
+      selection["unselectedItemIds"] = ["item-1"];
+    }
     if (state.metadataProviderFailure) {
       const problem = (value["items"] as Json[]).find(
         (item) => item["itemId"] === "item-1",
@@ -866,6 +901,45 @@ function makeBackend() {
     next_action: resolved
       ? "continue safe analysis"
       : "choose one legal metadata candidate",
+  });
+
+  const conflictRecovery = (resolved: boolean): Json => ({
+    task_id: "organize-task-1",
+    item_id: "problem-item-1",
+    checkpoint: {
+      status: resolved ? "skipped" : "waiting_conflict",
+      stage: resolved ? "conflict_resolved" : "waiting_conflict",
+      raw_stage: resolved ? "conflict_resolved" : "waiting_conflict",
+      effects: { certainty: "none" },
+      retry_safety: "safe",
+      checkpoint_version: "d".repeat(64),
+      blocker: resolved ? null : { kind: "conflict", blocker_id: "conflict-1" },
+      permitted_action_ids: resolved ? [] : ["resolve_conflict", "ignore"],
+      refusal_reason: null,
+      next_action: resolved ? null : "choose a conflict strategy",
+    },
+    decision: resolved
+      ? null
+      : {
+          kind: "conflict",
+          review_id: "conflict-1",
+          status: "pending",
+          configured_strategy: "manual",
+          allowed_strategies: ["skip", "rename"],
+          conflict_types: ["DESTINATION_EXISTS"],
+          source_path: "Movies/Movie.01.mkv",
+          target_path: "Movies/Movie.01 (2001)/Movie.01.mkv",
+        },
+    manualRecoveryAvailable: false,
+    native_analysis: {
+      task_id: "organize-task-1",
+      item_id: "problem-item-1",
+      readable: true,
+      queue_state: "waiting_human",
+      machine_stage: null,
+    },
+    recoveryKind: resolved ? "technical_history" : "business_problem",
+    next_action: resolved ? "none" : "choose a conflict strategy",
   });
 
   const fetchMock = vi.fn(
@@ -1110,9 +1184,11 @@ function makeBackend() {
         method === "GET"
       ) {
         return jsonResponse(
-          state.metadataCandidateProblem
-            ? metadataCandidateRecovery(state.metadataCandidateResolved)
-            : metadataCorrectionRecovery(state.metadataProblemResolved),
+          state.conflictProblem
+            ? conflictRecovery(state.conflictResolved)
+            : state.metadataCandidateProblem
+              ? metadataCandidateRecovery(state.metadataCandidateResolved)
+              : metadataCorrectionRecovery(state.metadataProblemResolved),
         );
       }
 
@@ -1176,6 +1252,10 @@ function makeBackend() {
           return jsonResponse({ error: { code: "stale_checkpoint" } }, 409);
         }
         state.recoveryAnalysisQueued = false;
+        if (state.conflictProblem) {
+          state.conflictResolved = true;
+          return jsonResponse(conflictRecovery(true));
+        }
         if (state.metadataCandidateProblem) {
           state.metadataCandidateResolved = true;
           return jsonResponse(metadataCandidateRecovery(true));
@@ -3838,5 +3918,205 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.executePosts).toHaveLength(0);
     // The reviewed selection is still present for the operator to retry.
     expect(screen.getByRole("button", { name: "确认整理 1 项" })).toBeEnabled();
+  }, 30_000);
+
+  it("A59-02 explains a stale plan row by the live metadata correction it still offers", async () => {
+    const user = userEvent.setup();
+    await openDialog(
+      user,
+      (value) => {
+        value.state.metadataProblem = true;
+        value.state.previewCurrent = false;
+        value.state.previewStaleTail = FILE_COUNT;
+      },
+      undefined,
+      "overview",
+    );
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    // The plan's item is stale, but its exact TaskItem still waits for the
+    // metadata correction. The row must name that live next step instead of
+    // the generic "left the plan" text.
+    expect(within(overview).getByText(/需要处理作品搜索修正/)).toBeVisible();
+    const metadataRow = within(overview)
+      .getByText("Movie.01.mkv")
+      .closest("li");
+    expect(metadataRow).not.toBeNull();
+    expect(
+      within(metadataRow as HTMLElement).queryAllByText(/已不在当前方案中/),
+    ).toHaveLength(0);
+
+    await user.click(
+      within(overview).getByRole("button", { name: "查看 Movie.01.mkv" }),
+    );
+    expect(await screen.findByText(/没有找到匹配的作品/)).toBeVisible();
+    expect(
+      within(card()).getByRole("button", { name: "保存并重新分析" }),
+    ).toBeVisible();
+    expect(
+      within(card()).queryAllByText("该文件已不在当前方案中"),
+    ).toHaveLength(0);
+  }, 30_000);
+
+  it("A59-01 returns to the overview with the exact skipped result and no analysis", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.conflictProblem = true;
+      },
+      undefined,
+      "overview",
+    );
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    expect(within(overview).getByText(/需要处理目标冲突/)).toBeVisible();
+    await user.click(
+      within(overview).getByRole("button", { name: "查看 Movie.01.mkv" }),
+    );
+    await user.click(await screen.findByRole("radio", { name: /跳过此条目/ }));
+    await user.click(
+      within(card()).getByRole("button", { name: "保存并重新分析" }),
+    );
+
+    await waitFor(() =>
+      expect(backend.calls.recoveryDecisionPosts).toHaveLength(1),
+    );
+    expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    // The decision response itself ended this item: the same dialog returns
+    // to the overview and its exact row carries the durable skipped result.
+    const returned = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    expect(within(returned).getByText(/决定已保存并读回/)).toBeVisible();
+    expect(
+      within(returned).getByText(/「Movie\.01\.mkv」已按当前决定跳过/),
+    ).toBeVisible();
+    const row = within(returned).getByText("Movie.01.mkv").closest("li");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("已有记录")).toBeVisible();
+    expect(
+      within(row as HTMLElement).getByText(/已按当前决定跳过，未纳入本次整理/),
+    ).toBeVisible();
+    expect(within(row as HTMLElement).queryAllByText("待处理")).toHaveLength(0);
+
+    // Re-opening the same file reads the same result; the old conflict form
+    // is not offered again.
+    await user.click(
+      within(returned).getByRole("button", { name: "查看 Movie.01.mkv" }),
+    );
+    expect(await screen.findByText("此文件已跳过")).toBeVisible();
+    expect(
+      within(card()).queryAllByText(
+        /当前文件在冲突决定被保存并由真实分析取代前不能纳入确认/,
+      ),
+    ).toHaveLength(0);
+    expect(
+      within(card()).queryByRole("radio", { name: /跳过此条目/ }),
+    ).toBeNull();
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(1);
+    expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("A59-01 keeps the operator's new file and draft when the skip result lands late", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.conflictProblem = true;
+      },
+      undefined,
+      "overview",
+    );
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    await user.click(
+      within(overview).getByRole("button", { name: "查看 Movie.01.mkv" }),
+    );
+    await user.click(await screen.findByRole("radio", { name: /跳过此条目/ }));
+
+    let releaseDecision: (() => void) | null = null;
+    const original = backend.fetchMock.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    backend.fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (
+        method === "POST" &&
+        url ===
+          "/api/tasks/organize-task-1/items/problem-item-1/recovery/decision"
+      ) {
+        await new Promise<void>((resolve) => {
+          releaseDecision = resolve;
+        });
+      }
+      return original(input, init);
+    });
+
+    await user.click(
+      within(card()).getByRole("button", { name: "保存并重新分析" }),
+    );
+    await waitFor(() => expect(releaseDecision).not.toBeNull());
+    // The operator leaves the original file while the decision is in flight.
+    await user.click(screen.getByRole("button", { name: "下一项" }));
+    await screen.findByRole("heading", { name: /第 2 \/ 10 个/ });
+    expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
+
+    (releaseDecision as unknown as () => void)();
+    await waitFor(() =>
+      expect(backend.calls.recoveryDecisionPosts).toHaveLength(1),
+    );
+    // The late result updates only the original row: position and current
+    // file stay exactly where the operator chose.
+    expect(
+      screen.getByRole("heading", { name: /第 2 \/ 10 个/ }),
+    ).toBeVisible();
+    expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
+    expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "上一项" }));
+    expect(await screen.findByText("此文件已跳过")).toBeVisible();
+  }, 30_000);
+
+  it("A59-01 reads a durable skipped TaskItem on the first overview read", async () => {
+    const user = userEvent.setup();
+    await openDialog(
+      user,
+      (value) => {
+        value.state.conflictProblem = true;
+        value.state.conflictResolved = true;
+        value.state.previewCurrent = false;
+        value.state.previewStaleTail = FILE_COUNT;
+      },
+      undefined,
+      "overview",
+    );
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    const row = within(overview).getByText("Movie.01.mkv").closest("li");
+    expect(row).not.toBeNull();
+    await waitFor(() =>
+      expect(within(row as HTMLElement).getByText("已有记录")).toBeVisible(),
+    );
+    expect(
+      within(row as HTMLElement).getByText(/已按当前决定跳过，未纳入本次整理/),
+    ).toBeVisible();
+    expect(within(row as HTMLElement).queryAllByText("待处理")).toHaveLength(0);
+
+    await user.click(
+      within(overview).getByRole("button", { name: "查看 Movie.01.mkv" }),
+    );
+    expect(await screen.findByText("此文件已跳过")).toBeVisible();
   }, 30_000);
 });

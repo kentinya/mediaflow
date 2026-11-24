@@ -1290,6 +1290,489 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   });
 });
 
+test("Task59.1 A59-01 a real conflict skip returns to the overview with the durable item result", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(300_000);
+  const conflictFile = "DialogSkip.2041.mkv";
+  const siblingFile = "DialogSkipSibling.2045.mkv";
+  const stateFor = async (name: string) => {
+    const response = await request.get(
+      `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(
+        `Dialog/${name}`,
+      )}`,
+    );
+    expect(response.ok()).toBe(true);
+    return (await response.json()) as {
+      readonly sourceExists: boolean;
+      readonly destinationTargets: readonly string[];
+    };
+  };
+  const decisionPosts = () =>
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/tasks\/[^/]+\/items\/[^/]+\/recovery\/decision$/.test(command.path),
+    );
+  const executePosts = () =>
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    );
+
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+
+  // First pass: one explicit COPY creates the real target and keeps the
+  // source, exactly like the existing conflict journey.
+  await openDialogDirectory(page, conflictFile);
+  await selectFiles(page, [conflictFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  let card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await driveDiscovery(request, true);
+  await openOverviewFile(card);
+  await card.getByText("修正识别或作品", { exact: true }).click();
+  await card
+    .getByLabel(`识别类型 ${conflictFile}`)
+    .selectOption({ label: "Copy fixture" });
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  await expect(
+    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await driveDiscovery(request, true);
+  const copiedOverview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(copiedOverview).toBeVisible({ timeout: 30_000 });
+  await copiedOverview
+    .getByRole("button", { name: `查看 ${conflictFile}` })
+    .click();
+  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expectBatchSelected(card, 1);
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
+    timeout: 30_000,
+  });
+  const copyWorker = await request.post(
+    `${BASE}/__harness__/run-manual-worker`,
+  );
+  expect(copyWorker.ok()).toBe(true);
+  expect(await copyWorker.json()).toMatchObject({
+    completed: true,
+    status: "completed",
+    itemCount: 1,
+  });
+  await page.getByRole("button", { name: "关闭详情" }).click();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
+  const copied = await stateFor(conflictFile);
+  expect(copied.sourceExists).toBe(true);
+  expect(copied.destinationTargets).toHaveLength(1);
+
+  // Second pass: the same source now conflicts with its real target, beside
+  // one healthy sibling. The operator saves the legal skip and no analysis.
+  await openDialogDirectory(page, conflictFile);
+  await selectFiles(page, [conflictFile, siblingFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const skipDiscoveryId = new URL(page.url()).searchParams.get(
+    "organizeDiscovery",
+  );
+  expect(skipDiscoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, skipDiscoveryId as string);
+
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  const conflictRow = overview
+    .locator(".mf-organize-overview-item")
+    .filter({ hasText: conflictFile });
+  await expect(conflictRow).toContainText("需要处理目标冲突");
+  await expect(conflictRow).toContainText("待处理");
+  const siblingRow = overview
+    .locator(".mf-organize-overview-item")
+    .filter({ hasText: siblingFile });
+  await expect(siblingRow).toContainText("已纳入");
+
+  await conflictRow
+    .getByRole("button", { name: `查看 ${conflictFile}` })
+    .click();
+  await expect(card.getByText("目标已有文件").first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await card.getByRole("radio", { name: /跳过此条目/ }).check();
+  const skipResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/decision$/.test(new URL(response.url()).pathname),
+  );
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  expect((await skipResponse).ok()).toBe(true);
+
+  // The decision itself ended this exact item: the same dialog returns to the
+  // overview, the row carries the durable result and leaves the pending set.
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByText("决定已保存并读回")).toBeVisible();
+  const settledRow = overview
+    .locator(".mf-organize-overview-item")
+    .filter({ hasText: conflictFile });
+  await expect(settledRow).toContainText("已有记录");
+  await expect(settledRow).toContainText("已按当前决定跳过");
+  await expect(settledRow).not.toContainText("待处理");
+  // The sibling keeps its own included state and selection surface.
+  await expect(siblingRow).toContainText("已纳入");
+
+  // Exactly one decision was submitted; a skipped item requests no analysis
+  // and no execution, and the original media state is unchanged.
+  expect(decisionPosts()).toHaveLength(1);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" && /\/recovery\/continue$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+  expect(executePosts()).toHaveLength(1);
+  expect(await stateFor(conflictFile)).toEqual(copied);
+  expect(await stateFor(siblingFile)).toEqual({
+    sourceExists: true,
+    destinationTargets: [],
+  });
+
+  // The durable TaskItem records the same skipped result with no analysis
+  // authority, and its own recovery read proves it independently.
+  const decisionPath = decisionPosts()[0]?.path ?? "";
+  const decisionMatch = decisionPath.match(
+    /\/tasks\/([^/]+)\/items\/([^/]+)\/recovery\/decision$/,
+  );
+  expect(decisionMatch).not.toBeNull();
+  const recoveryRead = await request.get(
+    `${BASE}/api/tasks/${encodeURIComponent(
+      decisionMatch?.[1] as string,
+    )}/items/${encodeURIComponent(decisionMatch?.[2] as string)}/recovery`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(recoveryRead.ok()).toBe(true);
+  const recovery = (await recoveryRead.json()) as {
+    readonly checkpoint: {
+      readonly status: string;
+      readonly stage: string;
+      readonly permitted_action_ids: readonly string[];
+    };
+  };
+  expect(recovery.checkpoint.status).toBe("skipped");
+  expect(recovery.checkpoint.permitted_action_ids).toEqual([]);
+
+  // The skipped file does not enter the exact confirmation list; the ready
+  // sibling remains the only selected item.
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(card.getByRole("region", { name: "整批复核" })).toBeVisible();
+  const summary = card.locator(".mf-organize-batch-summary");
+  await expect(summary).toContainText(/将整理\s*1 项/);
+  await expect(summary).toContainText(/未纳入\s*1 项/);
+  await expect(
+    card.getByRole("region", { name: "本次确认的文件" }),
+  ).not.toContainText(conflictFile);
+  await card.getByRole("button", { name: "返回概览" }).click();
+
+  // Re-opening the same file still reads the skipped result instead of the
+  // resolved conflict decision form.
+  const reopenedRow = card
+    .getByRole("region", { name: "本次整理概览" })
+    .locator(".mf-organize-overview-item")
+    .filter({ hasText: conflictFile });
+  await reopenedRow
+    .getByRole("button", { name: `查看 ${conflictFile}` })
+    .click();
+  await expect(card.getByText("此文件已跳过")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(card.getByRole("radio", { name: /跳过此条目/ })).toHaveCount(0);
+  await card.getByRole("button", { name: "返回概览" }).click();
+  await card.getByRole("button", { name: "关闭整理弹窗" }).click();
+  await expect(card).toHaveCount(0);
+  expect(decisionPosts()).toHaveLength(1);
+});
+
+test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, classification and a skipped conflict before one confirmation", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(480_000);
+  const conflictFile = "DialogMixed.2042.mkv";
+  const renameFile = "DialogRecognize.2043.mkv";
+  const metadataFile = "DialogCandidate.2044.mkv";
+  const searchFile = "DialogSearch.2039.mkv";
+  const classifyFile = "DialogClassify.2040.mkv";
+  const mixedFiles = [
+    conflictFile,
+    renameFile,
+    metadataFile,
+    searchFile,
+    classifyFile,
+  ];
+  const stateFor = async (name: string) => {
+    const response = await request.get(
+      `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(
+        `Dialog/${name}`,
+      )}`,
+    );
+    expect(response.ok()).toBe(true);
+    return (await response.json()) as {
+      readonly sourceExists: boolean;
+      readonly destinationTargets: readonly string[];
+    };
+  };
+  const posts = (pattern: RegExp) =>
+    commands.filter(
+      (command) => command.method === "POST" && pattern.test(command.path),
+    );
+
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+
+  // First pass: one explicit COPY creates the real conflict target that the
+  // mixed batch later finds, while keeping the same source in place.
+  await openDialogDirectory(page, conflictFile);
+  await selectFiles(page, [conflictFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  let card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await driveDiscovery(request, true);
+  await openOverviewFile(card);
+  await card.getByText("修正识别或作品", { exact: true }).click();
+  await card
+    .getByLabel(`识别类型 ${conflictFile}`)
+    .selectOption({ label: "Copy fixture" });
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  await expect(
+    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await driveDiscovery(request, true);
+  const copiedOverview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(copiedOverview).toBeVisible({ timeout: 30_000 });
+  await copiedOverview
+    .getByRole("button", { name: `查看 ${conflictFile}` })
+    .click();
+  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expectBatchSelected(card, 1);
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
+    timeout: 30_000,
+  });
+  const copyWorker = await request.post(
+    `${BASE}/__harness__/run-manual-worker`,
+  );
+  expect(copyWorker.ok()).toBe(true);
+  expect(await copyWorker.json()).toMatchObject({
+    completed: true,
+    status: "completed",
+    itemCount: 1,
+  });
+  await page.getByRole("button", { name: "关闭详情" }).click();
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
+  const copied = await stateFor(conflictFile);
+  expect(copied.sourceExists).toBe(true);
+  expect(copied.destinationTargets).toHaveLength(1);
+  expect(posts(/\/previews\/[^/]+\/execute$/)).toHaveLength(1);
+
+  // Second pass: one Files batch contains all four live decision families
+  // plus the real conflict, each resolved through its own TaskItem.
+  await openDialogDirectory(page, conflictFile);
+  await selectFiles(page, mixedFiles);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const mixedDiscoveryId = new URL(page.url()).searchParams.get(
+    "organizeDiscovery",
+  );
+  expect(mixedDiscoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, mixedDiscoveryId as string);
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  const overviewRow = (name: string) =>
+    overview.locator(".mf-organize-overview-item").filter({ hasText: name });
+  await expect(overviewRow(renameFile)).toContainText("需要处理识别类型");
+  await expect(overviewRow(metadataFile)).toContainText("需要处理元数据候选");
+  await expect(overviewRow(searchFile)).toContainText("需要处理作品搜索修正");
+  await expect(overviewRow(classifyFile)).toContainText("需要处理分类目标");
+  await expect(overviewRow(conflictFile)).toContainText("需要处理目标冲突");
+
+  // 1. The real conflict is skipped first: no analysis and no execution
+  // follows, and the same dialog keeps the remaining ready siblings.
+  await overviewRow(conflictFile)
+    .getByRole("button", { name: `查看 ${conflictFile}` })
+    .click();
+  await expect(card.getByText("目标已有文件").first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await card.getByRole("radio", { name: /跳过此条目/ }).check();
+  const skipResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/decision$/.test(new URL(response.url()).pathname),
+  );
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  expect((await skipResponse).ok()).toBe(true);
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  await expect(overviewRow(conflictFile)).toContainText("已有记录");
+  await expect(overviewRow(conflictFile)).toContainText("已按当前决定跳过");
+
+  // 2. Recognition: the source has no matching rule, so the operator selects
+  // the pinned Normal Movie type and the real analysis re-runs.
+  await overviewRow(renameFile)
+    .getByRole("button", { name: `查看 ${renameFile}` })
+    .click();
+  await expect(card.getByText("确认识别类型")).toBeVisible({
+    timeout: 30_000,
+  });
+  await card.getByRole("radio", { name: /Normal Movie/ }).check();
+  await saveNativeDecision(page, card);
+  await driveDiscoveryFor(page, request, mixedDiscoveryId as string);
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+
+  // 3. Metadata: two grounded candidates remain tied.
+  await overviewRow(metadataFile)
+    .getByRole("button", { name: `查看 ${metadataFile}` })
+    .click();
+  await expect(card.getByText("选择正确的作品")).toBeVisible({
+    timeout: 30_000,
+  });
+  await card.getByRole("radio", { name: /候选 2/ }).check();
+  await saveNativeDecision(page, card);
+  await driveDiscoveryFor(page, request, mixedDiscoveryId as string);
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+
+  // 4. Metadata correction: the parsed title has no candidate; the exact
+  // provider search finds the corrected one and the operator selects it.
+  await overviewRow(searchFile)
+    .getByRole("button", { name: `查看 ${searchFile}` })
+    .click();
+  await expect(card.getByText("修正作品搜索")).toBeVisible({
+    timeout: 30_000,
+  });
+  await card.getByLabel("搜索标题").fill("CorrectedSearch");
+  await card.getByRole("button", { name: "搜索作品" }).click();
+  await expect(card.getByText(/搜索结果/)).toBeVisible({ timeout: 30_000 });
+  await card.getByRole("radio", { name: /CorrectedSearch/ }).check();
+  await saveNativeDecision(page, card);
+  await driveDiscoveryFor(page, request, mixedDiscoveryId as string);
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+
+  // 5. Classification: the pinned policy's enabled rule is a legal manual
+  // choice but does not match automatically.
+  await overviewRow(classifyFile)
+    .getByRole("button", { name: `查看 ${classifyFile}` })
+    .click();
+  await expect(card.getByText("选择整理目标")).toBeVisible({
+    timeout: 30_000,
+  });
+  await card.getByRole("radio", { name: /目标 1/ }).check();
+  await saveNativeDecision(page, card);
+  await driveDiscoveryFor(page, request, mixedDiscoveryId as string);
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+
+  // Every decision went through its own durable command; only the four
+  // resolved items are included and the skip issued no analysis.
+  expect(posts(/\/recovery\/decision$/)).toHaveLength(5);
+  expect(posts(/\/recovery\/continue$/)).toHaveLength(4);
+  expect(posts(/\/previews\/[^/]+\/execute$/)).toHaveLength(1);
+  const countFacts = await overview
+    .locator(".mf-organize-overview-counts > div")
+    .evaluateAll((rows) =>
+      Object.fromEntries(
+        rows.map((row) => [
+          row.querySelector("dt")?.textContent ?? "",
+          row.querySelector("dd")?.textContent ?? "",
+        ]),
+      ),
+    );
+  // The later analyses publish a new exact plan for the four resolved
+  // siblings; the already-settled conflict is not part of that newer plan.
+  expect(countFacts).toMatchObject({
+    待处理: "0",
+    已纳入: "4",
+  });
+
+  // Before the single confirmation, no media changed beyond the explicit
+  // COPY target the conflict journey created.
+  for (const name of [renameFile, metadataFile, searchFile, classifyFile]) {
+    expect(await stateFor(name)).toEqual({
+      sourceExists: true,
+      destinationTargets: [],
+    });
+  }
+  expect(await stateFor(conflictFile)).toEqual(copied);
+
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  await expect(card.getByRole("region", { name: "整批复核" })).toBeVisible();
+  const summary = card.locator(".mf-organize-batch-summary");
+  await expect(summary).toContainText(/将整理\s*4 项/);
+  await expect(summary).toContainText(/未纳入\s*0 项/);
+  await expect(
+    card.getByRole("region", { name: "本次确认的文件" }),
+  ).not.toContainText(conflictFile);
+  await page.getByRole("button", { name: "确认整理 4 项" }).click();
+  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
+    timeout: 30_000,
+  });
+  const mixedTaskId = new URL(page.url()).searchParams.get("run");
+  expect(mixedTaskId).toBeTruthy();
+  expect(posts(/\/previews\/[^/]+\/execute$/)).toHaveLength(2);
+  const mixedWorker = await request.post(
+    `${BASE}/__harness__/run-manual-worker`,
+  );
+  expect(mixedWorker.ok()).toBe(true);
+  expect(await mixedWorker.json()).toMatchObject({
+    completed: true,
+    taskId: mixedTaskId,
+    status: "completed",
+    itemCount: 4,
+  });
+
+  // The same Task executed exactly the four resolved files; the skipped
+  // conflict kept its source and its existing copy target untouched.
+  for (const name of [renameFile, metadataFile, searchFile, classifyFile]) {
+    expect((await stateFor(name)).sourceExists).toBe(false);
+  }
+  expect(await stateFor(conflictFile)).toEqual(copied);
+  const resultRead = await request.get(
+    `${BASE}/__harness__/task-result-state?taskId=${encodeURIComponent(
+      mixedTaskId as string,
+    )}`,
+  );
+  expect(resultRead.ok()).toBe(true);
+  const resultState = (await resultRead.json()) as {
+    readonly taskStatus: string;
+    readonly results: readonly {
+      readonly status: string;
+      readonly effectCertainty: string;
+      readonly completedOperations: readonly string[];
+    }[];
+  };
+  expect(resultState.taskStatus).toBe("completed");
+  expect(resultState.results).toHaveLength(4);
+  for (const result of resultState.results) {
+    expect(result.status).toBe("SUCCESS");
+    expect(result.effectCertainty).toBe("verified_complete");
+    expect(result.completedOperations.length).toBeGreaterThan(0);
+  }
+  expect(posts(/\/recovery\/decision$/)).toHaveLength(5);
+  expect(posts(/\/recovery\/continue$/)).toHaveLength(4);
+});
+
 test("Task59.1 follows the completed walk into the same preparation's linked plan without a second submission", async ({
   page,
   request,
@@ -2794,7 +3277,7 @@ test("Task59.1 manual organize readability: ten files keep an aligned batch summ
   await expectReadableBatch(page, card, { selected: 10, skipped: 0 });
 });
 
-test("Task59.1 manual organize readability: a 100-file batch shows 90 selected, 10 unselected and long paths", async ({
+test("Task59.1 A59-02 manual organize readability: a 100-file batch shows 90 selected, 10 unselected and long paths", async ({
   page,
   request,
 }) => {
@@ -2804,6 +3287,16 @@ test("Task59.1 manual organize readability: a 100-file batch shows 90 selected, 
   await connect(page);
   const commands = recordCommands(page);
   const { card } = await openReadabilityBatch(page, request, "directory");
+
+  // A59-02: the plan item is stale, but its exact TaskItem still offers the
+  // live metadata correction. The overview row names that real next step
+  // instead of the generic "left the plan" text.
+  const unmatchedOverviewRow = card
+    .locator(".mf-organize-overview-item")
+    .filter({ hasText: "Unmatched001.2011.mkv" });
+  await expect(unmatchedOverviewRow).toContainText("需要处理作品搜索修正");
+  await expect(unmatchedOverviewRow).not.toContainText("已不在当前方案中");
+
   await openOverviewFile(card, /第 1 \/ 100 个/);
 
   await card.getByRole("button", { name: /整批复核/ }).click();
@@ -2903,6 +3396,12 @@ test("Task59.1 manual organize readability: a 100-file batch shows 90 selected, 
     card.getByRole("heading", { name: /第 89 \/ 100 个/ }),
   ).toBeVisible();
   await expect(card.getByText("Unmatched001.2011.mkv").first()).toBeVisible();
+  // The same exact TaskItem opens its live metadata correction form, not a
+  // dead stale-plan explanation.
+  await expect(card.getByText("修正作品搜索")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(card.getByText(/没有找到匹配的作品/)).toBeVisible();
   expect(
     commands
       .slice(reviewMark)

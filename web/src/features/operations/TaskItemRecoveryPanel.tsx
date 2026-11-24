@@ -337,6 +337,15 @@ export type TaskItemRecoveryDecisionStatus =
   | "analysis_unknown"
   | "analysis_read_pending";
 
+/**
+ * A saved decision that ended this exact item without a follow-up analysis.
+ * The Files host shows this durable result on the original overview row; it is
+ * never used to infer execution or a file effect.
+ */
+export interface TaskItemDecisionSettled {
+  readonly status: "skipped" | "ignored";
+}
+
 export interface TaskItemRecoveryPanelProps {
   readonly taskId: string;
   readonly itemId: string;
@@ -358,6 +367,18 @@ export interface TaskItemRecoveryPanelProps {
   readonly onAnalysisStarted?: () => void;
   /** Called after this exact item's analysis continuation was accepted. */
   readonly onAnalysisRequested?: () => void;
+  /**
+   * Called before this exact item's decision or ignore command is sent. The
+   * Files host captures the visible file and edit position here so a late
+   * result can update that item without moving an operator who left.
+   */
+  readonly onDecisionStarted?: () => void;
+  /**
+   * Called after the exact decision response (or the same-item read-back of an
+   * acknowledged ignore) proves this item ended as `skipped`/`ignored` with no
+   * analysis to await. Nothing here is inferred from a page event.
+   */
+  readonly onDecisionSettled?: (result: TaskItemDecisionSettled) => void;
   /**
    * Decision-mode inputs keyed by the caller's exact TaskItem. The manual
    * organize card stores this draft outside the paged panel so moving to
@@ -397,6 +418,8 @@ export function TaskItemRecoveryPanel({
   mode = "full",
   onAnalysisStarted,
   onAnalysisRequested,
+  onDecisionStarted,
+  onDecisionSettled,
   decisionDraft,
   onDecisionDraftChange,
   onDecisionStatusChange,
@@ -920,6 +943,7 @@ export function TaskItemRecoveryPanel({
     // This explicit save starts a new decision/analysis attempt for the exact
     // current checkpoint; an older analysis observation cannot describe it.
     updateRecoverySession({ analysis: null });
+    onDecisionStarted?.();
     beginAction("decision");
     try {
       const result = await submitTaskItemRecoveryDecision(
@@ -958,6 +982,14 @@ export function TaskItemRecoveryPanel({
       if (updated.checkpoint.permittedActionIds.includes("retry")) {
         await continueAt(updated.checkpoint.checkpointVersion, false);
       } else {
+        // A skip/ignore decision ends this exact item; there is no analysis to
+        // wait for. The response's own checkpoint is the durable result.
+        if (
+          updated.checkpoint.status === "skipped" ||
+          updated.checkpoint.status === "ignored"
+        ) {
+          onDecisionSettled?.({ status: updated.checkpoint.status });
+        }
         updateRecoverySession({
           message:
             "决策已保存。此操作没有创建文件执行授权；请检查更新后的条目状态。 ",
@@ -971,6 +1003,7 @@ export function TaskItemRecoveryPanel({
 
   const ignoreDecision = async () => {
     if (checkpoint === null || busy || repeatLocked) return;
+    onDecisionStarted?.();
     beginAction("ignore");
     try {
       const result = await ignoreTaskItemReview(token, taskId, itemId, {
@@ -981,6 +1014,18 @@ export function TaskItemRecoveryPanel({
           message: "条目已忽略并保留审核记录；没有执行文件操作。 ",
           repeatLocked: false,
         });
+        // The ignore command answers with an acknowledgement only. A host
+        // that needs this item's terminal result reads the exact durable item
+        // back; other hosts keep their existing single-refresh behavior.
+        if (onDecisionSettled !== undefined) {
+          const readBack = await query.refetch({ cancelRefetch: false });
+          if (
+            readBack.data?.ok === true &&
+            readBack.data.model.checkpoint.status === "ignored"
+          ) {
+            onDecisionSettled({ status: "ignored" });
+          }
+        }
         refreshLinkedReads();
       } else {
         await reportUnknown(result.code, result.status);

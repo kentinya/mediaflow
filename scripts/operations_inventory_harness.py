@@ -773,6 +773,23 @@ def build_managed_fixture(
     # Task59.1 regression: its own unambiguous source so the Files journey's
     # lost direct analysis can run beside the destination-conflict journey
     # without borrowing (or being refused by) that journey's fixtures.
+    (dialog_root / "DialogSearch.2039.mkv").write_bytes(
+        b"slice59 live metadata correction synthetic media"
+    )
+    (dialog_root / "DialogSkip.2041.mkv").write_bytes(b"slice59 live conflict skip synthetic media")
+    (dialog_root / "DialogMixed.2042.mkv").write_bytes(b"slice59 mixed decisions synthetic media")
+    (dialog_root / "DialogRecognize.2043.mkv").write_bytes(
+        b"slice59 recognition decision synthetic media"
+    )
+    (dialog_root / "DialogCandidate.2044.mkv").write_bytes(
+        b"slice59 metadata candidate synthetic media"
+    )
+    (dialog_root / "DialogSkipSibling.2045.mkv").write_bytes(
+        b"slice59 skip sibling synthetic media"
+    )
+    (dialog_root / "DialogClassify.2040.mkv").write_bytes(
+        b"slice59 live classification decision synthetic media"
+    )
     (dialog_root / "DialogDirectLoss.2038.mkv").write_bytes(
         b"slice59 lost direct analysis synthetic media"
     )
@@ -793,6 +810,13 @@ def build_managed_fixture(
     os.utime(dialog_root / "DialogRecovery.2036.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogReadRetry.2037.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogDirectLoss.2038.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogSearch.2039.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogSkip.2041.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogMixed.2042.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogRecognize.2043.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogCandidate.2044.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogSkipSibling.2045.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogClassify.2040.mkv", (conflict_time, conflict_time))
     # PATCH-20261120-2 browser fixture: one dedicated directory with exactly
     # 101 eligible primaries.  Its walk stops at the durable primary bound; one
     # of them is the unambiguous source re-selected for the new small batch.
@@ -1133,6 +1157,34 @@ def build_managed_fixture(
     )
     document["recognitionRules"].append(
         {
+            "id": "dialog-slice59-video",
+            "name": "Slice59 mixed decision fixtures",
+            "priority": 121,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {
+                        "field": "resource_library_id",
+                        "operator": "equals",
+                        "value": "source",
+                    },
+                    {
+                        "field": "filename",
+                        "operator": "regex",
+                        "value": (
+                            r"^Dialog(?:Search\.2039|Skip\.2041|Mixed\.2042"
+                            r"|Candidate\.2044|SkipSibling\.2045)\.mkv$"
+                        ),
+                    },
+                ],
+            },
+            "outputRecognitionType": "A",
+        }
+    )
+    document["recognitionRules"].append(
+        {
             "id": "primary-limit-video",
             "name": "PATCH-20261120-2 primary limit fixtures",
             "priority": 123,
@@ -1290,6 +1342,68 @@ def build_managed_fixture(
             "namingPolicy": "A",
             "classificationPolicy": "A",
             "organizePolicy": "overwrite-fixture",
+        }
+    )
+    # Slice59 mixed Files decisions: an enabled classification rule that
+    # cannot match the probe's own metadata keeps the real engine outcome
+    # unclassified while publishing that rule as the operator's grounded
+    # choice.  The probe source resolves through its own pinned type, so no
+    # other fixture's classification changes.
+    document["classificationPolicies"].append(
+        {
+            "id": "classify-probe",
+            "name": "Classification probe",
+            "rules": [
+                {
+                    "id": "classify-probe-choice",
+                    "name": "Probe documentary library",
+                    "priority": 100,
+                    "conditions": {
+                        "mediaType": ["movie"],
+                        "genres": ["Documentary"],
+                    },
+                    "result": {
+                        "mediaLibraryId": "movies",
+                        "path": ["Movies", "Probe"],
+                    },
+                }
+            ],
+        }
+    )
+    document["recognitionTypes"].append({"id": "classify-probe", "name": "Classification probe"})
+    document["recognitionTypePolicies"].append(
+        {
+            "id": "type-classify-probe",
+            "recognitionType": "classify-probe",
+            "metadataPolicy": "A",
+            "namingPolicy": "A",
+            "classificationPolicy": "classify-probe",
+            "organizePolicy": "A",
+        }
+    )
+    document["recognitionRules"].append(
+        {
+            "id": "classify-probe-video",
+            "name": "Classification probe video fixture",
+            "priority": 124,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {
+                        "field": "resource_library_id",
+                        "operator": "equals",
+                        "value": "source",
+                    },
+                    {
+                        "field": "filename",
+                        "operator": "equals",
+                        "value": "DialogClassify.2040.mkv",
+                    },
+                ],
+            },
+            "outputRecognitionType": "classify-probe",
         }
     )
     # The single supported remote-organize admission is only reachable with the
@@ -1713,6 +1827,83 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogDirectLoss",
                         year=2038,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    # Slice59 mixed Files decisions: the search fixture has
+                    # no automatic candidate under its parsed title, and the
+                    # classification fixture resolves to one identity while
+                    # its pinned ClassificationPolicy has no automatically
+                    # matching rule.
+                    MediaCandidate(
+                        "tmdb",
+                        "720",
+                        MediaType.MOVIE,
+                        "CorrectedSearch",
+                        year=2039,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "721",
+                        MediaType.MOVIE,
+                        "DialogClassify",
+                        year=2040,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "722",
+                        MediaType.MOVIE,
+                        "DialogSkip",
+                        year=2041,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "723",
+                        MediaType.MOVIE,
+                        "DialogMixed",
+                        year=2042,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "724",
+                        MediaType.MOVIE,
+                        "DialogRecognize",
+                        year=2043,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "725",
+                        MediaType.MOVIE,
+                        "DialogCandidate",
+                        year=2044,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "726",
+                        MediaType.MOVIE,
+                        "DialogCandidate",
+                        year=2044,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "727",
+                        MediaType.MOVIE,
+                        "DialogSkipSibling",
+                        year=2045,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -4711,6 +4902,14 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Dialog/DialogSubsetSecond.2031.mkv",
         "PrimaryLimit/DialogLimit.2032.mkv",
         "Dialog/DialogDirectLoss.2038.mkv",
+        "Dialog/DialogSearch.2039.mkv",
+        "Dialog/DialogClassify.2040.mkv",
+        "Dialog/DialogSkip.2041.mkv",
+        "Dialog/Dialog01.2011.mkv",
+        "Dialog/DialogMixed.2042.mkv",
+        "Dialog/DialogRecognize.2043.mkv",
+        "Dialog/DialogCandidate.2044.mkv",
+        "Dialog/DialogSkipSibling.2045.mkv",
         "YearProbe/DialogYear.2025.mkv",
         f"SeasonProbe/{_SEASON_PROBE_TITLE}.2024.S04E01.mkv",
     )

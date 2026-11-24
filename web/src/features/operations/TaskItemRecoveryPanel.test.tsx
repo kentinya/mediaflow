@@ -3145,3 +3145,151 @@ it("keeps a successful technical-history item free of failure guidance", async (
   ).toBeVisible();
   expect(within(panel).getByText("unsafe")).toBeVisible();
 });
+
+function endedRecovery(status: "skipped" | "ignored"): Record<string, unknown> {
+  return {
+    task_id: "task-1",
+    item_id: "item-1",
+    checkpoint: {
+      status,
+      stage: "conflict_resolved",
+      raw_stage: "conflict_resolved",
+      effects: { certainty: "none" },
+      retry_safety: "safe",
+      checkpoint_version: checkpointVersion,
+      blocker: null,
+      permitted_action_ids: [],
+      refusal_reason: null,
+      next_action: null,
+    },
+    decision: null,
+    manualRecoveryAvailable: false,
+    native_analysis: nativeAnalysis(),
+    recoveryKind: "technical_history",
+    next_action: "none",
+  };
+}
+
+it("reports a saved conflict skip as this item's terminal result", async () => {
+  const user = userEvent.setup();
+  authStore.setToken("task-recovery-test-token");
+  let currentRecovery = conflictRecovery();
+  const posts: string[] = [];
+  const started = vi.fn();
+  const settled = vi.fn();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "POST") posts.push(url);
+      if (
+        method === "GET" &&
+        url === "/api/tasks/task-1/items/item-1/recovery"
+      ) {
+        return new Response(JSON.stringify(currentRecovery), { status: 200 });
+      }
+      if (
+        method === "POST" &&
+        url === "/api/tasks/task-1/items/item-1/recovery/decision"
+      ) {
+        currentRecovery = endedRecovery("skipped");
+        return new Response(JSON.stringify(currentRecovery), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+        status: 404,
+      });
+    }),
+  );
+
+  renderWithProviders(
+    <TaskItemRecoveryPanel
+      taskId="task-1"
+      itemId="item-1"
+      runId="task-1"
+      active={false}
+      mode="decision"
+      onDecisionStarted={started}
+      onDecisionSettled={settled}
+    />,
+  );
+
+  const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+  await user.click(
+    await within(panel).findByRole("radio", { name: /跳过此条目/ }),
+  );
+  await user.click(
+    within(panel).getByRole("button", { name: "保存并重新分析" }),
+  );
+
+  await waitFor(() =>
+    expect(settled).toHaveBeenCalledWith({ status: "skipped" }),
+  );
+  expect(started).toHaveBeenCalledTimes(1);
+  // A terminal skip has no analysis to send: only the decision was submitted.
+  expect(posts).toEqual(["/api/tasks/task-1/items/item-1/recovery/decision"]);
+});
+
+it("reads the exact ignored result after the ignore acknowledgement", async () => {
+  const user = userEvent.setup();
+  authStore.setToken("task-recovery-test-token");
+  let ignored = false;
+  const posts: string[] = [];
+  const settled = vi.fn();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "POST") posts.push(url);
+      if (
+        method === "GET" &&
+        url === "/api/tasks/task-1/items/item-1/recovery"
+      ) {
+        return new Response(
+          JSON.stringify(
+            ignored ? endedRecovery("ignored") : conflictRecovery(),
+          ),
+          { status: 200 },
+        );
+      }
+      if (
+        method === "POST" &&
+        url === "/api/tasks/task-1/items/item-1/recovery"
+      ) {
+        ignored = true;
+        return new Response(
+          JSON.stringify({
+            requestId: "request-ignored-1",
+            sideEffects: "none",
+            nextAction: "inspect the ignored item",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+        status: 404,
+      });
+    }),
+  );
+
+  renderWithProviders(
+    <TaskItemRecoveryPanel
+      taskId="task-1"
+      itemId="item-1"
+      runId="task-1"
+      active={false}
+      onDecisionSettled={settled}
+    />,
+  );
+
+  const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+  await user.click(
+    await within(panel).findByRole("button", { name: "忽略此条目" }),
+  );
+
+  await waitFor(() =>
+    expect(settled).toHaveBeenCalledWith({ status: "ignored" }),
+  );
+  expect(posts).toEqual(["/api/tasks/task-1/items/item-1/recovery"]);
+});

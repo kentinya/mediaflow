@@ -33,7 +33,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
@@ -47,6 +52,7 @@ import type {
   OrganizePreviewModel,
 } from "../../entities/operations/organize";
 import type { ManualPreviewItemModel } from "../../entities/operations/preview";
+import type { TaskItemRecoveryModel } from "../../entities/operations/task-item-recovery";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
@@ -75,6 +81,7 @@ import {
   organizeIntentQueryOptions,
   organizePreviewQueryOptions,
 } from "./organize-query";
+import { taskItemRecoveryQueryOptions } from "./run-detail-query";
 import {
   PREPARATION_STATUS_LABELS,
   REASON_LABELS,
@@ -91,6 +98,7 @@ import { usePrincipalIdentity } from "./principal-identity-query";
 import {
   TaskItemRecoveryPanel,
   type TaskItemDecisionDraft,
+  type TaskItemDecisionSettled,
   type TaskItemRecoveryDecisionStatus,
 } from "./TaskItemRecoveryPanel";
 
@@ -379,13 +387,52 @@ function previewItemResultSignature(item: ManualPreviewItemModel): string {
   });
 }
 
+/** One exact decision result already read back for a Files overview row. */
+interface FilesSettledDecision {
+  readonly taskItemId: string;
+  readonly status: "skipped" | "ignored";
+}
+
+/** The durable per-item recovery fact the Files overview may read back. */
+function taskItemSettledStatus(
+  fact: TaskItemRecoveryModel | undefined,
+): FilesSettledDecision["status"] | null {
+  if (fact === undefined) return null;
+  return fact.checkpoint.status === "skipped" ||
+    fact.checkpoint.status === "ignored"
+    ? fact.checkpoint.status
+    : null;
+}
+
+/** Only a live four-type review still owes this item an operator action. */
+function taskItemLiveProblemKind(
+  fact: TaskItemRecoveryModel | undefined,
+): string | null {
+  if (fact === undefined) return null;
+  if (
+    fact.recoveryKind !== "business_problem" &&
+    fact.recoveryKind !== "recovery_lineage"
+  ) {
+    return null;
+  }
+  return fact.decision?.kind ?? null;
+}
+
+function settledDecisionReason(status: FilesSettledDecision["status"]): string {
+  return status === "skipped"
+    ? "该文件已按当前决定跳过，未纳入本次整理；来源与现有目标保持原状，原任务保留该结果。"
+    : "该文件已忽略，未纳入本次整理；来源与现有目标保持原状，审核记录保留该结果。";
+}
+
 function overviewStatusFor(
   item: ManualPreviewItemModel,
   executableIds: readonly string[],
   admittedItemIds: ReadonlySet<string>,
   excluded: ReadonlySet<string>,
+  settled: FilesSettledDecision | null,
 ): OrganizeOverviewStatus {
   if (admittedItemIds.has(item.itemId)) return "recorded";
+  if (settled !== null) return "recorded";
   if (!item.current || !executableIds.includes(item.itemId)) return "pending";
   return excluded.has(item.itemId) ? "ready" : "included";
 }
@@ -394,16 +441,26 @@ function overviewStatusFor(
 function overviewPendingReason(
   item: ManualPreviewItemModel,
   organizeTaskId: string | null,
+  taskFact: TaskItemRecoveryModel | undefined,
+  organizeFlowEnded: boolean,
 ): string {
-  if (!item.current) {
-    return "该文件已不在当前方案中；需要重新分析后才能再次核对或纳入。";
-  }
+  const settled = taskItemSettledStatus(taskFact);
+  if (settled !== null) return settledDecisionReason(settled);
   if (previewItemTechnicalStage(item) === "metadata") {
     return metadataTechnicalFailureSummary(organizeTaskId, false);
   }
-  const problem = previewItemProblemKind(item, false);
-  if (problem !== null) {
-    return `需要处理${problemKindLabel(problem)}；保存决定并重新分析后可回到概览核对。`;
+  // The durable TaskItem is the exact problem this row can still open. The
+  // plan's own analysis is the fallback only while that read is unavailable;
+  // a stale plan field must never hide a live decision the file still offers.
+  const problem =
+    taskFact === undefined
+      ? previewItemProblemKind(item, false)
+      : taskItemLiveProblemKind(taskFact);
+  if (!organizeFlowEnded && organizeTaskId !== null && problem !== null) {
+    return `需要处理${problemKindLabel(problem)}；打开该文件保存决定并重新分析后可回到概览核对。`;
+  }
+  if (!item.current) {
+    return "该文件已不在当前方案中；需要重新分析后才能再次核对或纳入。";
   }
   if (item.capabilities?.verdict === "capability_gap") {
     const missing = item.capabilities.missing.join("、");
@@ -533,6 +590,8 @@ export function ManualOrganizeDialog({
   const [filesOverviewVisible, setFilesOverviewVisible] = useState(filesHost);
   const [filesOverviewNotice, setFilesOverviewNotice] = useState<{
     readonly kind: "success" | "warning";
+    /** A specific result name; omitted falls back to the analysis read-back. */
+    readonly title?: string;
     readonly text: string;
   } | null>(null);
   const [filesOverviewFocus, setFilesOverviewFocus] = useState<
@@ -594,6 +653,30 @@ export function ManualOrganizeDialog({
   }, []);
   /** Bumped only by a real operator edit, never by saving or read-back. */
   const fileDraftRevision = useRef(0);
+  /**
+   * The exact item result a saved decision/ignore proved for a Files row. It
+   * is keyed by the durable item and its TaskItem so a later plan cannot reuse
+   * the result for another problem. A durable same-item read covers refresh.
+   */
+  const [filesDecisionResults, setFilesDecisionResults] = useState<
+    Readonly<Record<string, FilesSettledDecision>>
+  >({});
+  /**
+   * The file and edit position visible when a decision command started. A
+   * response only returns to the overview while these are still the exact
+   * values the operator saw; a late result otherwise just updates its row.
+   */
+  const filesDecisionAction = useRef<{
+    readonly itemId: string;
+    readonly taskItemId: string;
+    readonly filename: string;
+    readonly draftRevision: number;
+  } | null>(null);
+  const [filesSettledDecision, setFilesSettledDecision] = useState<{
+    readonly itemId: string;
+    readonly taskItemId: string;
+    readonly status: "skipped" | "ignored";
+  } | null>(null);
   /** The visible position before any durable anchor has been picked. */
   const [index, setIndex] = useState(0);
   /**
@@ -745,6 +828,58 @@ export function ManualOrganizeDialog({
     [preview],
   );
   const items = preview?.items ?? [];
+  const filesOrganizeTaskId = preparation?.organizeTaskId ?? null;
+  /**
+   * A plan item whose exact TaskItem is still readable is the only place the
+   * overview may learn that a published problem ended (skipped or ignored) or
+   * still owes this file a correction. It is bounded to these exact links and
+   * is disabled outside the Files host.
+   */
+  const filesProblemItems = useMemo(() => {
+    if (!filesHost || filesOrganizeTaskId === null) return [];
+    return (preview?.items ?? []).flatMap((item) =>
+      item.problemTaskItemId !== null
+        ? [
+            {
+              itemId: item.itemId,
+              taskItemId: item.problemTaskItemId,
+            },
+          ]
+        : [],
+    );
+  }, [filesHost, filesOrganizeTaskId, preview]);
+  const filesProblemReads = useQueries({
+    queries: filesProblemItems.map((value) =>
+      taskItemRecoveryQueryOptions(token, {
+        taskId: filesOrganizeTaskId ?? "",
+        itemId: value.taskItemId,
+        runId: filesOrganizeTaskId ?? "",
+        active: false,
+      }),
+    ),
+  });
+  const filesTaskItemFacts = new Map<string, TaskItemRecoveryModel>();
+  filesProblemItems.forEach((value, index) => {
+    const read = filesProblemReads[index]?.data;
+    if (read?.ok === true) filesTaskItemFacts.set(value.itemId, read.model);
+  });
+  const filesSettledDecisionFor = (
+    item: ManualPreviewItemModel,
+  ): FilesSettledDecision | null => {
+    const local = filesDecisionResults[item.itemId];
+    if (
+      local !== undefined &&
+      item.problemTaskItemId !== null &&
+      local.taskItemId === item.problemTaskItemId
+    ) {
+      return local;
+    }
+    const fact = filesTaskItemFacts.get(item.itemId);
+    const status = taskItemSettledStatus(fact);
+    if (fact === undefined || status === null) return null;
+    if (item.problemTaskItemId !== fact.itemId) return null;
+    return { taskItemId: fact.itemId, status };
+  };
   /**
    * The native problems this exact summary currently exposes. A stored
    * decision draft whose TaskItem is no longer part of it belongs to a
@@ -1745,6 +1880,37 @@ export function ManualOrganizeDialog({
     const baseline = item === undefined ? null : decisionBaselineFor(item);
     if (baseline !== null) setFilesDecisionReturn(baseline);
   };
+  /**
+   * Capture the exact visible file and edit position before this item's
+   * decision/ignore command. The response may only move the operator while
+   * these values are still what they see; otherwise it updates this row.
+   */
+  const beginFilesDecisionSettle = (itemId: string, taskItemId: string) => {
+    if (!filesHost) return;
+    const item = items.find((value) => value.itemId === itemId);
+    filesDecisionAction.current = {
+      itemId,
+      taskItemId,
+      filename: item?.sourceFilename ?? itemId,
+      draftRevision: fileDraftRevision.current,
+    };
+  };
+  const recordFilesDecisionSettled = (
+    itemId: string,
+    taskItemId: string,
+    result: TaskItemDecisionSettled,
+  ) => {
+    if (!filesHost) return;
+    setFilesDecisionResults((previous) => ({
+      ...previous,
+      [itemId]: { taskItemId, status: result.status },
+    }));
+    setFilesSettledDecision({
+      itemId,
+      taskItemId,
+      status: result.status,
+    });
+  };
 
   type AnalysisReadOutcome = "accepted" | "refused" | "unreadable" | "stale";
   /**
@@ -1884,6 +2050,61 @@ export function ManualOrganizeDialog({
         : { kind: "item", itemId: currentItemId },
     );
   };
+
+  // A decision command may only return to the overview while the exact file
+  // and edit position it started from are still visible. Leaving this file,
+  // entering the batch review or any real edit retires that possibility; the
+  // late result then only updates its own row.
+  useEffect(() => {
+    if (!filesHost || filesDecisionAction.current === null) return;
+    const action = filesDecisionAction.current;
+    if (
+      filesOverviewVisible ||
+      step !== "review" ||
+      currentItemId !== action.itemId
+    ) {
+      filesDecisionAction.current = null;
+    }
+  }, [filesHost, filesOverviewVisible, step, currentItemId]);
+  useEffect(() => {
+    if (!filesHost || filesSettledDecision === null) return;
+    const settled = filesSettledDecision;
+    const action = filesDecisionAction.current;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFilesSettledDecision(null);
+    if (
+      action === null ||
+      action.itemId !== settled.itemId ||
+      action.taskItemId !== settled.taskItemId ||
+      action.draftRevision !== fileDraftRevision.current ||
+      filesOverviewVisible ||
+      step !== "review" ||
+      currentItemId !== settled.itemId
+    ) {
+      return;
+    }
+    filesDecisionAction.current = null;
+    clearAnalysisReadback();
+    setFilesDecisionReturn(null);
+    setFilesOverviewNotice({
+      kind: "success",
+      title: "决定已保存并读回",
+      text:
+        settled.status === "skipped"
+          ? `「${action.filename}」已按当前决定跳过，未纳入本次整理；来源与现有目标保持原状。`
+          : `「${action.filename}」已忽略，未纳入本次整理；审核记录保留该结果，来源与现有目标保持原状。`,
+    });
+    setFilesOverviewFocus({ kind: "item", itemId: settled.itemId });
+    setFilesOverviewVisible(true);
+    setStep("review");
+  }, [
+    clearAnalysisReadback,
+    currentItemId,
+    filesHost,
+    filesOverviewVisible,
+    filesSettledDecision,
+    step,
+  ]);
 
   const filesDecisionReturnItem =
     filesDecisionReturn === null
@@ -2808,10 +3029,20 @@ export function ManualOrganizeDialog({
 
   const renderFilesOverview = () => {
     if (preview === undefined) return null;
-    const rows = items.map((item) => ({
-      item,
-      status: overviewStatusFor(item, executableIds, admittedItemIds, excluded),
-    }));
+    const rows = items.map((item) => {
+      const settled = filesSettledDecisionFor(item);
+      return {
+        item,
+        settled,
+        status: overviewStatusFor(
+          item,
+          executableIds,
+          admittedItemIds,
+          excluded,
+          settled,
+        ),
+      };
+    });
     const countOf = (status: OrganizeOverviewStatus) =>
       rows.filter((row) => row.status === status).length;
     const pendingCount = countOf("pending");
@@ -2858,9 +3089,10 @@ export function ManualOrganizeDialog({
               filesOverviewNotice.kind === "success" ? "success" : "warning"
             }
             title={
-              filesOverviewNotice.kind === "success"
+              filesOverviewNotice.title ??
+              (filesOverviewNotice.kind === "success"
                 ? "重新分析已读回"
-                : "出现新的待处理问题"
+                : "出现新的待处理问题")
             }
           >
             <p role="status">{filesOverviewNotice.text}</p>
@@ -2903,7 +3135,7 @@ export function ManualOrganizeDialog({
           </p>
         ) : null}
         <ul className="mf-organize-overview-list" ref={overviewListRef}>
-          {rows.map(({ item, status }) => {
+          {rows.map(({ item, settled, status }) => {
             const itemName = item.sourceFilename ?? item.itemId;
             const target =
               item.targetPath ??
@@ -2951,12 +3183,16 @@ export function ManualOrganizeDialog({
                   <p className="mf-organize-overview-reason" role="status">
                     {overviewPendingReason(
                       item,
-                      preparation?.organizeTaskId ?? null,
+                      filesOrganizeTaskId,
+                      filesTaskItemFacts.get(item.itemId),
+                      organizeFlowEnded,
                     )}
                   </p>
                 ) : status === "recorded" ? (
                   <p className="mf-organize-overview-reason" role="status">
-                    该文件已受理执行；独立结果以任务中心的原任务详情为准，不会重放。
+                    {settled === null
+                      ? "该文件已受理执行；独立结果以任务中心的原任务详情为准，不会重放。"
+                      : settledDecisionReason(settled.status)}
                   </p>
                 ) : null}
               </li>
@@ -2997,6 +3233,7 @@ export function ManualOrganizeDialog({
     }
     const item = currentItem;
     const filename = item.sourceFilename ?? item.itemId;
+    const settledDecision = filesSettledDecisionFor(item);
     const notice = currentNotice;
     const itemAnalysisReadback =
       analysisReadback?.itemId === currentItemId ? analysisReadback : null;
@@ -3004,6 +3241,7 @@ export function ManualOrganizeDialog({
     const firstConflict = item.conflicts[0] ?? null;
     const problemTaskItemId = item.problemTaskItemId;
     const hasNativeProblem =
+      settledDecision === null &&
       !organizeFlowEnded &&
       organizeTaskId !== null &&
       problemTaskItemId !== null;
@@ -3025,6 +3263,7 @@ export function ManualOrganizeDialog({
       (attachment) => attachment.nextAction !== null,
     );
     const hasCurrentProblem =
+      settledDecision !== null ||
       item.conflicts.length > 0 ||
       item.failure !== null ||
       metadataTechnicalFailure ||
@@ -3052,15 +3291,19 @@ export function ManualOrganizeDialog({
             <h3>
               第 {pageInfo + 1} / {items.length} 个
               <span className="mf-status-badge">
-                {admittedItemIds.has(item.itemId)
-                  ? "已受理执行"
-                  : organizeFlowEnded
-                    ? "只读历史"
-                    : !executableIds.includes(item.itemId)
-                      ? "未就绪"
-                      : isIncluded
-                        ? "纳入本次整理"
-                        : "暂不纳入"}
+                {settledDecision !== null
+                  ? settledDecision.status === "skipped"
+                    ? "已跳过"
+                    : "已忽略"
+                  : admittedItemIds.has(item.itemId)
+                    ? "已受理执行"
+                    : organizeFlowEnded
+                      ? "只读历史"
+                      : !executableIds.includes(item.itemId)
+                        ? "未就绪"
+                        : isIncluded
+                          ? "纳入本次整理"
+                          : "暂不纳入"}
               </span>
             </h3>
             <p className="mf-organize-file-name mf-exact-identity">
@@ -3089,15 +3332,30 @@ export function ManualOrganizeDialog({
               <h4>当前状态</h4>
               {!hasNativeProblem ? (
                 <span className="mf-organize-section-note">
-                  {item.conflicts.length > 0
-                    ? "需要当前文件的冲突决定"
-                    : metadataTechnicalFailure
-                      ? "元数据阶段技术失败"
-                      : "已记录的核对信息"}
+                  {settledDecision !== null
+                    ? "已读取该文件的决定结果"
+                    : item.conflicts.length > 0
+                      ? "需要当前文件的冲突决定"
+                      : metadataTechnicalFailure
+                        ? "元数据阶段技术失败"
+                        : "已记录的核对信息"}
                 </span>
               ) : null}
             </div>
-            {item.conflicts.length > 0 ? (
+            {settledDecision !== null ? (
+              <StatusBanner
+                variant="info"
+                title={
+                  settledDecision.status === "skipped"
+                    ? "此文件已跳过"
+                    : "此文件已忽略"
+                }
+              >
+                <p role="status">
+                  {settledDecisionReason(settledDecision.status)}
+                </p>
+              </StatusBanner>
+            ) : item.conflicts.length > 0 ? (
               <>
                 <p role="status" className="mf-organize-problem-line">
                   <strong>
@@ -3160,6 +3418,20 @@ export function ManualOrganizeDialog({
                   beginFilesDecisionReturn(item.itemId);
                 }}
                 onAnalysisRequested={decisionAnalysisRequested}
+                onDecisionStarted={() => {
+                  // The Files host records the exact file and edit position
+                  // before this command, so a late terminal result can
+                  // update its row without moving an operator who left.
+                  // eslint-disable-next-line react-hooks/refs
+                  beginFilesDecisionSettle(item.itemId, problemTaskItemId);
+                }}
+                onDecisionSettled={(settled) => {
+                  recordFilesDecisionSettled(
+                    item.itemId,
+                    problemTaskItemId,
+                    settled,
+                  );
+                }}
                 decisionDraft={decisionDrafts[problemTaskItemId]}
                 onDecisionDraftChange={(draft) => {
                   if (draft.dirty) {
