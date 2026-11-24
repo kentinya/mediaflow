@@ -1326,7 +1326,7 @@ describe("selected-run detail tabs", () => {
       .closest("tr");
     expect(waitingRow).not.toBeNull();
     expect(within(waitingRow!).getByText("等待元数据决策")).toBeVisible();
-    expect(within(waitingRow!).getByText("等待元数据决定")).toBeVisible();
+    expect(within(waitingRow!).getByText("元数据候选需要确认")).toBeVisible();
     expect(within(waitingRow!).queryByText("metadata")).toBeNull();
     const failedRow = within(items)
       .getByText(/source:movies\/c\.mkv/)

@@ -1481,6 +1481,16 @@ const BLOCKER_LABELS: Readonly<Record<string, string>> = {
   conflict: "等待冲突处理",
 };
 
+/** The concrete thing still unresolved behind each current blocker. */
+const BLOCKER_REASONS: Readonly<Record<string, string>> = {
+  recognition_review: "识别结果需要确认",
+  metadata_review: "元数据候选需要确认",
+  metadata_correction: "元数据内容需要修正",
+  classification_review: "分类目标需要确认",
+  conflict_review: "目标冲突需要处理",
+  conflict: "目标冲突需要处理",
+};
+
 function storageStepLabel(step: string): string {
   const label =
     STORAGE_STEP_LABELS[step] ??
@@ -1582,7 +1592,7 @@ function itemRowReading(item: RunItemsPage["items"][number]): {
   if (blocker !== null) {
     return {
       disposition,
-      reason: BLOCKER_LABELS[blocker] ?? "等待处理决定",
+      reason: BLOCKER_REASONS[blocker] ?? "需要人工处理决定",
       tone: "warning",
     };
   }
@@ -1609,7 +1619,7 @@ function itemRowReading(item: RunItemsPage["items"][number]): {
   }
   return {
     disposition,
-    reason: "—",
+    reason: item.status === "partial" ? "部分文件或附件未完成" : "—",
     tone: item.status === "partial" ? "warning" : "normal",
   };
 }
