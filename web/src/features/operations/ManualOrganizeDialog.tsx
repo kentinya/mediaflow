@@ -215,7 +215,10 @@ const OVERVIEW_STATUS_LABELS: Readonly<Record<OrganizeOverviewStatus, string>> =
  * Mirrors the backend's own `manual_preview_plan_problem` boundary so the
  * overview can tell a real operator decision from a technical condition.
  */
-function previewItemProblemKind(item: ManualPreviewItemModel): string | null {
+function previewItemProblemKind(
+  item: ManualPreviewItemModel,
+  includeStageFallback = true,
+): string | null {
   // A current, executable plan item has no remaining operator problem even
   // when its analysis evidence still carries the stage that produced it.
   if (
@@ -252,9 +255,25 @@ function previewItemProblemKind(item: ManualPreviewItemModel): string | null {
     }
   }
   // The item's `stage` names where the pipeline stopped, including technical
-  // failures that published no operator problem. Only the four published
-  // business findings above may become a candidate/decision instruction.
-  return null;
+  // failures that published no operator problem. The Files host only trusts
+  // the four published business findings above, so a stage word can never
+  // become a candidate/decision instruction. The Base Task Center in-place
+  // continuation keeps its existing stage fallback for its unchanged body.
+  if (!includeStageFallback) return null;
+  switch (item.stage) {
+    case "recognition":
+      return "recognition";
+    case "metadata":
+      return "metadata";
+    case "metadata_correction":
+      return "metadata_correction";
+    case "classification":
+      return "classification";
+    case "conflict":
+      return "conflict";
+    default:
+      return null;
+  }
 }
 
 /**
@@ -353,7 +372,7 @@ function overviewPendingReason(
       organizeTaskId,
     )}`;
   }
-  const problem = previewItemProblemKind(item);
+  const problem = previewItemProblemKind(item, false);
   if (problem !== null) {
     return `需要处理${problemKindLabel(problem)}；保存决定并重新分析后可回到概览核对。`;
   }
@@ -1688,7 +1707,7 @@ export function ManualOrganizeDialog({
       filename: item.sourceFilename ?? item.itemId,
       previewId: preview.previewId,
       signature: previewItemResultSignature(item),
-      problem: previewItemProblemKind(item),
+      problem: previewItemProblemKind(item, !filesHost),
       draftRevision: fileDraftRevision.current,
     };
   };
@@ -1910,7 +1929,7 @@ export function ManualOrganizeDialog({
       }
       return;
     }
-    const problem = previewItemProblemKind(item);
+    const problem = previewItemProblemKind(item, false);
     const executable = item.current && executableIds.includes(item.itemId);
     if (executable) {
       setFilesOverviewNotice({
