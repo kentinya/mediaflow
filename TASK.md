@@ -1,6 +1,6 @@
 # Task 59.1 — 文件入口的手动整理弹窗与整批确认
 
-Next Action: DEVELOPER CORRECTS TASK 59.1 AND RESUBMITS FOR B REVIEW
+Next Action: B INDEPENDENTLY REVIEWS THIS CORRECTION CANDIDATE
 
 用户已授权激活 Task 59.1。Developer 开始实施时将状态从 `PLANNED` 转为
 `IN PROGRESS`。原 Task ID、Base、范围和验收条件沿用。A 代 B 的授权限于本 Task 的规划，
@@ -11,7 +11,7 @@ B 独立复核实施候选，A 负责 Slice 终审。
 Task ID: 59.1
 Task Type: SLICE
 Parent Slice: 59
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
 Difficulty: High
 Test Level: T3
@@ -358,3 +358,42 @@ Files 原地慢读的丢包旅程已验证只请求一次分析，新方案读�
 Slice 重评：RO-1 的定向概览和重开已验证。RO-2 的 Files 直连丢包已通过，任务中心原位续作
 出现本轮回归。RO-3 的单项精确交接、附件展开已有通过证据，其余组合待完整验收。RO-4 的
 任务详情正文仍待交付。本轮继续修正 Task 59.1。
+
+### Developer Correction Report (in-place analysis read-back)
+
+按上轮修正指引实施，范围仍限 Task 59.1。实现候选
+`b74cfb071d0c2fd3f35b479c3cd4c90a0a1c0e0e`：
+
+- 共享弹窗按 host 落实两条旅程。Files 仍用同一条目/同一准备的读回回到概览；任务中心
+  「继续整理」保留原位逐文件复核：未知分析结果经同一准备读回证明受理后，新方案或该条目
+  自身结果在原文件就地显示，纳入与后续动作恢复可用，措辞为当前入口的状态。
+- 原位基线仅在分析结果未知时启用，普通成功回包保持 Base 表现；离开该文件、进入整批复核、
+  新编辑或迟到受理证明都不会替换已显示的原位结果。兄弟摘要只按条目事实处理：本条目事实
+  未变时释放等待并说明，不推断本条已处理。
+- Files 直连丢包旅程改用独立临时来源 `Dialog/DialogDirectLoss.2038.mkv` 与既有 Provider
+  夹具新增身份 718，不再借用冲突旅程的兄弟来源；两条原生旅程同次运行通过。
+- 现有「继续整理」原生旅程（PATCH-20261113-3）扩为丢包旅程：真实 API 受理 MOVE→COPY
+  修正、Worker 发布新方案，浏览器只丢该回包。断言等待期间不重发、新方案显示「复制 ·
+  来源保留」与真实目标、纳入可调整、原弹窗整批复核仍是同一任务精确范围、分析仅一次、
+  确认前零执行与临时媒体零变更；确认后由真实 Worker 复制（来源保留），后续只读历史不变。
+
+实际命令与结果（cwd `web/`）：
+
+- `npm run typecheck` — 通过。
+- `npx eslint` 触及的 2 个源/测试文件与 2 个 E2E 文件 — 通过。
+- `npx prettier --check` 同上 — 通过。
+- `npm run test -- run` 七个受影响文件（新增 `OperationsInventory.test.tsx` 两条原位用例）
+  — 7 files / 220 tests passed。
+- `npm run build` — 通过。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts --grep 'a real destination conflict|lost direct analysis response stays locked'` —
+  2 passed（19.2 秒），两条旅程同次运行无来源占用失败。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'PATCH-20261113-3 initial manual preparation remains reachable in place from Task Center'` —
+  1 passed（17.3 秒）。
+- 反向验证：临时停用本条修复后同一原生旅程在「原位读回新方案」断言超时失败（30.2 秒），
+  恢复后通过；临时改动未提交。新增两条单测在停用修复时同样失败。
+- 仓库根 `git diff --check` — 通过。
+
+已知限制/风险：B 的完整 T3 仍须覆盖 100/101 项、窄屏与任务详情正文；原位等待仅由该条目
+自身的新方案、离开/返回或新编辑解除，若分析被受理却始终未发布新方案（旧方案仍可读），
+本轮不变更该既有边界；附件展开与任务详情正文仍属 Slice 后续范围。未新增 API、schema、
+Worker、权限或执行授权；未推送或发布。
