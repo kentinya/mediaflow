@@ -8,9 +8,8 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice 59](../SLICE.md) is **ACTIVE** for the Files manual organizer and Task Center detail
-body. Task 59.1 passed B review. [Task 59.2](../TASK.md) is authorized for Developer
-implementation and remains **PLANNED** until work starts. Slice 58 remains the latest
+[Slice 59](../SLICE.md) is **FIX REQUIRED** after A Final Review. B plans the A59-01 and A59-02
+correction in [Task 59.1](../TASK.md). Task 59.2 passed B review. Slice 58 remains the latest
 accepted closure.
 
 ## Latest accepted closure — Slice 58

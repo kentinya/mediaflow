@@ -4,14 +4,14 @@
 Slice ID: 59
 Name: Files Manual Organize Journey and Task Detail Content
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: 212acdef5d97c14a01353b22c103d44b911d6147
 Implementation Head: 27a430b7098a75f4fd040bc1109c678808629b1a
 Working Branch: main
-Development Authorization: TASK 59.2 CORRECTION ACCEPTED BY B
+Development Authorization: ORIGINAL TASK 59.1 CORRECTION SCOPE; B CORRECTION PLAN PENDING
 Risk: Medium
 Target Test Level: T3
-Next Action: A REVIEWS ENTIRE SLICE BASE..IMPLEMENTATION HEAD
+Next Action: B PLANS TASK 59.1 CORRECTION FOR A59-01 AND A59-02
 ```
 
 ## 授权、基线与设计依据
@@ -180,4 +180,33 @@ TARGET `V2-OPS-020/021` 只更新上述两处呈现，细化 `V2-OPS-018/019` �
 
 B 已验收 Task 59.1 和 59.2，并复核完整 Slice。
 [B 交接记录](TASK.md#b-复核与-slice-59-交接)涵盖合同结果、候选和验收证据。
-A 独立核对完整 Base..Implementation Head、保护边界和实际验收，记录终审结论。
+
+## A Final Review — FIX REQUIRED
+
+A 于 2026-11-24 独立审查 `212acdef5d97c14a01353b22c103d44b911d6147..27a430b7098a75f4fd040bc1109c678808629b1a`。
+终审开始时 `main` 为 `aa20989ade250fb98d46849cf4b3035f02820e10`，工作区及暂存区干净，
+治理检查通过。B 交接提交仅修改 Slice 和 Task 文档。完整范围内的运行改动位于 Files 整理弹窗、
+任务详情正文、共享恢复组件与样式，Python 差异位于隔离测试夹具。核对了原入口、精确 Task
+关联、选择和效果许可、未知确认的原请求核对，以及持久文件证据的读取边界。
+
+- **A59-01（P1，RO-2 / AC-02）。** 从资源库 Files 对实际目标冲突选择「跳过此条目」，点击
+  「保存并重新分析」。真实决定请求成功，原 TaskItem 的响应与重新读取均为 `skipped`，阶段为
+  `conflict_resolved`，且无后续分析权限。弹窗仍在原逐文件页，继续展示目标冲突，未回概览说明
+  已跳过。源文件、原目标和未提交的兄弟项均保持原状。当前回落只接收分析开始后的方案读回，
+  该合法跳过由决定自身结束条目。[保存结果分支](web/src/features/operations/TaskItemRecoveryPanel.tsx#L937) · [Files 回落条件](web/src/features/operations/ManualOrganizeDialog.tsx#L1896)
+- **A59-02（P1，RO-1/2 / AC-01/02）。** 从 Files 选择既有 100 主文件夹具 `Readability` 并批量整理。
+  概览中的 `Unmatched001.2011.mkv` 提示「该文件已不在当前方案中；需要重新分析后才能再次核对或纳入」。
+  点击同一行立即打开该条目已合法提供的「修正作品搜索」，原任务仍等待该决定。概览先按条目的
+  计划有效性字段选用通用文案，覆盖了真实问题和当前可执行的下一步。[概览原因投影](web/src/features/operations/ManualOrganizeDialog.tsx#L394)
+
+B 在原 [Task 59.1](TASK.md) 内规划修正。使用上述两个已存在的 Files 旅程复验：同一文件的持久
+跳过应回到概览显示实际结果，保留兄弟项的草稿、焦点与确认资格，并遵守操作者已切换位置时的读回
+规则。概览应按现有条目事实呈现待处理原因和合法入口，同时保留确实失效的方案提示及执行限制。
+继续核对 AC-02 要求的混合任务四类处理证据。B 独立复核修正候选及受影响旅程后，重新提交 Slice
+验收包。
+
+A 独立构建和验证了 8 项原生浏览器用例、2 项任务详情布局用例及 1 项 OpenList 隔离用例。
+十项决定后单次确认、回包丢失的精确交接、101 项边界、元数据技术失败、任务详情／原位续作及
+OpenList 真实效果均有通过证据。检查了 B 的门禁日志和桌面、390 px、矮窗截图。两项补充旅程
+复现上述阻塞。使用临时媒体根、本地 Provider、真实 API、SQLite 和 Worker。原始命令、日志、
+截图与失败 trace 位于本机 `.git/validation-evidence/27a430b7098a75f4fd040bc1109c678808629b1a/a-slice59/`。

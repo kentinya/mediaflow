@@ -1,8 +1,28 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 59.1 — Files 手动整理流程
 
-Next Action: A REVIEWS SLICE 59
+Next Action: B PLANS THE A59-01 AND A59-02 CORRECTION
 
-Task 59.2 **PASS**。Slice 59 **READY FOR A REVIEW**。
+```text
+Task ID: 59.1
+Task Type: SLICE
+Parent Slice: 59
+Status: FIX REQUIRED
+Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
+Reviewed Implementation Head: 27a430b7098a75f4fd040bc1109c678808629b1a
+Difficulty: High
+Test Level: T3
+Implementation Authorization: ORIGINAL TASK SCOPE; B CORRECTION PLAN PENDING
+```
+
+## A 终审退回
+
+**A59-01（P1，RO-2 / AC-02）**。从 Files 处理目标冲突时，持久跳过后的确切状态未回到概览。
+**A59-02（P1，RO-1/2 / AC-01/02）**。现有可修正的作品搜索在概览中被解释为条目已离开当前方案。
+[复现、证据及通过条件](SLICE.md#a-final-review--fix-required)
+
+B 按原 Task 59.1 的目标、Base 和范围规划修正，独立复核后重新提交 Slice 59 验收包。
+原 Task 计划及实施交接见 `868ff9daab6972473cfb7344ca02cbdbc30077cf:TASK.md`。
+以下保留 B 对原候选的验收记录，Task 59.2 的 B PASS 保持有效。
 
 ## B 复核与 Slice 59 交接
 
