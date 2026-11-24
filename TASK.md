@@ -1,6 +1,6 @@
 # Task 59.2 — 任务中心运行详情正文
 
-Next Action: DEVELOPER CORRECTS RUN PHASE COPY AND BRINGS THE CURRENT RECOVERY ACTION FIRST
+Next Action: DEVELOPER IMPLEMENTS THE APPROVED SHARED RUN DETAIL TOOLBAR
 
 ```text
 Task ID: 59.2
@@ -8,7 +8,7 @@ Task Type: SLICE
 Parent Slice: 59
 Status: FIX REQUIRED
 Task Base: 868ff9daab6972473cfb7344ca02cbdbc30077cf
-Reviewed Implementation Head: 3d39ec021599d1eb18b5706b358be6306a676b0e
+Reviewed Implementation Head: 0de24f4e5b2e9efc86be86da730cbe9e7f4da5b5
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
@@ -17,81 +17,74 @@ Implementation Authorization: ORIGINAL TASK 59.2 / SLICE 59 A59-03 CORRECTION SC
 
 ## B 复核与 Slice 59 交接
 
-**Task 59.2 — FIX REQUIRED。** B 从干净的 `main` 独立复核完整 Task
-`868ff9daab6972473cfb7344ca02cbdbc30077cf..3d39ec021599d1eb18b5706b358be6306a676b0e`
-及完整 Slice `212acdef5d97c14a01353b22c103d44b911d6147..3d39ec021599d1eb18b5706b358be6306a676b0e`。
-`a261b93f` 交付详情样式，`3d39ec02` 交付四类恢复与新计划摘要的布局。原规划和上轮 Files 验收
-保存在 `b4ff62f1:TASK.md`。本轮依据已提交的 AC-04/05/06（含 `2cc2ae0e`、`e82c0166`、
-`60a4b65d`），批准预览的 SHA-256 已校验。
+**Task 59.2 — FIX REQUIRED（当前 AC-04/06）。** B 从干净的 `main` 开始，审查完整 Task
+`868ff9daab6972473cfb7344ca02cbdbc30077cf..0de24f4e5b2e9efc86be86da730cbe9e7f4da5b5`
+及完整 Slice `212acdef5d97c14a01353b22c103d44b911d6147..a99005ea89030c88cc13b6fa582112b0817167e5`。
+`0de24f4e` 是开发候选。之后 `a99005ea` 只提交了 A 的批准合同，新增两页签共用的任务顶部操作区
+验收。批准预览 SHA-256 `8fca0fe4da050dda2e09fefb4aced52644c35c575034b8a4d05bc94f8f958369`
+与合同一致。
 [Slice 验收](SLICE.md#acceptance-criteria)
 
-1. **P1 / AC-04、AC-05。** 从 Files 为 `Two.2002.mkv` 生成方案，未确认就关闭。到任务中心点列表里
-   的原任务。首卡显示「正在处理文件」「执行已受理」，下方仍显示「查看整理摘要，确认后执行」
-   和「继续整理」。同一任务的持久流程为进行中，已有一个等待项，原旅程截至此时有零次 Execute。
-   `a261b93f` 的首卡仅凭流程的 `running` 推断执行已受理。操作者无法从第一屏判断自己是否还要确认。
-   [首卡文案](web/src/features/operations/OperationsLanding.tsx#L1944)
-2. **P1 / AC-06。** 从任务中心「元数据恢复」打开问题文件，390 px 界面先读到通用处理结果、来源、
-   空目标以及重复的待修正信息，实际修正原因和表单在下面。保存后在同一条目生成新方案，首部仍显示
-   「没有已记录的目标文件」，往下才出现新摘要里的真实计划目标和「确认继续整理」。`3d39ec02` 的
-   四类表单已改为逐行选项，摘要也有实际路径和影响，但它们仍排在通用证据之后。批准预览先提供
-   当前决定，分析完成后原位切到新摘要。可操作的决定或计划仍需成为展开区的主体。
-   [证据排列](web/src/features/operations/RunDetailTabs.tsx#L1898) ·
-   [四类恢复与新摘要](web/src/features/operations/TaskItemRecoveryPanel.tsx#L1982)
+- **上轮两项已通过。** 从 Files 为 `Two.2002.mkv` 生成方案，未确认就返回任务列表。原详情首卡
+  显示「等待确认后执行」和确认前的实际影响；点「继续整理」回到原方案，明确确认后同一任务显示
+  文件结果。元数据修正和分类的原位证据从当前问题及决定开始，分析后直接显示新摘要和实际目标。
+  历史空目标已移出可操作区。四类原生决定、原请求核对、已选与未选兄弟结果分别读回。
+- **当前阻塞。** 在同一个尚待确认的真实任务中，「继续整理」和「取消运行」都可用，但仍在「任务
+  详情」正文里，顶部只有「导出结果 JSON」。切到「操作记录」后两项操作消失，须切回详情才能继续
+  或取消。桌面和 390 px 实页均如此。原因是 `RunDetailTabs` 把当前操作渲染在详情页签内，顶部只
+  共同渲染导出。批准预览和现行合同要求共用顶部，桌面右侧按继续、取消、导出排列，窄屏整组在页签
+  下方，继续使用主按钮、取消使用红色描边。
+  [详情页签和操作](web/src/features/operations/RunDetailTabs.tsx#L873)
 
-**Slice 重评。** RO-1 的准备与概览、RO-2 的 Files 决定回落保留上一轮已审结果。RO-3 的精确子集、
-单次确认和原任务续作在本候选原生通过；最新 AC-06 的 Files 行内容仍有待修正。本轮在隔离
-`ReadabilityTen` 用 Files 自带的「新建文本文件」加一份同名中文字幕，选择两个主文件并取消一项。
-整批正确显示一项确认、一项未纳入、一份附件。标题仍写「共 1 项」，所选文件行缺图标，来源影响重复，
-字幕种类和语言需展开才可查。实点已选文件名跳到逐项复核，违反当前合同要求的普通文本。这一处
-后续回到原 Task 59.1 的 Files 整批行范围修正。RO-4 的首卡布局、紧凑行、行内历史、记录及同任务
-恢复取得当前证据，以上两个 Task 59.2 缺口待修。Slice 59 继续 FIX REQUIRED。
+**Slice 重评。** RO-1 的 Files 准备和概览、RO-2 的四类决定回落沿用上轮证据。RO-3 的精确子集、
+两次显式确认和原受理核对在本候选通过。现行 Files 整批行合同仍待原 Task 59.1，已选文件名、
+图标、路径、单次来源影响和普通字幕简述的已复验缺口见 `534e4c75:TASK.md`。RO-4 的状态真值、
+原位恢复和导出通过定向验收，顶部操作区待当前 Task 59.2 修正。Slice 59 仍为 FIX REQUIRED。
 
-**实跑。** 构建、类型、Lint、Prettier、治理和差异检查通过。4 个组件文件共 179 项，原生 Task、
-Files 回归和流程组 17 项，恢复授权与真实效果组 5 项通过。布局首跑 88/90，B 的
-`8acd5872fc8768bbcbfbd8595e93642d84c0db48` 仅让两条旧断言从紧凑行打开证据，并核对最新结果和
-折叠的上一次尝试均完整，重跑 2/2 通过。保留 Developer 已记录的 Files 作品候选旧入口测试失败，
-它仍在等待直接显示逐项页，本轮原生恢复搜索已通过。实际截图覆盖运行详情、记录、证据、四类决定
-和新摘要。第一个 Files 截图用例的原夹具无字幕，借现有 Files 创建后复验成功。原始日志和三个视口
-截图见本机 `.git/validation-evidence/3d39ec021599d1eb18b5706b358be6306a676b0e/b-task59.2-review/`。
-最终 Slice 门禁在修正候选上完成。
+**实跑。** 构建、类型、改动文件 ESLint 与 Prettier、治理及差异检查通过。三组组件 126 项、
+浏览器布局及任务中心 39 项、原生回归 9 项通过。另实跑现有多条目回包核对、元数据修正、分类
+及跨页签布局，截取桌面、390 × 844 和 390 × 520。首次截图测试的「操作记录」定位匹配两个
+区域，改用确切名称复验。保留最初日志和新的实跑结果。日志与实页截图在本机
+`.git/validation-evidence/0de24f4e5b2e9efc86be86da730cbe9e7f4da5b5/b-task59.2-review/`。
+批准预览在 `.git/validation-evidence/slice59-offline-task-toolbar/approved/`。
 
 ## 目标、范围与 Developer 开发指导
 
-用户在原任务详情首屏判断是否还需要决定或确认。点问题文件时，先完成它当前的决定，随后在原位核对
-新方案并明确继续。同一文件的结果、尝试和技术依据随时可查。范围限原 Task 59.2 的运行详情正文。
+打开可续作任务时，用户在弹窗顶部直接判断可继续、取消或导出的动作。在「操作记录」查看同一任务
+后可直接用同一组动作。关闭续作卡回到原页签和按钮，取消时按原任务的实际状态确认结果。范围限
+原 Task 59.2 的运行详情。
 
-1. 从 `RunFlowSummary` 和 `runStatusHeadline` 修正首卡。流程状态继续读原持久状态。用已有的
-   等待、进度、可续作和执行证据说明当前阶段。尚待确认的 Files 工作用实际等待说明和「继续整理」，
-   显式确认后再显示这次执行的受理或实际阶段。已有一次确认而另一项仍等待时分别说明两者，沿用原
-   任务关联和受理核对。文件成功的文案沿用既有摘要口径。
-2. 在 `RunEvidenceSection` 与 `TaskItemRecoveryPanel` 组织同一条目的正文。可操作时，文件标题、
-   真实问题与当前决定或新摘要排在前面。仅在已有相应事实时显示实际操作与效果，历史的空目标
-   无需在新摘要上方再次占位。只读结果继续先呈现当前结果、来源、目标和实际效果，再展开处理依据、
-   历史与诊断。已实现的逐行选项、字段、刷新及失败后的下一步继续使用原接口和权限。
-3. 新摘要摆在原文件下，先显示当前可确认文件、来源、目标和影响，其他条目的原因与技术字段按需
-   查阅。选择与覆盖、来源清理各自授权仍绑定准确摘要与子集，使用原有的显式确认和原请求核对。
-   保留原详情的焦点、跨筛选证据和草稿，以及 Task Center 原位整理卡。
+1. 把任务级按钮放到 `RunDetailTabs` 的共用操作区。桌面保持左侧两个页签、右侧按顺序显示
+   「继续整理」「取消运行」「导出结果 JSON」。窄屏整组移到页签下，保留相同阅读和键盘顺序。
+   按批准预览为继续使用主按钮，取消使用红色描边。导出继续使用已有资格和反馈。
+2. 在 `RunDetailPanel` 复用可续作条件和准确关联；「继续整理」继续使用原任务的
+   `run + dialog=organize` 和当前详情上下文。沿用原位关卡与焦点规则。显示「取消运行」使用
+   `RunLifecycleControls` 现有后端动作和版本，复用现有点击、提交锁定及重新读取。同一任务的
+   请求中、已受理、未知、拒绝和实际已取消继续从原读回呈现，切页签后反馈仍可见。正文保留真实
+   等待、进度和适用状态反馈。
+3. 保留已审查的文件证据、四类恢复、记录查询和单个导出入口。使用现有任务读模与用户操作路径完成
+   此调整。
    [运行详情](web/src/features/operations/OperationsLanding.tsx) ·
-   [行内证据](web/src/features/operations/RunDetailTabs.tsx) ·
-   [同页摘要](web/src/features/operations/SamePagePlanSummary.tsx)
+   [页签与工具栏](web/src/features/operations/RunDetailTabs.tsx) ·
+   [取消控制](web/src/features/operations/RunLifecycleControls.tsx)
 
 ## 验收与测试
 
-- [ ] 保持 `Two.2002.mkv` 的 Files 准备未确认，关闭后从任务列表打开原详情。操作者读到仍待确认，
-  用「继续整理」打开原方案并确认一次，再从原任务查看真实执行与文件结果。检查未知总量、失败和
-  已取消仍对应实际读回。
-- [ ] 从四类问题入口逐屏对照 1280 × 900、390 × 844、390 × 520。问题原因和决定先可读。实际
-  元数据搜索修正和分类保存后，在同一条目读到新目标、影响和明确确认。覆盖长路径、键盘、焦点、
-  读取失败重读、保留草稿、已有尝试和效果未知。确认前零媒体变更，确认后只发生选中效果。
-- [ ] Developer 运行改动文件的 ESLint 与 Prettier、类型检查和构建，复用三个任务中心组件用例、
-  两类布局用例及既有原生入口。记录截图、候选和结果。B 在候选上复核完整范围、Task 59.2 的 T3
-  门禁及已提交的全部 Slice 结果。测试墙钟低于本轮用时一半。
+- [ ] 从现有 Files 留下未确认方案，然后从任务列表打开原详情。核对桌面、390 × 844、390 × 520
+  两个页签的顶部按钮、条件、位置、键盘顺序及样式。当前任务尚无结果时保留导出不可用说明。
+  从「操作记录」点「继续整理」，关顶层卡回到同一任务、原页签和按钮焦点，再按原路径明确确认。
+- [ ] 在现有只可取消、可导出或已结束的相关入口核对各自权限。用原取消旅程核对请求中、已受理、
+  实际已取消；原回包异常可在同一任务核对。切换页签后保持反馈和原记录筛选，导出实际结果包。
+  复验现有未确认真值、四类决定及新摘要。
+- [ ] Developer 运行类型、构建、改动文件 Lint／格式和下列既有入口测试，提交候选和两个页签的
+  逐屏对照。可在既有原位续作用例增加顶部按钮、返回焦点及跨页签断言。B 核对完整范围和原 T3
+  集成。各轮测试墙钟低于本轮用时一半。
 
 ```sh
-npm run test -- run src/features/operations/RunDetailTabs.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx
+npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/RunDetailTabs.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx
 npm run test:e2e -- tests/e2e/task-center-layout.spec.ts tests/e2e/operations.spec.ts
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'initial manual preparation remains reachable in place|selected run detail reads progress|native recognition recovery|native Metadata candidate recovery|native Metadata correction|native Classification recovery|native conflict recovery|policy-permitted overwrite'
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.python.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'initial manual preparation remains reachable in place|detail tab and filter context|the eligible run exports'
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/task-flow.python.spec.ts --grep 'an acknowledged cancellation'
 ```
 
 [开发与验收分工](docs/development-workflow.md#6-test-levels)
