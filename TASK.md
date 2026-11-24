@@ -1,6 +1,6 @@
 # Task 59.2 — 任务中心运行详情正文
 
-Next Action: B REVIEWS THE TASK 59.2 CANDIDATE
+Next Action: DEVELOPER CORRECTS TASK 59.2 AND HANDS OFF FOR B REVIEW
 
 依据已提交的 [Slice 59](SLICE.md) RO-4、AC-04 和 AC-05 的任务详情部分，落实
 `V2-OPS-021`。开发与验收按[开发工作流](docs/development-workflow.md)执行。
@@ -11,7 +11,7 @@ Next Action: B REVIEWS THE TASK 59.2 CANDIDATE
 Task ID: 59.2
 Task Type: SLICE
 Parent Slice: 59
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 868ff9daab6972473cfb7344ca02cbdbc30077cf
 Difficulty: Medium
 Test Level: T3
@@ -175,4 +175,44 @@ E2E 使用既有隔离夹具与临时媒体根，未触及生产 Provider、真�
 
 ## B review result
 
-待独立复核。
+**FIX REQUIRED**。B 独立复核
+`868ff9daab6972473cfb7344ca02cbdbc30077cf..9ed64f28493f6e97a87ca7fda4aa16c91d9ac96f`。
+实施候选为 `d1a58b9199e07840cf3ce9ae5842637a47f4c7e5`，后继提交只更新本 Task 的交接记录。
+任务动作已移到进度之后、文件结果之前。以下两项阻塞 RO-4、AC-04/05 的文件结果和需处理原因。
+
+1. **文件行把普通收尾列为需处理，并把未确认效果列为成功。** 从 Files 选中
+   `DialogConflict.2022.mkv`，复核并确认复制，进入交接的运行详情。Worker 完成后，隔离
+   Storage 中已验证目标存在、来源保留；该行仍在「需处理原因」显示「已结束的条目不再提供重放」。
+   从任务中心「已结束」打开现有历史混合任务，已跳过项也有这条提示。另一条文件显示「成功」，
+   旁边写「目标文件结果尚未确认」，展开同一文件的证据亦为效果未确认。用户无法根据主结果判断
+   哪些文件已经有可核实结果、哪些仍要查看证据。
+2. **候选决策行给出泛化原因。** 从任务中心「元数据恢复」点击「查看问题文件」，打开
+   `MetadataChoice.2015.mkv`。证据中的表单要求确认具体候选，文件行的「需处理原因」却只
+   显示「需要人工处理决定」。真正读到的检查点类型是 `metadata`，现有新测试用的是
+   `metadata_review`；识别和分类的生产类型同样是 `recognition`、`classification`。
+
+### 本 Task 修正的开发指导
+
+1. 在 `RunDetailTabs` 的文件行中，用现有检查点效果事实表达当前处理结果。对于已验证成功、
+   跳过和忽略，显示各自结果，普通收尾的重放限制放在原诊断里。对已尝试但效果未确认的历史
+   文件，在「处理结果」直接写明未确认，点「查看证据」后能对照原尝试、已知效果和目标。
+   核对正文的成功计数与这些结果的口径。可用时，以现有进度读模的 `confirmedSuccess` 表达
+   已验证成功；使用持久状态计数时明确它表示已记录状态。沿用原列表、结果查询和各自的权限。
+2. 用实际返回的检查点类型生成当前原因。识别说明需要确认识别结果；元数据候选和作品搜索修正
+   分别说明要确认候选或修正搜索；分类说明要确认目标；冲突说明要处理目标冲突。复用同一类型
+   对应的文案，让文件行和展开证据指向该文件的当前阶段。从原四类列表进入后，继续用现有表单
+   完成决定、重新分析、查看同页新摘要并明确确认。
+3. 更新 Task59.2 受影响单测，用实际 API 的检查点值。从现有
+   `manual-organize-dialog.python.spec.ts` 的 Files 确认交接用例，验证 Worker 完成后成功文件
+   的结果和提示；从 `operations-inventory.python.spec.ts` 的历史混合任务及原生恢复用例，验证
+   同一行的已验证成功与未确认效果、正常跳过、以及真实问题类型的文案和对应动作。继续运行原
+   Developer 清单中的直接受影响检查，将命令及结果随新候选交 B。
+
+B 实跑 `npm run build` 通过，产物与交接记录一致。两条定向真实浏览器旅程复现上述断言失败，
+Playwright 命令墙钟合计约 24 秒，低于本轮复核用时的一半。日志、截图与 trace 保存在
+`.git/validation-evidence/9ed64f28493f6e97a87ca7fda4aa16c91d9ac96f/task59.2/`。
+其余 T3 门禁在修正候选复核时完成。
+
+Slice 重评：RO-1/2 的准备首屏、概览及决定读回沿用 Task 59.1 已审结果；RO-3 的精确确认、
+同任务交接和 Worker 效果在本轮 Files 实跑中通过。RO-4 的正文顺序已交付，逐文件结论和原因
+仍有上述阻塞。修正留在 Task 59.2，Slice 保持 ACTIVE。
