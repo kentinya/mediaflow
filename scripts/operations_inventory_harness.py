@@ -741,6 +741,12 @@ def build_managed_fixture(
     (dialog_root / "DialogReadRetry.2037.mkv").write_bytes(
         b"patch preparation summary retry synthetic media"
     )
+    # Task59.1 regression: its own unambiguous source so the Files journey's
+    # lost direct analysis can run beside the destination-conflict journey
+    # without borrowing (or being refused by) that journey's fixtures.
+    (dialog_root / "DialogDirectLoss.2038.mkv").write_bytes(
+        b"slice59 lost direct analysis synthetic media"
+    )
     conflict_time = time.time() - 86400
     os.utime(dialog_root / "DialogConflict.2022.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSibling.2023.mkv", (conflict_time, conflict_time))
@@ -757,6 +763,7 @@ def build_managed_fixture(
     os.utime(dialog_root / "DialogPendingSibling.2034.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogRecovery.2036.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogReadRetry.2037.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogDirectLoss.2038.mkv", (conflict_time, conflict_time))
     # PATCH-20261120-2 browser fixture: one dedicated directory with exactly
     # 101 eligible primaries.  Its walk stops at the durable primary bound; one
     # of them is the unambiguous source re-selected for the new small batch.
@@ -1056,7 +1063,7 @@ def build_managed_fixture(
                         "field": "filename",
                         "operator": "regex",
                         "value": (
-                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025|Reconcile\.2027|Unselected\.2028|Reopen\.2029|SubsetFirst\.2030|SubsetSecond\.2031|PendingOwned\.2033|PendingSibling\.2034)\.mkv$"
+                            r"^Dialog(?:[0-9]{2}\.2011|Unknown\.2021|Conflict\.2022|Sibling\.2023|Back\.2025|Reconcile\.2027|Unselected\.2028|Reopen\.2029|SubsetFirst\.2030|SubsetSecond\.2031|PendingOwned\.2033|PendingSibling\.2034|DirectLoss\.2038)\.mkv$"
                         ),
                     },
                 ],
@@ -1608,6 +1615,18 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogReadRetry",
                         year=2037,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    # Task59.1: one unambiguous identity, so the Files direct
+                    # analysis correction is the only decision this source
+                    # needs and no other journey's media is borrowed.
+                    MediaCandidate(
+                        "tmdb",
+                        "718",
+                        MediaType.MOVIE,
+                        "DialogDirectLoss",
+                        year=2038,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -4587,6 +4606,7 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Dialog/DialogSubsetFirst.2030.mkv",
         "Dialog/DialogSubsetSecond.2031.mkv",
         "PrimaryLimit/DialogLimit.2032.mkv",
+        "Dialog/DialogDirectLoss.2038.mkv",
         "YearProbe/DialogYear.2025.mkv",
         f"SeasonProbe/{_SEASON_PROBE_TITLE}.2024.S04E01.mkv",
     )

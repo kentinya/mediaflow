@@ -5384,6 +5384,126 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
     beforeNavigationPosts,
   );
 
+  // Task59.1: the same in-place continuation must read a lost per-file
+  // analysis result back into the file the operator acted on. The real API
+  // accepts the MOVE -> COPY correction and the real Worker publishes the
+  // exact new plan; only this browser's copy of the analyze response is lost.
+  const inPlaceFile = "Two.2002.mkv";
+  const inPlaceFileState = async () =>
+    (await (
+      await request.get(
+        `${BASE}/__harness__/manual-file-state?file=${inPlaceFile}`,
+      )
+    ).json()) as {
+      readonly sourceExists: boolean;
+      readonly destinationTargets: readonly string[];
+    };
+  const beforeInPlaceAnalysis = await inPlaceFileState();
+  const analyzePosts = () =>
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        /\/operations\/organize\/discoveries\/[^/]+\/analyze$/.test(entry.path),
+    );
+  expect(analyzePosts()).toHaveLength(0);
+
+  await reviewDialog.getByText("修正识别或作品", { exact: true }).click();
+  const inPlaceRecognition = reviewDialog.getByLabel(`识别类型 ${inPlaceFile}`);
+  await expect(inPlaceRecognition).toBeVisible({ timeout: 15_000 });
+  await inPlaceRecognition.selectOption({ label: "Copy fixture" });
+  let lostAnalysisResponses = 0;
+  await page.route(
+    /\/api\/operations\/organize\/discoveries\/[^/]+\/analyze$/,
+    async (route) => {
+      if (lostAnalysisResponses > 0) {
+        await route.continue();
+        return;
+      }
+      lostAnalysisResponses += 1;
+      // The production API really admits this analysis and the Worker will
+      // publish its plan; the browser loses only this response.
+      await route.fetch();
+      await route.abort("failed");
+    },
+  );
+  await reviewDialog.getByRole("button", { name: "保存并重新分析" }).click();
+  const lockedAnalysis = reviewDialog.getByRole("button", {
+    name: /正在核对分析结果|等待新的零变更方案/,
+  });
+  await expect(lockedAnalysis).toBeVisible({ timeout: 15_000 });
+  await expect(lockedAnalysis).toBeDisabled();
+  // The real accepted response was lost, so no second analysis may be sent
+  // while the same preparation is being read back.
+  expect(analyzePosts()).toHaveLength(1);
+  expect(await inPlaceFileState()).toEqual(beforeInPlaceAnalysis);
+
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
+        discoveryId as string,
+      )}`,
+    );
+    expect(advanced.ok()).toBe(true);
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+    await page.waitForTimeout(1_700);
+  }
+  // The new plan ends the wait on this same file: the real COPY operation,
+  // the real target and a usable inclusion control, with no Files overview
+  // inside the task center and no navigation.
+  await expect(
+    reviewDialog.getByText(/已重新分析并读回当前方案：现在可以纳入本次整理/),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(reviewDialog.getByText("复制 · 来源保留").first()).toBeVisible();
+  const inPlaceInclusion = reviewDialog.getByRole("checkbox", {
+    name: `纳入 ${inPlaceFile}`,
+  });
+  await expect(inPlaceInclusion).toBeEnabled();
+  await expect(inPlaceInclusion).toBeChecked();
+  await expect(
+    reviewDialog.getByRole("region", { name: "本次整理概览" }),
+  ).toHaveCount(0);
+  expect(new URL(page.url()).pathname).toBe("/operations");
+  expect(new URL(page.url()).searchParams.get("run")).toBe(taskId);
+  expect(analyzePosts()).toHaveLength(1);
+  expect(await inPlaceFileState()).toEqual(beforeInPlaceAnalysis);
+
+  // The original card still reviews the exact scope it is about to confirm.
+  await reviewDialog.getByRole("button", { name: /整批复核/ }).click();
+  const inPlaceBatch = reviewDialog.getByRole("region", {
+    name: "本次确认的文件",
+  });
+  await expect(inPlaceBatch).toBeVisible();
+  await expect(inPlaceBatch).toContainText(inPlaceFile);
+  await expect(inPlaceBatch).toContainText("复制 · 来源保留");
+  await expect(inPlaceBatch).toContainText("Two (2002)");
+  expect(analyzePosts()).toHaveLength(1);
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        /\/previews\/[^/]+\/execute$/.test(entry.path),
+    ),
+  ).toEqual([]);
+  expect(await inPlaceFileState()).toEqual(beforeInPlaceAnalysis);
+  await reviewDialog.getByRole("button", { name: "返回逐项复核" }).click();
+  await expect(
+    reviewDialog.getByRole("heading", { name: /第 1 \/ 1 个/ }),
+  ).toBeVisible();
+  await page.unroute(
+    /\/api\/operations\/organize\/discoveries\/[^/]+\/analyze$/,
+  );
+  // The one saved choice and its one analysis are the only submissions this
+  // correction made; every later browse, reload and re-authentication must
+  // add none.
+  const afterInPlaceAnalysisPosts = api.filter(
+    (entry) => entry.method === "POST",
+  ).length;
+  expect(afterInPlaceAnalysisPosts).toBe(beforeNavigationPosts + 2);
+
   // Open/settle frames at the acceptance viewports; the page must not overflow
   // horizontally at the narrow or short size.
   mkdirSync("test-results/PATCH-20261113-3", { recursive: true });
@@ -5476,7 +5596,7 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   ).toBeVisible({ timeout: 30_000 });
   expect(new URL(page.url()).searchParams.get("discoveryId")).toBeNull();
   expect(api.filter((entry) => entry.method === "POST").length).toBe(
-    beforeNavigationPosts,
+    afterInPlaceAnalysisPosts,
   );
 
   // Confirm that same review exactly once.  The proven admission clears the
@@ -5522,13 +5642,13 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
     status: "completed",
     itemCount: 1,
   });
-  expect(
-    await (
-      await request.get(
-        `${BASE}/__harness__/manual-file-state?file=Two.2002.mkv`,
-      )
-    ).json(),
-  ).toMatchObject({ sourceExists: false });
+  // The confirmed correction copies the file: the source stays and exactly
+  // the reviewed target appears, so the new plan's operation is the one the
+  // real Worker executed.
+  const copiedInPlace = await inPlaceFileState();
+  expect(copiedInPlace.sourceExists).toBe(true);
+  expect(copiedInPlace.destinationTargets).toHaveLength(1);
+  expect(copiedInPlace.destinationTargets[0]).toContain("Two (2002)");
 
   // The same durable entry still reopens the exact preparation after the
   // execution finished, where the independent existing execution is visible.

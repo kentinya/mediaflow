@@ -2690,6 +2690,8 @@ describe("Operations run inventory landing", () => {
 const HOST_DISCOVERY_ID = "discovery-1";
 const HOST_INTENT_ID = "intent-1";
 const HOST_PREVIEW_ID = "preview-1";
+/** The plan this same preparation links after the in-place re-analysis. */
+const HOST_SECOND_PREVIEW_ID = "preview-2";
 
 function hostAction(): Record<string, unknown> {
   return {
@@ -2810,7 +2812,61 @@ function hostPreviewDocument(): Record<string, unknown> {
   return value;
 }
 
-function hostIntentDocument(): Record<string, unknown> {
+/**
+ * The exact summary the real Worker publishes after the in-place correction
+ * from MOVE to COPY: same item, different recognition type, operation, target
+ * and source retention, so the dialog's own facts prove this item's result.
+ */
+function hostSecondPreviewDocument(
+  kind: "copy" | "sibling",
+): Record<string, unknown> {
+  const value = hostPreviewDocument();
+  value["previewId"] = HOST_SECOND_PREVIEW_ID;
+  value["intentVersion"] = 3;
+  const actions = value["actions"] as Record<string, Record<string, unknown>>;
+  actions["execute"]!["path"] =
+    `/api/operations/organize/previews/${HOST_SECOND_PREVIEW_ID}/execute`;
+  if (kind === "sibling") return value;
+  const items = value["items"] as Record<string, unknown>[];
+  const first = items[0]!;
+  const choice = first["choice"] as Record<string, unknown>;
+  choice["recognitionTypeId"] = "B";
+  choice["namingPolicyId"] = "B";
+  choice["classificationPolicyId"] = "B";
+  choice["organizePolicyId"] = "B";
+  const plan = first["plan"] as Record<string, unknown>;
+  plan["recognitionType"] = "B";
+  plan["operation"] = "COPY";
+  const policies = plan["policies"] as Record<string, unknown>;
+  policies["recognitionTypePolicyId"] = "type-B";
+  policies["namingPolicyId"] = "B";
+  policies["classificationPolicyId"] = "B";
+  policies["organizePolicyId"] = "B";
+  const destination = plan["destination"] as Record<string, unknown>;
+  destination["filename"] = "One (2001) copy.mkv";
+  destination["relativePath"] = "Shows/One (2001)/One (2001) copy.mkv";
+  destination["storageRelativePath"] =
+    "Movies/Shows/One (2001)/One (2001) copy.mkv";
+  const implications = plan["destructiveImplications"] as Record<
+    string,
+    unknown
+  >;
+  implications["statement"] =
+    "this exact plan copies each source to its reviewed target; the source location keeps the original media file";
+  const analysis = plan["analysis"] as Record<string, unknown>;
+  const recognition = analysis["recognition"] as Record<string, unknown>;
+  recognition["recognitionTypeId"] = "B";
+  const naming = analysis["naming"] as Record<string, unknown>;
+  naming["directory"] = "One (2001)";
+  naming["filename"] = "One (2001) copy.mkv";
+  naming["policyId"] = "B";
+  naming["recognitionTypeId"] = "B";
+  return value;
+}
+
+function hostIntentDocument(
+  latestPreviewId: string = HOST_PREVIEW_ID,
+): Record<string, unknown> {
   const value = JSON.parse(
     JSON.stringify(
       (manualOperationsFixture as Record<string, unknown>)[
@@ -2829,7 +2885,7 @@ function hostIntentDocument(): Record<string, unknown> {
   actions["choice"]!["path"] =
     `/api/operations/organize/intents/${HOST_INTENT_ID}/items/{itemId}/choice`;
   value["latestPlan"] = {
-    previewId: HOST_PREVIEW_ID,
+    previewId: latestPreviewId,
     status: "previewed",
     current: true,
     intentVersion: 2,
@@ -2879,6 +2935,15 @@ interface OrganizeHostBackend {
     executeResponseLost: boolean;
     /** Bounded admission reads answer 503 while this stays true. */
     admissionUnavailable: boolean;
+    /** The next analyze POST is admitted by this fake, then its response is lost. */
+    analyzeResponseLost: boolean;
+    /** Whether this exact preparation already links its second plan. */
+    secondPlanPublished: boolean;
+    /**
+     * What that second plan carries: this item's own COPY result, or only a
+     * sibling's newer summary where this item's readable facts are equal.
+     */
+    secondPlanKind: "copy" | "sibling";
   };
 }
 
@@ -2908,6 +2973,9 @@ function stubOrganizeHost(
       overviewUnavailable: false,
       executeResponseLost: false,
       admissionUnavailable: false,
+      analyzeResponseLost: false,
+      secondPlanPublished: false,
+      secondPlanKind: "copy",
     },
   };
   stubFetch(async (input, init) => {
@@ -2944,13 +3012,36 @@ function stubOrganizeHost(
       method === "GET"
     ) {
       backend.calls.discoveryReads += 1;
+      return jsonResponse(
+        hostDiscoveryDocument({
+          ...options.discovery,
+          ...(backend.state.secondPlanPublished
+            ? { previewId: HOST_SECOND_PREVIEW_ID, version: 6 }
+            : {}),
+        }),
+      );
+    }
+    if (
+      url ===
+        `/api/operations/organize/discoveries/${HOST_DISCOVERY_ID}/analyze` &&
+      method === "POST"
+    ) {
+      if (backend.state.analyzeResponseLost) {
+        // The real analysis is admitted and its exact plan published; only
+        // this browser's copy of the response is lost.
+        backend.state.analyzeResponseLost = false;
+        backend.state.secondPlanPublished = true;
+        throw new TypeError("Failed to fetch");
+      }
       return jsonResponse(hostDiscoveryDocument(options.discovery));
     }
     if (
-      /\/operations\/organize\/discoveries\/[^/]+\/analyze$/.test(url) &&
+      /\/operations\/organize\/intents\/[^/]+\/items\/[^/]+\/choice$/.test(
+        url,
+      ) &&
       method === "POST"
     ) {
-      return jsonResponse(hostDiscoveryDocument(options.discovery));
+      return jsonResponse(hostIntentDocument());
     }
     if (
       url === `/api/operations/organize/intents/${HOST_INTENT_ID}` &&
@@ -2960,13 +3051,27 @@ function stubOrganizeHost(
       if (backend.state.intentUnavailable) {
         return jsonResponse({ error: { code: "unavailable" } }, 503);
       }
-      return jsonResponse(hostIntentDocument());
+      return jsonResponse(
+        hostIntentDocument(
+          backend.state.secondPlanPublished
+            ? HOST_SECOND_PREVIEW_ID
+            : HOST_PREVIEW_ID,
+        ),
+      );
     }
     if (
       url === `/api/operations/organize/previews/${HOST_PREVIEW_ID}` &&
       method === "GET"
     ) {
       return jsonResponse(hostPreviewDocument());
+    }
+    if (
+      url === `/api/operations/organize/previews/${HOST_SECOND_PREVIEW_ID}` &&
+      method === "GET"
+    ) {
+      return jsonResponse(
+        hostSecondPreviewDocument(backend.state.secondPlanKind),
+      );
     }
     if (url.startsWith("/api/operations/organize/executions")) {
       return jsonResponse({
@@ -3374,6 +3479,104 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     ).toBeNull();
     expect(backend.calls.posts).toEqual([submittedPreview]);
     expect(backend.calls.admissionReads).toBeGreaterThanOrEqual(1);
+  }, 20_000);
+
+  it("Task59.1 reads a lost in-place analysis back into the same continuation file", async () => {
+    const user = userEvent.setup();
+    const backend = stubOrganizeHost();
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/operations?run=task-001&dialog=organize");
+
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(
+      await within(dialog).findByText("修正识别或作品", { exact: true }),
+    );
+    const recognition = within(dialog).getByLabelText("识别类型 One.2001.mkv");
+    await user.selectOptions(recognition, "B");
+
+    // The operator's own click starts one real analysis. This fake admits it
+    // and publishes the exact second plan, then loses only the browser's copy
+    // of that response.
+    backend.state.analyzeResponseLost = true;
+    await user.click(
+      within(dialog).getByRole("button", { name: "保存并重新分析" }),
+    );
+
+    // The same-preparation read proves admission; the published plan states
+    // this item's own new result on the file the operator acted on. No Files
+    // overview is invented in this host and the card never leaves its address.
+    expect(
+      await within(dialog).findByText(
+        /已重新分析并读回当前方案：现在可以纳入本次整理/,
+      ),
+    ).toBeVisible();
+    expect(within(dialog).getByText("复制 · 来源保留")).toBeVisible();
+    const inclusion = within(dialog).getByRole("checkbox", {
+      name: "纳入 One.2001.mkv",
+    });
+    expect(inclusion).toBeEnabled();
+    expect(inclusion).toBeChecked();
+    expect(
+      within(dialog).queryByRole("region", { name: "本次整理概览" }),
+    ).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: /等待新的零变更方案/ }),
+    ).toBeNull();
+    expect(router.state.location.pathname).toBe("/operations");
+    const search = new URLSearchParams(router.history.location.search);
+    expect(search.get("run")).toBe("task-001");
+    expect(search.get("dialog")).toBe("organize");
+    const analyzePosts = backend.calls.posts.filter((url) =>
+      /\/discoveries\/[^/]+\/analyze$/.test(url),
+    );
+    expect(analyzePosts).toHaveLength(1);
+    expect(backend.calls.posts.filter((url) => /\/execute$/.test(url))).toEqual(
+      [],
+    );
+  }, 20_000);
+
+  it("Task59.1 releases an in-place analysis wait when only a sibling summary changed", async () => {
+    const user = userEvent.setup();
+    const backend = stubOrganizeHost();
+    backend.state.secondPlanKind = "sibling";
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001&dialog=organize");
+
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(
+      await within(dialog).findByText("修正识别或作品", { exact: true }),
+    );
+    await user.selectOptions(
+      within(dialog).getByLabelText("识别类型 One.2001.mkv"),
+      "B",
+    );
+    backend.state.analyzeResponseLost = true;
+    await user.click(
+      within(dialog).getByRole("button", { name: "保存并重新分析" }),
+    );
+
+    // The newer summary reorders the same plan without changing this item's
+    // facts. The proved analysis releases the wait on this file instead of
+    // holding it forever, and nothing is re-requested or executed.
+    expect(
+      await within(dialog).findByText(/当前文件的可读方案事实没有变化/),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("checkbox", { name: "纳入 One.2001.mkv" }),
+    ).toBeEnabled();
+    expect(
+      within(dialog).queryByRole("button", { name: /等待新的零变更方案/ }),
+    ).toBeNull();
+    expect(
+      backend.calls.posts.filter((url) =>
+        /\/discoveries\/[^/]+\/analyze$/.test(url),
+      ),
+    ).toHaveLength(1);
+    expect(backend.calls.posts.filter((url) => /\/execute$/.test(url))).toEqual(
+      [],
+    );
   }, 20_000);
 
   it("protects unsaved drafts against leaving the task center without losing the card", async () => {

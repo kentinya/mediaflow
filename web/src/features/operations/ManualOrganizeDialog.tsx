@@ -474,12 +474,13 @@ export function ManualOrganizeDialog({
     | null
   >(null);
   /**
-   * The exact per-file decision response this Files card is waiting for. The
-   * baseline signature and preview identity are captured when analysis is
-   * accepted, so only a different read-back for this same item may return the
-   * operator to the overview.
+   * The exact per-file decision response a host is waiting for. The baseline
+   * signature and preview identity are captured when analysis is accepted, so
+   * only a different read-back for this same item may complete it. The Files
+   * host returns to its overview; the in-place Task Center host resolves the
+   * result on the same file it acted on.
    */
-  interface FilesDecisionReturn {
+  interface DecisionReturn {
     readonly itemId: string;
     readonly filename: string;
     readonly previewId: string;
@@ -488,7 +489,20 @@ export function ManualOrganizeDialog({
     readonly draftRevision: number;
   }
   const [filesDecisionReturn, setFilesDecisionReturn] =
-    useState<FilesDecisionReturn | null>(null);
+    useState<DecisionReturn | null>(null);
+  const [continuationDecisionReturn, setContinuationDecisionReturn] =
+    useState<DecisionReturn | null>(null);
+  /**
+   * The in-place host's pre-action baseline. It is captured before the request
+   * and arms the in-place resolution only when that request's result is
+   * unknown, so the ordinary success path keeps its existing presentation.
+   */
+  const continuationDecisionBaseline = useRef<DecisionReturn | null>(null);
+  /**
+   * The in-place baseline whose result was already stated. A read completion
+   * that lands after that result must not re-open the wait for it.
+   */
+  const resolvedContinuationBaseline = useRef<DecisionReturn | null>(null);
   /**
    * The exact same-preparation reconciliation of an unknown per-file analysis
    * response. `reading` keeps the saved choice and the submit control locked;
@@ -496,7 +510,7 @@ export function ManualOrganizeDialog({
    * `unreadable` keeps the lock and offers only another read of this
    * preparation, never a second analysis request.
    */
-  interface FilesAnalysisReadback {
+  interface AnalysisReadback {
     readonly itemId: string;
     readonly filename: string;
     readonly previewId: string | null;
@@ -504,12 +518,12 @@ export function ManualOrganizeDialog({
     readonly preparationStatus: string;
     readonly phase: "reading" | "awaiting" | "unreadable";
   }
-  const [filesAnalysisReadback, setFilesAnalysisReadback] =
-    useState<FilesAnalysisReadback | null>(null);
-  const filesAnalysisReadbackVersion = useRef(0);
-  const clearFilesAnalysisReadback = useCallback(() => {
-    filesAnalysisReadbackVersion.current += 1;
-    setFilesAnalysisReadback(null);
+  const [analysisReadback, setAnalysisReadback] =
+    useState<AnalysisReadback | null>(null);
+  const analysisReadbackVersion = useRef(0);
+  const clearAnalysisReadback = useCallback(() => {
+    analysisReadbackVersion.current += 1;
+    setAnalysisReadback(null);
   }, []);
   /** Bumped only by a real operator edit, never by saving or read-back. */
   const fileDraftRevision = useRef(0);
@@ -849,10 +863,18 @@ export function ManualOrganizeDialog({
       setFilesOverviewNotice(null);
       // The pre-action baseline belongs to this exact item and the file facts
       // the operator can see now. Capturing it before the request is what
-      // makes an accepted response and a lost response follow the same
-      // overview return when the same preparation is read back.
-      if (filesHost && variables.itemId !== "") {
-        beginFilesDecisionReturn(variables.itemId);
+      // makes an accepted response and a lost response complete the same way
+      // in whichever host made the request.
+      if (variables.itemId !== "") {
+        const item = items.find((value) => value.itemId === variables.itemId);
+        const baseline = item === undefined ? null : decisionBaselineFor(item);
+        if (filesHost) {
+          if (baseline !== null) setFilesDecisionReturn(baseline);
+        } else {
+          // The in-place host arms the same baseline only for an unknown
+          // analysis result; its ordinary success keeps Base presentation.
+          continuationDecisionBaseline.current = baseline;
+        }
       }
       // A fresh explicit action supersedes the last preparation-level
       // request fact; the refetch (or rejection) below reports this one.
@@ -904,7 +926,12 @@ export function ManualOrganizeDialog({
             return next;
           });
         }
-        setFilesAnalysisReadback({ ...baseline, phase: "reading" });
+        setAnalysisReadback({ ...baseline, phase: "reading" });
+        if (!filesHost) {
+          const armed = continuationDecisionBaseline.current;
+          continuationDecisionBaseline.current = null;
+          setContinuationDecisionReturn(armed);
+        }
         setNotices((previous) => ({
           ...previous,
           [variables.itemId]: {
@@ -913,9 +940,9 @@ export function ManualOrganizeDialog({
             retryAnalysis: false,
           },
         }));
-        const outcome = await readFilesAnalysisOutcome(baseline);
+        const outcome = await readAnalysisOutcome(baseline);
         if (outcome === "stale") return;
-        applyFilesAnalysisOutcome(baseline, outcome);
+        applyAnalysisOutcome(baseline, outcome);
         return;
       }
       if (variables.onlyAnalysis) {
@@ -1498,7 +1525,7 @@ export function ManualOrganizeDialog({
   }
   /** One browse-only page move: it saves nothing and runs no analysis. */
   const goTo = (position: number) => {
-    clearFilesAnalysisReadback();
+    clearAnalysisReadback();
     const clamped = Math.max(
       0,
       Math.min(position, Math.max(items.length - 1, 0)),
@@ -1629,14 +1656,14 @@ export function ManualOrganizeDialog({
     selectedRecognition.organizePolicyId !== null;
 
   /**
-   * Capture the exact item read-back that existed when this Files analysis was
-   * accepted. Only that item's own newer durable facts may return the operator
-   * to the overview; an accepted request or any sibling summary cannot.
+   * Capture the exact item read-back that existed when this analysis was
+   * accepted. Only that item's own newer durable facts may complete it; an
+   * accepted request or any sibling summary cannot.
    */
-  const filesDecisionBaselineFor = (
+  const decisionBaselineFor = (
     item: ManualPreviewItemModel,
-  ): FilesDecisionReturn | null => {
-    if (!filesHost || preview === undefined) return null;
+  ): DecisionReturn | null => {
+    if (preview === undefined) return null;
     return {
       itemId: item.itemId,
       filename: item.sourceFilename ?? item.itemId,
@@ -1648,12 +1675,11 @@ export function ManualOrganizeDialog({
   };
   const beginFilesDecisionReturn = (itemId: string) => {
     const item = items.find((value) => value.itemId === itemId);
-    const baseline = item === undefined ? null : filesDecisionBaselineFor(item);
+    const baseline = item === undefined ? null : decisionBaselineFor(item);
     if (baseline !== null) setFilesDecisionReturn(baseline);
   };
 
-  type FilesAnalysisReadOutcome =
-    "accepted" | "refused" | "unreadable" | "stale";
+  type AnalysisReadOutcome = "accepted" | "refused" | "unreadable" | "stale";
   /**
    * Read this exact preparation once and decide what its durable facts prove
    * about the analysis request whose response was lost. A still-running
@@ -1661,21 +1687,21 @@ export function ManualOrganizeDialog({
    * unchanged completed preparation is an explicit non-admission. Anything
    * else is unread, so the original submit stays locked.
    */
-  const readFilesAnalysisOutcome = async (baseline: {
+  const readAnalysisOutcome = async (baseline: {
     readonly itemId: string;
     readonly filename: string;
     readonly previewId: string | null;
     readonly preparationVersion: number;
     readonly preparationStatus: string;
-  }): Promise<FilesAnalysisReadOutcome> => {
-    const readVersion = filesAnalysisReadbackVersion.current + 1;
-    filesAnalysisReadbackVersion.current = readVersion;
-    setFilesAnalysisReadback({ ...baseline, phase: "reading" });
+  }): Promise<AnalysisReadOutcome> => {
+    const readVersion = analysisReadbackVersion.current + 1;
+    analysisReadbackVersion.current = readVersion;
+    setAnalysisReadback({ ...baseline, phase: "reading" });
     const [preparationRead] = await Promise.all([
       preparationQuery.refetch({ cancelRefetch: false }),
       intentQuery.refetch({ cancelRefetch: false }),
     ]);
-    if (filesAnalysisReadbackVersion.current !== readVersion) return "stale";
+    if (analysisReadbackVersion.current !== readVersion) return "stale";
     const latest =
       preparationRead.data?.ok === true
         ? preparationRead.data.model
@@ -1698,7 +1724,7 @@ export function ManualOrganizeDialog({
     return "unreadable";
   };
 
-  const applyFilesAnalysisOutcome = (
+  const applyAnalysisOutcome = (
     baseline: {
       readonly itemId: string;
       readonly filename: string;
@@ -1706,23 +1732,41 @@ export function ManualOrganizeDialog({
       readonly preparationVersion: number;
       readonly preparationStatus: string;
     },
-    outcome: Exclude<FilesAnalysisReadOutcome, "stale">,
+    outcome: Exclude<AnalysisReadOutcome, "stale">,
   ) => {
     if (outcome === "accepted") {
-      setFilesAnalysisReadback({ ...baseline, phase: "awaiting" });
+      const resolved = resolvedContinuationBaseline.current;
+      if (
+        !filesHost &&
+        resolved !== null &&
+        resolved.itemId === baseline.itemId &&
+        resolved.previewId === baseline.previewId
+      ) {
+        // The in-place result for this exact baseline is already stated; the
+        // late admission proof must not replace it with a wait.
+        return;
+      }
+      setAnalysisReadback({ ...baseline, phase: "awaiting" });
       setNotices((previous) => ({
         ...previous,
         [baseline.itemId]: {
           kind: "success",
-          text: `选择已保存；已读取同一准备，本次分析已受理。正在等待新的零变更方案，方案就绪后会自动回到概览。`,
+          text: filesHost
+            ? `选择已保存；已读取同一准备，本次分析已受理。正在等待新的零变更方案，方案就绪后会自动回到概览。`
+            : `选择已保存；已读取同一准备，本次分析已受理。正在等待新的零变更方案；方案就绪后会在当前文件显示新的可核对结果。`,
           retryAnalysis: false,
         },
       }));
       return;
     }
-    setFilesAnalysisReadback(
+    setAnalysisReadback(
       outcome === "unreadable" ? { ...baseline, phase: "unreadable" } : null,
     );
+    if (!filesHost && outcome === "refused") {
+      // An explicit non-admission leaves no result to read back in place; the
+      // next explicit action arms its own baseline.
+      setContinuationDecisionReturn(null);
+    }
     setNotices((previous) => ({
       ...previous,
       [baseline.itemId]: {
@@ -1736,8 +1780,8 @@ export function ManualOrganizeDialog({
     }));
   };
 
-  const retryFilesAnalysisReadback = async () => {
-    const current = filesAnalysisReadback;
+  const retryAnalysisReadback = async () => {
+    const current = analysisReadback;
     if (current === null) return;
     const prepared = {
       itemId: current.itemId,
@@ -1746,13 +1790,13 @@ export function ManualOrganizeDialog({
       preparationVersion: current.preparationVersion,
       preparationStatus: current.preparationStatus,
     };
-    const outcome = await readFilesAnalysisOutcome(prepared);
+    const outcome = await readAnalysisOutcome(prepared);
     if (outcome === "stale") return;
-    applyFilesAnalysisOutcome(prepared, outcome);
+    applyAnalysisOutcome(prepared, outcome);
   };
 
   const openFilesOverviewItem = (itemId: string) => {
-    clearFilesAnalysisReadback();
+    clearAnalysisReadback();
     const position = items.findIndex((item) => item.itemId === itemId);
     if (position < 0) return;
     setIndex(position);
@@ -1763,7 +1807,7 @@ export function ManualOrganizeDialog({
   };
 
   const returnToFilesOverview = () => {
-    clearFilesAnalysisReadback();
+    clearAnalysisReadback();
     setStep("review");
     setFilesOverviewVisible(true);
     setFilesDecisionReturn(null);
@@ -1798,14 +1842,14 @@ export function ManualOrganizeDialog({
       // Leaving this exact file is the event that retires the pending return.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setFilesDecisionReturn(null);
-      clearFilesAnalysisReadback();
+      clearAnalysisReadback();
       return;
     }
     if (preview.previewId === filesDecisionReturn.previewId) return;
     if (filesDecisionReturn.draftRevision !== fileDraftRevision.current) {
       // A newer edit belongs to the operator, not to the old response.
       setFilesDecisionReturn(null);
-      clearFilesAnalysisReadback();
+      clearAnalysisReadback();
       return;
     }
     const item = filesDecisionReturnItem;
@@ -1818,7 +1862,7 @@ export function ManualOrganizeDialog({
         text: `「${filesDecisionReturn.filename}」已重新分析，但未出现在当前方案中；请核对当前范围。`,
       });
       setFilesDecisionReturn(null);
-      clearFilesAnalysisReadback();
+      clearAnalysisReadback();
       setFilesOverviewFocus({ kind: "heading" });
       setFilesOverviewVisible(true);
       setStep("review");
@@ -1832,10 +1876,10 @@ export function ManualOrganizeDialog({
       // readable and release the lock instead of waiting forever for a
       // difference that this summary does not contain.
       if (
-        filesAnalysisReadback?.itemId === filesDecisionReturn.itemId &&
-        filesAnalysisReadback.phase === "awaiting"
+        analysisReadback?.itemId === filesDecisionReturn.itemId &&
+        analysisReadback.phase === "awaiting"
       ) {
-        clearFilesAnalysisReadback();
+        clearAnalysisReadback();
         setNotices((previous) => ({
           ...previous,
           [filesDecisionReturn.itemId]: {
@@ -1858,7 +1902,7 @@ export function ManualOrganizeDialog({
             : `「${filesDecisionReturn.filename}」已重新分析，现在可以纳入本次整理。`,
       });
       setFilesDecisionReturn(null);
-      clearFilesAnalysisReadback();
+      clearAnalysisReadback();
       setFilesOverviewFocus({ kind: "heading" });
       setFilesOverviewVisible(true);
       setStep("review");
@@ -1873,7 +1917,7 @@ export function ManualOrganizeDialog({
         text: `「${filesDecisionReturn.filename}」已重新分析，当前出现新的待处理问题：${problemKindLabel(problem)}。`,
       });
       setFilesDecisionReturn(null);
-      clearFilesAnalysisReadback();
+      clearAnalysisReadback();
       setFilesOverviewFocus({ kind: "heading" });
       setFilesOverviewVisible(true);
       setStep("review");
@@ -1882,7 +1926,7 @@ export function ManualOrganizeDialog({
     if (problem !== null) {
       // The same decision kind still needs correction: keep the form, the
       // operator's place and any inputs exactly where they are.
-      clearFilesAnalysisReadback();
+      clearAnalysisReadback();
       setNotices((previous) => ({
         ...previous,
         [item.itemId]: {
@@ -1910,17 +1954,132 @@ export function ManualOrganizeDialog({
       },
     }));
     setFilesDecisionReturn(null);
-    clearFilesAnalysisReadback();
+    clearAnalysisReadback();
   }, [
-    clearFilesAnalysisReadback,
+    clearAnalysisReadback,
     currentItemId,
     executableIds,
     filesDecisionReturn,
     filesDecisionReturnItem,
     filesDecisionReturnSignature,
-    filesAnalysisReadback,
+    analysisReadback,
     filesHost,
     filesOverviewVisible,
+    preview,
+    step,
+  ]);
+
+  const continuationDecisionReturnItem =
+    continuationDecisionReturn === null
+      ? undefined
+      : items.find((item) => item.itemId === continuationDecisionReturn.itemId);
+  /**
+   * The in-place Task Center host reads an unknown per-file analysis into the
+   * file the operator acted on instead of into a Files overview. A newer exact
+   * summary that carries this item's own changed facts ends the wait and
+   * states the real result beside that file; a sibling-only summary releases
+   * the wait without claiming this item's result. Nothing here navigates,
+   * re-indexes, resets a draft or steals focus.
+   */
+  useEffect(() => {
+    if (filesHost || continuationDecisionReturn === null) return;
+    if (preview === undefined) return;
+    if (
+      step !== "review" ||
+      currentItemId !== continuationDecisionReturn.itemId
+    ) {
+      // The operator left this file or opened the batch review: the late read
+      // may still update data, but never replaces what they chose to read.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setContinuationDecisionReturn(null);
+      clearAnalysisReadback();
+      return;
+    }
+    if (preview.previewId === continuationDecisionReturn.previewId) return;
+    if (
+      continuationDecisionReturn.draftRevision !== fileDraftRevision.current
+    ) {
+      // A newer edit belongs to the operator, not to the old response.
+      setContinuationDecisionReturn(null);
+      clearAnalysisReadback();
+      return;
+    }
+    const item = continuationDecisionReturnItem;
+    if (item === undefined) {
+      resolvedContinuationBaseline.current = continuationDecisionReturn;
+      setNotices((previous) => ({
+        ...previous,
+        [continuationDecisionReturn.itemId]: {
+          kind: "warning",
+          text: `「${continuationDecisionReturn.filename}」已重新分析，但未出现在当前方案中；请核对当前范围。`,
+          retryAnalysis: false,
+        },
+      }));
+      setContinuationDecisionReturn(null);
+      clearAnalysisReadback();
+      return;
+    }
+    if (
+      previewItemResultSignature(item) !== continuationDecisionReturn.signature
+    ) {
+      const problem = previewItemProblemKind(item);
+      const executable = item.current && executableIds.includes(item.itemId);
+      const sameProblem =
+        problem !== null &&
+        problemFamily(problem) ===
+          problemFamily(continuationDecisionReturn.problem);
+      resolvedContinuationBaseline.current = continuationDecisionReturn;
+      const text = executable
+        ? item.operation === "SKIP"
+          ? "已重新分析并读回当前方案：该文件按当前决定明确跳过文件操作。"
+          : "已重新分析并读回当前方案：现在可以纳入本次整理。"
+        : problem !== null
+          ? sameProblem
+            ? `已重新分析并读回当前方案：当前文件仍需处理${problemKindLabel(problem)}；输入和位置已保留。`
+            : `已重新分析并读回当前方案：当前出现新的待处理问题：${problemKindLabel(problem)}。`
+          : `已重新分析，但该文件当前未就绪：${
+              item.failure?.message ??
+              item.nextAction ??
+              "请核对当前文件的实际结果。"
+            }`;
+      setNotices((previous) => ({
+        ...previous,
+        [item.itemId]: {
+          kind: executable ? "success" : "warning",
+          text,
+          retryAnalysis: false,
+        },
+      }));
+      setContinuationDecisionReturn(null);
+      clearAnalysisReadback();
+      return;
+    }
+    // The newer summary belongs to other files. Release the wait with the real
+    // facts rather than holding this file for a difference this summary does
+    // not contain; a later summary may still publish this item's result.
+    if (
+      analysisReadback?.itemId === continuationDecisionReturn.itemId &&
+      analysisReadback.phase === "awaiting"
+    ) {
+      resolvedContinuationBaseline.current = continuationDecisionReturn;
+      clearAnalysisReadback();
+      setNotices((previous) => ({
+        ...previous,
+        [continuationDecisionReturn.itemId]: {
+          kind: "warning",
+          text: "已重新分析并读回当前方案；当前文件的可读方案事实没有变化。请按当前状态继续核对。",
+          retryAnalysis: false,
+        },
+      }));
+    }
+  }, [
+    analysisReadback,
+    clearAnalysisReadback,
+    continuationDecisionReturn,
+    continuationDecisionReturnItem,
+    currentItemId,
+    executableIds,
+    filesHost,
     preview,
     step,
   ]);
@@ -1954,7 +2113,7 @@ export function ManualOrganizeDialog({
     if (currentItemId === null) return;
     fileDraftRevision.current += 1;
     setFilesDecisionReturn(null);
-    clearFilesAnalysisReadback();
+    clearAnalysisReadback();
     setDrafts((previous) => ({
       ...previous,
       [currentItemId]: {
@@ -2753,10 +2912,8 @@ export function ManualOrganizeDialog({
     const item = currentItem;
     const filename = item.sourceFilename ?? item.itemId;
     const notice = currentNotice;
-    const analysisReadback =
-      filesAnalysisReadback?.itemId === currentItemId
-        ? filesAnalysisReadback
-        : null;
+    const itemAnalysisReadback =
+      analysisReadback?.itemId === currentItemId ? analysisReadback : null;
     const organizeTaskId = preparation?.organizeTaskId ?? null;
     const firstConflict = item.conflicts[0] ?? null;
     const problemTaskItemId = item.problemTaskItemId;
@@ -2893,7 +3050,10 @@ export function ManualOrganizeDialog({
                 mode="decision"
                 onAnalysisStarted={() => {
                   // The baseline reads the edit revision captured at the
-                  // operator's action, never during this render.
+                  // operator's action, never during this render. Only the
+                  // Files host returns to its overview from this native form;
+                  // the in-place host keeps the panel's own status handling.
+                  if (!filesHost) return;
                   // eslint-disable-next-line react-hooks/refs
                   beginFilesDecisionReturn(item.itemId);
                 }}
@@ -3101,7 +3261,7 @@ export function ManualOrganizeDialog({
               open={
                 draftDirty ||
                 notice?.retryAnalysis === true ||
-                analysisReadback !== null
+                itemAnalysisReadback !== null
               }
             >
               <summary className="mf-organize-correction-summary">
@@ -3115,7 +3275,7 @@ export function ManualOrganizeDialog({
                     aria-label={`识别类型 ${filename}`}
                     value={draftRecognitionId}
                     disabled={
-                      saveMutation.isPending || analysisReadback !== null
+                      saveMutation.isPending || itemAnalysisReadback !== null
                     }
                     onChange={(event) =>
                       patchDraft({ recognitionTypeId: event.target.value })
@@ -3136,7 +3296,7 @@ export function ManualOrganizeDialog({
                       aria-label={`元数据身份 ${filename}`}
                       value={draftMetadataKey}
                       disabled={
-                        saveMutation.isPending || analysisReadback !== null
+                        saveMutation.isPending || itemAnalysisReadback !== null
                       }
                       onChange={(event) =>
                         patchDraft({ metadataKey: event.target.value })
@@ -3178,7 +3338,7 @@ export function ManualOrganizeDialog({
                   type="button"
                   disabled={
                     saveMutation.isPending ||
-                    analysisReadback !== null ||
+                    itemAnalysisReadback !== null ||
                     preparationStatusRunning ||
                     (!draftDirty && notice?.retryAnalysis !== true) ||
                     (draftDirty &&
@@ -3195,22 +3355,22 @@ export function ManualOrganizeDialog({
                     })
                   }
                 >
-                  {analysisReadback?.phase === "reading"
+                  {itemAnalysisReadback?.phase === "reading"
                     ? "正在核对分析结果…"
                     : saveMutation.isPending
                       ? "正在保存并重新分析…"
-                      : analysisReadback?.phase === "awaiting"
+                      : itemAnalysisReadback?.phase === "awaiting"
                         ? "等待新的零变更方案…"
-                        : analysisReadback?.phase === "unreadable"
+                        : itemAnalysisReadback?.phase === "unreadable"
                           ? "分析结果待核对"
                           : "保存并重新分析"}
                 </Button>
-                {analysisReadback?.phase === "unreadable" ? (
+                {itemAnalysisReadback?.phase === "unreadable" ? (
                   <Button
                     type="button"
                     variant="secondary"
                     disabled={saveMutation.isPending}
-                    onClick={() => void retryFilesAnalysisReadback()}
+                    onClick={() => void retryAnalysisReadback()}
                   >
                     重新读取分析状态
                   </Button>
@@ -3227,7 +3387,7 @@ export function ManualOrganizeDialog({
                 disabled={
                   !isExecutable ||
                   saveMutation.isPending ||
-                  analysisReadback !== null
+                  itemAnalysisReadback !== null
                 }
                 onChange={(event) => {
                   setExcluded((previous) => {
@@ -3827,7 +3987,7 @@ export function ManualOrganizeDialog({
     preview !== undefined &&
     items.length > 0;
   const openBatchReview = () => {
-    clearFilesAnalysisReadback();
+    clearAnalysisReadback();
     setFilesOverviewNotice(null);
     setStep("confirm");
     setFilesOverviewVisible(false);

@@ -2016,7 +2016,10 @@ test("Task59.1 a lost direct analysis response stays locked until the same prepa
   request,
 }) => {
   test.setTimeout(180_000);
-  const targetFile = "DialogSibling.2023.mkv";
+  // This journey owns its source: the destination-conflict journey leaves its
+  // own sibling under an unfinished Task, so reusing that name would make this
+  // preparation refuse the selection when both run in one suite.
+  const targetFile = "DialogDirectLoss.2038.mkv";
   const fileState = async () => {
     const response = await request.get(
       `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(
