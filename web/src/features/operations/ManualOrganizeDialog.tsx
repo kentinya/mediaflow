@@ -1726,9 +1726,14 @@ export function ManualOrganizeDialog({
     activeSelection.length === 0 ||
     (requiresOverwrite && !effectiveAllowOverwrite) ||
     (requiresCleanup && !effectiveAllowSourceCleanup);
-  /** The dominant current reason a confirmation cannot be sent, with its legal next step. */
-  const confirmationBlocker = (() => {
-    if (preview === undefined || executeMutation.isPending) return null;
+  /**
+   * A blocker owned by this summary itself, independent of which ready files
+   * the operator has currently selected. A selection-specific blocker narrows
+   * what one confirmation submits but never makes unselected siblings
+   * ineligible by itself.
+   */
+  const summaryConfirmationBlocker = (() => {
+    if (preview === undefined) return null;
     if (organizeFlowEnded) {
       return {
         reason: "本次整理工作已结束，只读历史不再提供确认。",
@@ -1819,6 +1824,14 @@ export function ManualOrganizeDialog({
         nextAction: "重新读取摘要后再确认。",
       };
     }
+    return null;
+  })();
+  /** The dominant current reason a confirmation cannot be sent, with its legal next step. */
+  const confirmationBlocker = (() => {
+    if (preview === undefined || executeMutation.isPending) return null;
+    if (summaryConfirmationBlocker !== null) {
+      return summaryConfirmationBlocker;
+    }
     if (activeSelection.length === 0) {
       return {
         reason: "当前没有选中任何就绪文件。",
@@ -1839,9 +1852,15 @@ export function ManualOrganizeDialog({
     }
     return null;
   })();
-  /** The exact selected items this summary can confirm right now. */
+  /**
+   * The ready files this summary can include in one confirmation right now.
+   * The operator's exact selection remains the numerator; unselected ready
+   * siblings stay in the denominator while the summary itself is confirmable.
+   */
+  const filesReadyCount =
+    filesOverviewCount("ready") + filesOverviewCount("included");
   const filesConfirmableCount =
-    confirmationBlocker === null ? activeSelection.length : 0;
+    summaryConfirmationBlocker === null ? filesReadyCount : 0;
   /** A settled-only stale summary may be refreshed by its original preparation. */
   const filesReanalysisEligible =
     filesHost &&

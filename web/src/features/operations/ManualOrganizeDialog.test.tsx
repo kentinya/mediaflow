@@ -3305,7 +3305,10 @@ describe("ManualOrganizeDialog", () => {
         .closest("div") as HTMLElement;
       return row.querySelector("dd")?.textContent ?? "";
     };
-    expect(returnedCount("已选 / 可确认")).toBe("0 / 0");
+    expect(returnedCount("已选 / 可确认")).toBe("0 / 1");
+    // Excluding the only ready file changes the selection, not the file's
+    // own eligibility: the summary stays confirmable for any ready subset.
+    expect(within(card()).getByText(/此刻可确认 1 项/)).toBeVisible();
     expect(returnedCount("需要处理")).toBe("0");
 
     // The exact batch review names the source, destination, operation and
@@ -3354,6 +3357,66 @@ describe("ManualOrganizeDialog", () => {
     expect(within(listed).getAllByText(/subtitle\(zh\) · 移动/)).toHaveLength(
       2,
     );
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 Files keeps an unchecked ready sibling in the confirmable count", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      () => undefined,
+      [filename(0), filename(1)],
+      "overview",
+    );
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    const count = (term: string): string => {
+      const row = within(overview)
+        .getByText(term, { selector: "dt" })
+        .closest("div") as HTMLElement;
+      return row.querySelector("dd")?.textContent ?? "";
+    };
+    expect(count("已选 / 可确认")).toBe("2 / 2");
+    expect(within(card()).getByText(/此刻可确认 2 项/)).toBeVisible();
+
+    await user.click(
+      within(overview).getByRole("button", {
+        name: `查看 ${filename(1)}`,
+      }),
+    );
+    await screen.findByRole("heading", { name: /第 2 \/ 2 个/ });
+    await user.click(
+      screen.getByRole("checkbox", { name: `纳入 ${filename(1)}` }),
+    );
+    await user.click(screen.getByRole("button", { name: "返回概览" }));
+
+    const returned = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    const returnedCount = (term: string): string => {
+      const row = within(returned)
+        .getByText(term, { selector: "dt" })
+        .closest("div") as HTMLElement;
+      return row.querySelector("dd")?.textContent ?? "";
+    };
+    // The unchecked file is still a ready, confirmable sibling; only the
+    // exact selected subset shrinks.
+    expect(returnedCount("已选 / 可确认")).toBe("1 / 2");
+    const readyRow = within(returned)
+      .getByRole("button", { name: `查看 ${filename(1)}` })
+      .closest("li") as HTMLElement;
+    expect(within(readyRow).getByText("可确认")).toBeVisible();
+    expect(within(card()).getByText(/此刻可确认 2 项/)).toBeVisible();
+
+    // The batch still submits only the exact selected file, never the sibling
+    // merely because it remains eligible in the summary.
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    const batch = await screen.findByRole("region", { name: "整批复核" });
+    const summary = within(batch).getByText("本次确认").closest("div");
+    expect(summary?.querySelector("dd")?.textContent).toBe("1 项");
+    expect(screen.getByRole("button", { name: "确认整理 1 项" })).toBeEnabled();
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 

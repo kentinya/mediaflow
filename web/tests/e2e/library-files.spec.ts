@@ -610,11 +610,19 @@ test("the same-page preparation links the summary and confirms one exact subset"
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByRole("region", { name: "整批复核" })).toBeVisible();
   const batchSummary = card.locator(".mf-organize-batch-summary");
+  // The Files host states its own exact selected scope and zero-mutation
+  // promise before the single confirmation.
   await expect(
-    batchSummary.locator("> div").filter({ hasText: "将整理" }).locator("dd"),
+    batchSummary.locator("> div").filter({ hasText: "本次确认" }).locator("dt"),
+  ).toHaveText("本次确认");
+  await expect(
+    batchSummary.locator("> div").filter({ hasText: "本次确认" }).locator("dd"),
   ).toHaveText("1 项");
   await expect(
-    card.getByText("确认受理前不修改任何文件", { exact: true }),
+    card.getByText(
+      "提交前不修改任何文件；确认后只提交下列已选文件。目标路径、操作和对来源的影响以本页所示方案为准。",
+      { exact: true },
+    ),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "确认整理 1 项" }),

@@ -344,13 +344,14 @@ async function expectReadableBatch(
 async function expectBatchSelected(
   card: Locator,
   selected: number,
+  term: "本次确认" | "将整理" = "本次确认",
 ): Promise<void> {
   const summary = card
     .getByRole("region", { name: "整批复核" })
     .locator(".mf-organize-batch-summary");
   await expect(summary).toBeVisible();
-  const row = summary.locator("> div").filter({ hasText: "本次确认" });
-  await expect(row.locator("dt")).toHaveText("本次确认");
+  const row = summary.locator("> div").filter({ hasText: term });
+  await expect(row.locator("dt")).toHaveText(term);
   await expect(row.locator("dd")).toHaveText(`${selected} 项`);
 }
 
@@ -766,12 +767,28 @@ test("Task59.1 a second confirmation on the same Task is reconciled from its own
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
   await driveDiscovery(request, true);
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  const overviewCount = async (term: string): Promise<string> => {
+    const row = overview
+      .locator(".mf-organize-overview-counts > div")
+      .filter({ hasText: term });
+    return (await row.locator("dd").textContent()) ?? "";
+  };
+  expect(await overviewCount("已选 / 可确认")).toBe("2 / 2");
+  expect(await overviewCount("需要处理")).toBe("0");
   await openOverviewFile(card, /第 1 \/ 2 个/);
   await card.getByRole("button", { name: "下一项" }).click();
   await expect(
     card.getByRole("heading", { name: /第 2 \/ 2 个/ }),
   ).toBeVisible();
   await card.getByRole("checkbox", { name: `纳入 ${secondFile}` }).uncheck();
+  // Returning to the overview keeps the unchecked ready sibling in the
+  // confirmable denominator while the selected numerator shrinks.
+  await card.getByRole("button", { name: "返回概览" }).click();
+  await expect(overview).toBeVisible();
+  expect(await overviewCount("已选 / 可确认")).toBe("1 / 2");
+  await expect(card.getByText(/此刻可确认 2 项/)).toBeVisible();
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expectBatchSelected(card, 1);
   const executePosts = () =>
@@ -857,7 +874,7 @@ test("Task59.1 a second confirmation on the same Task is reconciled from its own
     },
   );
   await reopened.getByRole("button", { name: /整批复核/ }).click();
-  await expectBatchSelected(card, 1);
+  await expectBatchSelected(card, 1, "将整理");
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/, {
     timeout: 30_000,
@@ -3183,10 +3200,10 @@ test("Task59.1 Files opens the same preparation dialog as an overview, enters on
     .getByRole("button", { name: `查看 ${READABILITY_DIALOG_FILE}` })
     .locator("xpath=ancestor::li[1]");
   await expect(row).toContainText("已纳入");
-  await expect(row).toContainText(
-    `source-storage:${READABILITY_DIALOG_DIRECTORY}/${READABILITY_DIALOG_FILE}`,
-  );
-  await expect(row).toContainText("移动 · 来源不保留");
+  // The compact ready row keeps the file, its operation and work title on one
+  // line; the exact source and target stay on the opened file review.
+  await expect(row).toContainText("移动 · ReadableDialog");
+  await expect(row).not.toContainText("source-storage:");
 
   await overview
     .getByRole("button", { name: `查看 ${READABILITY_DIALOG_FILE}` })
