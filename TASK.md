@@ -1,6 +1,6 @@
 # Task 59.1 — 文件入口的手动整理弹窗与整批确认
 
-Next Action: DEVELOPER CORRECTS TASK 59.1 AND RESUBMITS FOR B REVIEW
+Next Action: B REVIEWS THE CORRECTED TASK 59.1 CANDIDATE
 
 用户已授权激活 Task 59.1。Developer 开始实施时将状态从 `PLANNED` 转为
 `IN PROGRESS`。原 Task ID、Base、范围和验收条件沿用。A 代 B 的授权限于本 Task 的规划，
@@ -11,7 +11,7 @@ B 独立复核实施候选，A 负责 Slice 终审。
 Task ID: 59.1
 Task Type: SLICE
 Parent Slice: 59
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
 Difficulty: High
 Test Level: T3
@@ -269,3 +269,47 @@ RO-3 的附件核对仍有上述缺口。RO-4 的任务详情正文当前未交�
 
 Slice 重评：RO-1 仍待完整核对，RO-2 的直接分析未知状态阻塞本轮通过。RO-3 附件修正
 已覆盖，完整交接门禁仍待复核。RO-4 的详情正文仍待交付，留在原 Slice 边界。
+
+### Developer Correction Report (re-review)
+
+已按上一轮 B 复核指引修正，范围仍限于 Task 59.1。实现候选
+`bc0e04063d996aef2c1619198df62033e03f2569`：
+
+- Files 的「修正识别或作品」直连分析在保存选择后，把任何未确认的分析结果先接入现有
+  同一准备读回。读回期间保持当前文件、已保存选择和输入现场，保存按钮与识别/身份选择
+  均锁定，并显示实际读取状态；慢速首次读回无法再发第二个分析请求。
+- 读回由同一准备/条目的真实事实决定：仍在分析、新方案已链接或准备版本变化视为受理，
+  进入等待并沿用现有概览回落；版本、状态和方案均未变化才恢复原按钮的分析-only 补做；
+  读取失败保持锁定，只提供同一准备的重新读取，不自动重发分析。
+- 已受理后的方案事实没有变化时（例如仅兄弟摘要变化）释放等待，不再无限锁定当前文件；
+  离开文件、返回概览、翻页、整批复核和新编辑都会终止旧条目读回。
+- 现有原生冲突表单、整批附件、确认身份、Task Center 原位续作和只读历史未改变。
+- 更新 `library-files.spec.ts` 与 `operations-inventory.python.spec.ts` 的 Files 阶段为
+  先验「本次整理概览」、再经对应文件进入详情；Task Center「继续整理」仍直接打开既有
+  单文件界面。
+- 更新 `TaskItemRecoveryPanel` 原有无障碍路径未变；未新增 API、schema、Worker、权限或
+  执行授权。
+
+实际命令与结果（cwd `web/`）：
+
+- `npm run typecheck` — 通过。
+- `npx eslint` 触及的 5 个源/测试/E2E 文件 — 通过。
+- `npx prettier --check` 同上 — 通过。
+- `npm run test -- run` 六个受影响单测文件 — 6 files / 156 tests passed，包含新增
+  回包丢失锁定、明确未受理后分析-only 补做、兄弟摘要释放等待用例。
+- `npm run build` — 通过。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts --grep "lost direct analysis|a real destination conflict"` —
+  2 passed；新增直连分析丢回包用例首轮曾因地址更新 10 秒超时失败一次，扩为 30 秒后重跑
+  6.1 秒通过，既有冲突旅程 11.6 秒通过。
+- `npm run test:e2e -- tests/e2e/library-files.spec.ts` — 51 passed（37.0 秒），包含
+  Files 概览、单项详情、重开与确认前零执行断言。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep "...前序 10 项|new task selection reconciles"` —
+  11 passed（15.0 秒）；另跑更新的 opened-item、selected-execution、ambiguous-source、
+  ordinary Files navigation、initial preparation 五个用例 — 5 passed。
+- 仓库根 `git diff --check` — 通过。
+
+先前一次仅取前序单个文件加 `new task selection` 子集时在 `run-manual-worker` 超时，
+补齐该文件真实声明顺序前序 10 项后重跑通过；属于夹具状态顺序依赖，不是产品断言失败。
+
+已知限制/风险：B 的完整 T3 仍须覆盖 100/101 项、窄屏、Task Center 原行为和真实混合
+批次；本轮未重跑这些长套件。未推送或发布。
