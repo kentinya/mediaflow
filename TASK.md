@@ -1,6 +1,6 @@
 # Task 59.1 — 文件入口的手动整理弹窗与整批确认
 
-Next Action: B REVIEWS THE TASK 59.1 CORRECTION CANDIDATE
+Next Action: DEVELOPER CORRECTS TASK 59.1 AND RESUBMITS FOR B REVIEW
 
 用户已授权激活 Task 59.1。Developer 开始实施时将状态从 `PLANNED` 转为
 `IN PROGRESS`。原 Task ID、Base、范围和验收条件沿用。A 代 B 的授权限于本 Task 的规划，
@@ -11,7 +11,7 @@ B 独立复核实施候选，A 负责 Slice 终审。
 Task ID: 59.1
 Task Type: SLICE
 Parent Slice: 59
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
 Difficulty: High
 Test Level: T3
@@ -492,3 +492,44 @@ Files 才只读取已发布的业务证据。
 阶段沿用原受限失败文案。若被取代的旧摘要是唯一可读状态且整理流程仍未结束，同文件等待
 保持锁定，结束后的只读历史仍由既有结束流程展示。B 的完整原生/Web 门禁与桌面、390 px、
 矮窗证据仍需在修正候选上执行；未推送或发布。
+
+### B Review of the metadata failure journey
+
+**FIX REQUIRED**。独立复核
+`3bc9ad99137e5a2f8ff53add92041185ceb8ebbf..6fb9e977134f0ac0f302aed649a36c230ae38463`。
+实施 HEAD 为 `b59c86b7`，后继提交只更新 TASK 报告。上轮两处修正已验证：概览和文件详情正确
+识别元数据服务技术失败，原生概览焦点、单文件可读性用例在同一次完整运行通过。
+
+**AC-02／AC-03 / P1：同一个技术失败在后续操作中变成 Storage 故障，详情还指向当前不可用的操作。**
+B 使用已经提交的 Provider 故障夹具和正常 Files 批量整理入口，复现两条实际操作：
+
+- 选中故障文件和就绪文件。故障文件的当前状态提示「然后重新分析同一准备」。打开「修正识别或
+  作品」并保留原选择时，「保存并重新分析」禁用，该页没有可执行的分析动作。返回概览、进入
+  「整批复核」、展开「未纳入本次确认的文件」时，同一文件又显示为 Storage failure，
+  而就绪兄弟仍可独立确认。
+- 只选择故障文件。原任务结束后，Files 弹窗的「只读原计划摘要」仍将该文件显示为 Storage failure。
+  两条探测均未发起文件执行。
+
+整批未纳入和 Files 只读历史仍直接使用通用失败文字，未采用 `2ee98c1e` 已用于概览和详情的
+明确元数据证据。该提交也加入了「重新分析同一准备」提示，但详情中的分析按钮要求有可保存改动，
+现有独立运行分析入口只用于尚未链接第一份计划的准备。这里要修正前后贯通的原因和下一步。
+
+实跑（cwd `web/`）：`npm run typecheck`、`npm run lint`、`npm run format:check`、
+`npm run build` 通过。Files／任务中心布局 Web 64 项通过。真实 Python 整理全文件 21 项在同一轮通过（约 2.2 分钟），
+含 100／101 项边界。任务中心原位续作与详情上下文 2 项通过。查看了整批复核在桌面、390 px 和
+矮屏的截图。额外沿现有入口做的两条故障探测均复现上述现象，临时脚本和配置已移除。
+治理及完整范围的 `git diff --check` 通过。
+
+### Developer correction guide after the metadata review
+
+1. 把已用于 Files 概览和详情的元数据故障结论复用于整批未纳入行及 Files 只读摘要。就绪兄弟的
+   选择和现有确认入口照常使用。Task Center 的独立历史入口沿用合同规定的呈现和只读边界。
+2. 把「重新分析同一准备」改为当前条目实际可走的动作。该技术失败可以核对 Provider 和原任务结果；
+   已结束的失败项按已有 Files 入口重新发起独立准备。详情避免把技术失败写成等待人选择或修改识别
+   类型的任务。沿用现有活动范围和状态，不新增技术重试入口。
+3. 扩展现有原生 Provider 故障用例：混合批次打开故障详情和整批未纳入项，核对相同原因与现有
+   下一步、就绪兄弟可确认及确认前零执行。仅选故障文件的准备结束后，核对只读摘要的同一原因
+   及无执行入口。使用现有本地夹具并遵循独立来源或原准备已结束的条件。
+
+Slice 重评：RO-1 的主要入口与准备边界已验证。RO-2 的故障原因和下一步、RO-3 的未纳入原因须
+在同一 Files 旅程内统一。RO-4 任务详情正文仍待交付。修正继续在 Task 59.1。
