@@ -5,7 +5,7 @@ Next Action: B REVIEWS THE TASK 59.2 CANDIDATE
 依据已提交的 [Slice 59](SLICE.md) RO-4、AC-04 和 AC-05 的任务详情部分，落实
 `V2-OPS-021`。开发与验收按[开发工作流](docs/development-workflow.md)执行。
 
-用户已授权实施 Task 59.2。Developer 已完成本轮实现并交 B 独立复核。激活前的规划提交为 `92057bc2`，实施候选为 `1ea6b9cc`；工作区在实施前干净，治理检查通过。
+用户已授权实施 Task 59.2。Developer 已完成本轮实现并交 B 独立复核。激活前的规划提交为 `92057bc2`，实施候选为 `d1a58b91`；工作区在实施前干净，治理检查通过。
 
 ```text
 Task ID: 59.2
@@ -126,8 +126,8 @@ Slice 保持 ACTIVE。
 
 ## Developer completion report
 
-已按 Task 边界完成候选 `1ea6b9ccf137e14b6cb48e399ea69336e2fcf8b4`（源码与测试；后继仅
-更新本 TASK 交接记录）：
+已按 Task 边界完成候选 `d1a58b9199e07840cf3ce9ae5842637a47f4c7e5`（源码与测试；
+实现由 `1ea6b9cc` 与该提交组成，后继仅更新本 TASK 交接记录）：
 
 - 运行详情正文顺序改为：流程状态与阶段／等待 → 实际进度 → 当前适用操作 → 文件结果 →
   文件与待处理项／行内证据 → 任务信息与可展开技术诊断。移除导航行的任务操作重复占位，
@@ -136,8 +136,9 @@ Slice 保持 ACTIVE。
 - 文件结果卡在成功／部分／失败主计数不可读但存在未知效果或结果未记录时仍显示对应结论；
   跳过／忽略／取消的独立计数不再因主计数为空而被隐藏。
 - 文件表按「源文件／处理结果／需处理原因／目标／操作」阅读。每行先显示持久状态对应的
-  可读处置，以及阻塞、技术失败、未确认效果或拒绝原因；原始阶段、尝试次数和失败分类仍可在
-  该行唯一证据的诊断中核对。移除始终为空的「批量分析」列。
+  可读处置，以及尚未处理的具体原因（例如「元数据候选需要确认」「部分文件或附件未完成」）、
+  技术失败、未确认效果或拒绝原因；原始阶段、尝试次数和失败分类仍可在该行唯一证据的诊断中
+  核对。移除始终为空的「批量分析」列。
 - 原「条目证据」层级、唯一证据挂接、筛选／跨页迁移、草稿归属、恢复表单、同页摘要与确认、
   `run + dialog=organize` 续作、两页签、记录筛选／分页和有界导出未改。操作记录读取失败现在
   同时在失败区提供原位重读。
@@ -151,18 +152,18 @@ Slice 保持 ACTIVE。
 - `npm run test -- run src/features/operations/RunDetailTabs.test.tsx
   src/features/operations/OperationsInventory.test.tsx
   src/features/operations/TaskItemRecoveryPanel.test.tsx` — 3 files / 120 tests passed
-  （27.90 秒），含新增 `Task59.2` 正文顺序、动作前置、未知/缺失结果、行内可读原因与
+  （27.76 秒），含新增 `Task59.2` 正文顺序、动作前置、未知/缺失结果、行内可读原因与
   操作记录重读用例。
-- `npm run build` — 通过；产物 `dist/index.html`、`index-hXIaOMvw.css`、
-  `index-BYtAspts.js`。
+- `npm run build` — 通过；最终候选产物 `dist/index.html`、`index-hXIaOMvw.css`、
+  `index-B9_YC0pA.js`。
 - `npm run test:e2e -- tests/e2e/task-center-layout.spec.ts` — 13 passed（9.4 秒），
   含桌面、390 px、矮窗、键盘与 reduced-motion 的详情布局用例。
 - `npm run test:e2e -- --config=playwright.python.config.ts
   tests/e2e/operations-inventory.python.spec.ts --grep
   'Task59[.]2|the selected run detail reads progress|detail tab and filter context|initial manual preparation remains reachable in place'`
-  — 3 passed（20.8 秒），覆盖真实详情正文、筛选上下文和同任务原位续作。
+  — 3 passed（21.0 秒），覆盖真实详情正文、筛选上下文和同任务原位续作。
 - `npm run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/task-flow.python.spec.ts` — 3 passed（5.3 秒），覆盖混合文件事实、任务流程失败
+  tests/e2e/task-flow.python.spec.ts` — 3 passed（5.8 秒），覆盖混合文件事实、任务流程失败
   与协作取消。
 - 仓库根 `python3 scripts/check_governance.py`、`git diff --check` — 通过。
 
