@@ -1059,15 +1059,18 @@ test("Task59.1 manual organize readability: a pending owned file beside a new si
   await expect(
     summary.locator("> div").filter({ hasText: "未纳入" }).locator("dd"),
   ).toHaveText("0 项");
-  await expect(
-    summary.locator("> div").filter({ hasText: "未受理" }).locator("dd"),
-  ).toHaveText("1 项");
   const batch = card.getByRole("region", { name: "来源与目标" });
   await expect(batch).toContainText(siblingFile);
   await expect(batch).not.toContainText(ownedFile);
-  const batchRefused = card.getByText("未受理的所选条目(1 项)");
+  const batchRefused = card.getByText("未受理的所选条目(1 项)", {
+    exact: true,
+  });
+  await expect(batchRefused).toBeVisible();
   await batchRefused.click();
-  await expect(card.getByText(ownedFile)).toBeVisible();
+  const refusedItem = batchRefused.locator("..").getByRole("listitem");
+  await expect(refusedItem).toBeVisible();
+  await expect(refusedItem).toContainText(ownedFile);
+  await expect(refusedItem).toContainText(/未结束的整理工作/);
   expect(executeOrAnalyzePosts(commands)).toHaveLength(0);
 });
 
@@ -3342,7 +3345,7 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
     ),
   ).toHaveLength(0);
 
-  await card.getByRole("button", { name: "返回整理概览" }).click();
+  await card.getByRole("button", { name: "返回概览", exact: true }).click();
   await expect(overview).toBeVisible();
   await card.getByRole("button", { name: /整批复核/ }).click();
   const listed = card.getByRole("region", { name: "来源与目标" });
@@ -3373,7 +3376,7 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
   // its real Task settles failed and the same dialog keeps the original plan
   // as read-only history. The ended summary must name the same metadata stage
   // and offer the Files re-entry, not the generic Storage failure.
-  await card.getByRole("button", { name: "关闭", exact: true }).click();
+  await card.getByRole("button", { name: "关闭整理弹窗", exact: true }).click();
   await expect(card).toBeHidden();
   await openReadabilityDirectory(page, "ProviderFailure", endedFile);
   await selectFiles(page, [endedFile]);
