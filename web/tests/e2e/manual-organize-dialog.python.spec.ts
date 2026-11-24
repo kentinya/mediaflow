@@ -341,6 +341,70 @@ async function expectReadableBatch(
   }
 }
 
+async function expectFilesConfirmFirstScreen(
+  page: Page,
+  card: Locator,
+): Promise<void> {
+  const metrics = await page.evaluate(() => {
+    const body = document.querySelector<HTMLElement>(
+      ".mf-organize-dialog-body",
+    );
+    const heading = document.querySelector<HTMLElement>(
+      ".mf-organize-batch-list-section h4",
+    );
+    const footer = document.querySelector<HTMLElement>(".mf-modal-footer");
+    const buttons = [...(footer?.querySelectorAll("button") ?? [])];
+    const returnButton = buttons.find((button) =>
+      button.textContent?.includes("返回整理概览"),
+    );
+    const confirmButton = buttons.find((button) =>
+      button.textContent?.includes("确认整理"),
+    );
+    const bodyRect = body?.getBoundingClientRect();
+    const headingRect = heading?.getBoundingClientRect();
+    const returnRect = returnButton?.getBoundingClientRect();
+    const confirmRect = confirmButton?.getBoundingClientRect();
+    const inViewport = (rect: DOMRect | undefined): boolean =>
+      rect !== undefined &&
+      rect.top >= -1 &&
+      rect.left >= -1 &&
+      rect.bottom <= window.innerHeight + 1 &&
+      rect.right <= window.innerWidth + 1;
+    return {
+      bodyTop: bodyRect?.top,
+      bodyBottom: bodyRect?.bottom,
+      bodyScrollTop: body?.scrollTop,
+      headingTop: headingRect?.top,
+      headingBottom: headingRect?.bottom,
+      sourceTargetInFirstScreen:
+        bodyRect !== undefined &&
+        headingRect !== undefined &&
+        headingRect.top >= bodyRect.top - 1 &&
+        headingRect.bottom <= bodyRect.bottom + 1,
+      returnInViewport: inViewport(returnRect),
+      confirmInViewport: inViewport(confirmRect),
+      returnTop: returnRect?.top,
+      confirmTop: confirmRect?.top,
+      returnLeft: returnRect?.left,
+      confirmLeft: confirmRect?.left,
+    };
+  });
+  expect(metrics.sourceTargetInFirstScreen, JSON.stringify(metrics)).toBe(true);
+  expect(metrics.returnInViewport, JSON.stringify(metrics)).toBe(true);
+  expect(metrics.confirmInViewport, JSON.stringify(metrics)).toBe(true);
+  expect(
+    Math.abs((metrics.returnTop ?? 0) - (metrics.confirmTop ?? 0)),
+    JSON.stringify(metrics),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    (metrics.returnLeft ?? 0) < (metrics.confirmLeft ?? 0),
+    JSON.stringify(metrics),
+  ).toBe(true);
+  await expect(
+    card.locator(".mf-organize-confirm-submit-inline"),
+  ).toBeVisible();
+}
+
 async function expectBatchSelected(
   card: Locator,
   selected: number,
@@ -788,7 +852,10 @@ test("Task59.1 a second confirmation on the same Task is reconciled from its own
   await card.getByRole("button", { name: "返回概览" }).click();
   await expect(overview).toBeVisible();
   expect(await overviewCount("已选 / 可确认")).toBe("1 / 2");
-  await expect(card.getByText(/此刻可确认 2 项/)).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "整批复核(已选 1 项)" }),
+  ).toBeVisible();
+  await expect(card.getByText(/此刻可确认/)).toHaveCount(0);
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expectBatchSelected(card, 1);
   const executePosts = () =>
@@ -3258,6 +3325,7 @@ test("Task59.1 manual organize readability: one file separates source and target
   request,
 }) => {
   test.setTimeout(120_000);
+  mkdirSync(READABILITY_OUTPUT, { recursive: true });
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await connect(page);
   const { card } = await openReadabilityBatch(page, request, {
@@ -3278,12 +3346,34 @@ test("Task59.1 manual organize readability: one file separates source and target
 
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByRole("region", { name: "整批复核" })).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expectFilesConfirmFirstScreen(page, card);
+  await page.screenshot({
+    path: `${READABILITY_OUTPUT}/confirm-desktop.png`,
+    fullPage: false,
+  });
   await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
+  await card.locator(".mf-organize-dialog-body").evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expectFilesConfirmFirstScreen(page, card);
+  await page.screenshot({
+    path: `${READABILITY_OUTPUT}/confirm-narrow.png`,
+    fullPage: false,
+  });
   await page.setViewportSize({ width: 390, height: 520 });
   await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
+  await card.locator(".mf-organize-dialog-body").evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expectFilesConfirmFirstScreen(page, card);
+  await page.screenshot({
+    path: `${READABILITY_OUTPUT}/confirm-short.png`,
+    fullPage: false,
+  });
 });
 
 test("Task59.1 a metadata provider technical failure is not a candidate decision", async ({

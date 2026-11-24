@@ -2542,14 +2542,18 @@ describe("ManualOrganizeDialog", () => {
     expect(region).toHaveTextContent(/本次确认\s*1\s*项/);
     expect(region).toHaveTextContent(/未纳入\s*0\s*项/);
     expect(card()).toHaveTextContent("来源影响：移动成功后原位置不再保留");
-    const planDiagnostics = within(region)
-      .getByText(/方案 preview-1/)
-      .closest("details");
-    expect(planDiagnostics).toHaveClass("mf-organize-plan-diagnostics");
 
     const batchList = await screen.findByRole("region", {
       name: "来源与目标",
     });
+    const planDiagnostics = within(card())
+      .getByText(/方案 preview-1/)
+      .closest("details");
+    expect(planDiagnostics).toHaveClass("mf-organize-plan-diagnostics");
+    expect(
+      batchList.compareDocumentPosition(planDiagnostics as Node) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(
       within(batchList).getByRole("button", { name: "查看 Movie.01.mkv" }),
     ).toBeVisible();
@@ -3308,7 +3312,10 @@ describe("ManualOrganizeDialog", () => {
     expect(returnedCount("已选 / 可确认")).toBe("0 / 1");
     // Excluding the only ready file changes the selection, not the file's
     // own eligibility: the summary stays confirmable for any ready subset.
-    expect(within(card()).getByText(/此刻可确认 1 项/)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "整批复核(已选 0 项)" }),
+    ).toBeVisible();
+    expect(within(card()).queryByText(/此刻可确认/)).toBeNull();
     expect(returnedCount("需要处理")).toBe("0");
 
     // The exact batch review names the source, destination, operation and
@@ -3379,7 +3386,9 @@ describe("ManualOrganizeDialog", () => {
       return row.querySelector("dd")?.textContent ?? "";
     };
     expect(count("已选 / 可确认")).toBe("2 / 2");
-    expect(within(card()).getByText(/此刻可确认 2 项/)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "整批复核(已选 2 项)" }),
+    ).toBeVisible();
 
     await user.click(
       within(overview).getByRole("button", {
@@ -3407,8 +3416,11 @@ describe("ManualOrganizeDialog", () => {
     const readyRow = within(returned)
       .getByRole("button", { name: `查看 ${filename(1)}` })
       .closest("li") as HTMLElement;
-    expect(within(readyRow).getByText("可确认")).toBeVisible();
-    expect(within(card()).getByText(/此刻可确认 2 项/)).toBeVisible();
+    expect(readyRow).not.toBeNull();
+    expect(within(readyRow as HTMLElement).getByText("可确认")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "整批复核(已选 1 项)" }),
+    ).toBeVisible();
 
     // The batch still submits only the exact selected file, never the sibling
     // merely because it remains eligible in the summary.
@@ -4158,7 +4170,7 @@ describe("ManualOrganizeDialog", () => {
     await user.click(screen.getByText("未纳入本次确认的文件(1 项)"));
     expect(card()).toHaveTextContent(/该文件已按当前决定跳过/);
     expect(within(card()).queryAllByText(/该文件未就绪/)).toHaveLength(0);
-    const reanalysis = within(batch).getByRole("button", {
+    const reanalysis = within(card()).getByRole("button", {
       name: "重新分析同一准备",
     });
     await user.click(reanalysis);
@@ -4167,7 +4179,7 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
-  it("A59-01 uses the exact skipped result in the overview, footer and batch omission", async () => {
+  it("A59-01 uses the exact skipped result in the overview and batch omission", async () => {
     const user = userEvent.setup();
     await openDialog(
       user,
@@ -4201,11 +4213,12 @@ describe("ManualOrganizeDialog", () => {
     expect(count("已选 / 可确认")).toBe("1 / 1");
     expect(count("需要处理")).toBe("0");
     expect(count("已有记录")).toBe("1");
-    // The footer and the overview read the same exact rows: no stale pending
-    // item remains after the durable skip, and the ready sibling is untouched.
+    // The exact selected subset stays readable from the one batch action;
+    // the overview no longer repeats these counts in its fixed footer.
     expect(
-      within(card()).getByText(/已选 1 项 · 需要处理 0 项 · 已有记录 1 项/),
+      screen.getByRole("button", { name: "整批复核(已选 1 项)" }),
     ).toBeVisible();
+    expect(within(card()).queryByText(/已选 \d+ 项 · 需要处理/)).toBeNull();
     const row = within(returned).getByText("Movie.01.mkv").closest("li");
     expect(row).not.toBeNull();
     expect(within(row as HTMLElement).getByText("已有记录")).toBeVisible();
@@ -4265,8 +4278,17 @@ describe("ManualOrganizeDialog", () => {
     expect(
       within(row as HTMLElement).getByText(/已跳过 · 来源保留/),
     ).toBeVisible();
+    const count = (term: string): string => {
+      const countRow = within(returned)
+        .getByText(term, { selector: "dt" })
+        .closest("div") as HTMLElement;
+      return countRow.querySelector("dd")?.textContent ?? "";
+    };
+    expect(count("已选 / 可确认")).toBe("1 / 1");
+    expect(count("需要处理")).toBe("0");
+    expect(count("已有记录")).toBe("1");
     expect(
-      within(card()).getByText(/已选 1 项 · 需要处理 0 项 · 已有记录 1 项/),
+      screen.getByRole("button", { name: "整批复核(已选 1 项)" }),
     ).toBeVisible();
     const skippedButton = within(returned).getByRole("button", {
       name: "查看 Movie.01.mkv",

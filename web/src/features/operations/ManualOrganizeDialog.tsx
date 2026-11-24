@@ -4750,6 +4750,27 @@ export function ManualOrganizeDialog({
           </ul>
         </details>
       );
+    const planDiagnostics = (
+      <details className="mf-organize-diagnostics mf-organize-plan-diagnostics">
+        <summary>方案标识与诊断</summary>
+        <p className="mf-dashboard-meta">
+          方案 {preview.previewId}
+          {preview.intentVersion !== null
+            ? ` · 版本 ${preview.intentVersion}`
+            : ""}
+        </p>
+        {filesHost ? null : (
+          <dl>
+            <dt>入选条目</dt>
+            <dd>{selectedItems.length}</dd>
+            <dt>未纳入条目</dt>
+            <dd>{skippedItems.length}</dd>
+            <dt>目标位置</dt>
+            <dd>{targets.length}</dd>
+          </dl>
+        )}
+      </details>
+    );
     return (
       <>
         <section aria-label="整批复核" className="mf-organize-batch-review">
@@ -4842,26 +4863,8 @@ export function ManualOrganizeDialog({
               </p>
             </>
           )}
-          {filesReanalysisAction()}
-          <details className="mf-organize-diagnostics mf-organize-plan-diagnostics">
-            <summary>方案标识与诊断</summary>
-            <p className="mf-dashboard-meta">
-              方案 {preview.previewId}
-              {preview.intentVersion !== null
-                ? ` · 版本 ${preview.intentVersion}`
-                : ""}
-            </p>
-            {filesHost ? null : (
-              <dl>
-                <dt>入选条目</dt>
-                <dd>{selectedItems.length}</dd>
-                <dt>未纳入条目</dt>
-                <dd>{skippedItems.length}</dd>
-                <dt>目标位置</dt>
-                <dd>{targets.length}</dd>
-              </dl>
-            )}
-          </details>
+          {filesHost ? null : filesReanalysisAction()}
+          {filesHost ? null : planDiagnostics}
         </section>
 
         <section
@@ -5016,6 +5019,13 @@ export function ManualOrganizeDialog({
               ))}
             </ul>
           </details>
+        ) : null}
+
+        {filesHost ? (
+          <>
+            {filesReanalysisAction()}
+            {planDiagnostics}
+          </>
         ) : null}
 
         {!preview.current ? (
@@ -5243,14 +5253,6 @@ export function ManualOrganizeDialog({
       </>
     ) : filesOverviewFooter ? (
       <>
-        <span className="mf-dashboard-meta">
-          已选 {activeSelection.length} 项 · 需要处理{" "}
-          {filesOverviewCount("pending")} 项
-          {filesOverviewCount("recorded") > 0
-            ? ` · 已有记录 ${filesOverviewCount("recorded")} 项`
-            : ""}
-          {` · 此刻可确认 ${filesConfirmableCount} 项`}
-        </span>
         <span className="mf-modal-footer-spacer" />
         <Button
           type="button"
@@ -5374,7 +5376,13 @@ export function ManualOrganizeDialog({
             关闭
           </Button>
         )}
-        <div className="mf-organize-confirm-submit">
+        <div
+          className={`mf-organize-confirm-submit${
+            filesHost && confirmationBlocker === null
+              ? " mf-organize-confirm-submit-inline"
+              : ""
+          }`}
+        >
           {confirmationBlocker !== null ? (
             <span className="mf-organize-confirm-blocker" role="status">
               暂不能确认：{confirmationBlocker.reason}
