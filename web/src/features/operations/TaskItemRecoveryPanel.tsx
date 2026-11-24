@@ -1949,17 +1949,6 @@ export function TaskItemRecoveryPanel({
           </p>
         </StatusBanner>
       )}
-      {message &&
-        submittedConfirmation === null &&
-        !savedDecisionAnalysisVisible &&
-        !(activePreparation !== null && message.startsWith("选择已保存")) && (
-          <StatusBanner
-            variant={repeatLocked ? "warning" : "info"}
-            title="恢复操作状态"
-          >
-            <p>{message}</p>
-          </StatusBanner>
-        )}
       {confirmationStatusText !== null && (
         <p className="mf-dashboard-meta" role="status">
           {confirmationStatusText}
@@ -1993,6 +1982,17 @@ export function TaskItemRecoveryPanel({
             heading="新计划摘要（零变更）"
             compact={hostedDiagnostics}
           />
+        )}
+      {message &&
+        submittedConfirmation === null &&
+        !savedDecisionAnalysisVisible &&
+        !(activePreparation !== null && message.startsWith("选择已保存")) && (
+          <StatusBanner
+            variant={repeatLocked ? "warning" : "info"}
+            title="恢复操作状态"
+          >
+            <p>{message}</p>
+          </StatusBanner>
         )}
       {repeatLocked && submittedConfirmation === null && (
         <div className="mf-actions">

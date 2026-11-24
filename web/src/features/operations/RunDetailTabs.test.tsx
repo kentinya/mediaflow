@@ -627,6 +627,53 @@ function recognitionRecoveryDocument(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** The exact evidence body of a live recognition blocker. */
+function recognitionWaitingEvidenceDocument(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const base = evidenceDocument();
+  return {
+    ...base,
+    item: itemRow({
+      item_id: "item-2",
+      status: "waiting_recognition",
+      stage: "recognition",
+      source_path: "movies/b.mkv",
+      destination_storage_id: null,
+      destination_path: null,
+      checkpoint: {
+        status: "waiting_recognition",
+        stage: "waiting",
+        raw_stage: "recognition",
+        blocker_kind: "recognition",
+        blocker_id: "review-1",
+        effect_certainty: "unknown",
+        retry_safety: "unknown",
+        refusal_reason: null,
+        checkpoint_version: "v1",
+        permitted_action_ids: ["decide"],
+      },
+    }),
+    checkpoint: {
+      ...(base["checkpoint"] as Record<string, unknown>),
+      status: "waiting_recognition",
+      raw_stage: "recognition",
+      blocker: {
+        kind: "recognition",
+        id: "review-1",
+        status: "pending",
+        task_id: "task-001",
+        item_id: "item-2",
+      },
+      nextAction: "choose a RecognitionType",
+      refusal_reason: null,
+      permitted_action_ids: ["resolve_recognition", "ignore"],
+    },
+    recoveryKind: "business_problem",
+    ...overrides,
+  };
+}
+
 /** The same item before its recognition decision was saved. */
 function pendingRecognitionRecoveryDocument(): Record<string, unknown> {
   return recognitionRecoveryDocument({
@@ -932,6 +979,8 @@ function preparedSummaryDocument(status: "prepared" | "confirmed") {
 interface DetailJourneyOptions {
   /** One exact item-1 evidence document, when a test needs a specific result. */
   readonly evidenceItem1?: unknown;
+  /** One exact item-2 evidence document, when a test needs a specific state. */
+  readonly evidenceItem2?: unknown;
   /** The exact native recovery read of item-1, when a test drives it. */
   readonly recoveryItem1?: (
     input: RequestInfo | URL,
@@ -1007,7 +1056,7 @@ function stubDetailJourney(
       return jsonResponse(options.overview ?? overviewDocument());
     }
     if (url.startsWith("/api/operations/runs/task-001/items/item-2")) {
-      return jsonResponse(evidenceDocument());
+      return jsonResponse(options.evidenceItem2 ?? evidenceDocument());
     }
     if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
       return jsonResponse(
@@ -2037,6 +2086,51 @@ describe("selected-run detail tabs", () => {
     );
   });
 
+  it("leads a live four-type problem with its decision instead of historical outcome blocks (Task 59.2 AC-06)", async () => {
+    stubDetailJourney([], {
+      evidenceItem2: recognitionWaitingEvidenceDocument(),
+      recovery: async (_input, init) =>
+        (init?.method ?? "GET") === "GET"
+          ? jsonResponse(pendingRecognitionRecoveryDocument())
+          : jsonResponse({ error: { code: "invalid" } }, 400),
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001&item=item-2");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const evidence = await findInlineEvidence(detail);
+    await within(evidence).findByText("文件证据：b.mkv");
+    // The current problem and its one legal decision lead the file body.
+    const reason = within(evidence).getByRole("region", {
+      name: "需处理原因",
+    });
+    expect(within(reason).getByText(/识别结果需要确认/)).toBeVisible();
+    const decision = await within(evidence).findByLabelText("识别决策");
+    expect(
+      reason.compareDocumentPosition(decision) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // Historical empty result/target blocks no longer occupy the space above
+    // the actionable decision; the decision is the body of this expanded area.
+    expect(
+      within(evidence).queryByRole("region", { name: "处理结果" }),
+    ).toBeNull();
+    expect(
+      within(evidence).queryByRole("region", { name: "来源与目标" }),
+    ).toBeNull();
+    expect(within(evidence).queryByText("没有已记录的目标文件")).toBeNull();
+    // The unchanged technical diagnostics remain after the decision.
+    expect(
+      decision.compareDocumentPosition(within(evidence).getByText(/技术诊断/)) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // The same backend-permitted decision remains selectable, and no write has
+    // happened merely by opening this evidence.
+    expect(
+      within(decision).getByRole("radio", { name: /Special/ }),
+    ).toBeEnabled();
+  });
+
   it("PATCH-20261111-4 places one evidence region under its own item and follows the selection", async () => {
     const user = userEvent.setup();
     const fetchMock = stubDetailJourney();
@@ -2559,6 +2653,14 @@ describe("selected-run detail tabs", () => {
     const summary = await within(detail).findByRole("region", {
       name: "新计划摘要",
     });
+    // The new summary replaces the historical target placeholder above it and
+    // stays before the item's technical diagnostics.
+    expect(within(detail).queryByText("没有已记录的目标文件")).toBeNull();
+    expect(
+      summary.compareDocumentPosition(
+        within(detail).getByText(/技术诊断（检查点/),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     // The same-page summary leads with its status, the exact source/target
     // rows and the one confirmation; the verbose shared plan findings stay
     // out of the Task Center recovery surface.

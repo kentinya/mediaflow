@@ -1932,6 +1932,13 @@ test("the opened item reconciles the exact sibling subset admission it did not s
     await evidence.getByRole("button", { name: "关闭证据" }).click();
   };
   await openEvidence("Fifteenth.2015.mkv");
+  // Task 59.2 AC-06: the current decision is the body of the expanded item;
+  // a historical empty target no longer occupies the space above it.
+  await expect(evidence.getByLabel("识别决策")).toBeVisible();
+  await expect(
+    evidence.getByRole("region", { name: "需处理原因" }),
+  ).toBeVisible();
+  await expect(evidence.getByText("没有已记录的目标文件")).toHaveCount(0);
   await saveRecognition();
   await openEvidence("Sixteenth.2016.mkv");
   await saveRecognition();
@@ -1948,6 +1955,9 @@ test("the opened item reconciles the exact sibling subset admission it did not s
     await page.waitForTimeout(250);
   }
   await expect(summary).toBeVisible({ timeout: 30_000 });
+  // The new summary carries the exact source/target itself; the historical
+  // empty target never reappears above it.
+  await expect(evidence.getByText("没有已记录的目标文件")).toHaveCount(0);
   await summary
     .getByRole("checkbox", { name: "选择 Fifteenth.2015.mkv" })
     .uncheck();
@@ -5336,6 +5346,15 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
+  // Task 59.2 AC-04/AC-05: the durable waiting item and its still-continuable
+  // Files preparation lead the first card; `running` is not an execution claim.
+  await expect(detail.getByText("等待确认后执行")).toBeVisible();
+  await expect(
+    detail.getByText(/本次 Files 整理仍有 1 个文件等待确认/),
+  ).toBeVisible();
+  await expect(
+    detail.getByText("执行已受理，文件结果由后端独立记录。"),
+  ).toHaveCount(0);
   const continueLink = detail.getByRole("link", { name: "继续整理" });
   await expect(continueLink).toBeVisible();
   const continueHref = await continueLink.getAttribute("href");

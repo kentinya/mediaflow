@@ -102,6 +102,68 @@ function runDocument(overrides: Record<string, unknown> = {}) {
   return document;
 }
 
+function progressDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    available: true,
+    kind: "organize",
+    unit: "主条目",
+    unit_key: "task_items",
+    basis: "整理计数:成功表示已验证的存储操作结果。",
+    success_means: "已验证的存储操作成功",
+    known_total: 1,
+    indeterminate: false,
+    processed: 1,
+    dispositions: {
+      pending: 0,
+      active: 0,
+      waiting: 1,
+      success: 0,
+      skipped: 0,
+      failed_partial: 0,
+      ignored: 0,
+      cancelled: 0,
+    },
+    confirmed_success: 0,
+    uncertain_success: 0,
+    scan_errors: null,
+    scan_discovery_complete: null,
+    scan_progress: {},
+    attachment_steps: 0,
+    effect_counts: {},
+    results_total: 0,
+    results_complete: true,
+    sideEffects: "none",
+    ...overrides,
+  };
+}
+
+function manualSubmissionDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    executionId: "execution-1",
+    previewId: "preview-1",
+    intentVersion: 3,
+    selectedItemIds: ["item-1"],
+    status: "completed",
+    createdAt: "2026-08-22T12:01:00+00:00",
+    destructiveAuthority: {
+      allowOverwrite: false,
+      allowSourceCleanup: false,
+    },
+    items: [
+      {
+        itemId: "item-1",
+        taskItemId: "task-item-1",
+        status: "success",
+        resultId: "result-1",
+        sourcePath: "Movies/One.2001.mkv",
+        checkpointPath: "/api/tasks/task-001/items/task-item-1",
+      },
+    ],
+    sideEffects: "none",
+    ...overrides,
+  };
+}
+
 function summaryDocument(overrides: Record<string, unknown> = {}) {
   const zero = {
     recognition: 0,
@@ -715,6 +777,117 @@ describe("Operations run inventory landing", () => {
       expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
     );
     expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("reports an unconfirmed Files preparation as waiting instead of admitted execution (Task 59.2 AC-04/AC-05)", async () => {
+    const overview = runDocument({
+      status: "running",
+      command: "manual_organize",
+      command_label: "手动整理",
+      current_stage: null,
+      total_items: 1,
+      completed_items: 0,
+      processed_items: 1,
+      filesPreparation: {
+        discoveryId: "discovery-1",
+        resourceLibraryId: "source",
+        continuable: true,
+      },
+      progress: progressDocument(),
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/operations/runs?")) {
+        return jsonResponse(pageDocument({ items: [overview] }));
+      }
+      if (url === "/api/operations/runs/task-001") {
+        return jsonResponse(overview);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    // The durable waiting item and the still-continuable Files preparation
+    // are the first-screen evidence; a whole-Task `running` status is not an
+    // admission claim.
+    expect(await within(detail).findByText("等待确认后执行")).toBeVisible();
+    expect(
+      within(detail).getByText(
+        "本次 Files 整理仍有 1 个文件等待确认；确认前不会执行文件操作。",
+      ),
+    ).toBeVisible();
+    expect(
+      within(detail).queryByText("执行已受理，文件结果由后端独立记录。"),
+    ).toBeNull();
+    expect(
+      within(detail).getByText("查看整理摘要，确认后执行。"),
+    ).toBeVisible();
+    expect(
+      within(detail).getByRole("link", { name: "继续整理" }),
+    ).toBeVisible();
+  });
+
+  it("states an already-admitted confirmation and a still-waiting sibling separately (Task 59.2 AC-04/AC-05)", async () => {
+    const overview = runDocument({
+      status: "running",
+      command: "manual_organize",
+      command_label: "手动整理",
+      current_stage: null,
+      total_items: 2,
+      completed_items: 1,
+      processed_items: 1,
+      success_items: 1,
+      filesPreparation: {
+        discoveryId: "discovery-1",
+        resourceLibraryId: "source",
+        continuable: true,
+      },
+      progress: progressDocument({
+        known_total: 2,
+        processed: 2,
+        dispositions: {
+          pending: 0,
+          active: 0,
+          waiting: 1,
+          success: 1,
+          skipped: 0,
+          failed_partial: 0,
+          ignored: 0,
+          cancelled: 0,
+        },
+        confirmed_success: 1,
+        results_total: 1,
+        effect_counts: { verified_complete: 1 },
+      }),
+      manualOrganizeSubmissions: [manualSubmissionDocument()],
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/operations/runs?")) {
+        return jsonResponse(pageDocument({ items: [overview] }));
+      }
+      if (url === "/api/operations/runs/task-001") {
+        return jsonResponse(overview);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    expect(
+      await within(detail).findByText("已有确认受理，另有文件等待确认"),
+    ).toBeVisible();
+    expect(
+      within(detail).getByText(
+        "已有 1 次确认记录被受理；本次 Files 整理仍有 1 个文件等待确认，确认前不会执行该部分文件。",
+      ),
+    ).toBeVisible();
+    expect(
+      within(detail).getByRole("link", { name: "继续整理" }),
+    ).toBeVisible();
   });
 
   it("PATCH-20261113-3 continues the exact Files preparation above the preserved task center", async () => {

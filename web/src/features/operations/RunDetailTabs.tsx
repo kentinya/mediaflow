@@ -62,6 +62,7 @@ import {
 } from "./run-detail-query";
 import type { RunDetailState, RunDetailTab } from "./run-detail-state";
 import { taskFailureReason } from "./ProblemFilePanel";
+import { isRecoveryActionKind } from "../../entities/operations/task-item-recovery";
 import {
   TaskItemRecoveryPanel,
   type TaskItemDecisionDraft,
@@ -1476,6 +1477,20 @@ const NO_REPLAY_ITEM_STATUSES = new Set([
   "dry_run",
 ]);
 
+/**
+ * A settled file outcome that stays read-only even when the item still carries
+ * a historical recovery lineage.  Only an open problem/decision or a prepared
+ * summary turns the expanded evidence into an actionable body.
+ */
+const READ_ONLY_OUTCOME_ITEM_STATUSES = new Set([
+  "success",
+  "partial",
+  "failed",
+  "skipped",
+  "ignored",
+  "cancelled",
+]);
+
 /** Chinese labels for the persisted Result row status values. */
 const RESULT_STATUS_LABELS: Readonly<Record<string, string>> = {
   pending: "待处理",
@@ -1893,109 +1908,131 @@ function RunEvidenceSection({
             failure.nextAction === checkpoint.nextAction
               ? failure.nextAction
               : null;
+          // A live four-type problem or an admitted recovery step owns this
+          // file's body: its real problem and current decision/new summary
+          // lead, while generic outcome/path blocks follow only when they
+          // carry actual facts.  A read-only item keeps the established
+          // result -> source/target -> execution -> evidence order.
+          const recoveryActionable =
+            !READ_ONLY_OUTCOME_ITEM_STATUSES.has(item.status) &&
+            (isRecoveryActionKind(evidence.recoveryKind) ||
+              checkpoint.blockerKind !== null);
+          const outcomeSection = (
+            <section className="mf-run-evidence-block" aria-label="处理结果">
+              <h5>处理结果</h5>
+              <p className={`mf-run-outcome mf-run-outcome-${outcome.tone}`}>
+                {outcome.text}
+              </p>
+            </section>
+          );
+          const factsSection = (
+            <section className="mf-run-evidence-block" aria-label="来源与目标">
+              <h5>来源与目标</h5>
+              <dl className="mf-dashboard-facts">
+                <div>
+                  <dt>来源</dt>
+                  <dd>
+                    {item.storageId}:{item.sourcePath}
+                  </dd>
+                </div>
+                <div>
+                  <dt>目标</dt>
+                  <dd>{target ?? "没有已记录的目标文件"}</dd>
+                </div>
+              </dl>
+            </section>
+          );
+          const processingBasis =
+            processingBasisRows.length > 0 ? (
+              <details className="mf-run-fact-diagnostics mf-run-basis">
+                <summary>处理依据</summary>
+                <PlanProcessingSummary evidence={evidence.planEvidence} />
+              </details>
+            ) : null;
+          const executionSection =
+            latestResult !== null ||
+            checkpoint.completedOperations.length > 0 ||
+            checkpoint.uncertainEffects.length > 0 ? (
+              <section className="mf-run-evidence-block" aria-label="执行记录">
+                <h5>实际操作与效果</h5>
+                {latestResult === null ? (
+                  <ul className="mf-run-result-list">
+                    {checkpoint.completedOperations.length > 0 && (
+                      <li>
+                        已完成：
+                        {checkpoint.completedOperations
+                          .map(storageStepLabel)
+                          .join("、")}
+                      </li>
+                    )}
+                    {checkpoint.uncertainEffects.length > 0 && (
+                      <li>
+                        未确认效果：
+                        {checkpoint.uncertainEffects
+                          .map(storageStepLabel)
+                          .join("、")}
+                      </li>
+                    )}
+                  </ul>
+                ) : (
+                  <div className="mf-run-current-result">
+                    <ResultAttemptDetails result={latestResult} index={0} />
+                  </div>
+                )}
+              </section>
+            ) : null;
+          const attentionSection = needsAttention ? (
+            <section className="mf-run-evidence-block" aria-label="需处理原因">
+              <h5>需处理原因</h5>
+              {failure !== null && <p>{failureReason}。</p>}
+              {checkpoint.blockerKind !== null && (
+                <p>
+                  当前阻塞：
+                  {BLOCKER_REASONS[checkpoint.blockerKind] ??
+                    "需要人工处理决定"}
+                </p>
+              )}
+              {unconfirmedEffect && (
+                <p>
+                  执行已尝试，目标文件结果尚未确认；请先核对，不要直接重放。
+                </p>
+              )}
+              {checkpoint.uncertainEffects.length > 0 && (
+                <p>未确认效果：{checkpoint.uncertainEffects.join("、")}</p>
+              )}
+            </section>
+          ) : null;
+          const recoveryPanel = (
+            <TaskItemRecoveryPanel
+              key={`${evidence.taskId}:${itemId}:${token ?? "disconnected"}`}
+              taskId={evidence.taskId}
+              itemId={itemId}
+              runId={runId}
+              active={active}
+              hostedDiagnostics
+              decisionDraft={decisionDraft}
+              onDecisionDraftChange={onDecisionDraftChange}
+            />
+          );
           return (
             <>
-              <section className="mf-run-evidence-block" aria-label="处理结果">
-                <h5>处理结果</h5>
-                <p className={`mf-run-outcome mf-run-outcome-${outcome.tone}`}>
-                  {outcome.text}
-                </p>
-              </section>
-              <section
-                className="mf-run-evidence-block"
-                aria-label="来源与目标"
-              >
-                <h5>来源与目标</h5>
-                <dl className="mf-dashboard-facts">
-                  <div>
-                    <dt>来源</dt>
-                    <dd>
-                      {item.storageId}:{item.sourcePath}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>目标</dt>
-                    <dd>{target ?? "没有已记录的目标文件"}</dd>
-                  </div>
-                </dl>
-              </section>
-              {processingBasisRows.length > 0 && (
-                <details className="mf-run-fact-diagnostics mf-run-basis">
-                  <summary>处理依据</summary>
-                  <PlanProcessingSummary evidence={evidence.planEvidence} />
-                </details>
+              {recoveryActionable ? (
+                <>
+                  {attentionSection}
+                  {recoveryPanel}
+                  {executionSection}
+                  {processingBasis}
+                </>
+              ) : (
+                <>
+                  {outcomeSection}
+                  {attentionSection}
+                  {factsSection}
+                  {executionSection}
+                  {processingBasis}
+                  {recoveryPanel}
+                </>
               )}
-              {(latestResult !== null ||
-                checkpoint.completedOperations.length > 0 ||
-                checkpoint.uncertainEffects.length > 0) && (
-                <section
-                  className="mf-run-evidence-block"
-                  aria-label="执行记录"
-                >
-                  <h5>实际操作与效果</h5>
-                  {latestResult === null ? (
-                    <ul className="mf-run-result-list">
-                      {checkpoint.completedOperations.length > 0 && (
-                        <li>
-                          已完成：
-                          {checkpoint.completedOperations
-                            .map(storageStepLabel)
-                            .join("、")}
-                        </li>
-                      )}
-                      {checkpoint.uncertainEffects.length > 0 && (
-                        <li>
-                          未确认效果：
-                          {checkpoint.uncertainEffects
-                            .map(storageStepLabel)
-                            .join("、")}
-                        </li>
-                      )}
-                    </ul>
-                  ) : (
-                    <div className="mf-run-current-result">
-                      <ResultAttemptDetails result={latestResult} index={0} />
-                    </div>
-                  )}
-                </section>
-              )}
-              {needsAttention && (
-                <section
-                  className="mf-run-evidence-block"
-                  aria-label="需处理原因"
-                >
-                  <h5>需处理原因</h5>
-                  {failure !== null && <p>{failureReason}。</p>}
-                  {checkpoint.blockerKind !== null && (
-                    <p>
-                      当前阻塞：
-                      {BLOCKER_REASONS[checkpoint.blockerKind] ??
-                        "需要人工处理决定"}
-                    </p>
-                  )}
-                  {unconfirmedEffect && (
-                    <p>
-                      执行已尝试，目标文件结果尚未确认；请先核对，不要直接重放。
-                    </p>
-                  )}
-                  {checkpoint.uncertainEffects.length > 0 && (
-                    <p>
-                      未确认效果：
-                      {checkpoint.uncertainEffects.join("、")}
-                    </p>
-                  )}
-                </section>
-              )}
-              <TaskItemRecoveryPanel
-                key={`${evidence.taskId}:${itemId}:${token ?? "disconnected"}`}
-                taskId={evidence.taskId}
-                itemId={itemId}
-                runId={runId}
-                active={active}
-                hostedDiagnostics
-                decisionDraft={decisionDraft}
-                onDecisionDraftChange={onDecisionDraftChange}
-              />
               {priorResults.length > 0 && (
                 <details className="mf-run-fact-diagnostics mf-run-history">
                   <summary>此前尝试（{priorResults.length} 次）</summary>

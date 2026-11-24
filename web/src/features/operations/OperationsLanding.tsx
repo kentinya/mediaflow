@@ -1871,6 +1871,25 @@ function runStatusTone(run: RunSummary): RunStatusTone {
   return "neutral";
 }
 
+/**
+ * The durable item dispositions that explain what a still-running flow is
+ * actually waiting on.  A whole-Task status of `running` also covers ordinary
+ * human waiting and zero-mutation analysis, so it is never used on its own as
+ * proof that a file execution was admitted.
+ */
+function runDispositionCounts(run: RunSummary): {
+  readonly waiting: number;
+  readonly active: number;
+  readonly pending: number;
+} | null {
+  if (run.progress?.available !== true) return null;
+  return {
+    waiting: run.progress.dispositions.waiting,
+    active: run.progress.dispositions.active,
+    pending: run.progress.dispositions.pending,
+  };
+}
+
 /** The card title and its one-sentence truthful explanation. */
 function runStatusHeadline(run: RunSummary): {
   readonly title: string;
@@ -1941,11 +1960,78 @@ function runStatusHeadline(run: RunSummary): {
         title: "任务已取消",
         copy: "未开始的操作已停止，已完成的文件效果继续保留。",
       };
-    case "running":
+    case "running": {
+      const counts = runDispositionCounts(run);
+      const filesWaiting =
+        counts !== null &&
+        counts.waiting > 0 &&
+        run.filesPreparation?.continuable === true;
+      if (
+        counts !== null &&
+        counts.waiting > 0 &&
+        (counts.active > 0 || counts.pending > 0)
+      ) {
+        const confirmed = run.manualOrganizeSubmissions.length;
+        return {
+          title: filesWaiting
+            ? "部分文件等待确认，其余正在处理"
+            : "部分文件正在处理，另有文件等待处理",
+          copy:
+            confirmed > 0
+              ? `已有 ${confirmed} 次确认记录被受理；另有 ${counts.waiting} 个文件等待确认或处理，确认前不会执行对应文件。`
+              : `另有 ${counts.waiting} 个文件等待确认或处理，确认前不会执行对应文件。`,
+        };
+      }
+      if (counts !== null && counts.waiting > 0) {
+        const confirmed = run.manualOrganizeSubmissions.length;
+        if (filesWaiting) {
+          return confirmed > 0
+            ? {
+                title: "已有确认受理，另有文件等待确认",
+                copy: `已有 ${confirmed} 次确认记录被受理；本次 Files 整理仍有 ${counts.waiting} 个文件等待确认，确认前不会执行该部分文件。`,
+              }
+            : {
+                title: "等待确认后执行",
+                copy: `本次 Files 整理仍有 ${counts.waiting} 个文件等待确认；确认前不会执行文件操作。`,
+              };
+        }
+        return {
+          title: "等待处理",
+          copy:
+            confirmed > 0
+              ? `已有 ${confirmed} 次确认记录被受理；另有 ${counts.waiting} 个文件等待决定或确认。`
+              : "同一任务仍有文件需要决定或确认。",
+        };
+      }
+      if (counts !== null && counts.active === 0 && counts.pending > 0) {
+        return {
+          title: "已受理，等待执行",
+          copy: "后台尚未开始处理这些文件；文件结果将在执行后独立记录。",
+        };
+      }
+      if (run.currentStage === "organizing") {
+        return {
+          title: "正在执行整理",
+          copy: "当前阶段为整理执行；每个文件的实际结果由后端独立记录。",
+        };
+      }
+      if (run.currentStage === "scanning") {
+        return {
+          title: "正在扫描文件",
+          copy: "当前阶段为扫描；文件结果和后续阶段以后端记录为准。",
+        };
+      }
+      if (run.currentStage === "processing") {
+        return {
+          title: "正在分析文件",
+          copy: "当前阶段为媒体分析；文件结果和后续执行以后端记录为准。",
+        };
+      }
       return {
-        title: "正在处理文件",
-        copy: "执行已受理，文件结果由后端独立记录。",
+        title: "正在处理",
+        copy: "流程仍在进行；当前阶段和文件结果以后端记录为准。",
       };
+    }
     case "waiting":
       return {
         title: "等待处理",
