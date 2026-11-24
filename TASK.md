@@ -362,7 +362,7 @@ Slice 重评：RO-1 的定向概览和重开已验证。RO-2 的 Files 直连丢
 ### Developer Correction Report (in-place analysis read-back)
 
 按上轮修正指引实施，范围仍限 Task 59.1。实现候选
-`b74cfb071d0c2fd3f35b479c3cd4c90a0a1c0e0e`：
+`b74cfb07d60187ecfedb04135f7b07f2eb0c5029`：
 
 - 共享弹窗按 host 落实两条旅程。Files 仍用同一条目/同一准备的读回回到概览；任务中心
   「继续整理」保留原位逐文件复核：未知分析结果经同一准备读回证明受理后，新方案或该条目
