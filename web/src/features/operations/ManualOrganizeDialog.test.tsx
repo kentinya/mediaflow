@@ -2126,7 +2126,7 @@ describe("ManualOrganizeDialog", () => {
     await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
 
     const warning =
-      await screen.findByText(/候选选择已保存,但重新分析暂未完成/);
+      await screen.findByText(/已读取同一准备，本次分析明确未受理/);
     expect(warning).toBeVisible();
     expect(backend.calls.choicePosts).toHaveLength(1);
     expect(backend.calls.analyzePosts).toHaveLength(0);
@@ -3236,6 +3236,15 @@ describe("ManualOrganizeDialog", () => {
       init?: RequestInit,
     ) => Promise<Response>;
     let analyzeResponseLost = false;
+    let analysisAccepted = false;
+    let releasePreparationRead = () => {};
+    const preparationReadGate = new Promise<void>((resolve) => {
+      releasePreparationRead = resolve;
+    });
+    let markPreparationReadStarted: (() => void) | null = null;
+    const preparationReadStarted = new Promise<void>((resolve) => {
+      markPreparationReadStarted = resolve;
+    });
     backend.fetchMock.mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith("/analyze") && !analyzeResponseLost) {
@@ -3243,13 +3252,33 @@ describe("ManualOrganizeDialog", () => {
         // The real API accepts and publishes the same analysis; only this
         // browser's copy of the response is dropped.
         await original(input, init);
+        analysisAccepted = true;
         throw new TypeError("Failed to fetch");
+      }
+      if (
+        analysisAccepted &&
+        url.endsWith(`/api/operations/organize/discoveries/${DISCOVERY_ID}`)
+      ) {
+        markPreparationReadStarted?.();
+        await preparationReadGate;
       }
       return original(input, init);
     });
 
     await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
     await waitFor(() => expect(backend.calls.analyzePosts).toHaveLength(1));
+    await preparationReadStarted;
+    // The first same-preparation read is slow. The saved choice and the
+    // current file stay in place, and the one analysis action cannot submit
+    // a second request while acceptance is still being read.
+    const locked = await screen.findByRole("button", {
+      name: "正在核对分析结果…",
+    });
+    expect(locked).toBeDisabled();
+    expect(screen.getByText(/正在核对同一准备是否已受理/)).toBeVisible();
+    expect(backend.calls.analyzePosts).toHaveLength(1);
+    expect(backend.calls.choicePosts).toHaveLength(1);
+    releasePreparationRead();
     const overview = await screen.findByRole("region", {
       name: "本次整理概览",
     });
@@ -3258,6 +3287,38 @@ describe("ManualOrganizeDialog", () => {
     );
     expect(backend.calls.choicePosts).toHaveLength(1);
     expect(backend.calls.analyzePosts).toHaveLength(1);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 restores the analysis-only action only after the same preparation proves non-admission", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.rejectAnalysisOnce = true;
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    await openCorrection(user);
+    await user.selectOptions(
+      screen.getByLabelText(`识别类型 ${filename(0)}`),
+      "C",
+    );
+    await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
+    await waitFor(() => expect(backend.calls.analyzePosts).toHaveLength(1));
+
+    // The 409 is not treated as a retry ticket by itself: the same unchanged
+    // preparation is read first and proves this request did not enter the
+    // analysis stage. Only then does the saved choice get an analysis-only
+    // retry, which never posts the choice again.
+    const save = await screen.findByRole("button", {
+      name: "保存并重新分析",
+    });
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(screen.getByText(/明确未受理/)).toBeVisible();
+    expect(backend.calls.choicePosts).toHaveLength(1);
+
+    await user.click(save);
+    await waitFor(() => expect(backend.calls.analyzePosts).toHaveLength(2));
+    expect(backend.calls.choicePosts).toHaveLength(1);
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
@@ -3419,6 +3480,54 @@ describe("ManualOrganizeDialog", () => {
     expect(
       screen.getByLabelText(`元数据身份 ${filename(0)}`),
     ).toBeInTheDocument();
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 releases the read lock when a lost analysis is proved and only a sibling summary changed", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.flipPreviewOnAnalyze = true;
+      value.state.secondPlanKind = "sibling";
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    await openCorrection(user);
+    const identity = screen.getByLabelText(`元数据身份 ${filename(0)}`);
+    const alternate = within(identity)
+      .getAllByRole("option")
+      .at(2)
+      ?.getAttribute("value");
+    await user.selectOptions(identity, alternate as string);
+
+    const original = backend.fetchMock.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    let analyzeResponseLost = false;
+    backend.fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/analyze") && !analyzeResponseLost) {
+        analyzeResponseLost = true;
+        await original(input, init);
+        throw new TypeError("Failed to fetch");
+      }
+      return original(input, init);
+    });
+
+    await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
+    await waitFor(() => expect(backend.calls.analyzePosts).toHaveLength(1));
+    // The newer summary reorders files but this item's own facts are equal.
+    // The proved analysis therefore releases the read lock instead of
+    // holding the current file forever; browsing and inputs stay in place.
+    await screen.findByRole("heading", { name: /第 10 \/ 10 个/ });
+    expect(
+      await screen.findByText(/当前文件的可读方案事实没有变化/),
+    ).toBeVisible();
+    expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "正在核对分析结果…" }),
+    ).toBeNull();
+    expect(backend.calls.analyzePosts).toHaveLength(1);
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 

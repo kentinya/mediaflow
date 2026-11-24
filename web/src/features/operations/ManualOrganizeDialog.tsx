@@ -489,6 +489,28 @@ export function ManualOrganizeDialog({
   }
   const [filesDecisionReturn, setFilesDecisionReturn] =
     useState<FilesDecisionReturn | null>(null);
+  /**
+   * The exact same-preparation reconciliation of an unknown per-file analysis
+   * response. `reading` keeps the saved choice and the submit control locked;
+   * `awaiting` means the read proved admission and the next plan is pending;
+   * `unreadable` keeps the lock and offers only another read of this
+   * preparation, never a second analysis request.
+   */
+  interface FilesAnalysisReadback {
+    readonly itemId: string;
+    readonly filename: string;
+    readonly previewId: string | null;
+    readonly preparationVersion: number;
+    readonly preparationStatus: string;
+    readonly phase: "reading" | "awaiting" | "unreadable";
+  }
+  const [filesAnalysisReadback, setFilesAnalysisReadback] =
+    useState<FilesAnalysisReadback | null>(null);
+  const filesAnalysisReadbackVersion = useRef(0);
+  const clearFilesAnalysisReadback = useCallback(() => {
+    filesAnalysisReadbackVersion.current += 1;
+    setFilesAnalysisReadback(null);
+  }, []);
   /** Bumped only by a real operator edit, never by saving or read-back. */
   const fileDraftRevision = useRef(0);
   /** The visible position before any durable anchor has been picked. */
@@ -729,10 +751,30 @@ export function ManualOrganizeDialog({
       readonly analysisFailure?: {
         readonly code: string;
         readonly nextAction: string | null;
+        readonly status: number;
       };
+      /** The exact preparation/item facts this request started from. */
+      readonly analysisBaseline: {
+        readonly itemId: string;
+        readonly filename: string;
+        readonly previewId: string | null;
+        readonly preparationVersion: number;
+        readonly preparationStatus: string;
+      } | null;
     }> => {
-      const item = intent?.items.find((row) => row.itemId === options.itemId);
       if (preparation === undefined) throw { stage: "save", code: "not_ready" };
+      const item = intent?.items.find((row) => row.itemId === options.itemId);
+      const previewItem = items.find((row) => row.itemId === options.itemId);
+      const analysisBaseline =
+        options.itemId === ""
+          ? null
+          : {
+              itemId: options.itemId,
+              filename: previewItem?.sourceFilename ?? options.itemId,
+              previewId: preparation.previewId,
+              preparationVersion: preparation.version,
+              preparationStatus: preparation.status,
+            };
       if (!options.onlyAnalysis) {
         if (item === undefined || intent === undefined) {
           throw { stage: "save", code: "item_unavailable" };
@@ -793,10 +835,12 @@ export function ManualOrganizeDialog({
           analysisFailure: {
             code: analyzed.code,
             nextAction: analyzed.nextAction,
+            status: analyzed.status,
           },
+          analysisBaseline,
         };
       }
-      return { saved: true, analyzed: true };
+      return { saved: true, analyzed: true, analysisBaseline };
     },
     retry: false,
     onMutate: (variables) => {
@@ -814,7 +858,7 @@ export function ManualOrganizeDialog({
       // request fact; the refetch (or rejection) below reports this one.
       setPreparationNotice(null);
     },
-    onSuccess: (value, variables) => {
+    onSuccess: async (value, variables) => {
       if (variables.onlyAnalysis && variables.itemId === "") {
         if (value.analyzed) {
           setPreparationNotice({
@@ -840,6 +884,38 @@ export function ManualOrganizeDialog({
         // operator to submit the same analysis again.
         void preparationQuery.refetch();
         void intentQuery.refetch();
+        return;
+      }
+      const baseline = value.analysisBaseline;
+      const analysisFailure = value.analysisFailure;
+      if (
+        !value.analyzed &&
+        baseline !== null &&
+        analysisFailure !== undefined
+      ) {
+        // The saved choice is durable, but a lost or unreadable analysis
+        // response is not admission proof. Keep this file and its saved
+        // selection; the same preparation read below is the only authority
+        // that can prove acceptance or an explicit non-admission.
+        if (!variables.onlyAnalysis) {
+          setDrafts((previous) => {
+            const next = { ...previous };
+            delete next[variables.itemId];
+            return next;
+          });
+        }
+        setFilesAnalysisReadback({ ...baseline, phase: "reading" });
+        setNotices((previous) => ({
+          ...previous,
+          [variables.itemId]: {
+            kind: "warning",
+            text: `选择已保存；分析结果未确认(${analysisFailure.code})，正在核对同一准备是否已受理…`,
+            retryAnalysis: false,
+          },
+        }));
+        const outcome = await readFilesAnalysisOutcome(baseline);
+        if (outcome === "stale") return;
+        applyFilesAnalysisOutcome(baseline, outcome);
         return;
       }
       if (variables.onlyAnalysis) {
@@ -1422,6 +1498,7 @@ export function ManualOrganizeDialog({
   }
   /** One browse-only page move: it saves nothing and runs no analysis. */
   const goTo = (position: number) => {
+    clearFilesAnalysisReadback();
     const clamped = Math.max(
       0,
       Math.min(position, Math.max(items.length - 1, 0)),
@@ -1575,7 +1652,107 @@ export function ManualOrganizeDialog({
     if (baseline !== null) setFilesDecisionReturn(baseline);
   };
 
+  type FilesAnalysisReadOutcome =
+    "accepted" | "refused" | "unreadable" | "stale";
+  /**
+   * Read this exact preparation once and decide what its durable facts prove
+   * about the analysis request whose response was lost. A still-running
+   * analysis, a linked new plan or a version change proves admission. An
+   * unchanged completed preparation is an explicit non-admission. Anything
+   * else is unread, so the original submit stays locked.
+   */
+  const readFilesAnalysisOutcome = async (baseline: {
+    readonly itemId: string;
+    readonly filename: string;
+    readonly previewId: string | null;
+    readonly preparationVersion: number;
+    readonly preparationStatus: string;
+  }): Promise<FilesAnalysisReadOutcome> => {
+    const readVersion = filesAnalysisReadbackVersion.current + 1;
+    filesAnalysisReadbackVersion.current = readVersion;
+    setFilesAnalysisReadback({ ...baseline, phase: "reading" });
+    const [preparationRead] = await Promise.all([
+      preparationQuery.refetch({ cancelRefetch: false }),
+      intentQuery.refetch({ cancelRefetch: false }),
+    ]);
+    if (filesAnalysisReadbackVersion.current !== readVersion) return "stale";
+    const latest =
+      preparationRead.data?.ok === true
+        ? preparationRead.data.model
+        : undefined;
+    if (latest === undefined) return "unreadable";
+    const analysisActive = [
+      "queued",
+      "running",
+      "waiting_stability",
+      "analyzing",
+    ].includes(latest.status);
+    if (
+      analysisActive ||
+      latest.previewId !== baseline.previewId ||
+      latest.version !== baseline.preparationVersion
+    ) {
+      return "accepted";
+    }
+    if (latest.status === baseline.preparationStatus) return "refused";
+    return "unreadable";
+  };
+
+  const applyFilesAnalysisOutcome = (
+    baseline: {
+      readonly itemId: string;
+      readonly filename: string;
+      readonly previewId: string | null;
+      readonly preparationVersion: number;
+      readonly preparationStatus: string;
+    },
+    outcome: Exclude<FilesAnalysisReadOutcome, "stale">,
+  ) => {
+    if (outcome === "accepted") {
+      setFilesAnalysisReadback({ ...baseline, phase: "awaiting" });
+      setNotices((previous) => ({
+        ...previous,
+        [baseline.itemId]: {
+          kind: "success",
+          text: `选择已保存；已读取同一准备，本次分析已受理。正在等待新的零变更方案，方案就绪后会自动回到概览。`,
+          retryAnalysis: false,
+        },
+      }));
+      return;
+    }
+    setFilesAnalysisReadback(
+      outcome === "unreadable" ? { ...baseline, phase: "unreadable" } : null,
+    );
+    setNotices((previous) => ({
+      ...previous,
+      [baseline.itemId]: {
+        kind: "warning",
+        text:
+          outcome === "refused"
+            ? "选择已保存；已读取同一准备，本次分析明确未受理。可再次点击“保存并重新分析”只补做分析（不会重复保存）。"
+            : "选择已保存；暂时无法确认本次分析是否受理。已保持请求锁定；请重新读取同一准备后再继续，不会自动重发分析。",
+        retryAnalysis: outcome === "refused",
+      },
+    }));
+  };
+
+  const retryFilesAnalysisReadback = async () => {
+    const current = filesAnalysisReadback;
+    if (current === null) return;
+    const prepared = {
+      itemId: current.itemId,
+      filename: current.filename,
+      previewId: current.previewId,
+      preparationVersion: current.preparationVersion,
+      preparationStatus: current.preparationStatus,
+    };
+    const outcome = await readFilesAnalysisOutcome(prepared);
+    if (outcome === "stale") return;
+    applyFilesAnalysisOutcome(prepared, outcome);
+  };
+
   const openFilesOverviewItem = (itemId: string) => {
+    clearFilesAnalysisReadback();
     const position = items.findIndex((item) => item.itemId === itemId);
     if (position < 0) return;
     setIndex(position);
@@ -1586,6 +1763,7 @@ export function ManualOrganizeDialog({
   };
 
   const returnToFilesOverview = () => {
+    clearFilesAnalysisReadback();
     setStep("review");
     setFilesOverviewVisible(true);
     setFilesDecisionReturn(null);
@@ -1620,12 +1798,14 @@ export function ManualOrganizeDialog({
       // Leaving this exact file is the event that retires the pending return.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setFilesDecisionReturn(null);
+      clearFilesAnalysisReadback();
       return;
     }
     if (preview.previewId === filesDecisionReturn.previewId) return;
     if (filesDecisionReturn.draftRevision !== fileDraftRevision.current) {
       // A newer edit belongs to the operator, not to the old response.
       setFilesDecisionReturn(null);
+      clearFilesAnalysisReadback();
       return;
     }
     const item = filesDecisionReturnItem;
@@ -1638,6 +1818,7 @@ export function ManualOrganizeDialog({
         text: `「${filesDecisionReturn.filename}」已重新分析，但未出现在当前方案中；请核对当前范围。`,
       });
       setFilesDecisionReturn(null);
+      clearFilesAnalysisReadback();
       setFilesOverviewFocus({ kind: "heading" });
       setFilesOverviewVisible(true);
       setStep("review");
@@ -1646,6 +1827,24 @@ export function ManualOrganizeDialog({
     if (filesDecisionReturnSignature === filesDecisionReturn.signature) {
       // A newer summary was published for other files. This item's own
       // readable facts did not change, so its analysis result is not proven.
+      // If the same-preparation read already proved this analysis and the
+      // newer plan leaves this file's facts unchanged, keep the real facts
+      // readable and release the lock instead of waiting forever for a
+      // difference that this summary does not contain.
+      if (
+        filesAnalysisReadback?.itemId === filesDecisionReturn.itemId &&
+        filesAnalysisReadback.phase === "awaiting"
+      ) {
+        clearFilesAnalysisReadback();
+        setNotices((previous) => ({
+          ...previous,
+          [filesDecisionReturn.itemId]: {
+            kind: "warning",
+            text: "已重新分析并读回当前准备；当前文件的可读方案事实没有变化。请按当前状态继续核对。",
+            retryAnalysis: false,
+          },
+        }));
+      }
       return;
     }
     const problem = previewItemProblemKind(item);
@@ -1659,6 +1858,7 @@ export function ManualOrganizeDialog({
             : `「${filesDecisionReturn.filename}」已重新分析，现在可以纳入本次整理。`,
       });
       setFilesDecisionReturn(null);
+      clearFilesAnalysisReadback();
       setFilesOverviewFocus({ kind: "heading" });
       setFilesOverviewVisible(true);
       setStep("review");
@@ -1673,6 +1873,7 @@ export function ManualOrganizeDialog({
         text: `「${filesDecisionReturn.filename}」已重新分析，当前出现新的待处理问题：${problemKindLabel(problem)}。`,
       });
       setFilesDecisionReturn(null);
+      clearFilesAnalysisReadback();
       setFilesOverviewFocus({ kind: "heading" });
       setFilesOverviewVisible(true);
       setStep("review");
@@ -1681,6 +1882,7 @@ export function ManualOrganizeDialog({
     if (problem !== null) {
       // The same decision kind still needs correction: keep the form, the
       // operator's place and any inputs exactly where they are.
+      clearFilesAnalysisReadback();
       setNotices((previous) => ({
         ...previous,
         [item.itemId]: {
@@ -1708,12 +1910,15 @@ export function ManualOrganizeDialog({
       },
     }));
     setFilesDecisionReturn(null);
+    clearFilesAnalysisReadback();
   }, [
+    clearFilesAnalysisReadback,
     currentItemId,
     executableIds,
     filesDecisionReturn,
     filesDecisionReturnItem,
     filesDecisionReturnSignature,
+    filesAnalysisReadback,
     filesHost,
     filesOverviewVisible,
     preview,
@@ -1749,6 +1954,7 @@ export function ManualOrganizeDialog({
     if (currentItemId === null) return;
     fileDraftRevision.current += 1;
     setFilesDecisionReturn(null);
+    clearFilesAnalysisReadback();
     setDrafts((previous) => ({
       ...previous,
       [currentItemId]: {
@@ -2474,6 +2680,9 @@ export function ManualOrganizeDialog({
                     className="mf-link-button mf-organize-overview-file"
                     data-organize-overview-item={item.itemId}
                     aria-label={`查看 ${itemName}`}
+                    // Opening a row retires any in-flight readback for the
+                    // previous file; this is an event handler, not render.
+                    // eslint-disable-next-line react-hooks/refs
                     onClick={() => openFilesOverviewItem(item.itemId)}
                   >
                     {itemName}
@@ -2544,6 +2753,10 @@ export function ManualOrganizeDialog({
     const item = currentItem;
     const filename = item.sourceFilename ?? item.itemId;
     const notice = currentNotice;
+    const analysisReadback =
+      filesAnalysisReadback?.itemId === currentItemId
+        ? filesAnalysisReadback
+        : null;
     const organizeTaskId = preparation?.organizeTaskId ?? null;
     const firstConflict = item.conflicts[0] ?? null;
     const problemTaskItemId = item.problemTaskItemId;
@@ -2885,7 +3098,11 @@ export function ManualOrganizeDialog({
           intent !== undefined ? (
             <details
               className="mf-organize-correction mf-organize-decision"
-              open={draftDirty || notice?.retryAnalysis === true}
+              open={
+                draftDirty ||
+                notice?.retryAnalysis === true ||
+                analysisReadback !== null
+              }
             >
               <summary className="mf-organize-correction-summary">
                 修正识别或作品
@@ -2897,7 +3114,9 @@ export function ManualOrganizeDialog({
                   <select
                     aria-label={`识别类型 ${filename}`}
                     value={draftRecognitionId}
-                    disabled={saveMutation.isPending}
+                    disabled={
+                      saveMutation.isPending || analysisReadback !== null
+                    }
                     onChange={(event) =>
                       patchDraft({ recognitionTypeId: event.target.value })
                     }
@@ -2916,7 +3135,9 @@ export function ManualOrganizeDialog({
                     <select
                       aria-label={`元数据身份 ${filename}`}
                       value={draftMetadataKey}
-                      disabled={saveMutation.isPending}
+                      disabled={
+                        saveMutation.isPending || analysisReadback !== null
+                      }
                       onChange={(event) =>
                         patchDraft({ metadataKey: event.target.value })
                       }
@@ -2957,6 +3178,7 @@ export function ManualOrganizeDialog({
                   type="button"
                   disabled={
                     saveMutation.isPending ||
+                    analysisReadback !== null ||
                     preparationStatusRunning ||
                     (!draftDirty && notice?.retryAnalysis !== true) ||
                     (draftDirty &&
@@ -2973,10 +3195,26 @@ export function ManualOrganizeDialog({
                     })
                   }
                 >
-                  {saveMutation.isPending
-                    ? "正在保存并重新分析…"
-                    : "保存并重新分析"}
+                  {analysisReadback?.phase === "reading"
+                    ? "正在核对分析结果…"
+                    : saveMutation.isPending
+                      ? "正在保存并重新分析…"
+                      : analysisReadback?.phase === "awaiting"
+                        ? "等待新的零变更方案…"
+                        : analysisReadback?.phase === "unreadable"
+                          ? "分析结果待核对"
+                          : "保存并重新分析"}
                 </Button>
+                {analysisReadback?.phase === "unreadable" ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={saveMutation.isPending}
+                    onClick={() => void retryFilesAnalysisReadback()}
+                  >
+                    重新读取分析状态
+                  </Button>
+                ) : null}
               </div>
             </details>
           ) : null}
@@ -2986,7 +3224,11 @@ export function ManualOrganizeDialog({
                 type="checkbox"
                 aria-label={`纳入 ${filename}`}
                 checked={isIncluded}
-                disabled={!isExecutable || saveMutation.isPending}
+                disabled={
+                  !isExecutable ||
+                  saveMutation.isPending ||
+                  analysisReadback !== null
+                }
                 onChange={(event) => {
                   setExcluded((previous) => {
                     const next = new Set(previous);
@@ -3585,6 +3827,7 @@ export function ManualOrganizeDialog({
     preview !== undefined &&
     items.length > 0;
   const openBatchReview = () => {
+    clearFilesAnalysisReadback();
     setFilesOverviewNotice(null);
     setStep("confirm");
     setFilesOverviewVisible(false);

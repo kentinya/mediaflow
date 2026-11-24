@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { accountForToken, submitSignIn } from "./auth";
 
 const VIEWER_TOKEN = "e2e-viewer-token";
@@ -39,6 +39,16 @@ async function openFiles(
 /** Open one directory through its visible table row button. */
 async function openDirectory(page: Page, name: string): Promise<void> {
   await page.getByRole("button", { name, exact: true }).click();
+}
+
+/** Enter the Files-owned dialog at its overview, then one exact file detail. */
+async function openOrganizeOverviewFile(card: Locator): Promise<void> {
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  await overview
+    .getByRole("button", { name: /^查看 / })
+    .first()
+    .click();
 }
 
 test("the shell 文件 entry opens ResourceLibrary Files at its new address", async ({
@@ -456,6 +466,7 @@ test("general selection excludes ineligible rows from the durable Organize admis
   await expect(page).toHaveURL(
     /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
+  await openOrganizeOverviewFile(card);
   await expect(
     card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();
@@ -514,9 +525,9 @@ test("a folder selection starts the bounded discovery journey instead of a direc
   // The folder/mixed preparation never uses the direct file-only intent
   // admission; the linked exact plan summary opens inside the same card.
   expect(admissionBodies).toHaveLength(0);
-  await expect(
-    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
-  ).toBeVisible();
+  await expect(card.getByRole("region", { name: "本次整理概览" })).toBeVisible({
+    timeout: 30_000,
+  });
   // Zero mutation is advertised truthfully in the card's own wording.
   await expect(card.getByText(/零媒体变更/)).toBeVisible();
   await expect(card.getByRole("button", { name: /整批复核/ })).toBeVisible();
@@ -590,9 +601,9 @@ test("the same-page preparation links the summary and confirms one exact subset"
   await page.getByRole("checkbox", { name: "选择 Movies" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
   const card = page.getByRole("dialog", { name: "整理所选文件" });
-  await expect(
-    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
-  ).toBeVisible();
+  await expect(card.getByRole("region", { name: "本次整理概览" })).toBeVisible({
+    timeout: 30_000,
+  });
 
   // The card reviews one exact zero-mutation plan first, then offers one
   // compact batch review of the exact subset before the single confirmation.
@@ -648,6 +659,7 @@ test("the Files URL preparation identity reconnects the same card with no duplic
   await expect(page).toHaveURL(
     /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
+  await openOrganizeOverviewFile(card);
   await expect(
     card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();
@@ -778,9 +790,9 @@ test("the selection footer admits one bounded multi-file intent", async ({
   expect(admissionBodies[0]).toContain(
     '"paths":["sample.mkv","Avatar.2009.1080p.mkv"]',
   );
-  await expect(
-    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
-  ).toBeVisible();
+  await expect(card.getByRole("region", { name: "本次整理概览" })).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(
     card.getByRole("button", { name: "关闭整理弹窗" }),
   ).toBeVisible();

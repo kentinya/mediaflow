@@ -1879,7 +1879,7 @@ test("Task59.1 a missing metadata candidate is corrected on the current file and
   await page.getByRole("button", { name: "批量整理" }).click();
   const card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible();
-  await expect(page).toHaveURL(/organizeDiscovery=/);
+  await expect(page).toHaveURL(/organizeDiscovery=/, { timeout: 30_000 });
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, discoveryId as string);
@@ -2009,6 +2009,114 @@ test("Task59.1 a missing metadata candidate is corrected on the current file and
   const finalTargets = (await stateFor(targetStemFile)).destinationTargets;
   expect(finalTargets).toHaveLength(1);
   expect(finalTargets[0]).toContain("DialogRename (2024)");
+});
+
+test("Task59.1 a lost direct analysis response stays locked until the same preparation is read back", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(180_000);
+  const targetFile = "DialogSibling.2023.mkv";
+  const fileState = async () => {
+    const response = await request.get(
+      `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(
+        `Dialog/${targetFile}`,
+      )}`,
+    );
+    expect(response.ok()).toBe(true);
+    return (await response.json()) as {
+      readonly sourceExists: boolean;
+      readonly destinationTargets: readonly string[];
+    };
+  };
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+  const analyzePosts = () =>
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/discoveries\/[^/]+\/analyze$/.test(
+          command.path,
+        ),
+    );
+
+  await openDialogDirectory(page, targetFile);
+  await selectFiles(page, [targetFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  await openOverviewFile(card);
+
+  const before = await fileState();
+  await card.getByText("修正识别或作品", { exact: true }).click();
+  const recognition = card.getByLabel(`识别类型 ${targetFile}`);
+  await expect(recognition).toBeVisible({ timeout: 15_000 });
+  await recognition.selectOption({ label: "Copy fixture" });
+
+  // The browser loses the real accepted analysis response. Every subsequent
+  // discovery GET is held so the first same-preparation read is observably
+  // slow; the retained choice and the current file must stay in place.
+  let holdPreparationReads = true;
+  let releasePreparationReads = () => {};
+  const preparationReadGate = new Promise<void>((resolve) => {
+    releasePreparationReads = resolve;
+  });
+  let markPreparationReadStarted: (() => void) | null = null;
+  const preparationReadStarted = new Promise<void>((resolve) => {
+    markPreparationReadStarted = resolve;
+  });
+  // The GET hold is registered first so the later, more specific analyze
+  // route handles the POST itself instead of being bypassed by a broad
+  // continue.
+  await page.route(
+    /\/api\/operations\/organize\/discoveries\/[^/]+$/,
+    async (route) => {
+      if (route.request().method() === "GET" && holdPreparationReads) {
+        markPreparationReadStarted?.();
+        await preparationReadGate;
+      }
+      await route.continue();
+    },
+  );
+  let analysisResponseLost = false;
+  await page.route(
+    /\/operations\/organize\/discoveries\/[^/]+\/analyze$/,
+    async (route) => {
+      if (analysisResponseLost) {
+        await route.continue();
+        return;
+      }
+      analysisResponseLost = true;
+      await route.fetch();
+      await route.abort("failed");
+    },
+  );
+
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  await preparationReadStarted;
+  const lockedSave = card.getByRole("button", {
+    name: "正在核对分析结果…",
+  });
+  await expect(lockedSave).toBeDisabled();
+  await expect(card.getByText(/正在核对同一准备是否已受理/)).toBeVisible();
+  // The slow first read cannot open a second analysis command, and no media
+  // effect happened before the eventual explicit confirmation.
+  expect(analyzePosts()).toHaveLength(1);
+  expect(await fileState()).toEqual(before);
+
+  releasePreparationReads();
+  holdPreparationReads = false;
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  await expect(overview).toContainText("已重新分析，现在可以纳入本次整理");
+  expect(analyzePosts()).toHaveLength(1);
+  expect(await fileState()).toEqual(before);
 });
 
 test("Task59.1 keeps the exact admitted preparation across a cancelled browser Back and a normal refresh", async ({

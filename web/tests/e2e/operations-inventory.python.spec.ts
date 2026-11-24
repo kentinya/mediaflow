@@ -111,6 +111,20 @@ async function openInventory(page: Page): Promise<void> {
   await expect(page.getByRole("table")).toBeVisible();
 }
 
+/** Enter the Files-owned dialog at its overview, then one exact file detail. */
+async function openFilesOverviewFile(
+  card: Locator,
+  filename?: string,
+): Promise<void> {
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  const button =
+    filename === undefined
+      ? overview.getByRole("button", { name: /^查看 / }).first()
+      : overview.getByRole("button", { name: `查看 ${filename}` });
+  await button.click();
+}
+
 type NativeRecoveryKind =
   | "recognition"
   | "metadata"
@@ -1519,6 +1533,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   page,
   request,
 }) => {
+  test.setTimeout(240_000);
   const api = recordApiCalls(page);
   const registered = await request.post(
     `${BASE}/__harness__/register-manual-worker`,
@@ -1561,11 +1576,10 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    {
-      timeout: 30_000,
-    },
-  );
+  await openFilesOverviewFile(card, "Three.2003.mkv");
+  await expect(
+    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
+  ).toBeVisible();
   const recognition = card.locator('select[aria-label^="识别类型 "]');
   await card.getByText("修正识别或作品", { exact: true }).click();
   await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
@@ -1584,9 +1598,13 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
-    timeout: 30_000,
+  const reanalyzedOverview = card.getByRole("region", {
+    name: "本次整理概览",
   });
+  await expect(reanalyzedOverview).toBeVisible({ timeout: 30_000 });
+  await expect(reanalyzedOverview).toContainText(
+    "已重新分析，现在可以纳入本次整理",
+  );
 
   const beforePreview = await request.get(
     `${BASE}/__harness__/manual-file-state`,
@@ -1740,6 +1758,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   page,
   request,
 }) => {
+  test.setTimeout(240_000);
   // B55.5-01: after Files admits the pair, both files get their own recognition
   // decision and zero-mutation analysis on the same Task.  The operator opens
   // one file's summary, deselects that file, confirms only its sibling, and the
@@ -1751,15 +1770,6 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
 
-  const driveDiscovery = async (passes = 12) => {
-    // Each call advances one real bounded pass; a fixed bounded number lets
-    // the production Task engine finish its own analysis without inventing a
-    // stage or a second request.
-    for (let step = 0; step < passes; step += 1) {
-      await request.post(`${BASE}/__harness__/run-discovery-worker`);
-    }
-  };
-
   await openOrganizingSource(page);
   await page.getByRole("checkbox", { name: "选择 Fifteenth.2015.mkv" }).check();
   await page.getByRole("checkbox", { name: "选择 Sixteenth.2016.mkv" }).check();
@@ -1769,6 +1779,19 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   await expect(page).toHaveURL(/organizeDiscovery=/);
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
+  const exactDiscoveryId = discoveryId as string;
+  const driveDiscovery = async (passes = 20) => {
+    // Each call advances one real bounded pass of this exact preparation;
+    // naming the discovery keeps a later reopened correction from being
+    // starved by another durable preparation in the harness.
+    for (let step = 0; step < passes; step += 1) {
+      await request.post(
+        `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
+          exactDiscoveryId,
+        )}`,
+      );
+    }
+  };
   await driveDiscovery();
 
   // The Task Center Task is the one Files admitted; the browser reads its
@@ -2020,13 +2043,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   const reopenedCard = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(reopenedCard).toBeVisible({ timeout: 30_000 });
   await expect(reopenedCard.getByText(/已有受理的兄弟项/)).toBeVisible();
-  const reopenedHeading = reopenedCard.getByRole("heading", {
-    name: /第 [12] \/ 2 个/,
-  });
-  await expect(reopenedHeading).toBeVisible();
-  if ((await reopenedHeading.textContent())?.includes("第 2 /")) {
-    await reopenedCard.getByRole("button", { name: "上一项" }).click();
-  }
+  await openFilesOverviewFile(reopenedCard, "Fifteenth.2015.mkv");
   await expect(
     reopenedCard.getByText("Fifteenth.2015.mkv", { exact: true }),
   ).toBeVisible();
@@ -2070,6 +2087,7 @@ test("a selected execution never blocks the unselected sibling's correction and 
   page,
   request,
 }) => {
+  test.setTimeout(240_000);
   // RO-2 P1 (B blocker 1): two genuinely ready plans, one confirmed, the
   // sibling must remain correctable and re-analyzable on the same card
   // without re-including the completed item.
@@ -2097,9 +2115,10 @@ test("a selected execution never blocks the unselected sibling's correction and 
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(card.getByRole("heading", { name: /第 1 \/ 2 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openFilesOverviewFile(card, "Ninth.2009.mkv");
+  await expect(
+    card.getByRole("heading", { name: /第 1 \/ 2 个/ }),
+  ).toBeVisible();
 
   // Confirm exactly the Ninth item by leaving its sibling out of this batch.
   await card.getByRole("button", { name: "下一项" }).click();
@@ -2108,7 +2127,13 @@ test("a selected execution never blocks the unselected sibling's correction and 
   ).toBeVisible();
   await card.getByRole("checkbox", { name: /纳入 Tenth\.2010\.mkv/ }).uncheck();
   await card.getByRole("button", { name: /整批复核/ }).click();
-  await expect(page.getByText(/将整理 1 项/)).toBeVisible();
+  await expect(
+    card
+      .locator(".mf-organize-batch-summary")
+      .locator("> div")
+      .filter({ hasText: "将整理" })
+      .locator("dd"),
+  ).toHaveText("1 项");
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
@@ -2138,13 +2163,7 @@ test("a selected execution never blocks the unselected sibling's correction and 
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(card).toBeVisible({ timeout: 30_000 });
   await expect(card.getByText(/已有受理的兄弟项/)).toBeVisible();
-  const reopenedHeading = card.getByRole("heading", {
-    name: /第 [12] \/ 2 个/,
-  });
-  await expect(reopenedHeading).toBeVisible();
-  if ((await reopenedHeading.textContent())?.includes("第 1 /")) {
-    await card.getByRole("button", { name: "下一项" }).click();
-  }
+  await openFilesOverviewFile(card, "Tenth.2010.mkv");
   await expect(
     card.getByRole("heading", { name: /第 2 \/ 2 个/ }),
   ).toBeVisible();
@@ -2168,9 +2187,13 @@ test("a selected execution never blocks the unselected sibling's correction and 
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
-    timeout: 30_000,
+  const reanalyzedOverview = card.getByRole("region", {
+    name: "本次整理概览",
   });
+  await expect(reanalyzedOverview).toBeVisible({ timeout: 30_000 });
+  await expect(reanalyzedOverview).toContainText(
+    "已重新分析，现在可以纳入本次整理",
+  );
   // No second execution was admitted by the correction/re-analysis.
   expect(
     api.filter(
@@ -2185,6 +2208,7 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
   page,
   request,
 }) => {
+  test.setTimeout(240_000);
   // RO-2 P1 (B blocker 2): a brand-new source with no prior Result/choice/
   // review and two genuinely tied provider candidates.  The preparation must
   // ground both candidates for a same-page choice, reject an invented one,
@@ -2211,16 +2235,18 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await openFilesOverviewFile(card, "Eleventh.2011.mkv");
+  await expect(
+    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
+  ).toBeVisible();
   // The ambiguous item is not executable and offers its real candidates.
   await expect(card.getByText("未就绪").first()).toBeVisible();
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(
     page.getByRole("button", { name: "确认整理 0 项" }),
   ).toBeDisabled();
-  await page.getByRole("button", { name: "返回逐项复核" }).click();
+  await page.getByRole("button", { name: "返回概览" }).click();
+  await openFilesOverviewFile(card, "Eleventh.2011.mkv");
   expect(
     await (
       await request.get(
@@ -2265,9 +2291,13 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
-    timeout: 30_000,
+  const reanalyzedOverview = card.getByRole("region", {
+    name: "本次整理概览",
   });
+  await expect(reanalyzedOverview).toBeVisible({ timeout: 30_000 });
+  await expect(reanalyzedOverview).toContainText(
+    "已重新分析，现在可以纳入本次整理",
+  );
   // Nothing has mutated before the explicit confirmation.
   expect(
     await (
@@ -2551,11 +2581,10 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    {
-      timeout: 30_000,
-    },
-  );
+  await openFilesOverviewFile(card, "Four.2004.mkv");
+  await expect(
+    card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
+  ).toBeVisible();
   const recognition = card.locator('select[aria-label^="识别类型 "]');
   await card.getByText("修正识别或作品", { exact: true }).click();
   await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
@@ -2576,9 +2605,13 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
-    timeout: 30_000,
+  const reanalyzedOverview = card.getByRole("region", {
+    name: "本次整理概览",
   });
+  await expect(reanalyzedOverview).toBeVisible({ timeout: 30_000 });
+  await expect(reanalyzedOverview).toContainText(
+    "已重新分析，现在可以纳入本次整理",
+  );
 
   // The card hands the proved admission to the existing exact run selection.
   await card.getByRole("button", { name: /整批复核/ }).click();
@@ -5175,9 +5208,9 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  await expect(card.getByRole("region", { name: "本次整理概览" })).toBeVisible({
+    timeout: 30_000,
+  });
   // Deliberately leave the preparation unconfirmed.
   await expect(card.getByRole("button", { name: /整批复核/ })).toBeVisible();
 
