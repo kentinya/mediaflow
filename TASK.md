@@ -1,12 +1,12 @@
 # Task 59.1 — Files 手动整理流程
 
-Next Action: DEVELOPER CORRECTS SKIP READBACK, CONFIRMATION GUIDANCE AND CONTINUATION PRESENTATION
+Next Action: B REVIEWS CORRECTED FILES READBACK, CONFIRMATION GUIDANCE AND CONTINUATION BODY
 
 ```text
 Task ID: 59.1
 Task Type: SLICE
 Parent Slice: 59
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
 Reviewed Implementation Head: db6a505407e5dc1781e1913be5f0db6b960d3f23
 Difficulty: High
@@ -14,6 +14,35 @@ Test Level: T3
 Planner / Reviewer: B
 Implementation Authorization: ORIGINAL TASK 59.1 CORRECTION SCOPE
 ```
+
+## Developer 修正交接 — READY FOR B REVIEW
+
+候选：`44f95aef9ebd4fc7754b248d225403825e281f30`（父提交 `33cbe4ae`，Task Base
+`3bc9ad99137e5a2f8ff53add92041185ceb8ebbf`）。本轮只改 Files 整理弹窗、共享恢复表单接入、
+Files 正文样式、隔离夹具和直接受影响测试。
+
+- **A59-01。** Files 弹窗保留的逐条 TaskItem 读回现在驱动回落：正常回包沿用原结果，回包丢失时
+  由同一 itemId/TaskItem 的 `skipped/ignored` 读回记录结果；只有操作者仍在原文件、原编辑位置且
+  未进入复核时才回概览并聚焦该行，否则只更新对应结果。移除了挂在被替换表单上的无效 effect。
+  决定后重新读取同一摘要，概览与整批按实际资格显示。
+- **A59-03 确认提示。** 概览与整批复用实际 `confirmationBlocker` 和摘要当前资格，分别显示已选/
+  可确认；待处理只计未结束条目，已跳过/忽略单列为已有结果；仅当剩余未结束项为零且原准备广告
+  分析动作时提供「重新分析同一准备」，保留已结束原因与合法下一步。
+- **正文承载。** Files 按 `33cbe4ae` 使用三栏计数、紧凑就绪行、来源与目标整批行及固定底部动作；
+  非 Files 恢复 Slice Base 的「当前文件／来源库／当前方案」和原整批正文。新增样式按 Files 类隔离。
+
+实际验证（`web/`）：`npm run typecheck`、改动文件 `npm exec -- eslint`、`prettier --check`、
+`npm run build` 均通过。组件测试 2 个文件 83 项通过。原生 grep 六项 6 passed（54 秒），包括新增的
+真实丢回包旅程：保存后拦截并断开发送决定响应，概览仍从同一 TaskItem 读回「已跳过」，兄弟项保留
+1 项确认资格；一次决定、零次 continue、媒体不变。Task Center 原位续作 1 项 19 秒通过，断言
+「当前文件」「来源库」「当前方案」及 Base 整批正文。`check_governance.py` 与 `git diff --check`
+通过。桌面、390 px、矮窗概览与整批截图保存于
+`.git/validation-evidence/44f95aef9ebd4fc7754b248d225403825e281f30/developer/`。测试墙钟约 13
+分钟，低于本轮总耗时 30%。
+
+剩余风险：剩余项全部已结束、摘要需重新分析的状态由组件用例覆盖后端广告动作；本轮真实冲突跳过后
+摘要仍为当前方案，未在真实夹具构造该失效分支，请 B 在 A59-03 复核时补真实验证。100 项截图覆盖
+待处理分组与整批；就绪/已有结果分组的完整四屏对照仍需 B 按 AC-06 汇总。
 
 ## 目标与范围
 
