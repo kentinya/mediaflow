@@ -1168,14 +1168,43 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   expect(executePosts()).toHaveLength(1);
 
   await card.getByRole("radio", { name: /重命名目标/ }).check();
-  await saveNativeDecision(page, card);
+  // The browser issues the real analysis request once; the real API accepts
+  // it and the Worker will publish the new plan, but this client never sees
+  // the response.
+  let lostAnalysisResponses = 0;
+  await page.route(/\/items\/[^/]+\/recovery\/continue$/, async (route) => {
+    if (lostAnalysisResponses > 0) {
+      await route.continue();
+      return;
+    }
+    lostAnalysisResponses += 1;
+    await route.fetch();
+    await route.abort("failed");
+  });
+  const decision = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/decision$/.test(new URL(response.url()).pathname),
+  );
+  await card.getByRole("button", { name: "保存并重新分析" }).click();
+  expect((await decision).ok()).toBe(true);
+  await expect(
+    card.getByRole("heading", { name: "分析请求结果未知" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(card).toBeVisible();
   // Saving the decision and re-analyzing has changed no media effect yet.
   expect(await fileState()).toEqual(copied);
   expect(executePosts()).toHaveLength(1);
+  expect(lostAnalysisResponses).toBe(1);
 
   await driveDiscoveryFor(page, request, secondDiscoveryId as string);
   const secondOverview = card.getByRole("region", { name: "本次整理概览" });
   await expect(secondOverview).toBeVisible({ timeout: 30_000 });
+  await expect(secondOverview).toContainText(
+    `「${conflictFile}」已重新分析，现在可以纳入本次整理。`,
+  );
+  expect(await fileState()).toEqual(copied);
+  expect(lostAnalysisResponses).toBe(1);
   // Leave the healthy sibling out of the single execution confirmation.
   await secondOverview
     .getByRole("button", { name: `查看 ${siblingFile}` })

@@ -497,8 +497,10 @@ function makeBackend() {
             operation: "MOVE",
             suffix: "srt",
             language: "zh",
-            blockedReason: null,
-            nextAction: null,
+            blockedReason:
+              attachmentIndex === 0 ? null : "target already exists",
+            nextAction:
+              attachmentIndex === 0 ? null : "rename the attachment target",
           }),
         );
       }
@@ -3158,6 +3160,30 @@ describe("ManualOrganizeDialog", () => {
     });
     expect(listed).toHaveTextContent(`来源 source:Movies/${filename(0)}`);
     expect(listed).toHaveTextContent("附件 2 个");
+    await user.click(
+      within(listed).getByText(/展开核对来源、目标、操作与原因/),
+    );
+    const firstAttachment = within(listed)
+      .getAllByText(/subtitle\(zh\) · 移动/)[0]
+      ?.closest("li") as HTMLElement;
+    expect(firstAttachment).toHaveTextContent(
+      "source:Movies/Movie.01.1.srt → target:Movies/Movie.01.1.srt",
+    );
+    const secondAttachment = within(listed)
+      .getAllByText(/subtitle\(zh\) · 移动/)[1]
+      ?.closest("li") as HTMLElement;
+    expect(secondAttachment).toHaveTextContent(
+      "source:Movies/Movie.01.2.srt → target:Movies/Movie.01.2.srt",
+    );
+    expect(secondAttachment).toHaveTextContent(
+      "排除原因：target already exists",
+    );
+    expect(secondAttachment).toHaveTextContent(
+      "异常/下一步：rename the attachment target",
+    );
+    expect(within(listed).getAllByText(/subtitle\(zh\) · 移动/)).toHaveLength(
+      2,
+    );
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
@@ -3186,6 +3212,93 @@ describe("ManualOrganizeDialog", () => {
     );
     expect(overview).toHaveTextContent("Resolved Movie");
     expect(backend.calls.choicePosts).toHaveLength(1);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 returns to the overview when the accepted analysis response is lost", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.flipPreviewOnAnalyze = true;
+      value.state.secondPlanKind = "ready";
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    await openCorrection(user);
+    const identity = screen.getByLabelText(`元数据身份 ${filename(0)}`);
+    const alternate = within(identity)
+      .getAllByRole("option")
+      .at(2)
+      ?.getAttribute("value");
+    await user.selectOptions(identity, alternate as string);
+
+    const original = backend.fetchMock.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    let analyzeResponseLost = false;
+    backend.fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/analyze") && !analyzeResponseLost) {
+        analyzeResponseLost = true;
+        // The real API accepts and publishes the same analysis; only this
+        // browser's copy of the response is dropped.
+        await original(input, init);
+        throw new TypeError("Failed to fetch");
+      }
+      return original(input, init);
+    });
+
+    await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
+    await waitFor(() => expect(backend.calls.analyzePosts).toHaveLength(1));
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    expect(overview).toHaveTextContent(
+      `「${filename(0)}」已重新分析，现在可以纳入本次整理。`,
+    );
+    expect(backend.calls.choicePosts).toHaveLength(1);
+    expect(backend.calls.analyzePosts).toHaveLength(1);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 returns to the overview when the native decision analysis response is lost", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.metadataCandidateProblem = true;
+      value.state.flipPreviewOnAnalyze = true;
+      value.state.secondPlanKind = "ready";
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+    await screen.findByRole("radio", { name: /候选 1/ });
+    await user.click(screen.getByRole("radio", { name: /候选 2/ }));
+
+    const original = backend.fetchMock.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    let continueResponseLost = false;
+    backend.fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/recovery/continue") && !continueResponseLost) {
+        continueResponseLost = true;
+        await original(input, init);
+        throw new TypeError("Failed to fetch");
+      }
+      return original(input, init);
+    });
+
+    await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
+    await waitFor(() =>
+      expect(backend.calls.recoveryContinuePosts).toHaveLength(1),
+    );
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    expect(overview).toHaveTextContent(
+      `「${filename(0)}」已重新分析，现在可以纳入本次整理。`,
+    );
+    expect(backend.calls.recoveryContinuePosts).toHaveLength(1);
+    expect(backend.calls.choicePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 

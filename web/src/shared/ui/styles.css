@@ -10523,6 +10523,26 @@ tr[aria-selected="true"] {
   overflow-wrap: anywhere;
 }
 
+.mf-organize-batch-attachments-details {
+  grid-column: 1 / -1;
+  min-width: 0;
+  color: #5f6b7d;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.mf-organize-batch-attachments-details > summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-batch-attachments-details .mf-preview-attachments {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
 .mf-organize-skipped > summary,
 .mf-organize-scope-details > summary {
   cursor: pointer;

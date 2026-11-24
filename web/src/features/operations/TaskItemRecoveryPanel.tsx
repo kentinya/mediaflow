@@ -349,6 +349,13 @@ export interface TaskItemRecoveryPanelProps {
    * keeps its single final confirmation.
    */
   readonly mode?: "full" | "decision";
+  /**
+   * Called before this exact item's analysis continuation is sent. The Files
+   * card captures the item facts that existed when the operator acted, so an
+   * accepted response, an explicit refusal and a lost response all keep the
+   * same pre-request read-back baseline.
+   */
+  readonly onAnalysisStarted?: () => void;
   /** Called after this exact item's analysis continuation was accepted. */
   readonly onAnalysisRequested?: () => void;
   /**
@@ -388,6 +395,7 @@ export function TaskItemRecoveryPanel({
   runId,
   active,
   mode = "full",
+  onAnalysisStarted,
   onAnalysisRequested,
   decisionDraft,
   onDecisionDraftChange,
@@ -852,6 +860,7 @@ export function TaskItemRecoveryPanel({
       // follow-up is part of the same operator action, not a second command.
       updateRecoverySession({ pendingAction: "continue" });
     }
+    onAnalysisStarted?.();
     updateRecoverySession({
       analysis: {
         phase: "requesting",

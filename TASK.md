@@ -1,6 +1,6 @@
 # Task 59.1 — 文件入口的手动整理弹窗与整批确认
 
-Next Action: DEVELOPER CORRECTS TASK 59.1 AND RESUBMITS FOR B REVIEW
+Next Action: B REREVIEWS THE TASK 59.1 CORRECTION CANDIDATE
 
 用户已授权激活 Task 59.1。Developer 开始实施时将状态从 `PLANNED` 转为
 `IN PROGRESS`。原 Task ID、Base、范围和验收条件沿用。A 代 B 的授权限于本 Task 的规划，
@@ -11,7 +11,7 @@ B 独立复核实施候选，A 负责 Slice 终审。
 Task ID: 59.1
 Task Type: SLICE
 Parent Slice: 59
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
 Difficulty: High
 Test Level: T3
@@ -195,3 +195,35 @@ B 需重点复核 100 项可读性、兄弟迟到读回和 Task Center 原行为
 Slice 重评：RO-1 的准备和概览入口已有实现，完整门禁待复核。RO-2 的异常回包后回落及
 RO-3 的附件核对仍有上述缺口。RO-4 的任务详情正文当前未交付，仍属 Slice 的后续范围。
 本轮继续修正 Task 59.1。
+
+### Developer Correction Report
+
+已按 B 的修正指引完成候选，范围仍限于 Task 59.1：
+
+- Files 的逐文件「保存并重新分析」在请求发出前捕获该条目与当时方案的读回基线；
+  手动选择与原生决定共用同一回落判定。正常成功回包和回包丢失后，均由同一准备／条目
+  的新方案读回决定是否回概览；等待、明确拒绝和同类待修改仍留原处。原生决定的分析状态
+  `analysis_waiting`／`analysis_unknown` 也会触发同一准备的读回，不依赖任务中心另一次读取。
+- 「本次确认的文件」中有附件的已选条目可展开查看每项附件的来源、目标、操作、
+  `blockedReason` 与 `nextAction`；沿用原选中子集、授权和确认入口，展开不产生执行。
+- 现有原生冲突旅程改为拦截页面真实点击发出的 `/recovery/continue` 响应：
+  `route.fetch()` 让真实 API 受理与 Worker 发布照常执行，浏览器侧只丢失该响应。
+  旅程断言未知等待期仍在原弹窗、发布后自动回概览并显示当前文件可纳入、
+  分析请求仅一次、确认前媒体零变更；随后仍只确认冲突文件，健康兄弟项不重放。
+
+实际命令与结果（cwd `web/`）：
+
+- `npm run typecheck` — 通过。
+- `npx eslint` 触及源/测试/E2E 文件 — 通过。
+- `npx prettier --check` 触及源/样式/测试/E2E 文件 — 通过。
+- `npm run test -- run` 六个受影响文件 — 6 files / 154 tests passed（新增 2 个 Task59.1
+  回包丢失用例；概览用例补充附件展开、选择范围与零 Execute 断言）。
+- `npm run build` — 通过。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts --grep "a real destination conflict"` —
+  1 passed（11.7 秒），已覆盖成功回包丢失后的自动概览回落。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts --grep "a missing metadata candidate is corrected"` —
+  1 passed（7.3 秒），原生正常成功路径无回归。
+- 仓库根 `git diff --check` — 通过。
+
+剩余风险：B 的完整 T3 验收与 100／101 项、窄屏、Task Center 原行为仍需在修正候选上执行；
+附件展开的原生数据由 B 按其计划覆盖。未新增 API/schema/Worker/权限，未推送或发布。

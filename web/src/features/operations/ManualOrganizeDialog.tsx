@@ -489,13 +489,6 @@ export function ManualOrganizeDialog({
   }
   const [filesDecisionReturn, setFilesDecisionReturn] =
     useState<FilesDecisionReturn | null>(null);
-  /**
-   * The pre-save baseline of a native decision form. It is captured on the
-   * operator's edit, before the accepted continuation can race with a new
-   * preparation read, and promoted only by the exact item's analysis.
-   */
-  const [filesDecisionBaseline, setFilesDecisionBaseline] =
-    useState<FilesDecisionReturn | null>(null);
   /** Bumped only by a real operator edit, never by saving or read-back. */
   const fileDraftRevision = useRef(0);
   /** The visible position before any durable anchor has been picked. */
@@ -806,10 +799,17 @@ export function ManualOrganizeDialog({
       return { saved: true, analyzed: true };
     },
     retry: false,
-    onMutate: () => {
+    onMutate: (variables) => {
       setResult(null);
       setFilesDecisionReturn(null);
       setFilesOverviewNotice(null);
+      // The pre-action baseline belongs to this exact item and the file facts
+      // the operator can see now. Capturing it before the request is what
+      // makes an accepted response and a lost response follow the same
+      // overview return when the same preparation is read back.
+      if (filesHost && variables.itemId !== "") {
+        beginFilesDecisionReturn(variables.itemId);
+      }
       // A fresh explicit action supersedes the last preparation-level
       // request fact; the refetch (or rejection) below reports this one.
       setPreparationNotice(null);
@@ -852,7 +852,6 @@ export function ManualOrganizeDialog({
               retryAnalysis: false,
             },
           }));
-          beginFilesDecisionReturn(variables.itemId);
           void preparationQuery.refetch();
           void intentQuery.refetch();
           return;
@@ -866,6 +865,11 @@ export function ManualOrganizeDialog({
             retryAnalysis: true,
           },
         }));
+        // An unknown or refused answer may coincide with a plan the Worker
+        // already linked; re-read the same preparation so only its own newer
+        // plan can prove this analysis and return the item to the overview.
+        void preparationQuery.refetch();
+        void intentQuery.refetch();
         return;
       }
       // The decision is durable now: the local draft is replaced by the saved
@@ -885,7 +889,6 @@ export function ManualOrganizeDialog({
             retryAnalysis: false,
           },
         }));
-        beginFilesDecisionReturn(variables.itemId);
         void preparationQuery.refetch();
       } else {
         setNotices((previous) => ({
@@ -896,6 +899,10 @@ export function ManualOrganizeDialog({
             retryAnalysis: true,
           },
         }));
+        // An unknown or refused answer may still have been accepted; the same
+        // preparation is re-read so only its own new plan can complete the
+        // return.
+        void preparationQuery.refetch();
       }
     },
     onError: (error, variables) => {
@@ -2574,14 +2581,6 @@ export function ManualOrganizeDialog({
           retryAnalysis: false,
         },
       }));
-      setFilesDecisionReturn(
-        filesDecisionBaseline?.itemId === item.itemId
-          ? filesDecisionBaseline
-          : // The baseline reads the edit revision captured before the save.
-            // eslint-disable-next-line react-hooks/refs
-            filesDecisionBaselineFor(item),
-      );
-      setFilesDecisionBaseline(null);
       void preparationQuery.refetch();
       void intentQuery.refetch();
       void previewQuery.refetch();
@@ -2679,26 +2678,41 @@ export function ManualOrganizeDialog({
                 runId={organizeTaskId}
                 active={false}
                 mode="decision"
+                onAnalysisStarted={() => {
+                  // The baseline reads the edit revision captured at the
+                  // operator's action, never during this render.
+                  // eslint-disable-next-line react-hooks/refs
+                  beginFilesDecisionReturn(item.itemId);
+                }}
                 onAnalysisRequested={decisionAnalysisRequested}
                 decisionDraft={decisionDrafts[problemTaskItemId]}
                 onDecisionDraftChange={(draft) => {
                   if (draft.dirty) {
                     fileDraftRevision.current += 1;
                     setFilesDecisionReturn(null);
-                    setFilesDecisionBaseline(filesDecisionBaselineFor(item));
                   }
                   setDecisionDrafts((previous) => ({
                     ...previous,
                     [problemTaskItemId]: draft,
                   }));
                 }}
-                onDecisionStatusChange={(status) =>
+                onDecisionStatusChange={(status) => {
                   setDecisionStatuses((previous) =>
                     previous[problemTaskItemId] === status
                       ? previous
                       : { ...previous, [problemTaskItemId]: status },
-                  )
-                }
+                  );
+                  // The same preparation read proves the accepted or
+                  // unknown analysis for this exact item; it does not rely
+                  // on the Task Center's separate run-overview read.
+                  if (
+                    status === "analysis_waiting" ||
+                    status === "analysis_unknown"
+                  ) {
+                    void preparationQuery.refetch();
+                    void intentQuery.refetch();
+                  }
+                }}
               />
             ) : item.conflicts.length > 0 ? (
               <StatusBanner variant="error" title="无法打开当前文件的冲突决定">
@@ -3295,11 +3309,53 @@ export function ManualOrganizeDialog({
                         来源 {item.sourceStorageId ?? "—"}:
                         {item.sourcePath ?? "—"}
                       </span>
-                      <span className="mf-organize-batch-attachments">
-                        {item.attachments.length === 0
-                          ? "无关联附件"
-                          : `附件 ${item.attachments.length} 个`}
-                      </span>
+                      {item.attachments.length === 0 ? (
+                        <span className="mf-organize-batch-attachments">
+                          无关联附件
+                        </span>
+                      ) : (
+                        <details className="mf-organize-batch-attachments-details">
+                          <summary>
+                            附件 {item.attachments.length} 个 ·
+                            展开核对来源、目标、操作与原因
+                          </summary>
+                          <ul className="mf-preview-attachments">
+                            {item.attachments.map((attachment, position) => (
+                              <li
+                                key={`selected-attachment-${item.itemId}-${position}`}
+                              >
+                                {attachment.type ?? "附件"}
+                                {attachment.language != null
+                                  ? `(${attachment.language})`
+                                  : ""}{" "}
+                                · {operationLabel(attachment.operation)}
+                                {attachment.source !== null ||
+                                attachment.destination !== null ? (
+                                  <span className="mf-exact-identity">
+                                    {" "}
+                                    {attachment.source?.storageId ?? "—"}:
+                                    {attachment.source?.path ?? "—"} →{" "}
+                                    {attachment.destination?.storageId ?? "—"}:
+                                    {attachment.destination?.path ?? "—"}
+                                  </span>
+                                ) : null}
+                                {attachment.blockedReason ? (
+                                  <span role="status">
+                                    {" "}
+                                    排除原因：{attachment.blockedReason}
+                                  </span>
+                                ) : null}
+                                {attachment.nextAction ? (
+                                  <span role="status">
+                                    {" "}
+                                    异常/下一步：{attachment.nextAction}
+                                  </span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
                     </>
                   ) : null}
                 </li>
