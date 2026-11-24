@@ -1,17 +1,17 @@
 # Task 59.2 — 任务中心运行详情正文
 
-Next Action: DEVELOPER CORRECTS TASK 59.2 AND HANDS OFF FOR B REVIEW
+Next Action: B REVIEWS THE TASK 59.2 CORRECTION CANDIDATE
 
 依据已提交的 [Slice 59](SLICE.md) RO-4、AC-04 和 AC-05 的任务详情部分，落实
 `V2-OPS-021`。开发与验收按[开发工作流](docs/development-workflow.md)执行。
 
-用户已授权实施 Task 59.2。Developer 已完成本轮实现并交 B 独立复核。激活前的规划提交为 `92057bc2`，实施候选为 `d1a58b91`；工作区在实施前干净，治理检查通过。
+用户已授权实施 Task 59.2。Developer 已完成本轮修正并交 B 独立复核。激活前的规划提交为 `92057bc2`，原实施候选为 `d1a58b91`，本轮修正候选为 `85e689cf`；工作区在实施前干净，治理检查通过。
 
 ```text
 Task ID: 59.2
 Task Type: SLICE
 Parent Slice: 59
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 868ff9daab6972473cfb7344ca02cbdbc30077cf
 Difficulty: Medium
 Test Level: T3
@@ -126,52 +126,64 @@ Slice 保持 ACTIVE。
 
 ## Developer completion report
 
-已按 Task 边界完成候选 `d1a58b9199e07840cf3ce9ae5842637a47f4c7e5`（源码与测试；
-实现由 `1ea6b9cc` 与该提交组成，后继仅更新本 TASK 交接记录）：
+已按 Task 边界完成修正候选 `85e689cf221b8d4372e81db14f0176369ae24d54`（源码与测试；
+后继仅更新本 TASK 交接记录）：
 
-- 运行详情正文顺序改为：流程状态与阶段／等待 → 实际进度 → 当前适用操作 → 文件结果 →
-  文件与待处理项／行内证据 → 任务信息与可展开技术诊断。移除导航行的任务操作重复占位，
-  `RunLifecycleControls` 原位显示取消与「核对持久状态」；「文件整理准备 → 继续整理」只在
-  `filesPreparation.continuable` 时进入当前操作区。无可用动作时不渲染空操作区。
-- 文件结果卡在成功／部分／失败主计数不可读但存在未知效果或结果未记录时仍显示对应结论；
-  跳过／忽略／取消的独立计数不再因主计数为空而被隐藏。
-- 文件表按「源文件／处理结果／需处理原因／目标／操作」阅读。每行先显示持久状态对应的
-  可读处置，以及尚未处理的具体原因（例如「元数据候选需要确认」「部分文件或附件未完成」）、
-  技术失败、未确认效果或拒绝原因；原始阶段、尝试次数和失败分类仍可在该行唯一证据的诊断中
-  核对。移除始终为空的「批量分析」列。
-- 原「条目证据」层级、唯一证据挂接、筛选／跨页迁移、草稿归属、恢复表单、同页摘要与确认、
-  `run + dialog=organize` 续作、两页签、记录筛选／分页和有界导出未改。操作记录读取失败现在
-  同时在失败区提供原位重读。
+- 文件行以持久检查点效果事实给出当前结果：`verified_complete` 显示「已验证成功」；成功
+  状态但效果为 `attempted_unverified`/`unknown` 时在「处理结果」显示「效果未确认」，同名
+  行指向「查看证据核对目标与已记录效果」；失败/部分完成在效果未确认时同时在结果中标注。
+  跳过、忽略、取消和 DryRun 各自显示结果；普通收尾的 `replay_not_offered` 不再进入
+  「需处理原因」，只留在该文件的原有技术诊断。
+- 文件证据的「处理结果」只把 success/partial/failed 的零结果读为「结果未记录」；跳过等
+  正常终态不再被误报为结果缺失。已尝试但效果未确认的 success/partial/failed 在有持久
+  执行记录时显示未确认原因和原有核对动作。
+- 「文件结果」成功计数改用进度读模的 `confirmedSuccess`，按会计基础显示「已验证成功」／
+  「分析完成」／「已验证传输」／「已验证操作」／「已记录成功」；无进度读模时回退到持久
+  状态计数并明确标为「成功（已记录状态）」。部分、失败、未知和缺失计数保持原有独立口径。
+- 阻塞原因改用实际检查点类型 `recognition`／`metadata`／`metadata_correction`／
+  `classification`／`conflict`：分别说明确认识别结果、确认元数据候选、修正元数据搜索、
+  确认分类目标、处理目标冲突；文件行与展开证据复用同一文案。文件行级恢复表单、同任务
+  摘要与确认、精确续作、两页签、筛选分页、草稿和有界导出未改。
 - 未改 API、schema、Worker、权限或执行语义；未新增入口或页面。
 
 实际命令与结果（cwd `web/`）：
 
 - `npm run typecheck` — 通过。
 - `npm run lint`、`npm run format:check` — 通过。
-- `npx eslint`／`npx prettier --check` 触及的 4 个源文件、2 个测试文件与样式 — 通过。
+- `npx eslint`／`npx prettier --check` 修改文件 — 通过。
 - `npm run test -- run src/features/operations/RunDetailTabs.test.tsx
   src/features/operations/OperationsInventory.test.tsx
-  src/features/operations/TaskItemRecoveryPanel.test.tsx` — 3 files / 120 tests passed
-  （27.76 秒），含新增 `Task59.2` 正文顺序、动作前置、未知/缺失结果、行内可读原因与
-  操作记录重读用例。
-- `npm run build` — 通过；最终候选产物 `dist/index.html`、`index-hXIaOMvw.css`、
-  `index-B9_YC0pA.js`。
-- `npm run test:e2e -- tests/e2e/task-center-layout.spec.ts` — 13 passed（9.4 秒），
-  含桌面、390 px、矮窗、键盘与 reduced-motion 的详情布局用例。
+  src/features/operations/TaskItemRecoveryPanel.test.tsx` — 3 files / 121 tests passed
+  （29.03 秒），含新增 Task59.2 三种文件行结论、未确认效果的原尝试/目标/效果核对和
+  真实 blocker 类型文案用例。
+- `npm run build` — 通过；最终产物 `dist/index.html`、`index-hXIaOMvw.css`、
+  `index-Cz-cdBnZ.js`。
+- `npm run test:e2e -- tests/e2e/task-center-layout.spec.ts` — 13 passed（9.5 秒），
+  含桌面、390 px、矮窗、键盘与 reduced-motion 布局用例。
 - `npm run test:e2e -- --config=playwright.python.config.ts
   tests/e2e/operations-inventory.python.spec.ts --grep
   'Task59[.]2|the selected run detail reads progress|detail tab and filter context|initial manual preparation remains reachable in place'`
-  — 3 passed（21.0 秒），覆盖真实详情正文、筛选上下文和同任务原位续作。
+  — 3 passed（21.1 秒）；历史混合任务读取已验证成功、未确认效果、正常跳过及其证据。
 - `npm run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/task-flow.python.spec.ts` — 3 passed（5.8 秒），覆盖混合文件事实、任务流程失败
-  与协作取消。
+  tests/e2e/manual-organize-dialog.python.spec.ts --grep
+  'a real destination conflict is decided'` — 1 passed（17.7 秒）；Worker 完成后文件行
+  为「已验证成功」、无重放提示，证据显示原目标与已验证效果。
+- `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts --grep
+  'native recognition recovery|native Metadata candidate recovery|native Metadata correction|native Classification recovery|native conflict recovery'`
+  — 7 passed（15.1 秒）；逐类型核对文件行/证据原因与「查看证据」动作。
+- `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/task-flow.python.spec.ts` — 3 passed（5.9 秒）。
+- `npm run test:e2e -- tests/e2e/operations.spec.ts --grep
+  'the selected run detail reads flow|keeps the mixed completed run'` — 2 passed（1.8 秒）。
 - 仓库根 `python3 scripts/check_governance.py`、`git diff --check` — 通过。
 
-已知限制/风险：本轮未单独查看截图，桌面／390 px／矮窗视觉证据由 B 在候选上复核；项目
-E2E 使用既有隔离夹具与临时媒体根，未触及生产 Provider、真实用户媒体或新的执行路径。
-「当前操作」在取消请求或结果出现时会新增一块内容，可能使下方阅读位置下移；未引入新的
-滚动锚定机制，沿用原实时更新语义。本轮测试执行时间约 2.5 分钟，低于本轮开发总时间的
-30%。未推送或发布。
+已知限制/风险：`openlist-metadata.python.spec.ts` 的本机运行在打开页面后的
+`/__harness__/openlist-state` 读取返回非 2xx，失败发生在本次结果标签断言之前；已按两条
+`verified_complete` 结果将该断言更新为「2已验证成功」，需 B 在具备完整 OpenList 夹具的
+环境复核。未单独查看截图，桌面／390 px／矮窗视觉证据由 B 在候选上复核。E2E 使用既有隔离
+夹具与临时媒体根，未触及生产 Provider、真实用户媒体或新的执行路径。本轮测试执行约 3 分钟，
+低于本轮开发总耗时的 30%。未推送或发布。
 
 ## B review result
 
