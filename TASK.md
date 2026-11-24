@@ -1,6 +1,6 @@
 # Task 59.1 — 文件入口的手动整理弹窗与整批确认
 
-Next Action: B INDEPENDENTLY REVIEWS THIS CORRECTION CANDIDATE
+Next Action: DEVELOPER CORRECTS TASK 59.1 AND RESUBMITS FOR B REVIEW
 
 用户已授权激活 Task 59.1。Developer 开始实施时将状态从 `PLANNED` 转为
 `IN PROGRESS`。原 Task ID、Base、范围和验收条件沿用。A 代 B 的授权限于本 Task 的规划，
@@ -11,7 +11,7 @@ B 独立复核实施候选，A 负责 Slice 终审。
 Task ID: 59.1
 Task Type: SLICE
 Parent Slice: 59
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
 Difficulty: High
 Test Level: T3
@@ -397,3 +397,50 @@ Slice 重评：RO-1 的定向概览和重开已验证。RO-2 的 Files 直连丢
 自身的新方案、离开/返回或新编辑解除，若分析被受理却始终未发布新方案（旧方案仍可读），
 本轮不变更该既有边界；附件展开与任务详情正文仍属 Slice 后续范围。未新增 API、schema、
 Worker、权限或执行授权；未推送或发布。
+
+
+### B Review of the in-place continuation correction
+
+**FIX REQUIRED**。独立复核 `3bc9ad99137e5a2f8ff53add92041185ceb8ebbf..c25f69a2e28f40a9d3e5276b244a00e480e72193`。
+实现为 `b74cfb07`，其后两个提交仅更新 TASK 报告。上轮两项已验证：任务中心丢回包后
+在原文件显示复制方案、恢复纳入并继续到原任务结果。Files 的冲突与直连丢包用例在同一次
+原生运行中均通过。
+
+- **AC-02 / P1：元数据服务连接失败被显示成候选待选。** 在 Files 同时选中两个实际文件，
+  点击「批量整理」。隔离原生复核只让其中一个文件的测试 Provider 返回连接失败，正常
+  API 和 Worker 发布结果。概览却提示「需要处理元数据候选；保存决定并重新分析」；点入
+  该文件没有候选恢复表单，详情称「Storage failure」，下一步又要求检查 Metadata Provider。
+  后端摘要记录的是元数据阶段技术失败，没有关联的候选问题项。就绪兄弟项仍独立纳入，
+  浏览和核对期间零执行。首次探测因页面使用有界错误文案而未匹配夹具原文，第二次按实际
+  可见状态及 API 结果验证复现。误导性的概览指引来自 2026-11-24 的 `815c2ca1`：
+  概览把元数据阶段直接当成候选决定，导致技术失败既看不清原因，也没有提示中承诺的动作。
+- **T3 完整原生套件仍有来源串用。** 新增概览与焦点用例和原有单文件来源／目标可读性用例
+  都从 Files 选 `ReadabilityOne/ReadableOne.2011.mkv`。前一用例留下未确认准备，后一用例
+  被后端如实拒绝重复受理。页面明确显示「所选文件已有未结束的整理工作」，等待地址更新
+  只是后续超时。单文件可读性用例在独立运行中通过，来源串用由 `815c2ca1` 新增的概览
+  用例引入。
+
+实跑（cwd `web/`）：typecheck、lint、format:check、build 通过。Files／任务中心布局
+Web 64 项通过。原生整理全文件套件 16 项通过、1 项来源占用失败、3 项未运行。另从干净
+夹具运行单／十／100／101 项可读性和边界及任务中心两个定向旅程，共 6 项通过。
+已查看 100 项整批复核的桌面、390 px 和矮屏截图。原生 Provider 故障探测最终 1 项通过，
+结果证明上述用户可见问题。临时探测脚本及配置已移除。治理和完整范围的 `git diff --check`
+通过。完整同次原生门禁及余下组合验收待修正候选。
+
+### Developer correction guide after the in-place review
+
+1. 在 Files 概览和文件详情中，沿用已有条目状态、分析结果及关联的业务问题，统一呈现该
+   文件的当前结论。有真实候选决定时引导选择；元数据服务技术失败时说明当前阶段和已知
+   影响，附上适用的 Provider 排查及原任务结果查看方式。四类业务问题和技术阶段各用
+   自己的已发布证据。详情中与技术事实矛盾的 Storage 提示同样用现有元数据证据纠正。
+   修正限定在当前 Files 正文，复用现有读模与动作。
+2. 用现有 Files 批量入口验证一个 Provider 连接失败文件和一个就绪兄弟。让正常 API/Worker
+   产生摘要，只在本地测试 Provider 注入错误。核对概览、该文件详情、兄弟选择与零执行，
+   并用已有元数据候选旅程对照真实候选仍可选、可重新分析并返回概览。
+3. 让概览焦点用例与单文件可读性用例使用不同的临时来源，或在一次已受理准备中完成二者
+   的原断言。保留概览返回、精确来源与目标、窄屏和矮窗断言。Developer 同次跑受影响两条
+   用例及 Provider 故障对照。B 在修正候选上运行完整原生门禁。
+
+Slice 重评：RO-1 的主要入口、预览回读与 100/101 项边界已有通过证据。RO-2 的原位回落
+已验证，本轮技术失败指引阻塞。RO-3 的附件、精确子集及原请求交接已有通过证据，组合
+验收继续。RO-4 任务详情正文仍待交付。修正继续在 Task 59.1。
