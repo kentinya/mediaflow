@@ -1,9 +1,11 @@
 # Task 59.2 — 任务中心运行详情正文
 
-Next Action: USER AUTHORIZES TASK 59.2 IMPLEMENTATION
+Next Action: DEVELOPER STARTS TASK 59.2 IMPLEMENTATION
 
 依据已提交的 [Slice 59](SLICE.md) RO-4、AC-04 和 AC-05 的任务详情部分，落实
 `V2-OPS-021`。开发与验收按[开发工作流](docs/development-workflow.md)执行。
+
+用户已授权实施 Task 59.2。Developer 开始实施时将状态转为 `IN PROGRESS`。激活前的规划提交为 `92057bc2`，工作区和暂存区干净，治理检查通过。
 
 ```text
 Task ID: 59.2
@@ -14,7 +16,7 @@ Task Base: 868ff9daab6972473cfb7344ca02cbdbc30077cf
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: PENDING USER AUTHORIZATION FOR TASK 59.2
+Implementation Authorization: AUTHORIZED BY USER FOR TASK 59.2
 ```
 
 ## 上一 Task 的 B 复核
