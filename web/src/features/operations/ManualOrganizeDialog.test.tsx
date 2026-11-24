@@ -733,6 +733,15 @@ function makeBackend() {
         selection["selectedItemIds"] as string[]
       ).filter((itemId) => itemId !== "item-1");
       selection["unselectedItemIds"] = ["item-1"];
+      if ((value["executionCandidateItemIds"] as string[]).length === 0) {
+        // The real backend only advertises Execute for a current plan with an
+        // executable candidate; an all-unavailable plan carries a refusal.
+        const execute = (value["actions"] as Json)["execute"] as Json;
+        execute["available"] = false;
+        execute["reason"] = "no current executable candidate";
+        execute["nextAction"] =
+          "inspect the Provider and the original preparation result";
+      }
     }
     const execute = (value["actions"] as Json)["execute"] as Json;
     execute["path"] = `/api/operations/organize/previews/${previewId}/execute`;
@@ -3291,6 +3300,7 @@ describe("ManualOrganizeDialog", () => {
     expect(status).toHaveTextContent("元数据服务技术失败");
     expect(status).toHaveTextContent(/Metadata Provider/);
     expect(status).toHaveTextContent(/任务中心/);
+    expect(status).not.toHaveTextContent("重新分析同一准备");
     expect(card()).not.toHaveTextContent("Storage failure");
     expect(within(card()).queryByRole("radio", { name: /候选/ })).toBeNull();
     expect(
@@ -3306,9 +3316,47 @@ describe("ManualOrganizeDialog", () => {
     });
     expect(listed).toHaveTextContent(filename(1));
     expect(listed).not.toHaveTextContent(filename(0));
+    await user.click(screen.getByText(`未纳入本次确认的文件(1 项)`));
+    const skippedRow = within(card())
+      .getByRole("button", { name: `查看 ${filename(0)}` })
+      .closest("li") as HTMLElement;
+    expect(skippedRow).toHaveTextContent("元数据服务技术失败");
+    expect(skippedRow).toHaveTextContent(/Metadata Provider/);
+    expect(skippedRow).toHaveTextContent(/原整理准备任务 organize-task-1/);
+    expect(skippedRow).not.toHaveTextContent("重新分析同一准备");
+    expect(skippedRow).not.toHaveTextContent("Storage failure");
     expect(screen.getByRole("button", { name: "确认整理 1 项" })).toBeEnabled();
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
+
+  it("Task59.1 keeps the same metadata technical failure in the ended read-only summary", async () => {
+    const user = userEvent.setup();
+    const backend = await openPreparationDialog(
+      user,
+      (value) => {
+        value.state.metadataProviderFailure = true;
+        value.state.previewItemPaths = [`Movies/${filename(0)}`];
+        value.state.endedFlow = true;
+        value.state.endedFlowKeepsPreview = true;
+      },
+      [filename(0)],
+    );
+
+    await screen.findByText("本次整理工作已结束");
+    const history = await screen.findByRole("region", {
+      name: "只读原计划摘要",
+    });
+    expect(history).toHaveTextContent("元数据服务技术失败");
+    expect(history).toHaveTextContent(/Metadata Provider/);
+    expect(history).toHaveTextContent(/重新选择该文件发起新的整理/);
+    expect(history).not.toHaveTextContent("重新分析同一准备");
+    expect(history).not.toHaveTextContent("Storage failure");
+    expect(
+      within(history).queryByRole("button", { name: /确认整理/ }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeEnabled();
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 20_000);
 
   it("Task59.1 returns to the overview only after this item's new ready plan is read back", async () => {
     const user = userEvent.setup();

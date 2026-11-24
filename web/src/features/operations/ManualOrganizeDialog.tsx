@@ -297,6 +297,37 @@ function technicalTaskPointer(organizeTaskId: string | null): string {
     : `关闭本弹窗后，可在任务中心打开原整理准备任务 ${organizeTaskId} 查看阶段与结果。`;
 }
 
+/**
+ * One Files conclusion for a metadata-stage technical failure.  The backend
+ * publishes no candidate and no reusable decision for this item, so the
+ * overview, file detail, batch exclusion and ended read-only summary must all
+ * name the same failed stage and the same real next step instead of falling
+ * back to the raw generic failure message.
+ */
+function metadataTechnicalFailureReason(): string {
+  return "元数据服务技术失败：Metadata Provider 没有返回可用候选，当前文件没有可保存的候选决定，也没有生成可确认方案；没有修改任何文件。";
+}
+
+function metadataTechnicalFailureNextStep(
+  organizeTaskId: string | null,
+  flowEnded: boolean,
+): string {
+  const nextStep = flowEnded
+    ? "该整理工作已结束；请关闭本弹窗后从资源库文件页重新选择该文件发起新的整理。"
+    : "请检查已配置的 Metadata Provider 的连接、凭据与可用性。";
+  return `${nextStep}${technicalTaskPointer(organizeTaskId)}`;
+}
+
+function metadataTechnicalFailureSummary(
+  organizeTaskId: string | null,
+  flowEnded: boolean,
+): string {
+  return `${metadataTechnicalFailureReason()}${metadataTechnicalFailureNextStep(
+    organizeTaskId,
+    flowEnded,
+  )}`;
+}
+
 /** Metadata candidate and correction stay one family for "same problem" reads. */
 function problemFamily(value: string | null): string | null {
   return value === "metadata_correction" ? "metadata" : value;
@@ -368,9 +399,7 @@ function overviewPendingReason(
     return "该文件已不在当前方案中；需要重新分析后才能再次核对或纳入。";
   }
   if (previewItemTechnicalStage(item) === "metadata") {
-    return `元数据服务技术失败：当前文件没有可用的元数据候选，也没有可保存的候选决定；请检查已配置的 Metadata Provider 后重新分析同一准备。${technicalTaskPointer(
-      organizeTaskId,
-    )}`;
+    return metadataTechnicalFailureSummary(organizeTaskId, false);
   }
   const problem = previewItemProblemKind(item, false);
   if (problem !== null) {
@@ -2747,7 +2776,17 @@ export function ManualOrganizeDialog({
                         ? ` · 附件 ${item.attachments.length} 个`
                         : ""}
                       {item.current ? "" : " · 已被后续方案取代"}
-                      {item.failure !== null ? (
+                      {filesHost &&
+                      previewItemTechnicalStage(item) === "metadata" ? (
+                        <span role="status">
+                          {" "}
+                          —{" "}
+                          {metadataTechnicalFailureSummary(
+                            preparation?.organizeTaskId ?? null,
+                            true,
+                          )}
+                        </span>
+                      ) : item.failure !== null ? (
                         <span role="status"> — {item.failure.message}</span>
                       ) : null}
                     </li>
@@ -3088,18 +3127,13 @@ export function ManualOrganizeDialog({
               </>
             ) : metadataTechnicalFailure ? (
               <StatusBanner variant="warning" title="元数据服务技术失败">
-                <p role="status">
-                  该文件在元数据分析阶段未完成：Metadata Provider
-                  没有返回可用候选，因此这里没有可保存的候选决定，也不会显示候选恢复表单。
-                  没有修改任何文件。
-                </p>
+                <p role="status">{metadataTechnicalFailureReason()}</p>
                 <p className="mf-dashboard-meta">
                   已知影响：当前文件未生成可确认方案，不能纳入本次整理；其他文件仍按各自事实独立核对。
                 </p>
                 <p className="mf-dashboard-meta">
-                  下一步：检查已配置的 Metadata Provider
-                  的连接、凭据与可用性，然后重新分析同一准备。
-                  {technicalTaskPointer(organizeTaskId)}
+                  下一步：
+                  {metadataTechnicalFailureNextStep(organizeTaskId, false)}
                 </p>
               </StatusBanner>
             ) : item.failure !== null && !hasNativeProblem ? (
@@ -3279,15 +3313,17 @@ export function ManualOrganizeDialog({
           </dl>
           {!hasGeneratedScheme ? (
             <p className="mf-organize-section-note" role="status">
-              {decisionStatus === "analysis_waiting"
-                ? "新的零变更方案生成后，这里会显示来源、目标、操作与附件。"
-                : decisionStatus === "analysis_refused"
-                  ? "补做同一零变更分析并生成新方案后，这里会显示来源、目标、操作与附件。"
-                  : decisionStatus === "analysis_unknown"
-                    ? "核对分析结果并生成可确认的新方案后，这里会显示来源、目标、操作与附件。"
-                    : decisionStatus === "analysis_read_pending"
-                      ? "正在确认当前分析状态；确认后会显示可核对的新方案。"
-                      : "零变更方案尚未生成：完成上方当前选择并重新分析后，这里会显示来源、目标、操作与附件。"}
+              {metadataTechnicalFailure
+                ? "元数据阶段技术失败，当前文件没有生成来源、目标、操作或附件；请按当前状态核对 Metadata Provider 与原任务结果。"
+                : decisionStatus === "analysis_waiting"
+                  ? "新的零变更方案生成后，这里会显示来源、目标、操作与附件。"
+                  : decisionStatus === "analysis_refused"
+                    ? "补做同一零变更分析并生成新方案后，这里会显示来源、目标、操作与附件。"
+                    : decisionStatus === "analysis_unknown"
+                      ? "核对分析结果并生成可确认的新方案后，这里会显示来源、目标、操作与附件。"
+                      : decisionStatus === "analysis_read_pending"
+                        ? "正在确认当前分析状态；确认后会显示可核对的新方案。"
+                        : "零变更方案尚未生成：完成上方当前选择并重新分析后，这里会显示来源、目标、操作与附件。"}
             </p>
           ) : !hasGeneratedTarget ? (
             <p className="mf-organize-section-note" role="status">
@@ -3477,13 +3513,15 @@ export function ManualOrganizeDialog({
               <p className="mf-organize-section-note" role="status">
                 {admittedItemIds.has(item.itemId)
                   ? "该文件已受理执行,不能再纳入本次确认;已在任务中心保持独立进度与结果。"
-                  : decisionStatus === "analysis_waiting"
-                    ? "该文件当前未就绪；分析完成并生成新方案后可在此选择。"
-                    : decisionStatus === "analysis_refused"
-                      ? "该文件当前未就绪；先补做分析并生成新方案，再决定是否纳入。"
-                      : decisionStatus === "analysis_unknown"
-                        ? "该文件当前未就绪；分析结果未确认前不会纳入本次确认。"
-                        : "该文件当前未就绪，不能纳入本次确认；完成上方当前状态后可再生方案。"}
+                  : metadataTechnicalFailure
+                    ? "该文件因元数据阶段技术失败没有生成可确认方案，不能纳入本次确认；请按当前状态核对 Metadata Provider 与原任务结果。"
+                    : decisionStatus === "analysis_waiting"
+                      ? "该文件当前未就绪；分析完成并生成新方案后可在此选择。"
+                      : decisionStatus === "analysis_refused"
+                        ? "该文件当前未就绪；先补做分析并生成新方案，再决定是否纳入。"
+                        : decisionStatus === "analysis_unknown"
+                          ? "该文件当前未就绪；分析结果未确认前不会纳入本次确认。"
+                          : "该文件当前未就绪，不能纳入本次确认；完成上方当前状态后可再生方案。"}
               </p>
             ) : null}
           </div>
@@ -3599,8 +3637,7 @@ export function ManualOrganizeDialog({
                 </dd>
                 <dt>下一步</dt>
                 <dd>
-                  检查已配置的 Metadata Provider 后，重新分析同一准备。
-                  {technicalTaskPointer(organizeTaskId)}
+                  {metadataTechnicalFailureNextStep(organizeTaskId, false)}
                 </dd>
               </dl>
             ) : (
@@ -3884,7 +3921,13 @@ export function ManualOrganizeDialog({
                       : excluded.has(item.itemId)
                         ? "你选择了暂不纳入(不是持久忽略)"
                         : item.failure !== null
-                          ? item.failure.message
+                          ? filesHost &&
+                            previewItemTechnicalStage(item) === "metadata"
+                            ? metadataTechnicalFailureSummary(
+                                preparation?.organizeTaskId ?? null,
+                                false,
+                              )
+                            : item.failure.message
                           : "未就绪"}
                 </li>
               ))}

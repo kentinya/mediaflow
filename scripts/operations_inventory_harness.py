@@ -835,9 +835,16 @@ def build_managed_fixture(
     (provider_failure_root / "ProviderReady.2011.mkv").write_bytes(
         b"metadata provider ready sibling synthetic media"
     )
+    # One independent failure-only source for the ended read-only summary
+    # journey; it shares the ProviderFailure directory but no source ownership
+    # with the mixed batch above.
+    (provider_failure_root / "ProviderFail.2035.mkv").write_bytes(
+        b"metadata provider failure ended summary synthetic media"
+    )
     for provider_file in (
         provider_failure_root / "ProviderFail.2011.mkv",
         provider_failure_root / "ProviderReady.2011.mkv",
+        provider_failure_root / "ProviderFail.2035.mkv",
     ):
         os.utime(provider_file, (conflict_time, conflict_time))
     readability_ten_root = source_root / "ReadabilityTen"

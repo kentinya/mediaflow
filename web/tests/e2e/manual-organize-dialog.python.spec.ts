@@ -2603,6 +2603,7 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
   test.setTimeout(180_000);
   const failedFile = "ProviderFail.2011.mkv";
   const readyFile = "ProviderReady.2011.mkv";
+  const endedFile = "ProviderFail.2035.mkv";
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await connect(page);
   const commands = recordCommands(page);
@@ -2663,6 +2664,56 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
   await expect(
     card.getByRole("button", { name: "确认整理 1 项" }),
   ).toBeEnabled();
+  const skipped = card.locator(".mf-organize-skipped");
+  await skipped.locator("summary").click();
+  const skippedRow = skipped
+    .getByRole("button", { name: `查看 ${failedFile}` })
+    .locator("xpath=ancestor::li[1]");
+  await expect(skippedRow).toContainText("元数据服务技术失败");
+  await expect(skippedRow).toContainText("Metadata Provider");
+  await expect(skippedRow).toContainText(/原整理准备任务/);
+  await expect(skippedRow).not.toContainText("重新分析同一准备");
+  await expect(skippedRow).not.toContainText("Storage failure");
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+
+  // A preparation with only the failing source has no executable sibling, so
+  // its real Task settles failed and the same dialog keeps the original plan
+  // as read-only history. The ended summary must name the same metadata stage
+  // and offer the Files re-entry, not the generic Storage failure.
+  await card.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(card).toBeHidden();
+  await openReadabilityDirectory(page, "ProviderFailure", endedFile);
+  await selectFiles(page, [endedFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const endedCard = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(endedCard).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const endedDiscoveryId = new URL(page.url()).searchParams.get(
+    "organizeDiscovery",
+  );
+  expect(endedDiscoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, endedDiscoveryId as string);
+  await expect(endedCard.getByText("本次整理工作已结束")).toBeVisible({
+    timeout: 30_000,
+  });
+  const history = endedCard.getByRole("region", {
+    name: "只读原计划摘要",
+  });
+  await expect(history).toContainText("元数据服务技术失败");
+  await expect(history).toContainText("Metadata Provider");
+  await expect(history).toContainText(/原整理准备任务/);
+  await expect(history).toContainText(/重新选择该文件发起新的整理/);
+  await expect(history).not.toContainText("重新分析同一准备");
+  await expect(history).not.toContainText("Storage failure");
+  await expect(endedCard.getByRole("button", { name: /确认整理/ })).toHaveCount(
+    0,
+  );
   expect(
     commands.filter(
       (command) =>
