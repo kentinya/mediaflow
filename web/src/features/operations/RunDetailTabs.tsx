@@ -1925,45 +1925,40 @@ function RunEvidenceSection({
                   <PlanProcessingSummary evidence={evidence.planEvidence} />
                 </details>
               )}
-              <section className="mf-run-evidence-block" aria-label="执行记录">
-                <h5>实际操作与效果</h5>
-                {latestResult === null ? (
-                  <>
-                    <p className="mf-dashboard-meta">
-                      该文件还没有持久执行结果。
-                    </p>
-                    {checkpoint.completedOperations.length > 0 ||
-                    checkpoint.uncertainEffects.length > 0 ? (
-                      <ul className="mf-run-result-list">
-                        {checkpoint.completedOperations.length > 0 && (
-                          <li>
-                            已完成：
-                            {checkpoint.completedOperations
-                              .map(storageStepLabel)
-                              .join("、")}
-                          </li>
-                        )}
-                        {checkpoint.uncertainEffects.length > 0 && (
-                          <li>
-                            未确认效果：
-                            {checkpoint.uncertainEffects
-                              .map(storageStepLabel)
-                              .join("、")}
-                          </li>
-                        )}
-                      </ul>
-                    ) : (
-                      <p className="mf-dashboard-meta">
-                        尚无已记录的处理步骤。
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <div className="mf-run-current-result">
-                    <ResultAttemptDetails result={latestResult} index={0} />
-                  </div>
-                )}
-              </section>
+              {(latestResult !== null ||
+                checkpoint.completedOperations.length > 0 ||
+                checkpoint.uncertainEffects.length > 0) && (
+                <section
+                  className="mf-run-evidence-block"
+                  aria-label="执行记录"
+                >
+                  <h5>实际操作与效果</h5>
+                  {latestResult === null ? (
+                    <ul className="mf-run-result-list">
+                      {checkpoint.completedOperations.length > 0 && (
+                        <li>
+                          已完成：
+                          {checkpoint.completedOperations
+                            .map(storageStepLabel)
+                            .join("、")}
+                        </li>
+                      )}
+                      {checkpoint.uncertainEffects.length > 0 && (
+                        <li>
+                          未确认效果：
+                          {checkpoint.uncertainEffects
+                            .map(storageStepLabel)
+                            .join("、")}
+                        </li>
+                      )}
+                    </ul>
+                  ) : (
+                    <div className="mf-run-current-result">
+                      <ResultAttemptDetails result={latestResult} index={0} />
+                    </div>
+                  )}
+                </section>
+              )}
               {needsAttention && (
                 <section
                   className="mf-run-evidence-block"

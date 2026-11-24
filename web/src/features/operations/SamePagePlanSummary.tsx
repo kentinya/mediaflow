@@ -19,9 +19,11 @@ import {
   ItemFindings,
   OrganizeHistoryReminder,
   displayEnum,
+  safeValue,
 } from "./organize-summary";
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import type { ManualPreviewItemModel } from "../../entities/operations/preview";
 
 export interface SamePagePlanSummaryProps {
   readonly token: string | null;
@@ -36,6 +38,12 @@ export interface SamePagePlanSummaryProps {
   readonly onConfirm: () => void;
   /** Operator-facing heading, so each journey names its own scope. */
   readonly heading: string;
+  /**
+   * Task Center recovery renders the same exact selection in the approved
+   * compact source/target rows; the Files and paused-run surfaces keep the
+   * reviewed full findings.
+   */
+  readonly compact?: boolean;
   /** Operator-facing confirm verb, defaulting to the recovery copy. */
   readonly confirmLabel?: (count: number) => string;
   /**
@@ -86,6 +94,35 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
     (!requiresCleanup || props.allowCleanup);
   const confirmLabel =
     props.confirmLabel ?? ((count: number) => `确认继续整理 ${count} 项`);
+  const compact = props.compact === true;
+  const fileNameOf = (item: ManualPreviewItemModel): string =>
+    item.sourceFilename ?? item.itemId;
+  const sourceEffect = (item: ManualPreviewItemModel): string => {
+    const effects: string[] = [];
+    switch (item.operation) {
+      case "MOVE":
+        effects.push("成功后原位置移除");
+        break;
+      case "COPY":
+      case "LINK":
+        effects.push("原文件保留");
+        break;
+      case "NOOP":
+      case "SKIP":
+        effects.push("不执行文件操作");
+        break;
+      default:
+        effects.push("来源影响见精确方案");
+        break;
+    }
+    if (item.destructiveImplications?.overwriteRequired) {
+      effects.push("确认时需覆盖授权");
+    }
+    if (item.destructiveImplications?.sourceCleanupRequired) {
+      effects.push("确认时需来源清理授权");
+    }
+    return effects.join(" · ");
+  };
   return (
     <section className="mf-count-section" aria-label="新计划摘要">
       <div className="mf-run-items-head">
@@ -102,7 +139,99 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
         <StatusBanner variant="warning" title={previewQuery.data.failure.title}>
           <p>{previewQuery.data.failure.nextAction}</p>
         </StatusBanner>
-      ) : preview === undefined ? null : (
+      ) : preview === undefined ? null : compact ? (
+        <>
+          {executableIds.length > 0 ? (
+            <StatusBanner variant="success" title="可确认方案已就绪">
+              <p>
+                {preview.items
+                  .filter((item) => executableIds.includes(item.itemId))
+                  .map(fileNameOf)
+                  .join("、")}{" "}
+                已生成可确认的新方案。整理尚未提交。
+              </p>
+            </StatusBanner>
+          ) : (
+            <StatusBanner variant="warning" title="当前方案没有可确认文件">
+              <p>
+                {preview.nextAction ??
+                  "按当前方案逐项核对原因，处理后再生成新的精确方案。"}
+              </p>
+            </StatusBanner>
+          )}
+          <OrganizeHistoryReminder items={preview.items} />
+          <div className="mf-recovery-plan-head">
+            <h6>来源与目标</h6>
+            <span>按当前方案</span>
+          </div>
+          <ul className="mf-recovery-plan-list" aria-label="可确认文件">
+            {preview.items.map((item) => {
+              const isExecutable = executableIds.includes(item.itemId);
+              const target =
+                item.targetPath ??
+                item.destination?.relativePath ??
+                item.destination?.storageRelativePath ??
+                null;
+              return (
+                <li
+                  className={
+                    isExecutable
+                      ? "mf-recovery-plan-row"
+                      : "mf-recovery-plan-row mf-recovery-plan-row-blocked"
+                  }
+                  key={item.itemId}
+                >
+                  <label className="mf-recovery-plan-choice">
+                    <input
+                      type="checkbox"
+                      aria-label={`选择 ${fileNameOf(item)}`}
+                      checked={activeSelection.includes(item.itemId)}
+                      disabled={!isExecutable || props.busy}
+                      onChange={(event) =>
+                        props.onSelected(
+                          event.target.checked
+                            ? [...activeSelection, item.itemId]
+                            : activeSelection.filter(
+                                (value) => value !== item.itemId,
+                              ),
+                        )
+                      }
+                    />
+                  </label>
+                  <div className="mf-recovery-plan-copy">
+                    <p className="mf-recovery-plan-name">{fileNameOf(item)}</p>
+                    <p>
+                      <span className="mf-recovery-plan-label">来源</span>
+                      <span className="mf-exact-identity">
+                        {safeValue(item.sourcePath)}
+                      </span>
+                    </p>
+                    <p>
+                      <span className="mf-recovery-plan-label">目标</span>
+                      <span className="mf-exact-identity">
+                        {target === null ? "—" : target}
+                      </span>
+                    </p>
+                    <p className="mf-recovery-plan-effect">
+                      {isExecutable
+                        ? sourceEffect(item)
+                        : `不可执行 · ${
+                            item.nextAction ?? displayEnum(item.status)
+                          }`}
+                      {item.attachments.length > 0
+                        ? ` · 附件 ${item.attachments.length} 个`
+                        : ""}
+                    </p>
+                  </div>
+                  <span className="mf-recovery-plan-operation">
+                    {displayEnum(safeValue(item.operation))}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      ) : (
         <>
           <p className="mf-dashboard-meta">
             计划 {preview.previewId} · {displayEnum(preview.status)} ·{" "}
@@ -139,56 +268,54 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
               </div>
             );
           })}
-          {requiresOverwrite && (
-            <label>
-              <input
-                type="checkbox"
-                checked={props.allowOverwrite}
-                disabled={props.busy}
-                onChange={(event) =>
-                  props.onAllowOverwrite(event.target.checked)
-                }
-              />
-              我确认允许按此精确摘要替换现有目标文件
-            </label>
-          )}
-          {requiresCleanup && (
-            <label>
-              <input
-                type="checkbox"
-                checked={props.allowCleanup}
-                disabled={props.busy}
-                onChange={(event) => props.onAllowCleanup(event.target.checked)}
-              />
-              我确认允许删除整理后为空的来源目录
-            </label>
-          )}
-          <div className="mf-actions">
-            {props.showConfirm === false ? (
-              <p className="mf-dashboard-meta">
-                已选 {activeSelection.length} 项；请在下方统一确认所选就绪项。
-              </p>
-            ) : (
-              <button
-                type="button"
-                className="mf-button"
-                disabled={
-                  props.busy ||
-                  activeSelection.length === 0 ||
-                  !destructiveConfirmed
-                }
-                onClick={props.onConfirm}
-              >
-                {props.busy
-                  ? "正在受理…"
-                  : confirmLabel(activeSelection.length)}
-              </button>
-            )}
-          </div>
-          <p className="mf-dashboard-meta">
-            确认只会准入所选就绪子集；未选项保留自己的准备状态，不会被自动执行。
-          </p>
         </>
+      )}
+      {requiresOverwrite && (
+        <label>
+          <input
+            type="checkbox"
+            checked={props.allowOverwrite}
+            disabled={props.busy}
+            onChange={(event) => props.onAllowOverwrite(event.target.checked)}
+          />
+          我确认允许按此精确摘要替换现有目标文件
+        </label>
+      )}
+      {requiresCleanup && (
+        <label>
+          <input
+            type="checkbox"
+            checked={props.allowCleanup}
+            disabled={props.busy}
+            onChange={(event) => props.onAllowCleanup(event.target.checked)}
+          />
+          我确认允许删除整理后为空的来源目录
+        </label>
+      )}
+      <div className="mf-actions">
+        {props.showConfirm === false ? (
+          <p className="mf-dashboard-meta">
+            已选 {activeSelection.length} 项；请在下方统一确认所选就绪项。
+          </p>
+        ) : (
+          <button
+            type="button"
+            className="mf-button"
+            disabled={
+              props.busy ||
+              activeSelection.length === 0 ||
+              !destructiveConfirmed
+            }
+            onClick={props.onConfirm}
+          >
+            {props.busy ? "正在受理…" : confirmLabel(activeSelection.length)}
+          </button>
+        )}
+      </div>
+      {!compact && (
+        <p className="mf-dashboard-meta">
+          确认只会准入所选就绪子集；未选项保留自己的准备状态，不会被自动执行。
+        </p>
       )}
     </section>
   );

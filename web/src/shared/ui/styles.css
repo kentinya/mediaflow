@@ -5792,6 +5792,208 @@ tr[aria-selected="true"] {
   }
 }
 
+/* Slice 59 AC-06: the native four-type decision and its zero-mutation summary
+   use the approved row layout inside the exact Task Center file evidence. */
+.mf-recovery-host {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mf-recovery-decision {
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.mf-recovery-decision .mf-organize-decision-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.mf-recovery-decision .mf-organize-decision-field-title {
+  order: 1;
+}
+
+.mf-recovery-decision .mf-organize-decision-field-year {
+  order: 2;
+}
+
+.mf-recovery-decision .mf-organize-decision-field-media {
+  order: 3;
+}
+
+.mf-recovery-decision .mf-organize-decision-options {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.mf-recovery-conflict-target {
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border: 1px solid #dfe6ef;
+  border-radius: 10px;
+  background: #fbfcff;
+}
+
+.mf-recovery-conflict-target > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: baseline;
+}
+
+.mf-recovery-conflict-target dt {
+  color: #5f6b7d;
+  font-size: 12.5px;
+}
+
+.mf-recovery-conflict-target dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mf-recovery-ignore {
+  align-self: center;
+  border: 0;
+  background: transparent;
+  color: #0b63ce;
+  padding: 4px 2px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mf-recovery-ignore:focus-visible {
+  outline: 2px solid #0b63ce;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.mf-recovery-plan-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 12px 0 6px;
+}
+
+.mf-recovery-plan-head h6 {
+  margin: 0;
+  color: #14223c;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.mf-recovery-plan-head > span {
+  color: #5f6b7d;
+  font-size: 12px;
+}
+
+.mf-recovery-plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #dfe6ef;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.mf-recovery-plan-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.mf-recovery-plan-row + .mf-recovery-plan-row {
+  border-top: 1px solid #e9edf5;
+}
+
+.mf-recovery-plan-choice {
+  flex: none;
+  padding-top: 2px;
+}
+
+.mf-recovery-plan-choice input {
+  width: 16px;
+  height: 16px;
+  accent-color: #1268f5;
+}
+
+.mf-recovery-plan-copy {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mf-recovery-plan-name {
+  margin: 0;
+  color: #14223c;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.mf-recovery-plan-copy p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin: 0;
+  color: #263b61;
+  font-size: 12.5px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.mf-recovery-plan-copy .mf-exact-identity {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mf-recovery-plan-label {
+  flex: none;
+  color: #5f6b7d;
+}
+
+.mf-recovery-plan-effect {
+  color: #5f6b7d !important;
+}
+
+.mf-recovery-plan-operation {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eef3fb;
+  color: #30456b;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.mf-recovery-plan-row-blocked .mf-recovery-plan-operation {
+  background: #fdf1db;
+  color: #8a4b0f;
+}
+
+@media (max-width: 640px) {
+  .mf-recovery-decision .mf-organize-decision-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mf-recovery-plan-row {
+    flex-wrap: wrap;
+  }
+
+  .mf-recovery-plan-operation {
+    margin-left: 26px;
+  }
+}
+
 .mf-run-evidence-standalone {
   display: flex;
   flex-direction: column;

@@ -232,7 +232,7 @@ test("the Task Center recovery search submits the current year to the Provider",
 
   // The correction form starts from the saved original query and year.
   const title = recovery.getByLabel("搜索标题");
-  const year = recovery.getByLabel("年份(可留空)");
+  const year = recovery.getByLabel("年份（可留空）");
   await expect(title).toHaveValue("YearRecovery");
   await expect(year).toHaveValue("2025");
 
@@ -246,9 +246,7 @@ test("the Task Center recovery search submits the current year to the Provider",
       new URL(response.url()).pathname ===
         `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
   );
-  await recovery
-    .getByRole("button", { name: "显式搜索 Metadata Provider" })
-    .click();
+  await recovery.getByRole("button", { name: "搜索作品" }).click();
   expect((await rejectedSearch).status()).toBe(400);
   await expect(recovery.getByText(/本次搜索没有完成/)).toBeVisible();
   await expect(recovery.getByText(/1870–2100/)).toBeVisible();
@@ -272,9 +270,7 @@ test("the Task Center recovery search submits the current year to the Provider",
       new URL(response.url()).pathname ===
         `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
   );
-  await recovery
-    .getByRole("button", { name: "显式搜索 Metadata Provider" })
-    .click();
+  await recovery.getByRole("button", { name: "搜索作品" }).click();
   expect((await firstSearch).status()).toBe(200);
   await expect(recovery.getByRole("radio", { name: /ID 733/ })).toBeVisible();
   expect(await probeCalls(request)).toContainEqual({
@@ -287,9 +283,7 @@ test("the Task Center recovery search submits the current year to the Provider",
   // the explicit null reaches the Provider instead of the original 2025 (whose
   // search really returns nothing).
   await year.fill("");
-  await recovery
-    .getByRole("button", { name: "显式搜索 Metadata Provider" })
-    .click();
+  await recovery.getByRole("button", { name: "搜索作品" }).click();
   await expect(recovery.getByRole("radio", { name: /ID 733/ })).toHaveCount(0);
   await expect(recovery.getByRole("radio", { name: /ID 734/ })).toBeVisible();
   expect(await probeCalls(request)).toContainEqual({
@@ -549,8 +543,8 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
   // already loaded for this exact item: saved title, year, TV type and the
   // failure reason — never an empty movie form.
   await expect(recovery.getByLabel("搜索标题")).toHaveValue(SEASON_PROBE_TITLE);
-  await expect(recovery.getByLabel("年份(可留空)")).toHaveValue("2024");
-  await expect(recovery.getByLabel("媒体类型")).toHaveValue("tv");
+  await expect(recovery.getByLabel("年份（可留空）")).toHaveValue("2024");
+  await expect(recovery.getByLabel("作品类型")).toHaveValue("tv");
   await expect(
     recovery.getByText(/上次修正未通过验证：Season 4 is not available/),
   ).toBeVisible();
@@ -579,7 +573,7 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
   // Only the year is cleared; the saved title and TV type stay. The save and
   // its zero-mutation re-analysis stay on the same Task with no file effect.
   await clearProbeCalls(request);
-  const yearInput = recovery.getByLabel("年份(可留空)");
+  const yearInput = recovery.getByLabel("年份（可留空）");
   await yearInput.fill("");
   const decision = page.waitForResponse(
     (response) =>

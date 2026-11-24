@@ -270,11 +270,9 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   await connectOn(page, `/operations?run=${taskId}&item=${conflict!.itemId}`);
   const recovery = page.getByRole("region", { name: "条目审核与恢复" });
   await expect(
-    recovery.getByRole("heading", { name: "待处理的目标冲突决策" }),
+    recovery.getByRole("heading", { name: "处理目标文件冲突" }),
   ).toBeVisible();
-  await recovery
-    .getByRole("radio", { name: "重命名目标(保留现有文件)" })
-    .check();
+  await recovery.getByRole("radio", { name: "保留原目标，另存新文件" }).check();
   const continued = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&

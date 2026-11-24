@@ -257,6 +257,23 @@ function conflictStrategyHint(strategy: string): string {
       : "只有固定策略明确允许时才可选择；本次仍需再次确认";
 }
 
+/** The approved Task Center wording for the same server-allowed strategies. */
+function recoveryConflictStrategyTitle(strategy: string): string {
+  return strategy === "skip"
+    ? "跳过此文件"
+    : strategy === "rename"
+      ? "保留原目标，另存新文件"
+      : "按许可替换现有目标";
+}
+
+function recoveryConflictStrategyHint(strategy: string): string {
+  return strategy === "skip"
+    ? "保留来源和已有目标"
+    : strategy === "rename"
+      ? "按策略生成可用的新文件名"
+      : "整批复核中还需要授权这项覆盖";
+}
+
 /** Operator inputs for one live decision form, kept per exact TaskItem. */
 export interface TaskItemDecisionDraft {
   /** The exact checkpoint/decision identity these inputs belong to. */
@@ -1828,90 +1845,101 @@ export function TaskItemRecoveryPanel({
   }
 
   return (
-    <section className="mf-count-section" aria-label="条目审核与恢复">
-      <div className="mf-run-items-head">
-        <h5>审核与恢复</h5>
-        <RefreshControl
-          onRefresh={() => query.refetch({ cancelRefetch: false })}
-        />
-      </div>
-      {owesRecoveryAction ? (
-        <dl className="mf-dashboard-facts">
-          <div>
-            <dt>当前阶段</dt>
-            <dd>
-              {RECOVERY_STAGE_LABELS[checkpoint?.stage ?? ""] ??
-                checkpoint?.stage ??
-                "不可用"}
-            </dd>
-          </div>
-          <div>
-            <dt>效果确定性</dt>
-            <dd>
-              {RECOVERY_EFFECT_LABELS[checkpoint?.effectCertainty ?? ""] ??
-                checkpoint?.effectCertainty ??
-                "未知"}
-            </dd>
-          </div>
-          <div>
-            <dt>重试安全性</dt>
-            <dd>
-              {RECOVERY_RETRY_SAFETY_LABELS[checkpoint?.retrySafety ?? ""] ??
-                checkpoint?.retrySafety ??
-                "未知"}
-            </dd>
-          </div>
-          <div>
-            <dt>可用操作</dt>
-            <dd>
-              {permitted.size === 0
-                ? "无"
-                : [...permitted]
-                    .map((action) => RECOVERY_ACTION_LABELS[action] ?? action)
-                    .join("、")}
-            </dd>
-          </div>
-        </dl>
-      ) : hostedDiagnostics ? null : (
-        <p className="mf-dashboard-meta">
-          {technicalHistoryMessage(checkpoint)}
-        </p>
-      )}
+    <section
+      className={hostedDiagnostics ? "mf-recovery-host" : "mf-count-section"}
+      aria-label="条目审核与恢复"
+    >
       {!hostedDiagnostics && (
-        <details className="mf-run-fact-diagnostics">
-          <summary>技术诊断（状态、重试与权限）</summary>
-          <dl className="mf-dashboard-facts">
-            <div>
-              <dt>阶段</dt>
-              <dd>{checkpoint?.stage ?? "不可用"}</dd>
-            </div>
-            <div>
-              <dt>效果确定性</dt>
-              <dd>{checkpoint?.effectCertainty ?? "未知"}</dd>
-            </div>
-            <div>
-              <dt>重试安全性</dt>
-              <dd>{checkpoint?.retrySafety ?? "未知"}</dd>
-            </div>
-            <div>
-              <dt>可用操作标识</dt>
-              <dd>{permitted.size === 0 ? "无" : [...permitted].join("、")}</dd>
-            </div>
-            {checkpoint?.refusalReason !== null &&
-              checkpoint?.refusalReason !== undefined && (
+        <>
+          <div className="mf-run-items-head">
+            <h5>审核与恢复</h5>
+            <RefreshControl
+              onRefresh={() => query.refetch({ cancelRefetch: false })}
+            />
+          </div>
+          {owesRecoveryAction ? (
+            <dl className="mf-dashboard-facts">
+              <div>
+                <dt>当前阶段</dt>
+                <dd>
+                  {RECOVERY_STAGE_LABELS[checkpoint?.stage ?? ""] ??
+                    checkpoint?.stage ??
+                    "不可用"}
+                </dd>
+              </div>
+              <div>
+                <dt>效果确定性</dt>
+                <dd>
+                  {RECOVERY_EFFECT_LABELS[checkpoint?.effectCertainty ?? ""] ??
+                    checkpoint?.effectCertainty ??
+                    "未知"}
+                </dd>
+              </div>
+              <div>
+                <dt>重试安全性</dt>
+                <dd>
+                  {RECOVERY_RETRY_SAFETY_LABELS[
+                    checkpoint?.retrySafety ?? ""
+                  ] ??
+                    checkpoint?.retrySafety ??
+                    "未知"}
+                </dd>
+              </div>
+              <div>
+                <dt>可用操作</dt>
+                <dd>
+                  {permitted.size === 0
+                    ? "无"
+                    : [...permitted]
+                        .map(
+                          (action) => RECOVERY_ACTION_LABELS[action] ?? action,
+                        )
+                        .join("、")}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="mf-dashboard-meta">
+              {technicalHistoryMessage(checkpoint)}
+            </p>
+          )}
+          <details className="mf-run-fact-diagnostics">
+            <summary>技术诊断（状态、重试与权限）</summary>
+            <dl className="mf-dashboard-facts">
+              <div>
+                <dt>阶段</dt>
+                <dd>{checkpoint?.stage ?? "不可用"}</dd>
+              </div>
+              <div>
+                <dt>效果确定性</dt>
+                <dd>{checkpoint?.effectCertainty ?? "未知"}</dd>
+              </div>
+              <div>
+                <dt>重试安全性</dt>
+                <dd>{checkpoint?.retrySafety ?? "未知"}</dd>
+              </div>
+              <div>
+                <dt>可用操作标识</dt>
+                <dd>
+                  {permitted.size === 0 ? "无" : [...permitted].join("、")}
+                </dd>
+              </div>
+              {checkpoint?.refusalReason !== null &&
+                checkpoint?.refusalReason !== undefined && (
+                  <div>
+                    <dt>拒绝原因</dt>
+                    <dd>{checkpoint.refusalReason}</dd>
+                  </div>
+                )}
+              {checkpoint?.nextAction && (
                 <div>
-                  <dt>拒绝原因</dt>
-                  <dd>{checkpoint.refusalReason}</dd>
+                  <dt>服务下一步</dt>
+                  <dd>{checkpoint.nextAction}</dd>
                 </div>
               )}
-            {checkpoint?.nextAction && (
-              <div>
-                <dt>服务下一步</dt>
-                <dd>{checkpoint.nextAction}</dd>
-              </div>
-            )}
-          </dl>
-        </details>
+            </dl>
+          </details>
+        </>
       )}
       {busy && pendingAction !== null && (
         <StatusBanner variant="info" title="操作请求仍在进行">
@@ -1923,7 +1951,8 @@ export function TaskItemRecoveryPanel({
       )}
       {message &&
         submittedConfirmation === null &&
-        !savedDecisionAnalysisVisible && (
+        !savedDecisionAnalysisVisible &&
+        !(activePreparation !== null && message.startsWith("选择已保存")) && (
           <StatusBanner
             variant={repeatLocked ? "warning" : "info"}
             title="恢复操作状态"
@@ -1962,6 +1991,7 @@ export function TaskItemRecoveryPanel({
             busy={busy || repeatLocked}
             onConfirm={() => void confirmPreparation()}
             heading="新计划摘要（零变更）"
+            compact={hostedDiagnostics}
           />
         )}
       {repeatLocked && submittedConfirmation === null && (
@@ -2047,9 +2077,10 @@ export function TaskItemRecoveryPanel({
           canIgnore={permitted.has("ignore")}
           permitted={permitted}
           busy={busy}
+          presentation={hostedDiagnostics ? "recovery" : undefined}
         />
       )}
-      {savedDecisionPanel}
+      {activePreparation === null && savedDecisionPanel}
       {canPreparePreview && checkpoint !== null && (
         <div className="mf-count-section">
           <h6>原手动整理恢复</h6>
@@ -2097,13 +2128,18 @@ function DecisionForm(props: {
   readonly canIgnore: boolean;
   readonly permitted: ReadonlySet<string>;
   readonly busy: boolean;
-  /** `dialog` uses the current-file wording; Task Center keeps its own copy. */
-  readonly presentation?: "full" | "dialog";
+  /**
+   * `dialog` uses the current-file wording; `recovery` reuses that approved
+   * row-and-field layout inside the Task Center's exact file evidence.
+   */
+  readonly presentation?: "full" | "dialog" | "recovery";
   /** The Files footer slot; when present the one save group moves there. */
   readonly actionsTarget?: HTMLElement | null;
 }) {
   const { decision } = props;
   const dialog = props.presentation === "dialog";
+  const recovery = props.presentation === "recovery";
+  const compact = dialog || recovery;
   const canSave =
     decision.kind === "metadata_correction"
       ? props.searchText.trim() !== ""
@@ -2112,29 +2148,42 @@ function DecisionForm(props: {
           (props.conflictStrategy !== "overwrite" || props.confirmOverwrite)
         : props.selectedChoice !== "";
   const actionId = `resolve_${decision.kind}`;
-  const actionGroup = (
+  const saveButton = (
+    <button
+      type="button"
+      className="mf-button"
+      disabled={props.disabled || !canSave || !props.permitted.has(actionId)}
+      onClick={props.onSave}
+    >
+      {props.busy ? "正在保存并重新分析…" : "保存并重新分析"}
+    </button>
+  );
+  const ignoreButton = props.canIgnore ? (
+    <button
+      type="button"
+      className={
+        recovery
+          ? "mf-link-button mf-recovery-ignore"
+          : "mf-button mf-button-secondary"
+      }
+      disabled={props.disabled}
+      onClick={props.onIgnore}
+    >
+      忽略此条目
+    </button>
+  ) : null;
+  const actionGroup = recovery ? (
     <div className="mf-actions">
-      <button
-        type="button"
-        className="mf-button"
-        disabled={props.disabled || !canSave || !props.permitted.has(actionId)}
-        onClick={props.onSave}
-      >
-        {props.busy ? "正在保存并重新分析…" : "保存并重新分析"}
-      </button>
-      {props.canIgnore && (
-        <button
-          type="button"
-          className="mf-button mf-button-secondary"
-          disabled={props.disabled}
-          onClick={props.onIgnore}
-        >
-          忽略此条目
-        </button>
-      )}
+      {ignoreButton}
+      {saveButton}
+    </div>
+  ) : (
+    <div className="mf-actions">
+      {saveButton}
+      {ignoreButton}
     </div>
   );
-  const optionName = dialog
+  const optionName = compact
     ? `organize-${decision.kind}-choice`
     : "recovery-choice";
 
@@ -2202,32 +2251,38 @@ function DecisionForm(props: {
   return (
     <div
       className={
-        dialog ? "mf-count-section mf-organize-decision" : "mf-count-section"
+        recovery
+          ? "mf-organize-decision mf-recovery-decision"
+          : dialog
+            ? "mf-count-section mf-organize-decision"
+            : "mf-count-section"
       }
       aria-label={`${DECISION_LABELS[decision.kind]}决策`}
     >
       <h6>
-        {dialog
+        {compact
           ? DIALOG_DECISION_TITLES[decision.kind]
           : `待处理的${DECISION_LABELS[decision.kind]}决策`}
       </h6>
-      {decision.status && !dialog && (
+      {decision.status && !compact && (
         <p className="mf-dashboard-meta">审核状态：{decision.status}</p>
       )}
-      {dialog ? (
+      {compact ? (
         <p className="mf-organize-decision-intro">
           {DIALOG_DECISION_INTROS[decision.kind]}
         </p>
       ) : null}
       {decision.kind === "metadata_correction" && decision.reason ? (
         <p
-          className={dialog ? "mf-organize-decision-hint" : "mf-dashboard-meta"}
+          className={
+            compact ? "mf-organize-decision-hint" : "mf-dashboard-meta"
+          }
         >
           上次修正未通过验证：{decision.reason}
         </p>
       ) : null}
 
-      {!dialog &&
+      {!compact &&
         decision.kind === "recognition" &&
         decision.choices.map((choice) => (
           <label key={choice.id} className="mf-list-choice">
@@ -2242,7 +2297,7 @@ function DecisionForm(props: {
             {choice.description ? ` — ${choice.description}` : ""}
           </label>
         ))}
-      {dialog && decision.kind === "recognition" && (
+      {compact && decision.kind === "recognition" && (
         <div
           className="mf-organize-decision-options"
           role="radiogroup"
@@ -2261,7 +2316,7 @@ function DecisionForm(props: {
         </div>
       )}
 
-      {!dialog &&
+      {!compact &&
         decision.kind === "metadata" &&
         decision.choices.map((choice) => (
           <label key={choice.rank} className="mf-list-choice">
@@ -2275,7 +2330,7 @@ function DecisionForm(props: {
             候选 {choice.rank}：{candidateSummary(choice)}
           </label>
         ))}
-      {dialog && decision.kind === "metadata" && (
+      {compact && decision.kind === "metadata" && (
         <div
           className="mf-organize-decision-options"
           role="radiogroup"
@@ -2293,6 +2348,7 @@ function DecisionForm(props: {
                 choice.description === null
                   ? null
                   : `原名 ${choice.description}`,
+                recovery ? `ID ${choice.providerId ?? "—"}` : null,
               ]
                 .filter((part): part is string => part !== null)
                 .join(" · "),
@@ -2301,7 +2357,7 @@ function DecisionForm(props: {
         </div>
       )}
 
-      {!dialog && decision.kind === "metadata_correction" && (
+      {!compact && decision.kind === "metadata_correction" && (
         <>
           <label>
             搜索标题
@@ -2381,10 +2437,10 @@ function DecisionForm(props: {
           )}
         </>
       )}
-      {dialog && decision.kind === "metadata_correction" && (
+      {compact && decision.kind === "metadata_correction" && (
         <>
           <div className="mf-organize-decision-fields">
-            <label className="mf-organize-decision-field">
+            <label className="mf-organize-decision-field mf-organize-decision-field-title">
               <span className="mf-organize-decision-label">搜索标题</span>
               <input
                 value={props.searchText}
@@ -2393,8 +2449,10 @@ function DecisionForm(props: {
                 onChange={(event) => props.onSearchText(event.target.value)}
               />
             </label>
-            <label className="mf-organize-decision-field">
-              <span className="mf-organize-decision-label">媒体类型</span>
+            <label className="mf-organize-decision-field mf-organize-decision-field-media">
+              <span className="mf-organize-decision-label">
+                {recovery ? "作品类型" : "媒体类型"}
+              </span>
               <select
                 value={props.mediaType}
                 disabled={props.disabled}
@@ -2404,7 +2462,7 @@ function DecisionForm(props: {
                 <option value="tv">剧集</option>
               </select>
             </label>
-            <label className="mf-organize-decision-field">
+            <label className="mf-organize-decision-field mf-organize-decision-field-year">
               <span className="mf-organize-decision-label">年份（可留空）</span>
               <input
                 type="number"
@@ -2418,7 +2476,8 @@ function DecisionForm(props: {
             </label>
           </div>
           <p className="mf-organize-decision-hint">
-            标题、年份和媒体类型只用于外部元数据搜索，不会修改文件名或目录。
+            标题、年份和{recovery ? "作品类型" : "媒体类型"}
+            只用于外部元数据搜索，不会修改文件名或目录。
           </p>
           <div className="mf-actions">
             <button
@@ -2457,6 +2516,7 @@ function DecisionForm(props: {
                     candidate.originalTitle === null
                       ? null
                       : `原名 ${candidate.originalTitle}`,
+                    recovery ? `ID ${candidate.providerId}` : null,
                   ]
                     .filter((part): part is string => part !== null)
                     .join(" · "),
@@ -2472,7 +2532,7 @@ function DecisionForm(props: {
         </>
       )}
 
-      {!dialog &&
+      {!compact &&
         decision.kind === "classification" &&
         decision.choices.map((choice) => (
           <label key={choice.rank} className="mf-list-choice">
@@ -2488,7 +2548,7 @@ function DecisionForm(props: {
             {choice.description ? ` — ${choice.description}` : ""}
           </label>
         ))}
-      {dialog && decision.kind === "classification" && (
+      {compact && decision.kind === "classification" && (
         <div
           className="mf-organize-decision-options"
           role="radiogroup"
@@ -2500,14 +2560,28 @@ function DecisionForm(props: {
               props.selectedChoice === String(choice.rank),
               () => props.onSelectChoice(String(choice.rank)),
               `目标 ${choice.rank}`,
-              choice.name,
-              `位置 ${choice.relativePath ?? "根目录"}`,
+              recovery
+                ? `${choice.mediaLibraryId ?? "媒体库"} / ${
+                    choice.relativePath
+                      ?.split("/")
+                      .filter((part) => part !== "")
+                      .at(-1) ?? "根目录"
+                  }`
+                : choice.name,
+              recovery
+                ? [
+                    choice.name === "" ? null : `规则 ${choice.name}`,
+                    choice.description,
+                  ]
+                    .filter((part): part is string => part !== null)
+                    .join(" · ")
+                : `位置 ${choice.relativePath ?? "根目录"}`,
             ),
           )}
         </div>
       )}
 
-      {!dialog && decision.kind === "conflict" && (
+      {!compact && decision.kind === "conflict" && (
         <>
           <p>
             冲突：{decision.conflictTypes.join("、") || "未提供"}。来源：
@@ -2545,19 +2619,30 @@ function DecisionForm(props: {
           )}
         </>
       )}
-      {dialog && decision.kind === "conflict" && (
+      {compact && decision.kind === "conflict" && (
         <>
-          <p className="mf-organize-decision-hint">
-            来源{" "}
-            <span className="mf-exact-identity">
-              {decision.sourcePath ?? "不可用"}
-            </span>{" "}
-            的目标{" "}
-            <span className="mf-exact-identity">
-              {decision.targetPath ?? "不可用"}
-            </span>{" "}
-            已存在。
-          </p>
+          {recovery ? (
+            <dl className="mf-recovery-conflict-target">
+              <div>
+                <dt>已有目标</dt>
+                <dd className="mf-exact-identity">
+                  {decision.targetPath ?? "不可用"}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="mf-organize-decision-hint">
+              来源{" "}
+              <span className="mf-exact-identity">
+                {decision.sourcePath ?? "不可用"}
+              </span>{" "}
+              的目标{" "}
+              <span className="mf-exact-identity">
+                {decision.targetPath ?? "不可用"}
+              </span>{" "}
+              已存在。
+            </p>
+          )}
           <div
             className="mf-organize-decision-options"
             role="radiogroup"
@@ -2569,8 +2654,12 @@ function DecisionForm(props: {
                 props.conflictStrategy === strategy,
                 () => props.onConflictStrategy(strategy),
                 null,
-                conflictStrategyTitle(strategy),
-                conflictStrategyHint(strategy),
+                recovery
+                  ? recoveryConflictStrategyTitle(strategy)
+                  : conflictStrategyTitle(strategy),
+                recovery
+                  ? recoveryConflictStrategyHint(strategy)
+                  : conflictStrategyHint(strategy),
               ),
             )}
           </div>
@@ -2626,10 +2715,14 @@ function DecisionForm(props: {
       {props.actionsTarget === null || props.actionsTarget === undefined
         ? actionGroup
         : createPortal(actionGroup, props.actionsTarget)}
-      <p className={dialog ? "mf-organize-decision-hint" : "mf-dashboard-meta"}>
-        保存只记录当前文件的选择并请求零变更分析，不会执行整理，也不会修改任何文件。
-        分析使用此 Task 的固定配置并由常驻 Worker 处理。
-      </p>
+      {!recovery && (
+        <p
+          className={dialog ? "mf-organize-decision-hint" : "mf-dashboard-meta"}
+        >
+          保存只记录当前文件的选择并请求零变更分析，不会执行整理，也不会修改任何文件。
+          分析使用此 Task 的固定配置并由常驻 Worker 处理。
+        </p>
+      )}
     </div>
   );
 }

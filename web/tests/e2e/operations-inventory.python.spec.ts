@@ -204,9 +204,7 @@ async function chooseNativeRecoveryDecision(
         new URL(response.url()).pathname ===
           `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
     );
-    await recovery
-      .getByRole("button", { name: "显式搜索 Metadata Provider" })
-      .click();
+    await recovery.getByRole("button", { name: "搜索作品" }).click();
     expect((await searchResponse).status()).toBe(200);
     await recovery
       .getByRole("radio", { name: new RegExp(`${seeded.providerId}$`) })
@@ -219,12 +217,10 @@ async function chooseNativeRecoveryDecision(
     await recovery.getByRole("radio").first().check();
   } else if (kind === "conflict") {
     await recovery
-      .getByRole("radio", { name: "重命名目标(保留现有文件)" })
+      .getByRole("radio", { name: "保留原目标，另存新文件" })
       .check();
   } else if (kind === "conflict_overwrite") {
-    await recovery
-      .getByRole("radio", { name: "替换现有目标(高风险，需要再次确认)" })
-      .check();
+    await recovery.getByRole("radio", { name: "按许可替换现有目标" }).check();
     await recovery
       .getByRole("checkbox", {
         name: "我明确选择覆盖此冲突目标；本次仍只保存决定并重新分析",
@@ -1923,7 +1919,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   const saveRecognition = async () => {
     const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
     await expect(
-      recovery.getByRole("heading", { name: "待处理的识别决策" }),
+      recovery.getByRole("heading", { name: "确认识别类型" }),
     ).toBeVisible();
     await recovery.getByRole("radio", { name: "Normal Movie" }).check();
     const decision = page.waitForResponse(
@@ -4323,24 +4319,14 @@ test("PATCH-20261111-2 / PATCH-20261112-1 native recognition recovery keeps the 
   page,
   request,
 }) => {
-  await runNativeRecoveryJourney(
-    page,
-    request,
-    "recognition",
-    /待处理的识别决策/,
-  );
+  await runNativeRecoveryJourney(page, request, "recognition", /确认识别类型/);
 });
 
 test("PATCH-20261111-2 native Metadata candidate recovery keeps the same Task through summary and effect", async ({
   page,
   request,
 }) => {
-  await runNativeRecoveryJourney(
-    page,
-    request,
-    "metadata",
-    /待处理的元数据决策/,
-  );
+  await runNativeRecoveryJourney(page, request, "metadata", /选择正确的作品/);
 });
 
 test("PATCH-20261111-2 native Metadata correction searches explicitly before the same-Task summary", async ({
@@ -4351,7 +4337,7 @@ test("PATCH-20261111-2 native Metadata correction searches explicitly before the
     page,
     request,
     "metadata_correction",
-    /待处理的元数据修正决策/,
+    /修正作品搜索/,
   );
 });
 
@@ -4363,7 +4349,7 @@ test("PATCH-20261120-3 native Classification recovery reconciles a late original
     page,
     request,
     "classification",
-    /待处理的分类决策/,
+    /选择整理目标/,
     { variant: "Late", confirmation: "late" },
   );
 });
@@ -4376,7 +4362,7 @@ test("PATCH-20261120-3 native Classification recovery explicitly confirms a requ
     page,
     request,
     "classification",
-    /待处理的分类决策/,
+    /选择整理目标/,
     { variant: "Explicit", confirmation: "explicit" },
   );
 });
@@ -4389,7 +4375,7 @@ test("PATCH-20261120-3 native Classification recovery admits one execution when 
     page,
     request,
     "classification",
-    /待处理的分类决策/,
+    /选择整理目标/,
     { variant: "Race", confirmation: "race" },
   );
 });
@@ -4398,12 +4384,7 @@ test("PATCH-20261111-2 native conflict recovery renames while preserving the exi
   page,
   request,
 }) => {
-  await runNativeRecoveryJourney(
-    page,
-    request,
-    "conflict",
-    /待处理的目标冲突决策/,
-  );
+  await runNativeRecoveryJourney(page, request, "conflict", /处理目标文件冲突/);
 });
 
 test("PATCH-20261111-2 policy-permitted overwrite still needs exact same-page destructive consent", async ({
@@ -4414,7 +4395,7 @@ test("PATCH-20261111-2 policy-permitted overwrite still needs exact same-page de
     page,
     request,
     "conflict_overwrite",
-    /待处理的目标冲突决策/,
+    /处理目标文件冲突/,
   );
 });
 

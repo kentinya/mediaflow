@@ -1626,11 +1626,12 @@ describe("selected-run detail tabs", () => {
       within(evidence).getByText("文件处理已结束，结果未记录"),
     ).toBeVisible();
     // The missing-result truth and the checkpoint's known steps stay in the
-    // file's one execution history instead of a fabricated result.
-    expect(
-      within(evidence).getByText("该文件还没有持久执行结果。"),
-    ).toBeVisible();
+    // file's one execution record instead of a fabricated Result; an empty
+    // execution block is not rendered.
     expect(within(evidence).getByText("已完成：移动（MOVE）")).toBeVisible();
+    expect(
+      within(evidence).queryByText("该文件还没有持久执行结果。"),
+    ).toBeNull();
   });
 
   it("keeps failure-record and checkpoint next steps distinguishable in the one diagnostics entry", async () => {
@@ -2471,7 +2472,7 @@ describe("selected-run detail tabs", () => {
     const otherRecovery = await within(reopened).findByRole("region", {
       name: "条目审核与恢复",
     });
-    await within(otherRecovery).findByText(/审核与恢复/);
+    expect(otherRecovery).toBeVisible();
     expect(within(otherRecovery).queryByText(/请求响应未送达/)).toBeNull();
     await user.click(
       within(reopened).getByRole("button", { name: "关闭证据" }),
@@ -2543,6 +2544,13 @@ describe("selected-run detail tabs", () => {
     const recovery = await within(detail).findByRole("region", {
       name: "条目审核与恢复",
     });
+    // The hosted decision does not repeat the file's technical checkpoint
+    // facts or its own heading; those stay in the file evidence and its one
+    // diagnostics entry.
+    expect(
+      within(recovery).queryByRole("heading", { name: "审核与恢复" }),
+    ).toBeNull();
+    expect(within(recovery).queryByText("当前阶段")).toBeNull();
     await user.click(
       await within(recovery).findByRole("button", {
         name: "生成计划摘要并在此确认",
@@ -2551,6 +2559,12 @@ describe("selected-run detail tabs", () => {
     const summary = await within(detail).findByRole("region", {
       name: "新计划摘要",
     });
+    // The same-page summary leads with its status, the exact source/target
+    // rows and the one confirmation; the verbose shared plan findings stay
+    // out of the Task Center recovery surface.
+    expect(within(summary).getByText("来源与目标")).toBeVisible();
+    expect(within(summary).getByText("按当前方案")).toBeVisible();
+    expect(within(summary).queryByText("识别类型策略")).toBeNull();
     await user.click(
       await within(summary).findByRole("button", {
         name: "确认继续整理 1 项",
@@ -2570,7 +2584,7 @@ describe("selected-run detail tabs", () => {
     const otherRecovery = await within(detail).findByRole("region", {
       name: "条目审核与恢复",
     });
-    await within(otherRecovery).findByText(/审核与恢复/);
+    expect(otherRecovery).toBeVisible();
     expect(within(otherRecovery).queryByText(/本次确认已经受理/)).toBeNull();
     await user.click(within(detail).getByRole("button", { name: "关闭证据" }));
 
