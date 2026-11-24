@@ -251,20 +251,31 @@ function previewItemProblemKind(item: ManualPreviewItemModel): string | null {
       return "classification";
     }
   }
-  switch (item.stage) {
-    case "recognition":
-      return "recognition";
-    case "metadata":
-      return "metadata";
-    case "metadata_correction":
-      return "metadata_correction";
-    case "classification":
-      return "classification";
-    case "conflict":
-      return "conflict";
-    default:
-      return null;
-  }
+  // The item's `stage` names where the pipeline stopped, including technical
+  // failures that published no operator problem. Only the four published
+  // business findings above may become a candidate/decision instruction.
+  return null;
+}
+
+/**
+ * A technical stage the item's own published analysis evidence proves. A
+ * metadata provider error is not a metadata candidate: there are no grounded
+ * candidates and no linked problem TaskItem to decide, so the Files content
+ * must name the failed stage instead of inventing a decision.
+ */
+function previewItemTechnicalStage(
+  item: ManualPreviewItemModel,
+): "metadata" | null {
+  return item.analysis?.metadata?.status === "provider_error"
+    ? "metadata"
+    : null;
+}
+
+/** How to read the original preparation Task the failed stage belongs to. */
+function technicalTaskPointer(organizeTaskId: string | null): string {
+  return organizeTaskId === null
+    ? "关闭本弹窗后，可在任务中心查看本次整理准备任务的阶段与结果。"
+    : `关闭本弹窗后，可在任务中心打开原整理准备任务 ${organizeTaskId} 查看阶段与结果。`;
 }
 
 /** Metadata candidate and correction stay one family for "same problem" reads. */
@@ -330,9 +341,17 @@ function overviewStatusFor(
 }
 
 /** One operator-facing next step for an item that is not ready to confirm. */
-function overviewPendingReason(item: ManualPreviewItemModel): string {
+function overviewPendingReason(
+  item: ManualPreviewItemModel,
+  organizeTaskId: string | null,
+): string {
   if (!item.current) {
     return "该文件已不在当前方案中；需要重新分析后才能再次核对或纳入。";
+  }
+  if (previewItemTechnicalStage(item) === "metadata") {
+    return `元数据服务技术失败：当前文件没有可用的元数据候选，也没有可保存的候选决定；请检查已配置的 Metadata Provider 后重新分析同一准备。${technicalTaskPointer(
+      organizeTaskId,
+    )}`;
   }
   const problem = previewItemProblemKind(item);
   if (problem !== null) {
@@ -1939,6 +1958,12 @@ export function ManualOrganizeDialog({
       // Keep the same-file wait armed until the operator edits or leaves.
       return;
     }
+    if (!item.current) {
+      // A superseded summary can stay readable while the Worker re-plans.
+      // Its item no longer carries this analysis's current result, so the
+      // absence of a problem proves nothing and must not end the wait.
+      return;
+    }
     // A technical, terminal or otherwise non-decision result is shown where
     // the operator acted; it never becomes a fabricated overview state.
     setNotices((previous) => ({
@@ -2866,7 +2891,10 @@ export function ManualOrganizeDialog({
                 </p>
                 {status === "pending" ? (
                   <p className="mf-organize-overview-reason" role="status">
-                    {overviewPendingReason(item)}
+                    {overviewPendingReason(
+                      item,
+                      preparation?.organizeTaskId ?? null,
+                    )}
                   </p>
                 ) : status === "recorded" ? (
                   <p className="mf-organize-overview-reason" role="status">
@@ -2921,6 +2949,8 @@ export function ManualOrganizeDialog({
       !organizeFlowEnded &&
       organizeTaskId !== null &&
       problemTaskItemId !== null;
+    const metadataTechnicalFailure =
+      filesHost && previewItemTechnicalStage(item) === "metadata";
     const decisionStatus = currentDecisionStatus;
     const recognitionTypeName =
       intent?.options.recognitionTypes.find(
@@ -2939,6 +2969,7 @@ export function ManualOrganizeDialog({
     const hasCurrentProblem =
       item.conflicts.length > 0 ||
       item.failure !== null ||
+      metadataTechnicalFailure ||
       item.history !== null ||
       item.warnings.length > 0 ||
       hasNativeProblem;
@@ -3002,7 +3033,9 @@ export function ManualOrganizeDialog({
                 <span className="mf-organize-section-note">
                   {item.conflicts.length > 0
                     ? "需要当前文件的冲突决定"
-                    : "已记录的核对信息"}
+                    : metadataTechnicalFailure
+                      ? "元数据阶段技术失败"
+                      : "已记录的核对信息"}
                 </span>
               ) : null}
             </div>
@@ -3034,6 +3067,22 @@ export function ManualOrganizeDialog({
                   这里不会自动覆盖、跳过或移动任何文件。
                 </p>
               </>
+            ) : metadataTechnicalFailure ? (
+              <StatusBanner variant="warning" title="元数据服务技术失败">
+                <p role="status">
+                  该文件在元数据分析阶段未完成：Metadata Provider
+                  没有返回可用候选，因此这里没有可保存的候选决定，也不会显示候选恢复表单。
+                  没有修改任何文件。
+                </p>
+                <p className="mf-dashboard-meta">
+                  已知影响：当前文件未生成可确认方案，不能纳入本次整理；其他文件仍按各自事实独立核对。
+                </p>
+                <p className="mf-dashboard-meta">
+                  下一步：检查已配置的 Metadata Provider
+                  的连接、凭据与可用性，然后重新分析同一准备。
+                  {technicalTaskPointer(organizeTaskId)}
+                </p>
+              </StatusBanner>
             ) : item.failure !== null && !hasNativeProblem ? (
               <StatusBanner variant="error" title="条目未就绪">
                 <p>{item.failure.message}</p>
@@ -3130,7 +3179,11 @@ export function ManualOrganizeDialog({
           <div className="mf-organize-section-head">
             <h4>当前方案</h4>
             {!hasGeneratedScheme ? (
-              <span className="mf-organize-section-note">等待零变更分析</span>
+              <span className="mf-organize-section-note">
+                {metadataTechnicalFailure
+                  ? "元数据阶段未生成方案"
+                  : "等待零变更分析"}
+              </span>
             ) : null}
           </div>
           <dl className="mf-organize-facts">
@@ -3515,14 +3568,32 @@ export function ManualOrganizeDialog({
             <dd>{item.mediaIdentity?.matchedBy ?? "—"}</dd>
           </dl>
           {item.failure !== null ? (
-            <dl>
-              <dt>后端失败分类</dt>
-              <dd>{item.failure.category}</dd>
-              <dt>后端失败说明</dt>
-              <dd>{item.failure.message}</dd>
-              <dt>后端下一步</dt>
-              <dd>{item.failure.nextAction}</dd>
-            </dl>
+            metadataTechnicalFailure ? (
+              <dl>
+                <dt>技术阶段</dt>
+                <dd>元数据分析</dd>
+                <dt>元数据服务</dt>
+                <dd>Metadata Provider 请求未完成，未返回可用候选。</dd>
+                <dt>已知影响</dt>
+                <dd>
+                  当前文件未生成可确认方案，不能纳入本次整理；没有修改任何文件。
+                </dd>
+                <dt>下一步</dt>
+                <dd>
+                  检查已配置的 Metadata Provider 后，重新分析同一准备。
+                  {technicalTaskPointer(organizeTaskId)}
+                </dd>
+              </dl>
+            ) : (
+              <dl>
+                <dt>后端失败分类</dt>
+                <dd>{item.failure.category}</dd>
+                <dt>后端失败说明</dt>
+                <dd>{item.failure.message}</dd>
+                <dt>后端下一步</dt>
+                <dd>{item.failure.nextAction}</dd>
+              </dl>
+            )
           ) : null}
           {currentIntentItem !== undefined ? (
             <dl>

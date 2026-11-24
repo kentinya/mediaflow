@@ -588,6 +588,35 @@ class _SeasonProbeMetadataProvider(_YearSensitiveMetadataProvider):
         )
 
 
+#: One source whose metadata search is answered by the local test Provider with
+#: a connection failure.  The backend then publishes its real metadata-stage
+#: technical failure and no candidate decision.
+_PROVIDER_FAILURE_TITLE = "providerfail"
+
+
+class _ProviderFailureMetadataProvider(_SeasonProbeMetadataProvider):
+    """Inject one metadata connection failure without touching other fixtures.
+
+    The failed source parses to ``ProviderFail``; every other search continues
+    through the unchanged probe/scoped behavior.  The error travels the real
+    metadata identification path, so the durable plan records a provider error
+    instead of an invented candidate problem.
+    """
+
+    def search_movie(self, query, policy=None, **kwargs):
+        title = getattr(query, "title_candidate", getattr(query, "title", query))
+        normalized = "".join(
+            character.casefold() for character in str(title) if character.isalnum()
+        )
+        if normalized == _PROVIDER_FAILURE_TITLE:
+            self.calls += 1
+            raise MetadataError(
+                MetadataErrorCode.CONNECTION_FAILED,
+                "connection refused by the local test provider",
+            )
+        return super().search_movie(query, policy, **kwargs)
+
+
 def build_managed_fixture(
     database: Path,
     root: Path,
@@ -787,6 +816,30 @@ def build_managed_fixture(
     readability_one = readability_one_root / "ReadableOne.2011.mkv"
     readability_one.write_bytes(b"single readability synthetic media")
     os.utime(readability_one, (conflict_time, conflict_time))
+    # Task59.1: a separate single-source readiness fixture for the overview and
+    # focus journey, so its unconfirmed preparation never owns the file used by
+    # the source/target readability assertion.
+    readability_dialog_root = source_root / "ReadabilityDialog"
+    readability_dialog_root.mkdir(parents=True, exist_ok=True)
+    readability_dialog = readability_dialog_root / "ReadableDialog.2011.mkv"
+    readability_dialog.write_bytes(b"overview dialog readability synthetic media")
+    os.utime(readability_dialog, (conflict_time, conflict_time))
+    # Task59.1: one source whose metadata search is refused by the local test
+    # Provider and one ready sibling, so the Files overview can prove a real
+    # metadata-stage technical failure without inventing a candidate decision.
+    provider_failure_root = source_root / "ProviderFailure"
+    provider_failure_root.mkdir(parents=True, exist_ok=True)
+    (provider_failure_root / "ProviderFail.2011.mkv").write_bytes(
+        b"metadata provider failure synthetic media"
+    )
+    (provider_failure_root / "ProviderReady.2011.mkv").write_bytes(
+        b"metadata provider ready sibling synthetic media"
+    )
+    for provider_file in (
+        provider_failure_root / "ProviderFail.2011.mkv",
+        provider_failure_root / "ProviderReady.2011.mkv",
+    ):
+        os.utime(provider_file, (conflict_time, conflict_time))
     readability_ten_root = source_root / "ReadabilityTen"
     readability_ten_root.mkdir(parents=True, exist_ok=True)
     for index in range(1, 11):
@@ -1099,6 +1152,32 @@ def build_managed_fixture(
     )
     document["recognitionRules"].append(
         {
+            "id": "provider-failure-video",
+            "name": "Task59.1 metadata provider failure fixtures",
+            "priority": 124,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {
+                        "field": "resource_library_id",
+                        "operator": "equals",
+                        "value": "source",
+                    },
+                    {
+                        "field": "path",
+                        "operator": "contains",
+                        "value": "/ProviderFailure/",
+                    },
+                    {"field": "extension", "operator": "in", "value": ["mkv"]},
+                ],
+            },
+            "outputRecognitionType": "A",
+        }
+    )
+    document["recognitionRules"].append(
+        {
             "id": "readability-video",
             "name": "PATCH-20261122-1 readability fixtures",
             "priority": 124,
@@ -1338,7 +1417,7 @@ def build_managed_fixture(
     (retirement_root / "Downloading.mkv.part").write_bytes(b"temporary")
     registry = MetadataProviderRegistry(
         (
-            _SeasonProbeMetadataProvider(
+            _ProviderFailureMetadataProvider(
                 (
                     MediaCandidate(
                         "tmdb",
@@ -1765,6 +1844,24 @@ def build_managed_fixture(
                         "82103",
                         MediaType.MOVIE,
                         "ReadableOne",
+                        year=2011,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "82104",
+                        MediaType.MOVIE,
+                        "ReadableDialog",
+                        year=2011,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "82105",
+                        MediaType.MOVIE,
+                        "ProviderReady",
                         year=2011,
                         genres=("Animation",),
                         countries=("JP",),

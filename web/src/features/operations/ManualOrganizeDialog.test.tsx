@@ -105,6 +105,10 @@ function makeBackend() {
     // A real metadata-review problem: two tied legal candidates on item-1.
     metadataCandidateProblem: false as boolean,
     metadataCandidateResolved: false as boolean,
+    // A metadata Provider technical failure: the backend published the stage
+    // error and no candidate/problem TaskItem, so the Files body must not
+    // instruct the operator to pick a candidate.
+    metadataProviderFailure: false as boolean,
     failMetadataDecision: false as boolean,
     failMetadataContinue: false as boolean,
     recoveryAnalysisQueued: false as boolean,
@@ -675,6 +679,60 @@ function makeBackend() {
         ).filter((itemId) => itemId !== "item-1"),
         unselectedItemIds: ["item-1"],
       };
+    }
+    if (state.metadataProviderFailure) {
+      const problem = (value["items"] as Json[]).find(
+        (item) => item["itemId"] === "item-1",
+      );
+      if (problem !== undefined) {
+        problem["status"] = "unavailable";
+        problem["executionState"] = "not_available_in_this_task";
+        problem["stage"] = "metadata";
+        problem["nextAction"] =
+          "inspect the configured Metadata Provider, then explicitly rerun Preview";
+        problem["failure"] = {
+          category: "storage_failure",
+          message:
+            "Storage failure: the configured Storage operation did not complete",
+          durableState:
+            "this is a zero-mutation preparation finding; no execution TaskItem or Result was created",
+          nextAction:
+            "inspect the configured Metadata Provider, then explicitly rerun Preview",
+          retrySafe: true,
+          sideEffects: "none",
+        };
+        const plan = problem["plan"] as Json;
+        plan["problemTaskItemId"] = null;
+        plan["operation"] = null;
+        plan["planStatus"] = null;
+        plan["destination"] = null;
+        plan["attachments"] = [];
+        plan["conflicts"] = [];
+        plan["destructiveImplications"] = null;
+        plan["mediaIdentity"] = null;
+        plan["capabilities"] = {
+          verdict: "not_determined",
+          required: [],
+          declared: [],
+          missing: [],
+        };
+        const analysis = plan["analysis"] as Json;
+        analysis["metadata"] = {
+          available: false,
+          status: "provider_error",
+          query: "Movie.01",
+          identity: null,
+          match: null,
+        };
+      }
+      value["executionCandidateItemIds"] = (
+        (value["executionCandidateItemIds"] as string[]) ?? []
+      ).filter((itemId) => itemId !== "item-1");
+      const selection = value["selection"] as Json;
+      selection["selectedItemIds"] = (
+        selection["selectedItemIds"] as string[]
+      ).filter((itemId) => itemId !== "item-1");
+      selection["unselectedItemIds"] = ["item-1"];
     }
     const execute = (value["actions"] as Json)["execute"] as Json;
     execute["path"] = `/api/operations/organize/previews/${previewId}/execute`;
@@ -3184,6 +3242,71 @@ describe("ManualOrganizeDialog", () => {
     expect(within(listed).getAllByText(/subtitle\(zh\) · 移动/)).toHaveLength(
       2,
     );
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 shows a metadata provider technical failure as its own stage, not a candidate decision", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.metadataProviderFailure = true;
+      },
+      [filename(0), filename(1)],
+      "overview",
+    );
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    const count = (term: string): string => {
+      const row = within(overview)
+        .getByText(term, { selector: "dt" })
+        .closest("div") as HTMLElement;
+      return row.querySelector("dd")?.textContent ?? "";
+    };
+    expect(count("待处理")).toBe("1");
+    expect(count("已纳入")).toBe("1");
+
+    const failedRow = within(overview)
+      .getByRole("button", { name: `查看 ${filename(0)}` })
+      .closest("li") as HTMLElement;
+    expect(failedRow).toHaveTextContent("元数据服务技术失败");
+    expect(failedRow).toHaveTextContent(/Metadata Provider/);
+    expect(failedRow).toHaveTextContent(/原整理准备任务 organize-task-1/);
+    expect(failedRow).not.toHaveTextContent("需要处理元数据候选");
+    expect(failedRow).not.toHaveTextContent("Storage failure");
+    const readyRow = within(overview)
+      .getByRole("button", { name: `查看 ${filename(1)}` })
+      .closest("li") as HTMLElement;
+    expect(readyRow).toHaveTextContent("已纳入");
+
+    await user.click(
+      within(overview).getByRole("button", {
+        name: `查看 ${filename(0)}`,
+      }),
+    );
+    await screen.findByRole("heading", { name: /第 1 \/ 2 个/ });
+    const status = within(card()).getByRole("region", { name: "当前状态" });
+    expect(status).toHaveTextContent("元数据服务技术失败");
+    expect(status).toHaveTextContent(/Metadata Provider/);
+    expect(status).toHaveTextContent(/任务中心/);
+    expect(card()).not.toHaveTextContent("Storage failure");
+    expect(within(card()).queryByRole("radio", { name: /候选/ })).toBeNull();
+    expect(
+      within(card()).getByRole("button", { name: "保存并重新分析" }),
+    ).toBeDisabled();
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    const listed = await screen.findByRole("region", {
+      name: "本次确认的文件",
+    });
+    expect(listed).toHaveTextContent(filename(1));
+    expect(listed).not.toHaveTextContent(filename(0));
+    expect(screen.getByRole("button", { name: "确认整理 1 项" })).toBeEnabled();
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 

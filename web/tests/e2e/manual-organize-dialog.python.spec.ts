@@ -32,6 +32,8 @@ const PRIMARY_LIMIT_DIRECTORY = "PrimaryLimit";
 const PRIMARY_LIMIT_FILE = "DialogLimit.2032.mkv";
 const READABILITY_DIRECTORY = "Readability";
 const READABILITY_ONE_DIRECTORY = "ReadabilityOne";
+const READABILITY_DIALOG_DIRECTORY = "ReadabilityDialog";
+const READABILITY_DIALOG_FILE = "ReadableDialog.2011.mkv";
 const READABILITY_TEN_DIRECTORY = "ReadabilityTen";
 const READABILITY_ONE_FILE = "ReadableOne.2011.mkv";
 const READABILITY_LONG_CHINESE =
@@ -2488,8 +2490,8 @@ test("Task59.1 Files opens the same preparation dialog as an overview, enters on
   await connect(page);
   const commands = recordCommands(page);
   const { card } = await openReadabilityBatch(page, request, {
-    directory: READABILITY_ONE_DIRECTORY,
-    files: [READABILITY_ONE_FILE],
+    directory: READABILITY_DIALOG_DIRECTORY,
+    files: [READABILITY_DIALOG_FILE],
   });
 
   const overview = card.getByRole("region", { name: "本次整理概览" });
@@ -2508,16 +2510,16 @@ test("Task59.1 Files opens the same preparation dialog as an overview, enters on
   expect(await fact("已纳入")).toBe("1");
   expect(await fact("已有记录")).toBe("0");
   const row = overview
-    .getByRole("button", { name: `查看 ${READABILITY_ONE_FILE}` })
+    .getByRole("button", { name: `查看 ${READABILITY_DIALOG_FILE}` })
     .locator("xpath=ancestor::li[1]");
   await expect(row).toContainText("已纳入");
   await expect(row).toContainText(
-    `source-storage:${READABILITY_ONE_DIRECTORY}/${READABILITY_ONE_FILE}`,
+    `source-storage:${READABILITY_DIALOG_DIRECTORY}/${READABILITY_DIALOG_FILE}`,
   );
   await expect(row).toContainText("移动 · 来源不保留");
 
   await overview
-    .getByRole("button", { name: `查看 ${READABILITY_ONE_FILE}` })
+    .getByRole("button", { name: `查看 ${READABILITY_DIALOG_FILE}` })
     .click();
   await expect(
     card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
@@ -2525,14 +2527,14 @@ test("Task59.1 Files opens the same preparation dialog as an overview, enters on
   const source = card.locator(".mf-organize-source-fact dd");
   const target = card.locator(".mf-organize-target-fact dd");
   await expect(source).toContainText(
-    `source-storage:${READABILITY_ONE_DIRECTORY}/${READABILITY_ONE_FILE}`,
+    `source-storage:${READABILITY_DIALOG_DIRECTORY}/${READABILITY_DIALOG_FILE}`,
   );
   await expect(target).toContainText("media-target:");
 
   await card.getByRole("button", { name: "返回概览" }).click();
   await expect(overview).toBeVisible();
   const returnedRow = overview.getByRole("button", {
-    name: `查看 ${READABILITY_ONE_FILE}`,
+    name: `查看 ${READABILITY_DIALOG_FILE}`,
   });
   await expect(returnedRow).toBeFocused();
 
@@ -2542,7 +2544,7 @@ test("Task59.1 Files opens the same preparation dialog as an overview, enters on
   await expect(card.getByRole("region", { name: "整批复核" })).toBeVisible();
   const listed = card.getByRole("region", { name: "本次确认的文件" });
   await expect(listed).toContainText(
-    `来源 source-storage:${READABILITY_ONE_DIRECTORY}/${READABILITY_ONE_FILE}`,
+    `来源 source-storage:${READABILITY_DIALOG_DIRECTORY}/${READABILITY_DIALOG_FILE}`,
   );
   await expect(listed).toContainText("target:");
   await expect(listed).toContainText("无关联附件");
@@ -2557,7 +2559,7 @@ test("Task59.1 Files opens the same preparation dialog as an overview, enters on
   await card.getByRole("button", { name: "返回概览" }).click();
   await expect(overview).toBeVisible();
   await expect(
-    overview.getByRole("button", { name: `查看 ${READABILITY_ONE_FILE}` }),
+    overview.getByRole("button", { name: `查看 ${READABILITY_DIALOG_FILE}` }),
   ).toBeVisible();
 });
 
@@ -2592,6 +2594,82 @@ test("Task59.1 manual organize readability: one file separates source and target
   await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
   await page.setViewportSize({ width: 390, height: 520 });
   await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
+});
+
+test("Task59.1 a metadata provider technical failure is not a candidate decision", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(180_000);
+  const failedFile = "ProviderFail.2011.mkv";
+  const readyFile = "ProviderReady.2011.mkv";
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+
+  await openReadabilityDirectory(page, "ProviderFailure", failedFile);
+  await selectFiles(page, [failedFile, readyFile]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, discoveryId as string);
+
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  const failedRow = overview
+    .getByRole("button", { name: `查看 ${failedFile}` })
+    .locator("xpath=ancestor::li[1]");
+  await expect(failedRow).toContainText("待处理");
+  await expect(failedRow).toContainText("元数据服务技术失败");
+  await expect(failedRow).toContainText("Metadata Provider");
+  await expect(failedRow).toContainText(/原整理准备任务/);
+  await expect(failedRow).not.toContainText("需要处理元数据候选");
+  await expect(failedRow).not.toContainText("Storage failure");
+  const readyRow = overview
+    .getByRole("button", { name: `查看 ${readyFile}` })
+    .locator("xpath=ancestor::li[1]");
+  await expect(readyRow).toContainText("已纳入");
+
+  await overview.getByRole("button", { name: `查看 ${failedFile}` }).click();
+  await expect(card.getByRole("heading", { name: /第 1 \/ 2 个/ })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  const status = card.getByRole("region", { name: "当前状态" });
+  await expect(status).toContainText("元数据服务技术失败");
+  await expect(status).toContainText(/Metadata Provider/);
+  await expect(status).toContainText(/任务中心/);
+  await expect(card.getByText("Storage failure")).toHaveCount(0);
+  await expect(card.getByRole("radio", { name: /候选/ })).toHaveCount(0);
+  await expect(
+    card.getByRole("button", { name: "保存并重新分析" }),
+  ).toHaveCount(0);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+
+  await card.getByRole("button", { name: "返回概览" }).click();
+  await expect(overview).toBeVisible();
+  await card.getByRole("button", { name: /整批复核/ }).click();
+  const listed = card.getByRole("region", { name: "本次确认的文件" });
+  await expect(listed).toContainText(readyFile);
+  await expect(listed).not.toContainText(failedFile);
+  await expect(
+    card.getByRole("button", { name: "确认整理 1 项" }),
+  ).toBeEnabled();
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
 });
 
 test("Task59.1 manual organize readability: ten files keep an aligned batch summary", async ({
