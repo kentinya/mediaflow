@@ -1,190 +1,100 @@
 # Task 59.1 — Files 手动整理流程
 
-Next Action: B REVIEWS THE CORRECTED FILES CONFIRMABLE COUNTS AND AFFECTED JOURNEYS
+Next Action: DEVELOPER ALIGNS THE FILES OVERVIEW AND BATCH CONFIRMATION WITH AC-06
 
 ```text
 Task ID: 59.1
 Task Type: SLICE
 Parent Slice: 59
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
-Reviewed Implementation Head: 44f95aef9ebd4fc7754b248d225403825e281f30
+Reviewed Implementation Head: c109e403cc1733baebf20853d618d170c263d338
 Difficulty: High
 Test Level: T3
 Planner / Reviewer: B
 Implementation Authorization: ORIGINAL TASK 59.1 CORRECTION SCOPE
 ```
 
-## Developer 修正交接 — READY FOR B REVIEW
+## B 复核与 Slice 59 交接
 
-候选：`c109e403cc1733baebf20853d618d170c263d338`（父提交
-`44f95aef9ebd4fc7754b248d225403825e281f30`，Task Base
-`3bc9ad99137e5a2f8ff53add92041185ceb8ebbf`）。本轮只改 Files 概览可确认计数、同一概览的
-既有浏览器断言和直接受影响测试。
-
-- **A59-03 可确认计数。** 确认阻塞拆为摘要级（流程结束、准备/摘要/受理历史读取、摘要非当前或
-  截断、执行动作不可用、原提交待核对）与操作者选择级（未选、覆盖/清理授权）。分子继续是精确
-  `activeSelection`；分母取当前摘要资格下的 `ready + included` 就绪文件，未勾选的兄弟仍计入。
-  摘要级阻塞时仍为 `/ 0`。Readability 100 项保持 `90 / 0` 和实际原因，整批列表、确认按钮与
-  提交仍只按确切已选范围。
-- **真实旅程。** 两次确认用例在 Files 概览断言默认 `2 / 2`，取消第二项并回概览断言 `1 / 2`、
-  底部「此刻可确认 2 项」，整批仍只 1 项；从原任务继续的第二次确认恢复原「将整理」正文断言。
-  `library-files.spec.ts` 的 Files 整批改读「本次确认」和零变更说明。
-- **既有就绪行断言。** 单文件 Files 旅程按现行紧凑就绪行核对文件名、操作·作品和「已纳入」；
-  精确来源/目标继续在打开的文件页与整批「来源与目标」核对。旧行级路径和来源影响断言不再成立。
-
-实际验证（`web/`，候选 `c109e403`）：`npm run typecheck`、改动文件 `npm exec -- eslint`、
-`prettier --check`、`npm run build` 通过。组件 `ManualOrganizeDialog.test.tsx` 与
-`TaskItemRecoveryPanel.test.tsx` 84 项通过（39.2s）。原生通过：两次确认 1 项（8.2s）、
-Files 同页子集 1 项（1.8s）、A59-01/A59-02/AC-02/compact 组 5 项（48.9s）、101 项 1 项（8.0s）、
-Files 概览单文件 1 项（5.8s）、Task Center 原位续作 1 项（19.3s）。覆盖默认 `2 / 2`、取消后
-`1 / 2`、`90 / 0`、第二次「将整理」及一次决定/一次确认的媒体效果。`check_governance.py`、
-`git diff --check` 通过。测试墙钟约 2.5 分钟，低于本轮总耗时 30%。
-
-剩余风险：分母资格复用摘要级阻塞；组件覆盖未选、`0 / 1` 与 `1 / 2`，真实入口覆盖 `2 / 2`、
-`1 / 2`、`90 / 0`。请 B 按原 T3 门禁复跑四屏对照、完整布局套件及 Slice 级可确认计数复核。
-
-## 目标、范围与开发指导
-
-从 Files 批量整理两个就绪文件。逐项暂不纳入其中一个，回概览能读到「已选 / 可确认」为
-`1 / 2`，进入整批只复核并提交选中的一项，之后可从原任务继续余下文件。A 在 `33cbe4ae`
-明确了概览两项计数及整批正文的验收要求。继续原 Task 59.1 修正，原计划与上轮指导保存在
-`7d5b2565:TASK.md` 和 `674a0660:TASK.md`。Task Center 运行详情自身的视觉验收仍由原 Task 59.2 接续。
+**Task 59.1 — FIX REQUIRED。** 从 Files 批量整理两个就绪文件，打开第二项取消纳入，回到概览。
+批准预览和实页的上方均显示 `1 / 2`，实页底部又显示已选、需要处理、可确认三组数字。在
+390 × 520 的浏览器里，两排底部内容占用了原本可见的第一条就绪文件。继续点「整批复核」，
+实际范围正确，只包含第一项。底部的「返回整理概览」和「确认整理 1 项」上下排列，首屏仅读到
+确认状态和计数，需滚动才能看到「来源与目标」。同一可确认状态的批准预览在底部同一行左右
+放置两项操作，首屏显示「来源与目标」。在 390 × 844 上也可见两个按钮上下排列，桌面已左右分置。
+实页还把「方案标识与诊断」放在三栏计数与所选文件之间。这些差异属于 A59-03 的 Files 正常路径。
 [Slice AC-06](SLICE.md#acceptance-criteria)
 
-1. 在 Files 概览复用已有就绪分组和实际方案资格。分子计已选文件，分母计当前可纳入确认的就绪文件，
-   包含暂未勾选的项。把当前方案的整体阻塞与操作者的勾选分别用于计数。`Readability` 方案整批不可确认时
-   继续显示 `90 / 0` 与实际原因。概览底部用同一口径，整批清单、确认按钮和提交仍以确切已选范围为准。
-   [计数与整批复核](web/src/features/operations/ManualOrganizeDialog.tsx)
-2. 更新两个已实跑失败的旧断言。`library-files.spec.ts` 的 Files 整批读取「本次确认」和零媒体变更说明。
-   `manual-organize-dialog.python.spec.ts` 的两次确认旅程中，Files 首次读「本次确认」，从原任务继续的
-   第二次读原「将整理」。保留两次的数量、精确交接、Worker 实际效果、丢回包核对及无重放断言。
-   [Files 浏览器回归](web/tests/e2e/library-files.spec.ts) · [真实两次确认](web/tests/e2e/manual-organize-dialog.python.spec.ts)
+审查从 `main` 的 `c6c253a8894d2616103e0bc3b888784e456907e2` 开始，工作区与暂存区干净。
+独立核对完整 Task `3bc9ad99137e5a2f8ff53add92041185ceb8ebbf..c109e403cc1733baebf20853d618d170c263d338`
+与完整 Slice `212acdef5d97c14a01353b22c103d44b911d6147..c109e403cc1733baebf20853d618d170c263d338`。
+`c6c253a8` 是交接文档，B 的 `a7b8f0c8056cbd3154547705157d89d1578a76b2` 只更新两个浏览器
+用例的界面入口和断言，产品源码和构建相同。原计划与 Developer 实跑交接见 `c6c253a8:TASK.md`，
+原 Task 59.2 的功能验收和历史证据见 `aa20989a:TASK.md`。
 
-## 验收
+- **RO-1（AC-01/05/06）。** 读取方案仍在同一准备卡展示后端阶段、来源、范围和进度，读取失败后可重读。
+  100 项目录保持 `90 / 0` 和真实的作品搜索修正提示，第 101 项按原规则停止。就绪子集计数修正已通过，
+  概览底部的重复计数仍占用窄屏正文。
+- **RO-2（AC-02）。** 真实混合批次完成识别、候选、作品搜索、分类与冲突处理。普通及丢回包的冲突
+  跳过均读回已跳过，返回概览并保留兄弟结果和选择。十项逐项决定最后只确认一次。
+- **RO-3（AC-03/06）。** 两个就绪文件默认 `2 / 2`，暂不纳入一个后为 `1 / 2`。首次只提交第一项，
+  真实 Worker 处理后兄弟文件留在原处。从同一任务继续第二项，核对第二次提交的丢回包与实际效果。
+  正常整批复核的布局与诊断顺序仍需修正。
+- **RO-4（AC-04/05/06）。** 原位「继续整理」、原详情页签与筛选、四类同任务恢复、跨页证据在本轮
+  原生回归通过。最终任务详情正文的同状态视觉对照属于原 Task 59.2，等 Files 修正通过后接续。
+  Slice 59 仍为 FIX REQUIRED。
 
-- [ ] 按真实两次确认用例的 Files 入口操作。两个文件均就绪时，默认 `2 / 2`，取消选中一项后 `1 / 2`，
-  整批仍只包含一项。确认后核对兄弟文件留在原处，从原任务点「继续整理」，用原整批正文确认余下文件。
-  保留 `Readability` 的 `90 / 0` 以及整批实际拒绝。两套浏览器回归使用各自承载方的正文验证同一功能。
-- [ ] 从真实冲突和就绪兄弟同批打开，保存合法跳过后回概览。概览正文与底部对待处理的口径一致，
-  原文件行与整批未纳入区说明已跳过及零媒体变更，原文件可再次查看。复用同一入口分别验证正常
-  回包和后端已保存但回包丢失。核对读回原 TaskItem、一次决定写入、兄弟项选择和临时媒体效果。
-  延迟回包期间换到兄弟继续编辑或整批复核，原读回更新对应条目、保持当前正文和焦点。
-- [ ] 在现有入口走「准备／读取方案 → 分组概览 → 逐项决定 → 整批复核」。按合同做桌面、390 px
-  和矮窗的同状态预览对照。覆盖可读的真实等待与拒绝、状态卡及事实行、三组文件、固定区的合法
-  主操作、精确可读的来源目标及附件。核对键盘、焦点和一个正文滚动区。记录为保留真实状态、
-  合法动作或安全约束而与预览不同的具体状态。
-- [ ] 选择 `Readability` 文件夹，比较概览状态卡、整批复核按钮和实际后端给出的同一计划资格。
-  操作者在概览便能读到需要完成的修正以及暂时无法确认的事实。跳过后的原文件仍读为已处理，
-  兄弟项保留原选择；合法子集在后端许可后用一次明确确认提交。
-- [ ] 重跑 100 项 `Readability` 的作品搜索入口和第 101 项整批停止。重跑同一 Files 批次四类决定，
-  包括候选确认与作品搜索修正。确认前只改变决定，最后只确认一次合法范围。用准确任务详情核对
-  真实文件／附件和原请求回包丢失。从任务列表打开原任务并点击「继续整理」，核对第二层原逐项及
-  整批正文，关闭后回到原详情。Task Center 详情自身的视觉对照列入原 Task 59.2 和 Slice 级复核。
+受影响组件 **179 项**、Files 与 Task Center 布局 **64 项**、OpenList **1 项**通过。构建、类型检查、
+改动文件 ESLint 和 Prettier、治理与差异检查通过。完整原生 Files 首跑 **22/24**，两项旧断言分别
+在三栏计数里找「未受理」、在当前界面找旧返回或关闭标签。B 保留两轮原始失败，按现有 UI 验证
+展开的未受理文件、拒绝原因、精确范围与零变更；技术失败旅程沿实际按钮返回概览、整批读原因并
+重新进入单文件只读原计划。两项更新后 **2/2** 通过，其余 22 项输入相同。另有 **11 项**原生任务中心
+用例通过。测试使用真实 API、SQLite、Worker 及临时媒体根和隔离 Provider。
 
-## 测试与交接
+本机证据在 `.git/validation-evidence/c109e403cc1733baebf20853d618d170c263d338/b-task59.1-review/`。
+`candidate-screens/` 为三个视口的准备、概览、冲突决定和正常整批复核，`current-readability/` 为
+100 项真实阻塞。批准预览文件的 SHA-256 已核对。`approved-screens/subset-*.png` 由本轮从批准预览
+的「标准整理」同样取消一项后截取，其他同状态预览也保存在该目录。预览和实页均有一项纳入、一项
+未纳入，实页按真实方案显示零附件，预览样例所选文件带一份字幕。冲突选项按各自方案权限显示。
 
-**Developer** 在 `web/` 运行 `npm run typecheck`，对实际改动文件运行 `npm exec -- eslint` 和
-`npm exec -- prettier --check`。运行 `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx`，
-以及下列原生入口回归。把同一文件各处原因、确切读回和布局主操作的断言补入现有用例。根目录运行
-`git diff --check`。提交候选 SHA、实跑结果与仍需核对的状态。
+## 目标与 Developer 开发指导
+
+操作者从 Files 在概览确认范围，打开整批后先看到确认状态、三栏数字和所选文件，在固定操作区返回
+或提交。范围限 Files 概览和整批复核正文样式。
+
+1. 在 `ManualOrganizeDialog.tsx` 的 Files 概览固定区去掉重复的已选、待处理、已有记录和可确认数字。
+   保留正文唯一的三栏以及「整批复核」按钮里的精确已选数量。真实方案阻塞和下一步继续由现有状态卡
+   说明。原来检查底部同一计数的用例改在概览同一个三栏上核对，保留 `2 / 2 → 1 / 2`、
+   `90 / 0` 和已跳过、已有结果的真实计数。
+2. 把 Files 整批的「方案标识与诊断」放到所选文件和未纳入原因之后，继续可展开。三栏之后直接
+   阅读「来源与目标」。保留准确的来源、目标、操作、实际来源影响和确有的附件，保留原位拒绝、
+   授权、重新分析及提交核对。
+3. 在 Files 正常可确认状态，让返回与确认在底部同一行分居左右。现有窄窗 CSS 把确认区设成整行，
+   将正常 Files 确认和需要显示较长原因的状态按现有 `confirmationBlocker` 区分布局。在 390 × 520
+   保持两项操作可见，让正文首屏露出「来源与目标」，长路径使用现有单正文滚动。保留焦点、键盘、
+   reduced-motion 和 Task Center 原位续作的正文。
+   [整理弹窗](web/src/features/operations/ManualOrganizeDialog.tsx) · [样式](web/src/shared/ui/styles.css)
+
+## 验收与测试
+
+- [ ] 从现有 Files 入口跑「两次确认」用例。两个就绪项仅留一项已选，概览只读一次三栏计数；
+  整批的计数之后能先看实际来源和目标，诊断仍可展开。在 1280 × 900、390 × 844 与 390 × 520
+  对照批准预览和首屏，复核底部两项操作位置、正文单滚动区以及键盘返回焦点。随后提交第一项，
+  按原任务续作并核对第二次确认。
+- [ ] 用现有 100 项用例核对 `90 / 0`、作品搜索修正、实际阻塞与下一步。用一项未受理一项就绪的
+  用例核对两项各自去向。真实跳过后的概览继续显示已处理，已选兄弟按原范围继续。
+- [ ] Developer 在 `web/` 运行类型、构建、改动文件 ESLint 和 Prettier，运行
+  `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx`。复用原单文件、十文件与
+  两次确认用例，逐视口核对首屏，读取位置检查在测试主动滚动前进行。运行下列直接受影响的入口回归。
+  交接候选 SHA、执行结果和视口对照。测试墙钟低于本轮用时一半。
 
 ```sh
-npm run build
 npm run test:e2e -- tests/e2e/library-files.spec.ts --grep 'same-page preparation links the summary and confirms one exact subset'
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts --grep 'A59-01|A59-02|AC-02 mixed Files decisions|100-file batch|101-file directory|compact first-plan'
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts --grep 'second confirmation on the same Task'
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts --grep 'second confirmation on the same Task|pending owned file beside|one file separates source and target|ten files keep an aligned batch summary|100-file batch'
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'initial manual preparation remains reachable in place'
 ```
 
-**B** 独立看完整 Task 与 Slice Base..Head，先复验原阻塞和四屏对照。按 T3 在新候选运行 Web 类型、
-Lint、格式、构建和直接相关的组件测试，以及下列集成验证。复用已认可预览、既有 Files 用例和
-原位续作入口，对真实 API、SQLite、Worker 和临时媒体核对效果。两处正文均达到 AC-06 后进入
-Slice 最终门禁。各轮测试墙钟低于本轮总耗时的一半。
-
-```sh
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'initial manual preparation remains reachable in place|detail tab and filter context|recovery'
-npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/task-center-layout.spec.ts
-```
-
+B 再查完整 Base..Head，先复验上述可见缺口，再按原 T3 执行 Files 原生和两套布局回归，核对批准
+预览、真实效果、失败恢复与原位续作。通过后重评全部 Slice 结果，并接续原 Task 59.2 的任务详情正文。
 [开发与验收分工](docs/development-workflow.md#6-test-levels)
-
-## B 本轮复核 — FIX REQUIRED
-
-`main` 起始为 `b28c1ddbf98f9eee6de21c74b23bbe307976cdbe`，工作区与暂存区干净，治理通过。
-复核完整 Task `3bc9ad99137e5a2f8ff53add92041185ceb8ebbf..44f95aef9ebd4fc7754b248d225403825e281f30`
-及 Slice `212acdef5d97c14a01353b22c103d44b911d6147..44f95aef9ebd4fc7754b248d225403825e281f30`。
-后续 `b28c1ddb` 仅增加 Developer 交接。构建、类型、Lint、格式和 4 个组件测试文件共 178 项通过。
-重点原生 7 项通过，包括正常和丢回包的跳过、四类混合决定、方案读取、100／101 项及原任务续作。
-Files 和 Task Center 布局套件 63 项通过，1 项因旧 Files 文案断言失败。用对应承载方的现行文案
-重跑该用例通过。真实两次确认首轮还命中反向的旧断言，即续作中使用 Files 新标签。核对续作原标签后，
-两次实际执行、原任务交接及丢回包核对均通过对应断言。原生 86 秒与 Web 检查 89 秒并行，后续聚焦
-测试 16 秒加 8 秒，测试墙钟低于总耗时一半。
-
-- **A59-03（P1，RO-1/3 / AC-06）。** 从 Files 批量整理两个就绪文件，打开第二项取消纳入，再回概览。
-  两项都在「就绪文件」，第二项仍标记「可确认」，概览和底部却把总可确认数显示为 1。批准预览同一步显示
-  `1 / 2`。`44f95aef` 把分母直接取为已选文件数。实际整批只提交所选项，两个文件各自的效果及原提交核对通过。
-
-RO-1 的准备、分组及 100／101 项通过，普通就绪子集的可确认数待修正。RO-2 的四类决定及跳过丢回包回落
-通过。RO-3 的选定范围、单次提交、原任务交接与第二次提交核对通过，概览范围计数需反映实际选择。
-RO-4 原位第二层已恢复原逐项和整批正文，详情自身的 AC-06 仍需原 Task 59.2 接续。已核对批准预览校验值，
-同状态子集的实页与预览对照及 100 项桌面、390 px 和矮窗截图有记录，Files 修正后继续复核 AC-05/06。
-
-本机运行日志、截图和 trace 位于
-`.git/validation-evidence/44f95aef9ebd4fc7754b248d225403825e281f30/b-task59.1-review/`。
-已有产品阻塞，完整 T3 门禁在修正候选运行。下节保留 A 退回前的 B 交接记录。
-
-## B 复核与 Slice 59 交接
-
-```text
-Slice: 59 — 手动整理流程与任务详情弹窗正文
-Task Reviewed: 868ff9daab6972473cfb7344ca02cbdbc30077cf..27a430b7098a75f4fd040bc1109c678808629b1a
-Slice Base: 212acdef5d97c14a01353b22c103d44b911d6147
-Implementation Head: 27a430b7098a75f4fd040bc1109c678808629b1a
-Tasks completed: 59.1, 59.2
-Required Outcomes and Surfaces: COMPLETE
-Decision: SLICE READY FOR A REVIEW
-```
-
-Developer 实现为 `85e689cf221b8d4372e81db14f0176369ae24d54`。交接 `426c6cc` 只改
-`TASK.md`，含 Task 59.1 验收链接、Task 59.2 修正及上轮 B 阻塞。B 独立复核完整差异，
-并在 `27a430b7` 让 OpenList 原用例从现行概览点击「查看文件」，再执行原有断言。
-正式构建和运行输入与 Developer 候选相同。
-
-### 合同结果
-
-- **AC-01 / RO-1。** Files 的先受理、准备进度、读失败后的重读和同弹窗概览已有 Task 59.1
-  的隔离验收。最终候选复跑 100 项复核和第 101 项整批停止，检查窄窗的精确路径、未纳入
-  文件与原因。原 Files 入口、标题、背景和回落随布局组核对。
-- **AC-02 / RO-2。** 最终候选从 Files 对 10 个候选分别保存并重新分析，每个条目读回后返回
-  概览，最后一次确认准确交接原 Task。另验证元数据服务技术失败与就绪兄弟的独立处置。
-  Files 的拒绝、迟到读回、分类后续问题、草稿及焦点由组件和 Task 59.1 入口回归覆盖。
-  四类处理在原生任务中心逐类型走到同任务的新摘要及执行，其中混合任务验证独立兄弟；
-  原生证据按这些旅程组合，未将四类集中到单个 Files 夹具运行。
-- **AC-03 / RO-3。** 复跑兄弟项重分析后核对原提交，确认响应丢失仍指向精确 Task 且只提交
-  一次。真实复制后目标存在、源文件保留；冲突重命名时原目标保留。有明确许可的覆盖经同页
-  确认；组件验证方案更新时重新核对授权，及原请求保留文件子集和效果选项。OpenList 隔离
-  旅程证明确认前零媒体变更，确认后恰有两次移动和两次重命名，两份结果均已验证。
-- **AC-04 / RO-4。** 从 Files 交接、列表、深链和四类问题入口打开原任务。运行详情按流程、
-  进度、动作、文件结果和证据阅读。原位「继续整理」关联准确，关卡返回原任务及焦点；
-  同任务证据随筛选/跨页迁移，保留原草稿。重认证、两页签、记录筛选、读取失败重读和有界
-  JSON 导出均有验收证据。
-- **AC-05 / RO-1–4。** 复制成功后行内显示「已验证成功」，跳过项保持自己的结果，常规重放
-  限制在诊断里。历史未确认效果在文件行、汇总和证据中可区分。元数据候选行和证据均指明
-  要确认候选，各类型沿用原恢复。组件和原生任务覆盖主文件已完成但附件失败、混合结果、
-  无正式 Result、技术失败、流程失败及协作取消。检查了桌面、390 px 和矮窗截图，回归
-  覆盖长路径、键盘、焦点、reduced-motion、原列表和弹窗层级。
-
-### 门禁、证据与交接
-
-- 最终源码经 Web 类型、Lint、格式、构建及五个相关单测文件 174 项通过。布局与 Files
-  64 项、原生 24 项、OpenList 1 项通过。实跑命令、截图、制品摘要和失败 trace 保存在
-  `.git/validation-evidence/426c6cc67ec4732192c3a7293d85d066519339a6/task59.2/`。
-  Task 59.1 另有原生 Files 21 项、原位续作 2 项通过的原始日志及截图。
-- OpenList 旧用例等待直接进入单文件页，原失败已留档。它现可从概览进入该页，格式、
-  Lint 及专用浏览器用例通过。其他门禁在前一提交的相同产品代码与各自原测试输入上通过。
-  测试和质量检查按并行墙钟合计约 3 分钟，低于本轮复核用时的一半。治理和完整差异检查通过。
-- 使用本地隔离 Provider、SQLite、Worker 和临时媒体根。按合同保持 T3，生产部署、全量
-  发布矩阵、引擎与配置边界沿用 Slice 范围。A 终审通过后同步 V2 要求、用户旅程、任务中心
-  当前正文、架构说明和接受账本。
