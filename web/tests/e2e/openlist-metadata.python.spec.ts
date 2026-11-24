@@ -122,6 +122,10 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
     }
   }
   expect(previewId).not.toBeNull();
+  await card
+    .getByRole("region", { name: "本次整理概览" })
+    .getByRole("button", { name: "查看 One.2001.mkv" })
+    .click();
   await expect(
     card.getByRole("heading", { name: /第 1 \/ 2 个/ }),
   ).toBeVisible();
