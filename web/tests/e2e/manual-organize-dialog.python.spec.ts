@@ -3941,7 +3941,10 @@ test("Task59.1 a 101-file directory settles as a failed preparation and the same
   await expect(detail).toBeVisible({ timeout: 30_000 });
   await expect(detail.getByText("失败／准备阶段超限")).toBeVisible();
   await expect(
-    detail.getByText(/准备阶段超限：本次未执行整理。最多支持 100 个主文件/),
+    detail.getByRole("heading", { name: "准备阶段超限，本次未执行整理" }),
+  ).toBeVisible();
+  await expect(
+    detail.getByText("最多支持 100 个主文件，请缩小选择范围后重新发起。"),
   ).toBeVisible();
   await expect(
     detail.getByRole("region", { name: "文件整理准备" }),
