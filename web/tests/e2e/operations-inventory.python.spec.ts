@@ -5369,6 +5369,100 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   expect(continueUrl.searchParams.get("discoveryId")).toBeNull();
   expect(continueUrl.searchParams.get("resourceLibraryId")).toBeNull();
 
+  // Task 59.2: the task-level actions live in the shared tab toolbar with the
+  // export, in continue → cancel → export reading and keyboard order. The
+  // still-unconfirmed task has no results yet, so export stays unavailable
+  // with its own explanation.
+  const toolbar = detail.getByRole("navigation", {
+    name: "运行详情与操作记录",
+  });
+  const cancelButton = toolbar.getByRole("button", { name: "取消运行" });
+  await expect(cancelButton).toBeVisible();
+  const exportButton = toolbar.getByRole("button", { name: "导出结果 JSON" });
+  await expect(exportButton).toBeDisabled();
+  await expect(toolbar.getByText("此任务尚无可导出的结果记录。")).toBeVisible();
+  expect(
+    await toolbar.evaluate((nav) =>
+      Array.from(nav.querySelectorAll("button, a")).map((element) =>
+        (element.textContent ?? "").trim(),
+      ),
+    ),
+  ).toEqual(["任务详情", "操作记录", "继续整理", "取消运行", "导出结果 JSON"]);
+
+  const actions = toolbar.locator(".mf-run-tab-actions");
+  const detailTab = toolbar.getByRole("button", { name: "任务详情" });
+  const recordsTab = toolbar.getByRole("button", { name: "操作记录" });
+  const originalViewport = page.viewportSize();
+  const screenshot = async (name: string) => {
+    await page.screenshot({
+      path: `test-results/task59.2-toolbar-${name}.png`,
+      fullPage: false,
+    });
+  };
+
+  // Desktop: the two tabs stay left, the task actions and export share their
+  // right-hand row.
+  const detailTabBox = await detailTab.boundingBox();
+  const continueBox = await continueLink.boundingBox();
+  const cancelBox = await cancelButton.boundingBox();
+  const exportBox = await exportButton.boundingBox();
+  expect(detailTabBox).not.toBeNull();
+  expect(continueBox).not.toBeNull();
+  expect(cancelBox).not.toBeNull();
+  expect(exportBox).not.toBeNull();
+  expect(
+    Math.abs((continueBox?.y ?? 0) - (detailTabBox?.y ?? 0)),
+  ).toBeLessThanOrEqual(4);
+  expect(continueBox?.x ?? 0).toBeLessThan(cancelBox?.x ?? 0);
+  expect(cancelBox?.x ?? 0).toBeLessThan(exportBox?.x ?? 0);
+  expect(continueBox?.x ?? 0).toBeGreaterThan(detailTabBox?.x ?? 0);
+  await screenshot("desktop-detail");
+
+  // 操作记录 reads the same toolbar on desktop.
+  await recordsTab.click();
+  await expect(recordsTab).toHaveAttribute("aria-current", "page");
+  await expect(continueLink).toBeVisible();
+  await expect(cancelButton).toBeVisible();
+  await screenshot("desktop-records");
+
+  for (const viewport of [
+    { width: 390, height: 844, name: "390x844" },
+    { width: 390, height: 520, name: "390x520" },
+  ]) {
+    await page.setViewportSize({
+      width: viewport.width,
+      height: viewport.height,
+    });
+    const tabsBox = await detailTab.boundingBox();
+    const groupBox = await actions.boundingBox();
+    expect(tabsBox).not.toBeNull();
+    expect(groupBox).not.toBeNull();
+    // The whole group drops under the tabs instead of squeezing beside them.
+    expect(groupBox?.y ?? 0).toBeGreaterThan(
+      (tabsBox?.y ?? 0) + (tabsBox?.height ?? 0) - 1,
+    );
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <=
+          document.documentElement.clientWidth + 1,
+      ),
+    ).toBe(true);
+    await screenshot(`${viewport.name}-records`);
+    await detailTab.click();
+    await expect(detailTab).toHaveAttribute("aria-current", "page");
+    await expect(continueLink).toBeVisible();
+    await screenshot(`${viewport.name}-detail`);
+    await recordsTab.click();
+  }
+  if (originalViewport !== null) {
+    await page.setViewportSize(originalViewport);
+  }
+  // Leave the selected run on its detail tab before the continuation step.
+  await detailTab.click();
+  await expect(detailTab).toHaveAttribute("aria-current", "page");
+  await expect(page).not.toHaveURL(/tab=/);
+
   // The list behind the detail stays mounted. Record its exact position so
   // opening the continuation can be checked as a stable background, not only
   // as a final pathname.

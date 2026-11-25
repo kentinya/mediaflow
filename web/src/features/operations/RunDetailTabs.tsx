@@ -770,8 +770,12 @@ export interface RunDetailTabsProps {
   readonly results?: RunFileResults | null;
   /** Secondary run facts rendered after the file results. */
   readonly facts?: ReactNode;
-  /** The backend-advertised task operations rendered inside the status card. */
-  readonly actions?: ReactNode;
+  /**
+   * The backend-advertised task-level controls (continue, cancel). They share
+   * the tab strip with the export action, so both tabs read the same actions
+   * in the same place instead of duplicating or hiding them per tab.
+   */
+  readonly taskActions?: ReactNode;
 }
 
 export function RunDetailTabs({
@@ -784,7 +788,7 @@ export function RunDetailTabs({
   flow,
   results,
   facts,
-  actions,
+  taskActions,
 }: RunDetailTabsProps) {
   const authToken = useAuthToken();
   /** A filter change always starts from the first page: a cursor minted for
@@ -886,7 +890,12 @@ export function RunDetailTabs({
         >
           操作记录
         </button>
-        <RunExportAction runId={runId} progress={progress} />
+        {/* One shared action area for both tabs: the exact task operations
+            first, then the bounded export. */}
+        <div className="mf-run-tab-actions">
+          {taskActions}
+          <RunExportAction runId={runId} progress={progress} />
+        </div>
       </nav>
       {state.tab === "detail" ? (
         <div className="mf-run-tab-panel">
@@ -896,7 +905,6 @@ export function RunDetailTabs({
           >
             {flow}
             <ProgressCard progress={progress} />
-            <RunCurrentActions actions={actions} />
           </section>
           <RunFileResultsCard results={results} progress={progress} />
           <RunItemsSection
@@ -929,24 +937,6 @@ export function RunDetailTabs({
           />
         </div>
       )}
-    </section>
-  );
-}
-
-/**
- * The run's current applicable actions, read directly after the flow and its
- * progress. It renders only when the backend advertises a lifecycle action,
- * a cancellation request/outcome, or a continuable exact preparation link;
- * a terminal run with nothing left to do keeps no empty control block.
- */
-function RunCurrentActions({ actions }: { readonly actions?: ReactNode }) {
-  if (actions === null || actions === undefined) {
-    return null;
-  }
-  return (
-    <section className="mf-run-current-actions" aria-label="当前操作">
-      <h4>当前操作</h4>
-      {actions}
     </section>
   );
 }
@@ -2479,7 +2469,7 @@ function RunExportAction({
   };
 
   return (
-    <div className="mf-run-tab-actions">
+    <>
       <button
         type="button"
         className="mf-button mf-button-secondary"
@@ -2506,6 +2496,6 @@ function RunExportAction({
           <p>{notice.message}</p>
         </StatusBanner>
       )}
-    </div>
+    </>
   );
 }

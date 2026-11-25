@@ -5336,19 +5336,11 @@ tr[aria-selected="true"] {
   font-weight: 600;
 }
 .mf-run-fact-continuation h4,
-.mf-run-fact-meta h4,
-.mf-run-fact-preparation h4 {
+.mf-run-fact-meta h4 {
   margin: 0 0 4px;
 }
-.mf-run-fact-continuation p,
-.mf-run-fact-preparation p {
+.mf-run-fact-continuation p {
   margin: 0 0 4px;
-}
-.mf-run-fact-preparation {
-  padding: 10px 14px;
-  border: 1px solid var(--line, #e2e7ef);
-  border-radius: 8px;
-  background: #f8fafd;
 }
 .mf-run-fact-diagnostics {
   border: 1px dashed var(--line, #e2e7ef);
@@ -5403,32 +5395,48 @@ tr[aria-selected="true"] {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  /* The tab strip keeps the two tabs on the left and the task-level
+     controls on the right; the whole group drops under the tabs on narrow
+     cards without reordering continue → cancel → export. */
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.mf-run-tab-actions .mf-button {
+  white-space: nowrap;
+}
+
+/* Cancelling is destructive intent, so it reads as a red outline beside the
+   primary continue action instead of a second filled primary button. */
+.mf-run-tab-actions .mf-button-danger:not(:disabled) {
+  color: #9d2e29;
+  background: #fff;
+  border-color: #edc4c1;
+}
+
+.mf-run-tab-actions .mf-button-danger:not(:disabled):hover,
+.mf-run-tab-actions .mf-button-danger:not(:disabled):focus-visible {
+  color: #86231e;
+  background: #fff1f0;
+  border-color: #dc9b96;
+}
+
+@media (max-width: 560px) {
+  .mf-run-detail-tabs .mf-run-tab-actions {
+    flex: 0 1 100%;
+    gap: 6px;
+  }
+
+  .mf-run-detail-tabs .mf-run-tab-actions .mf-button {
+    font-size: 12px;
+    padding-inline: 9px;
+  }
 }
 
 .mf-run-tab-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-/* Current applicable actions read directly after the flow and progress. An
-   empty or terminal action area is not rendered at all. */
-.mf-run-current-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 0 0;
-  border-top: 1px solid var(--line, #e2e7ef);
-}
-
-.mf-run-current-actions h4 {
-  margin: 0;
-}
-
-.mf-run-current-actions .mf-run-fact-preparation {
-  padding: 0;
-  border: 0;
-  background: transparent;
 }
 
 .mf-run-progress {

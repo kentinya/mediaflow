@@ -205,7 +205,7 @@ export function RunLifecycleControls({
         <button
           key={item.action}
           type="button"
-          className="mf-button mf-button-secondary"
+          className="mf-button mf-button-danger"
           disabled={controlsDisabled}
           aria-busy={pendingAction === item.action}
           onClick={() => onInvoke(item, projection.version)}

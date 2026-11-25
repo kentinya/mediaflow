@@ -821,12 +821,11 @@ describe("Operations run inventory landing", () => {
     expect(
       within(detail).queryByText("执行已受理，文件结果由后端独立记录。"),
     ).toBeNull();
-    expect(
-      within(detail).getByText("查看整理摘要，确认后执行。"),
-    ).toBeVisible();
-    expect(
-      within(detail).getByRole("link", { name: "继续整理" }),
-    ).toBeVisible();
+    // The continuable preparation is the shared toolbar's primary action, so
+    // both tabs offer the same next step.
+    expect(within(detail).getByRole("link", { name: "继续整理" })).toHaveClass(
+      "mf-button-primary",
+    );
   });
 
   it("states an already-admitted confirmation and a still-waiting sibling separately (Task 59.2 AC-04/AC-05)", async () => {
@@ -899,14 +898,17 @@ describe("Operations run inventory landing", () => {
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: /预览/ }));
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    // The continuable state explains only the next step; the hosted card
-    // itself carries the confirmation boundary.
-    expect(
-      within(detail).getByText("查看整理摘要，确认后执行。"),
-    ).toBeVisible();
+    // The continuable state offers only the shared toolbar's next step; the
+    // hosted card itself carries the confirmation boundary.
     expect(
       within(detail).queryByText(/此运行由文件页的整理选择发起/),
     ).toBeNull();
+    const toolbar = within(detail).getByRole("navigation", {
+      name: "运行详情与操作记录",
+    });
+    expect(within(toolbar).getByRole("link", { name: "继续整理" })).toHaveClass(
+      "mf-button-primary",
+    );
     const link = await within(detail).findByRole("link", { name: "继续整理" });
     // The continue address is the task center itself: exact Task + closed
     // marker, never a browser-supplied discovery or library identity.
@@ -948,6 +950,62 @@ describe("Operations run inventory landing", () => {
     expect(screen.getByRole("table")).toBe(table);
     await waitFor(() => expect(document.activeElement).toBe(link));
     // Opening and closing the card submits nothing.
+    expect(backend.calls.posts).toEqual([]);
+  });
+
+  it("Task59.2 continues from 操作记录 and returns to the same tab and control", async () => {
+    const user = userEvent.setup();
+    const backend = stubOrganizeHost();
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const toolbar = await within(detail).findByRole("navigation", {
+      name: "运行详情与操作记录",
+    });
+    const recordsTab = within(toolbar).getByRole("button", {
+      name: "操作记录",
+    });
+    const link = within(toolbar).getByRole("link", { name: "继续整理" });
+
+    // The continue entry leaves the detail tab; 操作记录 keeps the same one.
+    await user.click(recordsTab);
+    expect(recordsTab).toHaveAttribute("aria-current", "page");
+    expect(new URLSearchParams(router.history.location.search).get("tab")).toBe(
+      "records",
+    );
+    expect(within(toolbar).getByRole("link", { name: "继续整理" })).toBe(link);
+
+    await user.click(link);
+    const dialog = await screen.findByRole("dialog", {
+      name: "整理所选文件",
+    });
+    await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
+    // The exact hosted preparation keeps the current tab context in its
+    // address: no preparation or library identity is added to the browser.
+    const opened = new URLSearchParams(router.history.location.search);
+    expect(opened.get("run")).toBe("task-001");
+    expect(opened.get("tab")).toBe("records");
+    expect(opened.get("dialog")).toBe("organize");
+    expect(opened.get("discoveryId")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "运行详情" })).toBe(detail);
+
+    await user.click(within(dialog).getByRole("button", { name: /^关闭$/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    // Closing returns to the same task, the same tab and the exact control.
+    const closed = new URLSearchParams(router.history.location.search);
+    expect(closed.get("run")).toBe("task-001");
+    expect(closed.get("tab")).toBe("records");
+    expect(closed.get("dialog")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "运行详情" })).toBe(detail);
+    expect(
+      within(toolbar).getByRole("button", { name: "操作记录" }),
+    ).toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(document.activeElement).toBe(link));
     expect(backend.calls.posts).toEqual([]);
   });
 
@@ -2279,21 +2337,26 @@ describe("Operations run inventory landing", () => {
     const progress = await within(detail).findByRole("region", {
       name: "处理进度",
     });
-    const actions = await within(detail).findByRole("region", {
-      name: "当前操作",
+    // The backend-advertised cancel control lives in the shared tab toolbar,
+    // above the body and available from either tab.
+    const toolbar = await within(detail).findByRole("navigation", {
+      name: "运行详情与操作记录",
     });
     expect(
-      within(actions).getByRole("button", { name: "取消运行" }),
-    ).toBeVisible();
+      within(toolbar).getByRole("button", { name: "取消运行" }),
+    ).toHaveClass("mf-button-danger");
+    expect(
+      within(detail).queryByRole("region", { name: "当前操作" }),
+    ).toBeNull();
     const results = within(detail).getByRole("region", { name: "文件结果" });
     const items = within(detail).getByRole("region", { name: "主条目" });
     const facts = within(detail).getByRole("region", { name: "任务信息" });
     expect(
-      progress.compareDocumentPosition(actions) &
+      toolbar.compareDocumentPosition(progress) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      actions.compareDocumentPosition(results) &
+      progress.compareDocumentPosition(results) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
@@ -2836,6 +2899,20 @@ describe("Operations run inventory landing", () => {
       ).toBeDisabled(),
     );
     expect(within(controls).getByText(/取消结果尚未确认/)).toBeTruthy();
+
+    // The outcome belongs to the shared toolbar: 操作记录 reads the same lock
+    // and feedback instead of losing the in-flight cancel context.
+    const toolbar = within(detail).getByRole("navigation", {
+      name: "运行详情与操作记录",
+    });
+    await user.click(within(toolbar).getByRole("button", { name: "操作记录" }));
+    expect(
+      within(toolbar).getByRole("button", { name: "操作记录" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(within(controls).getByText(/取消结果尚未确认/)).toBeTruthy();
+    expect(
+      within(controls).getByRole("button", { name: "取消运行" }),
+    ).toBeDisabled();
 
     // Closing the card must not drop the unresolved request's context.
     await user.click(within(detail).getByRole("button", { name: "关闭详情" }));

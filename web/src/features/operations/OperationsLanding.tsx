@@ -1785,46 +1785,35 @@ function RunDetailPanel({
                   missingResult: run.missingResultItems,
                 }}
                 facts={<RunDetailFacts run={run} />}
-                actions={
-                  lifecycleVisible || preparationVisible ? (
-                    <>
-                      {lifecycleVisible && run.lifecycle !== null && (
-                        <RunLifecycleControls
-                          projection={run.lifecycle}
-                          pendingAction={pendingAction}
-                          result={controlResult}
-                          locked={locked}
-                          reconciling={reconciling}
-                          onReconcile={reconcile}
-                          onInvoke={(action, expectedVersion) =>
-                            void invokeLifecycle(action, expectedVersion)
-                          }
-                        />
-                      )}
-                      {preparationVisible && (
-                        <section
-                          className="mf-run-fact-preparation"
-                          aria-label="文件整理准备"
-                        >
-                          <h4>文件整理准备</h4>
-                          <p>查看整理摘要，确认后执行。</p>
-                          <div className="mf-actions">
-                            <Link
-                              className="mf-button mf-button-secondary"
-                              to="/operations"
-                              search={preparationLinkSearch}
-                              // Opening the card is not a list visit: the task
-                              // center background stays at its exact scroll
-                              // position behind it.
-                              resetScroll={false}
-                            >
-                              继续整理
-                            </Link>
-                          </div>
-                        </section>
-                      )}
-                    </>
-                  ) : null
+                taskActions={
+                  <>
+                    {preparationVisible && (
+                      <Link
+                        className="mf-button mf-button-primary"
+                        to="/operations"
+                        search={preparationLinkSearch}
+                        // Opening the card is not a list visit: the task
+                        // center background stays at its exact scroll
+                        // position behind it.
+                        resetScroll={false}
+                      >
+                        继续整理
+                      </Link>
+                    )}
+                    {lifecycleVisible && run.lifecycle !== null && (
+                      <RunLifecycleControls
+                        projection={run.lifecycle}
+                        pendingAction={pendingAction}
+                        result={controlResult}
+                        locked={locked}
+                        reconciling={reconciling}
+                        onReconcile={reconcile}
+                        onInvoke={(action, expectedVersion) =>
+                          void invokeLifecycle(action, expectedVersion)
+                        }
+                      />
+                    )}
+                  </>
                 }
               />
             </>

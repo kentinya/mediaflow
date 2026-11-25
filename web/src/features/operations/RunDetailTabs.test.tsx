@@ -1256,7 +1256,8 @@ describe("selected-run detail tabs", () => {
     ).toBeNull();
   });
 
-  it("Task59.2 reads current actions before file results and run facts after the items", async () => {
+  it("Task59.2 keeps the same task actions in the shared toolbar on both tabs", async () => {
+    const user = userEvent.setup();
     stubDetailJourney([], {
       overview: overviewDocument({
         filesPreparation: {
@@ -1270,24 +1271,47 @@ describe("selected-run detail tabs", () => {
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    const actions = await within(detail).findByRole("region", {
-      name: "当前操作",
+    const toolbar = await within(detail).findByRole("navigation", {
+      name: "运行详情与操作记录",
     });
-    const preparation = within(actions).getByRole("region", {
-      name: "文件整理准备",
+    const detailTab = within(toolbar).getByRole("button", {
+      name: "任务详情",
     });
+    const recordsTab = within(toolbar).getByRole("button", {
+      name: "操作记录",
+    });
+    const continueLink = within(toolbar).getByRole("link", {
+      name: "继续整理",
+    });
+    const exportButton = within(toolbar).getByRole("button", {
+      name: "导出结果 JSON",
+    });
+    // The exact continue entry is the primary control of the shared toolbar,
+    // and the export keeps its own bounded entry beside it.
+    expect(continueLink).toHaveClass("mf-button-primary");
+    expect(continueLink.getAttribute("href")).toContain("run=task-001");
+    expect(continueLink.getAttribute("href")).toContain("dialog=organize");
+    // Reading and keyboard order: detail tab, records tab, continue, export.
     expect(
-      within(preparation).getByRole("link", { name: "继续整理" }),
-    ).toBeVisible();
+      detailTab.compareDocumentPosition(recordsTab) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      recordsTab.compareDocumentPosition(continueLink) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      continueLink.compareDocumentPosition(exportButton) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // The body carries the flow, progress and file results; the task-level
+    // actions no longer repeat inside the detail tab.
+    expect(
+      within(detail).queryByRole("region", { name: "当前操作" }),
+    ).toBeNull();
     const results = within(detail).getByRole("region", { name: "文件结果" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
     const facts = within(detail).getByText("触发方式");
-    // The first screen reads flow → progress → current action, then the file
-    // results and their items; the trigger/range facts follow the main result.
-    expect(
-      actions.compareDocumentPosition(results) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
     expect(
       results.compareDocumentPosition(items) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
@@ -1300,6 +1324,20 @@ describe("selected-run detail tabs", () => {
       items.compareDocumentPosition(diagnostics) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+
+    // 操作记录 reads the same toolbar: the exact continue entry stays mounted
+    // and focusable instead of disappearing with the detail tab.
+    await user.click(recordsTab);
+    const records = await within(detail).findByRole("region", {
+      name: "操作记录",
+    });
+    expect(records).toBeVisible();
+    expect(within(toolbar).getByRole("link", { name: "继续整理" })).toBe(
+      continueLink,
+    );
+    expect(continueLink).toBeVisible();
+    expect(continueLink.getAttribute("href")).toContain("tab=records");
+    expect(exportButton).toBeVisible();
   });
 
   it("Task59.2 reads the progress success split and its unknown or missing caveats", async () => {
