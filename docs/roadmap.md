@@ -49,7 +49,8 @@ only in [the development workflow](development-workflow.md).
 ## Current boundary
 
 [Slice 59](../SLICE.md) is **FIX REQUIRED** after A Final Review. The Roadmap row stays ACTIVE
-during correction. B plans the A59-01 and A59-02 correction in [Task 59.1](../TASK.md).
+during correction. B passed Task 59.1 and Task 59.2. [Task 59.3](../TASK.md) covers the approved
+task detail status presentation and awaits B's plan update for the file row.
 Slice 58 remains the latest accepted Slice.
 
 ## Accepted boundary references
