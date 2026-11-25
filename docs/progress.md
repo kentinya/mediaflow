@@ -9,7 +9,8 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 [Slice 59](../SLICE.md) is **FIX REQUIRED** after A Final Review of `6c54559b`. B owns the
-correction plans for the original Task 59.1 and Task 59.3. Task 59.2's accepted outcomes still apply.
+original Task 59.1 and 59.3 corrections and plans the approved preparation and Task Center changes.
+Task 59.2's accepted outcomes still apply.
 Slice 58 remains the latest accepted closure.
 
 ## Latest accepted closure — Slice 58
