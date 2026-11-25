@@ -813,6 +813,7 @@ export function RunDetailTabs({
   taskActions,
 }: RunDetailTabsProps) {
   const authToken = useAuthToken();
+  const queryClient = useQueryClient();
   /** A filter change always starts from the first page: a cursor minted for
    * the previous filter state is never carried into a new one (the server
    * would refuse it anyway). */
@@ -833,6 +834,38 @@ export function RunDetailTabs({
   const changeTab = (tab: RunDetailTab) => {
     onStateChange({ tab });
   };
+  // The item page is scoped to the 任务详情 tab, but the flow settles from
+  // the overview read shared by both tabs. Keeping the terminal re-read here
+  // means 操作记录 still invalidates the exact page it unmounted: the visible
+  // page repeats the read in place, while the hidden page becomes stale so
+  // returning to it reads the post-terminal row instead of reusing its cache.
+  // The ref holds only the previous activity of this same run; page/filter
+  // changes keep their own fresh read.
+  const previousActivity = useRef({ runId, active });
+  const { itemStatus, itemCursor, tab } = state;
+  useEffect(() => {
+    const previous = previousActivity.current;
+    previousActivity.current = { runId, active };
+    if (previous.runId !== runId || !previous.active || active) {
+      return;
+    }
+    const pageKey = runItemsPageQueryKey({
+      runId,
+      status: itemStatus,
+      cursor: itemCursor,
+    });
+    void (async () => {
+      await queryClient.cancelQueries({ queryKey: pageKey, exact: true });
+      if (tab === "detail") {
+        await queryClient.refetchQueries({
+          queryKey: pageKey,
+          exact: true,
+        });
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: pageKey, exact: true });
+    })();
+  }, [active, itemCursor, itemStatus, queryClient, runId, tab]);
   const detailTabRef = useRef<HTMLButtonElement | null>(null);
   // Unsaved decision inputs belong to this exact run + item, not to the
   // filtered/paged list that happens to render the evidence right now.  The
@@ -1354,7 +1387,6 @@ function RunItemsSection({
   ) => void;
 }) {
   const token = useAuthToken();
-  const queryClient = useQueryClient();
   const query = useQuery(
     runItemsQueryOptions(token, {
       runId,
@@ -1365,35 +1397,6 @@ function RunItemsSection({
   );
   const evidenceItem = state.evidenceItem;
   const evidencePanelId = useId();
-  // The last active poll can precede the durable item update. When the same
-  // detail reads its terminal flow, repeat this exact page/filter once before
-  // settling so the row reads post-terminal facts. A page that has delivered
-  // no data yet cannot be replaced by the observer's own cancel-refetch: the
-  // query library then returns the same in-flight request, whose pre-terminal
-  // response lands after the run settled. Cancelling this exact page/filter
-  // read by key first makes the terminal read a real new request, and keeps
-  // the already-displayed-page path reading once as well. The ref holds only
-  // the previous activity of this same run; remounts from filters/pages keep
-  // their own fresh read.
-  const previousActivity = useRef({ runId, active });
-  const refetchItems = query.refetch;
-  const { itemStatus, itemCursor } = state;
-  useEffect(() => {
-    const previous = previousActivity.current;
-    previousActivity.current = { runId, active };
-    if (previous.runId !== runId || !previous.active || active) {
-      return;
-    }
-    const pageKey = runItemsPageQueryKey({
-      runId,
-      status: itemStatus,
-      cursor: itemCursor,
-    });
-    void (async () => {
-      await queryClient.cancelQueries({ queryKey: pageKey, exact: true });
-      await refetchItems({ cancelRefetch: true });
-    })();
-  }, [active, itemCursor, itemStatus, queryClient, refetchItems, runId]);
   const itemsPage =
     query.data !== undefined && query.data.ok ? query.data.model : null;
   // The evidence belongs under its own row only when this exact server page
