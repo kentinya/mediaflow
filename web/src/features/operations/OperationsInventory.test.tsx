@@ -818,11 +818,23 @@ describe("Operations run inventory landing", () => {
     expect(
       within(detail).getByText("点击「继续整理」，核对 1 个文件的方案。"),
     ).toBeVisible();
-    // The processed range names its accounting basis and the still-waiting
-    // file instead of borrowing an execution or success claim.
+    // The processed range names its preparation/analysis basis and the
+    // still-waiting file instead of borrowing an execution or success claim.
+    const progress = within(detail).getByRole("region", { name: "处理进度" });
     expect(
-      within(detail).getByText(
-        "已处理 1 / 1 个主条目（整理计数，含 1 个等待确认，确认前不执行文件操作）",
+      within(progress).getByText(
+        "已进入准备与分析 1 / 1 个主条目（准备与分析计数，含 1 个等待确认）",
+      ),
+    ).toBeVisible();
+    expect(
+      within(progress).getByRole("progressbar", {
+        name: "准备与分析进度（含等待确认）",
+      }),
+    ).toBeVisible();
+    // The zero executed files stay a separate fact from the waiting range.
+    expect(
+      within(progress).getByText(
+        "尚未执行文件操作，暂无文件结果；1 个文件等待确认，确认前不执行文件操作。",
       ),
     ).toBeVisible();
     expect(
@@ -834,6 +846,179 @@ describe("Operations run inventory landing", () => {
       "mf-button-primary",
     );
   });
+
+  it("Task59.3 names the real Files preparation stage before any plan exists", async () => {
+    const user = userEvent.setup();
+    const discoveryBase = hostDiscoveryDocument();
+    let discovery: Record<string, unknown> = {
+      ...discoveryBase,
+      status: "queued",
+      version: 1,
+      previewId: null,
+      intentId: null,
+      prepared: false,
+      frozen: false,
+      progress: {
+        ...(discoveryBase.progress as Record<string, unknown>),
+        phase: "queued",
+      },
+    };
+    // This is the real state immediately after a Files admission: the Task
+    // exists, the Worker has not run, and the plan is not generated.
+    let overview = runDocument({
+      status: "pending",
+      current_stage: null,
+      total_items: 1,
+      completed_items: 0,
+      processed_items: 0,
+      success_items: 0,
+      filesPreparation: {
+        discoveryId: "discovery-1",
+        resourceLibraryId: "source",
+        continuable: true,
+      },
+      progress: progressDocument({
+        known_total: 1,
+        processed: 0,
+        dispositions: {
+          pending: 1,
+          active: 0,
+          waiting: 0,
+          success: 0,
+          skipped: 0,
+          failed_partial: 0,
+          ignored: 0,
+          cancelled: 0,
+        },
+        results_total: 0,
+        effect_counts: {},
+      }),
+    });
+    let previewReads = 0;
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
+      ) {
+        return jsonResponse(pageDocument());
+      }
+      if (url === "/api/operations/runs/task-001") {
+        return jsonResponse(overview);
+      }
+      if (url === "/api/operations/organize/discoveries/discovery-1") {
+        return jsonResponse(discovery);
+      }
+      if (url === `/api/operations/organize/previews/${HOST_PREVIEW_ID}`) {
+        previewReads += 1;
+        return jsonResponse(hostPreviewDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/operations");
+
+    // The real entry is the task list row, not a task-center deep link.
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
+    await waitFor(() =>
+      expect(
+        new URLSearchParams(router.history.location.search).get("run"),
+      ).toBe("task-001"),
+    );
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const flow = await within(detail).findByRole("region", {
+      name: "状态与流程",
+    });
+    // An admitted preparation is not an admitted execution: the title names
+    // the discovery stage and the page shows no file result.
+    expect(
+      await within(flow).findByRole("heading", {
+        name: "准备已受理，正在排队",
+      }),
+    ).toBeVisible();
+    expect(
+      within(flow).queryByRole("heading", { name: "已受理，等待执行" }),
+    ).toBeNull();
+    const progress = within(detail).getByRole("region", { name: "处理进度" });
+    expect(
+      within(progress).getByText(
+        "已进入准备与分析 0 / 1 个主条目（准备与分析计数；其余尚未结束）",
+      ),
+    ).toBeVisible();
+    expect(
+      within(progress).getByRole("progressbar", {
+        name: "准备与分析进度",
+      }),
+    ).toBeVisible();
+
+    // The same detail follows the durable preparation read; no reopen and no
+    // invented stage in between.
+    discovery = hostDiscoveryDocument({
+      status: "analyzing",
+      version: 2,
+      previewId: null,
+      intentId: null,
+      prepared: false,
+      frozen: false,
+    });
+    await waitFor(
+      () =>
+        expect(
+          within(flow).getByRole("heading", {
+            name: "正在分析并生成方案",
+          }),
+        ).toBeVisible(),
+      { timeout: 8_000 },
+    );
+
+    // The Worker publishes the exact plan: the same detail follows the
+    // waiting items and reads that plan, and the progress names the
+    // confirmation boundary instead of an execution range.
+    overview = runDocument({
+      status: "running",
+      command: "manual_organize",
+      command_label: "手动整理",
+      current_stage: null,
+      total_items: 1,
+      completed_items: 0,
+      processed_items: 1,
+      filesPreparation: {
+        discoveryId: "discovery-1",
+        resourceLibraryId: "source",
+        continuable: true,
+      },
+      progress: progressDocument(),
+    });
+    discovery = hostDiscoveryDocument({
+      status: "completed",
+      version: 3,
+      previewId: HOST_PREVIEW_ID,
+      intentId: HOST_INTENT_ID,
+      prepared: true,
+      frozen: true,
+    });
+    await waitFor(
+      () =>
+        expect(
+          within(flow).getByRole("heading", { name: "等待确认" }),
+        ).toBeVisible(),
+      { timeout: 8_000 },
+    );
+    await waitFor(() => expect(previewReads).toBeGreaterThan(0), {
+      timeout: 8_000,
+    });
+    expect(
+      within(progress).getByRole("progressbar", {
+        name: "准备与分析进度（含等待确认）",
+      }),
+    ).toBeVisible();
+    expect(
+      within(progress).getByText(
+        "尚未执行文件操作，暂无文件结果；1 个文件等待确认，确认前不执行文件操作。",
+      ),
+    ).toBeVisible();
+  }, 20_000);
 
   it("states one normal completion heading before the real progress and results (Task 59.3 AC-06)", async () => {
     const overview = runDocument({
@@ -1010,6 +1195,19 @@ describe("Operations run inventory landing", () => {
     ).toBeVisible();
     expect(
       within(detail).getByRole("link", { name: "继续整理" }),
+    ).toBeVisible();
+    // The full range does not hide the executed sibling: the settled result
+    // and the still-unconfirmed file are stated separately.
+    const progress = within(detail).getByRole("region", { name: "处理进度" });
+    expect(
+      within(progress).getByText(
+        "已进入准备与分析 2 / 2 个主条目（准备与分析计数，含 1 个等待确认）",
+      ),
+    ).toBeVisible();
+    expect(
+      within(progress).getByText(
+        "已执行 1 个文件；1 个文件等待确认，确认前不执行文件操作。",
+      ),
     ).toBeVisible();
   });
 

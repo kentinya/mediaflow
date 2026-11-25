@@ -64,6 +64,11 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(/organizeDiscovery=/);
   await driveDiscoveryWorker(request);
+  // The current Files landing is the overview; the per-file review is its
+  // own explicit entry for the exact selected file.
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  await overview.getByRole("button", { name: "查看 Three.2003.mkv" }).click();
   await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
     { timeout: 30_000 },
   );
@@ -83,6 +88,15 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
     card.getByText(/选择已保存,正在按固定配置重新分析/),
   ).toBeVisible();
   await driveDiscoveryWorker(request);
+  // A saved correction re-analyzes and returns to the same overview; the
+  // exact file is opened again before its inclusion is confirmed.
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  await overview.getByRole("button", { name: "查看 Three.2003.mkv" }).click();
+  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
+    {
+      timeout: 30_000,
+    },
+  );
   await expect(card.getByText("纳入本次整理").first()).toBeVisible({
     timeout: 30_000,
   });

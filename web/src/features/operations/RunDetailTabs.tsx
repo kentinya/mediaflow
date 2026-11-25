@@ -755,6 +755,16 @@ export interface RunFileResults {
 export type RunDetailStatusTone =
   "pending" | "running" | "attention" | "success" | "failure" | "neutral";
 
+/**
+ * The pre-execution stage that owns the processed range.
+ *
+ * `preparing` is this Task's own Files preparation before a plan exists;
+ * `confirming` is the current plan's still-unconfirmed candidate range.
+ * Neither stage has executed the waiting files, so the count must name that
+ * basis instead of borrowing the execution's own accounting.
+ */
+export type RunProgressPhase = "preparing" | "confirming";
+
 export interface RunDetailTabsProps {
   /** The exact canonical run identity from the overview read. */
   readonly runId: string;
@@ -763,6 +773,9 @@ export interface RunDetailTabsProps {
   readonly status?: RunStatus;
   /** The exact confirmable subset of the waiting range, when it is readable. */
   readonly confirmableWaiting?: number | null;
+  /** The owner of the processed count while this flow has not executed the
+   * waiting files: preparation/analysis or the confirmation boundary. */
+  readonly progressPhase?: RunProgressPhase | null;
   readonly state: RunDetailState;
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
   /** Poll the detail reads while the selected run is non-terminal. */
@@ -788,6 +801,7 @@ export function RunDetailTabs({
   progress,
   status,
   confirmableWaiting = null,
+  progressPhase = null,
   state,
   onStateChange,
   active,
@@ -915,6 +929,7 @@ export function RunDetailTabs({
               progress={progress}
               status={status}
               confirmableWaiting={confirmableWaiting}
+              phase={progressPhase}
             />
           </section>
           <RunFileResultsCard results={results} progress={progress} />
@@ -964,10 +979,12 @@ function ProgressCard({
   progress,
   status,
   confirmableWaiting,
+  phase,
 }: {
   readonly progress: RunProgress | null;
   readonly status?: RunStatus;
   readonly confirmableWaiting: number | null;
+  readonly phase: RunProgressPhase | null;
 }) {
   if (progress === null || !progress.available) {
     return (
@@ -1000,6 +1017,12 @@ function ProgressCard({
       ? Math.min(confirmableWaiting, waiting)
       : null;
   const remainingWait = waiting - (confirmable ?? 0);
+  // The count is pre-execution while this Task's own Files preparation has
+  // no plan yet or while the current plan's files still wait for the
+  // operator's explicit confirmation. The waiting disposition is already
+  // part of `processed`, so the number itself is the backend's; only its
+  // basis is named from the stage instead of being called organize execution.
+  const preExecution = phase !== null;
   const waitingNote =
     waiting > 0
       ? confirmable !== null
@@ -1008,20 +1031,37 @@ function ProgressCard({
           : `，含 ${waiting} 个等待确认`
         : `，含 ${waiting} 个等待处理`
       : "";
-  const basisEnd =
-    active > 0
+  const basisEnd = preExecution
+    ? active > 0
+      ? "；其余尚未结束"
+      : ""
+    : active > 0
       ? "；其余正在处理"
       : confirmable !== null && remainingWait === 0
         ? "，确认前不执行文件操作"
         : "；尚未结束";
-  const basisNote =
-    waiting > 0
+  const basisNote = preExecution
+    ? waiting > 0
+      ? `（准备与分析计数${waitingNote}${basisEnd}）`
+      : active > 0
+        ? "（准备与分析计数；其余尚未结束）"
+        : "（准备与分析计数，尚未进入执行）"
+    : waiting > 0
       ? progress.kind === "organize"
         ? `（整理计数${waitingNote}${basisEnd}）`
         : progress.kind === "analysis"
           ? `（分析计数${waitingNote}）`
           : `（已处理范围${waitingNote}）`
       : "";
+  // Executed files already have their own settled disposition and result;
+  // the remaining confirmation is named separately so one full bar can never
+  // imply that those waiters were executed.
+  const executedFiles =
+    progress.dispositions.success + progress.dispositions.failed_partial;
+  const pendingConfirmation =
+    phase === "confirming" && confirmable !== null && confirmable > 0
+      ? confirmable
+      : null;
   const unfinished: Array<{ readonly label: string; readonly count: number }> =
     (["pending", "active", "waiting"] as const)
       .map((disposition) => ({
@@ -1051,7 +1091,13 @@ function ProgressCard({
             aria-valuemin={0}
             aria-valuemax={progress.knownTotal}
             aria-valuenow={progress.processed ?? 0}
-            aria-label="处理进度"
+            aria-label={
+              preExecution
+                ? phase === "confirming"
+                  ? "准备与分析进度（含等待确认）"
+                  : "准备与分析进度"
+                : "处理进度"
+            }
           >
             <div
               className="mf-progress-fill"
@@ -1059,10 +1105,18 @@ function ProgressCard({
             />
           </div>
           <p className="mf-run-progress-count">
-            已处理 {progress.processed} / {progress.knownTotal} 个
-            {progress.unit}
+            {preExecution ? "已进入准备与分析" : "已处理"} {progress.processed}{" "}
+            / {progress.knownTotal} 个{progress.unit}
             {basisNote}
           </p>
+          {pendingConfirmation !== null && (
+            <p className="mf-dashboard-meta">
+              {executedFiles > 0
+                ? `已执行 ${executedFiles} 个文件；`
+                : "尚未执行文件操作，暂无文件结果；"}
+              {pendingConfirmation} 个文件等待确认，确认前不执行文件操作。
+            </p>
+          )}
           {unfinished.length > 0 && (
             <p className="mf-dashboard-meta">
               {unfinished

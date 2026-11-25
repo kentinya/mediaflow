@@ -367,7 +367,9 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   // The flow status and the independent file result each carry "失败" now;
   // this assertion names the flow block explicitly.
   const flow = detail.getByRole("region", { name: "状态与流程" });
-  await expect(flow.getByText("失败", { exact: true })).toBeVisible();
+  await expect(
+    flow.getByRole("heading", { name: "任务流程失败" }),
+  ).toBeVisible();
   await expect(detail.getByText(/已完成（恢复成功）/)).toHaveCount(0);
 
   // The Automation record reads the same failed flow with the current
@@ -476,7 +478,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   await expect(
     reopenedDetail
       .getByRole("region", { name: "状态与流程" })
-      .getByText("失败", { exact: true }),
+      .getByRole("heading", { name: "任务流程失败" }),
   ).toBeVisible();
 
   // The same readback holds on a narrow viewport.  The memory-only token is
@@ -489,7 +491,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   await expect(
     narrowDetail
       .getByRole("region", { name: "状态与流程" })
-      .getByText("失败", { exact: true }),
+      .getByRole("heading", { name: "任务流程失败" }),
   ).toBeVisible();
   await expect(narrowDetail.getByText(/已完成（恢复成功）/)).toHaveCount(0);
   await page.screenshot({

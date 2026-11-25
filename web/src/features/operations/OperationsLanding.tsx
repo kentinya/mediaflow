@@ -53,12 +53,14 @@ import {
   type RunView,
 } from "../../entities/operations/run";
 import {
+  RUN_REFETCH_INTERVAL,
   runInventoryQueryOptions,
   runOverviewQueryKey,
   runOverviewQueryOptions,
 } from "./run-query";
-import { RunDetailTabs } from "./RunDetailTabs";
+import { RunDetailTabs, type RunProgressPhase } from "./RunDetailTabs";
 import { organizeDiscoveryQueryOptions } from "./discovery-query";
+import type { OrganizeDiscoveryModel } from "../../entities/operations/discovery";
 import { organizePreviewQueryOptions } from "./organize-query";
 import { RunRetainedSubmissionNotice } from "./RunRetainedSubmissionNotice";
 import { ProblemFilePanel } from "./ProblemFilePanel";
@@ -1618,17 +1620,38 @@ function RunDetailPanel({
     overview?.filesPreparation?.continuable === true
       ? overview.filesPreparation.discoveryId
       : null;
-  const linkedDiscoveryQuery = useQuery(
-    organizeDiscoveryQueryOptions(
+  // The linked preparation keeps its own bounded read while it has no plan
+  // yet: a status poll of this same discovery is a side-effect-free GET, and
+  // it is what moves the detail from queued/discovering/analyzing to the
+  // current plan or to the stopped state. Once a plan id exists the plan read
+  // owns the next change, so this poll settles.
+  const linkedDiscoveryQuery = useQuery({
+    ...organizeDiscoveryQueryOptions(
       token,
       linkedDiscoveryId ?? "",
       linkedDiscoveryId !== null,
     ),
-  );
+    refetchInterval: (query) => {
+      const read = query.state.data;
+      if (read === undefined || !read.ok || read.model.previewId !== null) {
+        return false;
+      }
+      return RUN_REFETCH_INTERVAL;
+    },
+  });
   const linkedDiscovery =
     linkedDiscoveryQuery.data?.ok === true
       ? linkedDiscoveryQuery.data.model
       : null;
+  const preparationStage: RunPreparationStage | null =
+    linkedDiscoveryId === null
+      ? null
+      : linkedDiscovery !== null
+        ? preparationStageOf(linkedDiscovery)
+        : linkedDiscoveryQuery.isError ||
+            linkedDiscoveryQuery.data !== undefined
+          ? "unreadable"
+          : "reading";
   const linkedPreviewId = linkedDiscovery?.previewId ?? null;
   const linkedPreviewQuery = useQuery(
     organizePreviewQueryOptions(
@@ -1788,6 +1811,30 @@ function RunDetailPanel({
             });
           const preparationVisible =
             run.filesPreparation !== null && run.filesPreparation.continuable;
+          const confirmableWaiting =
+            planCandidateCount !== null
+              ? planCandidateCount
+              : waitingConfirmationOpen(run)
+                ? run.progress?.available === true
+                  ? run.progress.dispositions.waiting
+                  : null
+                : null;
+          // The count's real stage: preparation/analysis while this Task's
+          // own Files plan does not exist yet, and the confirmation boundary
+          // while the current plan's candidates are still unconfirmed. Every
+          // other reading keeps the backend's own accounting basis.
+          const waitingItems =
+            run.progress?.available === true
+              ? run.progress.dispositions.waiting
+              : 0;
+          const progressPhase: RunProgressPhase | null =
+            preparationStage !== null &&
+            preparationStage !== "reading" &&
+            preparationStage !== "unreadable"
+              ? "preparing"
+              : (confirmableWaiting ?? 0) > 0 && waitingItems > 0
+                ? "confirming"
+                : null;
           return (
             <>
               {/* The admitted preparation's first read and a failed read are
@@ -1802,15 +1849,8 @@ function RunDetailPanel({
                 runId={run.runId}
                 progress={run.progress}
                 status={run.status}
-                confirmableWaiting={
-                  planCandidateCount !== null
-                    ? planCandidateCount
-                    : waitingConfirmationOpen(run)
-                      ? run.progress?.available === true
-                        ? run.progress.dispositions.waiting
-                        : null
-                      : null
-                }
+                confirmableWaiting={confirmableWaiting}
+                progressPhase={progressPhase}
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
@@ -1820,6 +1860,7 @@ function RunDetailPanel({
                     <RunFlowSummary
                       run={run}
                       planCandidateCount={planCandidateCount}
+                      preparationStage={preparationStage}
                     />
                     <RunRetainedSubmissionNotice run={run} />
                   </>
@@ -1935,6 +1976,107 @@ function waitingConfirmationOpen(run: RunSummary): boolean {
   );
 }
 
+/**
+ * The exact durable stage of the selected Task's own Files preparation while
+ * it has not published a plan yet.
+ *
+ * Only the discovery read proves this stage: a Task `pending`/`running` status
+ * alone does not admit that execution was confirmed, and the plan summary can
+ * only be confirmed after it exists. `reading`/`unreadable` keep the honest
+ * limit of what this page can verify instead of guessing an execution state.
+ */
+type RunPreparationStage =
+  | "reading"
+  | "unreadable"
+  | "queued"
+  | "discovering"
+  | "waiting-stability"
+  | "analyzing"
+  | "plan-pending"
+  | "plan-frozen"
+  | "stopped";
+
+/** Map one linked discovery to its pre-plan stage, or null once it has a plan. */
+function preparationStageOf(
+  discovery: OrganizeDiscoveryModel,
+): RunPreparationStage | null {
+  if (discovery.previewId !== null) {
+    return null;
+  }
+  switch (discovery.status) {
+    case "queued":
+      return "queued";
+    case "running":
+      return "discovering";
+    case "waiting_stability":
+      return "waiting-stability";
+    case "analyzing":
+      return "analyzing";
+    case "completed":
+    case "partial_success":
+      return discovery.frozen ? "plan-frozen" : "plan-pending";
+    case "failed":
+    case "cancelled":
+      return "stopped";
+    default:
+      return null;
+  }
+}
+
+/** The actual preparation stage, never an execution claim it has not reached. */
+function preparationHeadline(stage: RunPreparationStage): {
+  readonly title: string;
+  readonly copy: string;
+} {
+  switch (stage) {
+    case "reading":
+      return {
+        title: "正在读取准备状态",
+        copy: "任务状态与文件结果以下方持久记录为准。",
+      };
+    case "unreadable":
+      return {
+        title: "准备状态暂时无法读取",
+        copy: "任务状态与文件结果以下方持久记录为准；点击「继续整理」可重新读取同一准备。",
+      };
+    case "queued":
+      return {
+        title: "准备已受理，正在排队",
+        copy: "后台尚未开始检查所选文件；确认前不会执行整理。",
+      };
+    case "discovering":
+      return {
+        title: "正在检查所选文件",
+        copy: "检查完成后继续分析与生成方案；确认前不会执行整理。",
+      };
+    case "waiting-stability":
+      return {
+        title: "正在等待来源文件稳定",
+        copy: "文件稳定后继续检查所选范围；确认前不会执行整理。",
+      };
+    case "analyzing":
+      return {
+        title: "正在分析并生成方案",
+        copy: "方案生成后可核对并确认整理；确认前不会执行整理。",
+      };
+    case "plan-pending":
+      return {
+        title: "准备已完成，等待生成方案",
+        copy: "后台生成方案后才能确认整理；确认前不会执行整理。",
+      };
+    case "plan-frozen":
+      return {
+        title: "正在生成整理方案",
+        copy: "来源已冻结，方案生成后在本页核对；确认前不会执行整理。",
+      };
+    case "stopped":
+      return {
+        title: "准备未完成",
+        copy: "本次没有生成可确认方案；点击「继续整理」查看当前状态。",
+      };
+  }
+}
+
 /** The legal next step for a published waiting range. */
 function waitingNextStep(
   run: RunSummary,
@@ -2010,6 +2152,7 @@ function waitingHeadline(
 function runStatusHeadline(
   run: RunSummary,
   planCandidateCount: number | null = null,
+  preparationStage: RunPreparationStage | null = null,
 ): {
   readonly title: string;
   readonly copy: string;
@@ -2020,6 +2163,15 @@ function runStatusHeadline(
   const uncertain = run.uncertainEffectItems ?? 0;
   const missing = run.missingResultItems ?? 0;
   const waiting = waitingItemCount(run);
+  // A known pre-plan stage (queued/discovering/analyzing/..., including a
+  // stopped preparation) is the durable proof that no plan exists yet, so it
+  // wins over a fallback confirmation guess. A reading/unreadable preparation
+  // proves nothing and falls through to the accepted waiting evidence instead
+  // of inventing a stage.
+  const knownPreparation =
+    preparationStage !== null &&
+    preparationStage !== "reading" &&
+    preparationStage !== "unreadable";
   switch (run.status) {
     case "completed":
       if (run.recoveredCompletion) {
@@ -2096,6 +2248,26 @@ function runStatusHeadline(
         copy: "未开始的操作已停止，已完成的文件效果继续保留。",
       };
     case "running": {
+      const confirmable =
+        planCandidateCount !== null
+          ? planCandidateCount > 0
+          : waitingConfirmationOpen(run);
+      if (knownPreparation) {
+        return preparationHeadline(preparationStage);
+      }
+      if (
+        confirmable &&
+        run.progress?.available === true &&
+        waiting !== null &&
+        waiting > 0
+      ) {
+        const active =
+          run.progress.dispositions.active + run.progress.dispositions.pending;
+        if (active > 0) {
+          return waitingHeadline(run, waiting, true, planCandidateCount);
+        }
+        return waitingHeadline(run, waiting, false, planCandidateCount);
+      }
       if (run.progress?.available === true && waiting !== null && waiting > 0) {
         const active =
           run.progress.dispositions.active + run.progress.dispositions.pending;
@@ -2103,6 +2275,11 @@ function runStatusHeadline(
           return waitingHeadline(run, waiting, true, planCandidateCount);
         }
         return waitingHeadline(run, waiting, false, planCandidateCount);
+      }
+      // Only a reading/unreadable preparation remains here; a published
+      // waiting range above is the stronger verifiable fact.
+      if (preparationStage !== null) {
+        return preparationHeadline(preparationStage);
       }
       if (
         run.progress?.available === true &&
@@ -2144,14 +2321,29 @@ function runStatusHeadline(
       };
     }
     case "waiting":
+      if (knownPreparation) {
+        return preparationHeadline(preparationStage);
+      }
       if (waiting !== null && waiting > 0) {
         return waitingHeadline(run, waiting, false, planCandidateCount);
+      }
+      if (preparationStage !== null) {
+        return preparationHeadline(preparationStage);
       }
       return {
         title: "等待处理",
         copy: "同一任务仍有文件需要决定或确认。",
       };
     case "pending":
+      if (knownPreparation) {
+        return preparationHeadline(preparationStage);
+      }
+      if (waiting !== null && waiting > 0) {
+        return waitingHeadline(run, waiting, false, planCandidateCount);
+      }
+      if (preparationStage !== null) {
+        return preparationHeadline(preparationStage);
+      }
       return {
         title: "已受理，等待执行",
         copy: "后台尚未开始处理；文件结果将在执行后独立记录。",
@@ -2178,11 +2370,13 @@ function runStatusHeadline(
 function RunFlowSummary({
   run,
   planCandidateCount,
+  preparationStage,
 }: {
   readonly run: RunSummary;
   readonly planCandidateCount: number | null;
+  readonly preparationStage: RunPreparationStage | null;
 }) {
-  const headline = runStatusHeadline(run, planCandidateCount);
+  const headline = runStatusHeadline(run, planCandidateCount, preparationStage);
   return (
     <div className="mf-run-fact-flow">
       <h3 className="mf-run-status-title">{headline.title}</h3>
