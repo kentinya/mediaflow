@@ -4474,6 +4474,8 @@ export function ManualOrganizeDialog({
      * The in-place Task Center continuation keeps the Slice Base header, its
      * source-library fact and its own section names unchanged.
      */
+    const filesCurrentDraft =
+      filesHost && (draftDirty || currentDecisionDraftDirty);
     const reviewHeader = () =>
       filesHost ? (
         <header className="mf-organize-file-head mf-organize-files-file-head">
@@ -4490,6 +4492,12 @@ export function ManualOrganizeDialog({
             <p className="mf-organize-file-path mf-dashboard-meta">
               {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
             </p>
+            {/* The draft note belongs to this file, not the shared footer. */}
+            {filesCurrentDraft ? (
+              <p className="mf-organize-file-draft" role="status">
+                有未保存的修正
+              </p>
+            ) : null}
           </div>
         </header>
       ) : (
@@ -5836,6 +5844,13 @@ export function ManualOrganizeDialog({
     !organizeFlowEnded &&
     preview !== undefined &&
     items.length > 0;
+  /** The approved Files decision/per-file footer, distinct from overview. */
+  const filesDecisionFooter =
+    filesHost &&
+    filesRecordDetail === null &&
+    step === "review" &&
+    !organizeFlowEnded &&
+    !preparationOnlyFooter;
   const openBatchReview = () => {
     clearAnalysisReadback();
     setFilesOverviewNotice(null);
@@ -5913,17 +5928,76 @@ export function ManualOrganizeDialog({
           关闭
         </Button>
       </>
-    ) : step === "review" ? (
+    ) : step === "review" && filesHost ? (
+      // Approved Files decision footer: the overview return alone on the left,
+      // then paging and this file's own ignore/save/recovery action. Closing
+      // stays on the existing top entry and the batch review is entered from
+      // the overview, so neither shares the row with the file's action.
       <>
-        {filesHost ? (
+        <span className="mf-organize-footer-return">
           <Button
             type="button"
             variant="secondary"
             onClick={returnToFilesOverview}
           >
-            返回概览
+            返回整理概览
           </Button>
-        ) : null}
+        </span>
+        <span className="mf-modal-footer-spacer" />
+        <span className="mf-organize-footer-paging">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={pageInfo <= 0 || items.length === 0}
+            onClick={() => goTo(pageInfo - 1)}
+          >
+            上一项
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={pageInfo >= items.length - 1}
+            onClick={() => goTo(pageInfo + 1)}
+          >
+            下一项
+          </Button>
+        </span>
+        <div id={FILES_REVIEW_ACTION_ID} className="mf-organize-footer-action">
+          {filesReviewCorrectionAction && currentItemId !== null ? (
+            <div className="mf-actions">
+              <Button
+                type="button"
+                disabled={currentCorrectionSaveDisabled}
+                onClick={() => submitCurrentCorrection(currentItemId)}
+              >
+                {currentAnalysisReadback?.phase === "reading"
+                  ? "正在核对分析结果…"
+                  : saveMutation.isPending
+                    ? "正在保存并重新分析…"
+                    : currentAnalysisReadback?.phase === "awaiting"
+                      ? "等待新的零变更方案…"
+                      : currentAnalysisReadback?.phase === "unreadable"
+                        ? "分析结果待核对"
+                        : "保存并重新分析"}
+              </Button>
+              {currentAnalysisReadback?.phase === "unreadable" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={saveMutation.isPending}
+                  onClick={() => void retryAnalysisReadback()}
+                >
+                  重新读取分析状态
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </>
+    ) : step === "review" ? (
+      // The Task Center continuation keeps its own Slice53 inline paging and
+      // batch entry; only the Files host owns the approved decision footer.
+      <>
         <Button
           type="button"
           variant="secondary"
@@ -5957,48 +6031,11 @@ export function ManualOrganizeDialog({
         </Button>
         <Button
           type="button"
-          variant={filesHost ? "secondary" : undefined}
           disabled={items.length === 0}
           onClick={openBatchReview}
         >
           整批复核(已选 {activeSelection.length} 项)
         </Button>
-        {filesHost ? (
-          <div
-            id={FILES_REVIEW_ACTION_ID}
-            className="mf-organize-footer-action"
-          >
-            {filesReviewCorrectionAction && currentItemId !== null ? (
-              <div className="mf-actions">
-                <Button
-                  type="button"
-                  disabled={currentCorrectionSaveDisabled}
-                  onClick={() => submitCurrentCorrection(currentItemId)}
-                >
-                  {currentAnalysisReadback?.phase === "reading"
-                    ? "正在核对分析结果…"
-                    : saveMutation.isPending
-                      ? "正在保存并重新分析…"
-                      : currentAnalysisReadback?.phase === "awaiting"
-                        ? "等待新的零变更方案…"
-                        : currentAnalysisReadback?.phase === "unreadable"
-                          ? "分析结果待核对"
-                          : "保存并重新分析"}
-                </Button>
-                {currentAnalysisReadback?.phase === "unreadable" ? (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={saveMutation.isPending}
-                    onClick={() => void retryAnalysisReadback()}
-                  >
-                    重新读取分析状态
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
       </>
     ) : (
       <>
@@ -6108,6 +6145,9 @@ export function ManualOrganizeDialog({
       bodyClassName="mf-modal-body-scroll mf-organize-dialog-body"
       cardClassName="mf-organize-dialog"
       footer={footer}
+      footerClassName={
+        filesDecisionFooter ? "mf-organize-files-decision-footer" : undefined
+      }
     >
       {taskReadNotice}
       {discardPromptOpen ? (

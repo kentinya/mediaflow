@@ -10722,6 +10722,18 @@ tr[aria-selected="true"] {
   min-width: 0;
 }
 
+.mf-organize-footer-return {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.mf-organize-footer-paging {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .mf-organize-footer-action .mf-actions {
   display: flex;
   flex-wrap: wrap;
@@ -10760,17 +10772,21 @@ tr[aria-selected="true"] {
     line-height: 25px;
   }
 
-  .mf-organize-footer-action {
+  /* Approved Files decision footer at narrow width: the overview return holds
+     the first row, then paging and this file's own action share the rest and
+     wrap naturally in keyboard order. */
+  .mf-organize-files-decision-footer .mf-organize-footer-return {
     flex-basis: 100%;
   }
 
-  .mf-organize-footer-action .mf-actions {
-    width: 100%;
-    justify-content: stretch;
+  .mf-organize-files-decision-footer .mf-modal-footer-spacer {
+    display: none;
   }
 
-  .mf-organize-footer-action .mf-button {
-    flex: 1 1 auto;
+  .mf-organize-files-decision-footer .mf-organize-footer-paging,
+  .mf-organize-files-decision-footer .mf-organize-footer-action,
+  .mf-organize-files-decision-footer .mf-organize-footer-action .mf-actions {
+    display: contents;
   }
 }
 
@@ -10831,6 +10847,16 @@ tr[aria-selected="true"] {
 .mf-organize-file-path {
   margin: 0;
   font-size: 12.5px;
+  line-height: 18px;
+}
+
+/* The current file's unsaved draft stays beside that file instead of the
+   shared decision footer. */
+.mf-organize-file-draft {
+  margin: 2px 0 0;
+  color: #a4610a;
+  font-size: 12.5px;
+  font-weight: 600;
   line-height: 18px;
 }
 

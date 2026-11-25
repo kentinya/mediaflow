@@ -330,6 +330,8 @@ export interface ModalCardShellProps {
   readonly layerBackground?: ReactNode;
   readonly children: ReactNode;
   readonly footer?: ReactNode;
+  /** Extra footer classes for hosts that group their own footer actions. */
+  readonly footerClassName?: string;
 }
 
 /** The centered backdrop, dialog card, header and scrollable body. */
@@ -351,6 +353,7 @@ export function ModalCardShell({
   layerBackground,
   children,
   footer,
+  footerClassName,
 }: ModalCardShellProps) {
   return (
     <div
@@ -424,7 +427,15 @@ export function ModalCardShell({
           {children}
         </div>
         {footer !== undefined && (
-          <footer className="mf-modal-footer">{footer}</footer>
+          <footer
+            className={
+              footerClassName === undefined
+                ? "mf-modal-footer"
+                : `mf-modal-footer ${footerClassName}`
+            }
+          >
+            {footer}
+          </footer>
         )}
       </section>
     </div>

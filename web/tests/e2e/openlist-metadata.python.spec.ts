@@ -147,6 +147,11 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
   }
 
   await page.request.post("/__harness__/register-manual-worker");
+  // The batch review opens from the same overview after leaving this file.
+  await card.getByRole("button", { name: "返回整理概览" }).click();
+  await expect(
+    card.getByRole("region", { name: "本次整理概览" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: /^确认整理 2 项$/ }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/);

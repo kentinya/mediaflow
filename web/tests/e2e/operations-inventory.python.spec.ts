@@ -2233,6 +2233,10 @@ test("a selected execution never blocks the unselected sibling's correction and 
     card.getByRole("heading", { name: /第 2 \/ 2 个/ }),
   ).toBeVisible();
   await card.getByRole("checkbox", { name: /纳入 Tenth\.2010\.mkv/ }).uncheck();
+  await card.getByRole("button", { name: "返回整理概览" }).click();
+  await expect(
+    card.getByRole("region", { name: "本次整理概览" }),
+  ).toBeVisible();
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(
     card
@@ -2348,11 +2352,15 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
   ).toBeVisible();
   // The ambiguous item is not executable and offers its real candidates.
   await expect(card.getByText("未就绪").first()).toBeVisible();
+  await card.getByRole("button", { name: "返回整理概览" }).click();
+  await expect(
+    card.getByRole("region", { name: "本次整理概览" }),
+  ).toBeVisible();
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(
     page.getByRole("button", { name: "确认整理 0 项" }),
   ).toBeDisabled();
-  await page.getByRole("button", { name: "返回概览" }).click();
+  await page.getByRole("button", { name: "返回整理概览" }).click();
   await openFilesOverviewFile(card, "Eleventh.2011.mkv");
   expect(
     await (
@@ -3613,6 +3621,10 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
   await card
     .getByRole("checkbox", { name: /纳入 Thirteenth\.2013\.mkv/ })
     .uncheck();
+  await card.getByRole("button", { name: "返回整理概览" }).click();
+  await expect(
+    card.getByRole("region", { name: "本次整理概览" }),
+  ).toBeVisible();
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(
     page.getByRole("button", { name: "确认整理 1 项" }),

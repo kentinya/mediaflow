@@ -1950,6 +1950,8 @@ describe("ManualOrganizeDialog", () => {
     }
     expect(backend.calls.executePosts).toHaveLength(0);
 
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     expect(screen.getByRole("region", { name: "整批复核" })).toHaveTextContent(
@@ -2073,7 +2075,7 @@ describe("ManualOrganizeDialog", () => {
 
     // The correction was durably saved and re-analyzed: closing afterwards is
     // an ordinary close, not a discard prompt for inputs that already exist.
-    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await user.click(screen.getByRole("button", { name: "关闭整理弹窗" }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
     );
@@ -2174,7 +2176,7 @@ describe("ManualOrganizeDialog", () => {
     const editedTitle = screen.getByLabelText("搜索标题");
     await user.clear(editedTitle);
     await user.type(editedTitle, "DialogRename");
-    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await user.click(screen.getByRole("button", { name: "关闭整理弹窗" }));
     const failedPrompt = await screen.findByRole("alertdialog");
     await user.click(
       within(failedPrompt).getByRole("button", { name: "继续编辑" }),
@@ -2329,7 +2331,7 @@ describe("ManualOrganizeDialog", () => {
 
     // Closing with an unsaved draft pins an explicit choice; nothing was
     // silently cancelled or executed.
-    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await user.click(screen.getByRole("button", { name: "关闭整理弹窗" }));
     const prompt = await screen.findByRole("alertdialog");
     expect(
       within(prompt).getByText("有尚未保存的逐文件修正草稿。"),
@@ -2339,7 +2341,7 @@ describe("ManualOrganizeDialog", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(screen.getByRole("dialog", { name: "整理所选文件" })).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await user.click(screen.getByRole("button", { name: "关闭整理弹窗" }));
     const secondPrompt = await screen.findByRole("alertdialog");
     await user.click(
       within(secondPrompt).getByRole("button", { name: "放弃草稿并关闭" }),
@@ -2361,7 +2363,7 @@ describe("ManualOrganizeDialog", () => {
 
     // Merely opening the current file's native decision form changes no
     // operator input; closing stays an ordinary close.
-    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await user.click(screen.getByRole("button", { name: "关闭整理弹窗" }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
     );
@@ -2437,7 +2439,7 @@ describe("ManualOrganizeDialog", () => {
 
     // Only the explicit discard leaves; nothing was saved, cancelled or
     // executed by closing or by the blocked navigation.
-    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await user.click(screen.getByRole("button", { name: "关闭整理弹窗" }));
     const discardPrompt = await screen.findByRole("alertdialog");
     await user.click(
       within(discardPrompt).getByRole("button", {
@@ -2534,6 +2536,8 @@ describe("ManualOrganizeDialog", () => {
     // The superseded per-file authorization state cannot silently confirm the
     // new summary: no Execute has happened and the confirmation must be
     // entered again explicitly.
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     expect(
@@ -2568,6 +2572,8 @@ describe("ManualOrganizeDialog", () => {
       return original(input, init);
     });
 
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     await user.click(screen.getByRole("button", { name: "确认整理 10 项" }));
@@ -2602,6 +2608,8 @@ describe("ManualOrganizeDialog", () => {
     // Fresh entry first: the confirmed subset must contain only what the
     // operator can actually confirm right now.
     expect(backend.calls.executePosts).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const region = await screen.findByRole("region", { name: "整批复核" });
     expect(region).toHaveTextContent(/本次确认\s*10\s*项/);
@@ -2620,6 +2628,8 @@ describe("ManualOrganizeDialog", () => {
     await user.click(
       screen.getByRole("checkbox", { name: "纳入 Movie.01.mkv" }),
     );
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     const confirm9 = screen.getByRole("button", { name: "确认整理 9 项" });
@@ -2643,6 +2653,8 @@ describe("ManualOrganizeDialog", () => {
       await user.click(
         screen.getByRole("checkbox", { name: `纳入 ${filename(index)}` }),
       );
+      await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+      await screen.findByRole("region", { name: "本次整理概览" });
       await user.click(screen.getByRole("button", { name: /整批复核/ }));
       await screen.findByRole("region", { name: "整批复核" });
       const expected = FILE_COUNT - (index + 1);
@@ -2731,6 +2743,8 @@ describe("ManualOrganizeDialog", () => {
     expect(sourceRow).toHaveTextContent("source:Movies/Movie.01.mkv");
     expect(targetRow).toHaveTextContent("target:Movies/Movie.01.mkv");
 
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const region = await screen.findByRole("region", { name: "整批复核" });
     expect(region).toHaveTextContent(/本次确认\s*1\s*项/);
@@ -2837,6 +2851,8 @@ describe("ManualOrganizeDialog", () => {
     expect(screen.queryByText(/未受理的所选条目/)).toBeNull();
 
     await enterFirstOverviewFile(user, /第 1 \/ 1 个/);
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const region = await screen.findByRole("region", { name: "整批复核" });
     const summary = region.querySelector(
@@ -2867,6 +2883,8 @@ describe("ManualOrganizeDialog", () => {
     // A stale tail is grouped under "待处理" before the ready file, so the
     // first overview row is that pending exact item, not array position one.
     await screen.findByRole("heading", { name: /第 2 \/ 2 个/ });
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     expect(within(card()).getByText("本次方案暂不能整体确认")).toBeVisible();
@@ -2915,6 +2933,8 @@ describe("ManualOrganizeDialog", () => {
     );
 
     await screen.findByRole("heading", { name: /第 2 \/ 2 个/ });
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     expect(within(card()).getByText("摘要已不是当前方案")).toBeVisible();
@@ -3328,6 +3348,8 @@ describe("ManualOrganizeDialog", () => {
     await user.click(
       screen.getByRole("checkbox", { name: "纳入 Movie.02.mkv" }),
     );
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     expect(screen.getByRole("region", { name: "整批复核" })).toHaveTextContent(
@@ -3406,6 +3428,8 @@ describe("ManualOrganizeDialog", () => {
     await waitFor(() => expect(backend.calls.choicePosts).toHaveLength(1));
     await waitFor(() => expect(backend.calls.analyzePosts).toHaveLength(1));
 
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     // The newer summary is visible and owned by the current review.
@@ -3504,7 +3528,7 @@ describe("ManualOrganizeDialog", () => {
     await user.click(
       screen.getByRole("checkbox", { name: `纳入 ${filename(0)}` }),
     );
-    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
 
     const returned = await screen.findByRole("region", {
       name: "本次整理概览",
@@ -3544,6 +3568,8 @@ describe("ManualOrganizeDialog", () => {
     await user.click(
       screen.getByRole("checkbox", { name: `纳入 ${filename(0)}` }),
     );
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const listed = await screen.findByRole("region", {
       name: "来源与目标",
@@ -3590,6 +3616,8 @@ describe("ManualOrganizeDialog", () => {
     );
 
     await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const listed = await screen.findByRole("region", {
       name: "来源与目标",
@@ -3617,6 +3645,8 @@ describe("ManualOrganizeDialog", () => {
     expect(targetRow).toHaveTextContent(
       "target:Movies/Movies/Anime/Movie.01.mkv",
     );
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const listed = await screen.findByRole("region", {
       name: "来源与目标",
@@ -3637,6 +3667,8 @@ describe("ManualOrganizeDialog", () => {
     );
 
     await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const listed = await screen.findByRole("region", {
       name: "来源与目标",
@@ -3677,7 +3709,7 @@ describe("ManualOrganizeDialog", () => {
     await user.click(
       screen.getByRole("checkbox", { name: `纳入 ${filename(1)}` }),
     );
-    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
 
     const returned = await screen.findByRole("region", {
       name: "本次整理概览",
@@ -3764,7 +3796,7 @@ describe("ManualOrganizeDialog", () => {
     ).toBeNull();
     expect(backend.calls.executePosts).toHaveLength(0);
 
-    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
     await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const listed = await screen.findByRole("region", {
@@ -4162,6 +4194,8 @@ describe("ManualOrganizeDialog", () => {
     const user = userEvent.setup();
     const backend = await openDialog(user, undefined, [filename(0)]);
     await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
 
@@ -4220,6 +4254,8 @@ describe("ManualOrganizeDialog", () => {
     const user = userEvent.setup();
     const backend = await openDialog(user, undefined, [filename(0)]);
     await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
 
@@ -4277,6 +4313,8 @@ describe("ManualOrganizeDialog", () => {
     const user = userEvent.setup();
     const backend = await openDialog(user, undefined, [filename(0)]);
     await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
+    await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     const confirm = screen.getByRole("button", { name: "确认整理 1 项" });
@@ -4779,6 +4817,89 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
   }, 30_000);
 
+  it("Task59.1 keeps the Files decision footer to the return, paging and the conflict action", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.conflictProblem = true;
+      },
+      undefined,
+      "overview",
+    );
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    await user.click(
+      within(overview).getByRole("button", { name: "查看 Movie.01.mkv" }),
+    );
+    const footer = await waitFor(() => {
+      const element = card().querySelector<HTMLElement>(".mf-modal-footer");
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    const footerLabels = () =>
+      within(footer)
+        .getAllByRole("button")
+        .map((button) => button.textContent?.trim() ?? "");
+    // Left: the overview return. Right: paging, then this file's one action.
+    expect(footerLabels()).toEqual([
+      "返回整理概览",
+      "上一项",
+      "下一项",
+      "保存并重新分析",
+    ]);
+    // Closing and the batch review keep their approved entries instead of
+    // sharing the row with this file's decision.
+    expect(within(footer).queryByRole("button", { name: "关闭" })).toBeNull();
+    expect(
+      within(footer).queryByRole("button", { name: /整批复核/ }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "关闭整理弹窗" })).toBeEnabled();
+
+    // The draft note follows this file; the footer carries no index copy.
+    expect(footer.textContent).not.toContain("有未保存的修正");
+    // The saved strategy is "skip"; choosing another legal one is a draft.
+    await user.click(screen.getByRole("radio", { name: /重命名目标/ }));
+    const draftNote = within(card()).getByText("有未保存的修正");
+    expect(draftNote.closest(".mf-organize-files-file-head")).not.toBeNull();
+    expect(footer.textContent).not.toContain("有未保存的修正");
+    expect(footer.textContent).not.toContain("第 1 / 10 个");
+    expect(
+      within(footer).getByRole("button", { name: "保存并重新分析" }),
+    ).toBeEnabled();
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
+
+    // The footer never bypasses the overview for the batch review.
+    await user.click(
+      within(footer).getByRole("button", { name: "返回整理概览" }),
+    );
+    await screen.findByRole("region", { name: "本次整理概览" });
+    expect(backend.calls.recoveryDecisionPosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 orders the permitted ignore before the save in the Files decision footer", async () => {
+    const user = userEvent.setup();
+    await openDialog(user, (value) => {
+      value.state.metadataCandidateProblem = true;
+    });
+    await screen.findByRole("heading", { name: "确认作品" });
+    const footer = card().querySelector<HTMLElement>(".mf-modal-footer");
+    expect(footer).not.toBeNull();
+    expect(
+      within(footer as HTMLElement)
+        .getAllByRole("button")
+        .map((button) => button.textContent?.trim() ?? ""),
+    ).toEqual([
+      "返回整理概览",
+      "上一项",
+      "下一项",
+      "忽略此文件",
+      "保存并重新分析",
+    ]);
+  }, 30_000);
+
   it("Task59.1 A59-07 keeps a durable skipped record whose file a newer plan no longer lists", async () => {
     const user = userEvent.setup();
     const backend = await openDialog(
@@ -4940,7 +5061,7 @@ describe("ManualOrganizeDialog", () => {
       screen.getByRole("heading", { name: /第 1 \/ 10 个/ }),
     ).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await user.click(screen.getByRole("button", { name: "返回整理概览" }));
     const overview = await screen.findByRole("region", {
       name: "本次整理概览",
     });
