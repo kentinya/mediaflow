@@ -89,7 +89,10 @@ import {
   organizeIntentQueryOptions,
   organizePreviewQueryOptions,
 } from "./organize-query";
-import { taskItemRecoveryQueryOptions } from "./run-detail-query";
+import {
+  filesSettledRecordsQueryOptions,
+  taskItemRecoveryQueryOptions,
+} from "./run-detail-query";
 import {
   PREPARATION_STATUS_LABELS,
   REASON_LABELS,
@@ -683,6 +686,35 @@ interface FilesSettledDecision {
   readonly status: "skipped" | "ignored";
 }
 
+/**
+ * One durable skipped/ignored TaskItem of this exact organize Task. A newer
+ * exact summary may stop publishing a settled file, so this read is the only
+ * evidence that keeps its result readable on the original overview.
+ */
+interface FilesSettledRecord extends FilesSettledDecision {
+  readonly storageId: string;
+  readonly sourcePath: string;
+  readonly resourceLibraryId: string | null;
+  readonly filename: string;
+}
+
+/** The proven Storage identity shared by one plan row and its TaskItem. */
+function filesSourceIdentity(
+  storageId: string | null,
+  sourcePath: string | null,
+): string | null {
+  if (storageId === null || storageId === "" || sourcePath === null) {
+    return null;
+  }
+  const path = sourcePath.replace(/^\/+/, "");
+  return path === "" ? null : `${storageId}\u0000${path}`;
+}
+
+function filesRecordFilename(sourcePath: string): string {
+  const parts = sourcePath.split("/").filter((part) => part !== "");
+  return parts.at(-1) ?? sourcePath;
+}
+
 /** The durable per-item recovery fact the Files overview may read back. */
 function taskItemSettledStatus(
   fact: TaskItemRecoveryModel | undefined,
@@ -893,8 +925,17 @@ export function ManualOrganizeDialog({
     readonly kind: "success" | "warning";
     /** A specific result name; omitted falls back to the analysis read-back. */
     readonly title?: string;
+    /** A newer confirmable plan was read back for this file. */
+    readonly planUpdated?: boolean;
     readonly text: string;
   } | null>(null);
+  /**
+   * The read-only detail of a durable skipped/ignored row whose file no
+   * longer appears in any current plan. It is the snapshot this overview read
+   * proved; opening it never reopens a decision form.
+   */
+  const [filesRecordDetail, setFilesRecordDetail] =
+    useState<FilesSettledRecord | null>(null);
   const [filesOverviewFocus, setFilesOverviewFocus] = useState<
     | { readonly kind: "heading" }
     | { readonly kind: "item"; readonly itemId: string }
@@ -1164,6 +1205,63 @@ export function ManualOrganizeDialog({
     const read = filesProblemReads[index]?.data;
     if (read?.ok === true) filesTaskItemFacts.set(value.itemId, read.model);
   });
+  /**
+   * The same organize Task's durable settled items. The Files host reads only
+   * the two terminal dispositions through the bounded run-items endpoint, so
+   * a normal success or a technical failure never becomes an overview record.
+   */
+  const filesSettledRecordReads = useQueries({
+    queries: (["skipped", "ignored"] as const).map((status) =>
+      filesSettledRecordsQueryOptions(token, {
+        runId: filesHost ? (filesOrganizeTaskId ?? "") : "",
+        status,
+      }),
+    ),
+  });
+  const filesSettledRecords: FilesSettledRecord[] = [];
+  if (filesHost && filesOrganizeTaskId !== null) {
+    (["skipped", "ignored"] as const).forEach((_status, index) => {
+      const read = filesSettledRecordReads[index]?.data;
+      if (read?.ok !== true) return;
+      if (
+        read.model.taskId !== null &&
+        read.model.taskId !== filesOrganizeTaskId
+      )
+        return;
+      for (const item of read.model.items) {
+        const settled = item.checkpoint?.status ?? item.status;
+        if (settled !== "skipped" && settled !== "ignored") continue;
+        filesSettledRecords.push({
+          taskItemId: item.itemId,
+          status: settled,
+          storageId: item.storageId,
+          sourcePath: item.sourcePath,
+          resourceLibraryId: item.resourceLibraryId,
+          filename: filesRecordFilename(item.sourcePath),
+        });
+      }
+    });
+  }
+  const filesSettledRecordsUnreadable =
+    filesHost &&
+    filesOrganizeTaskId !== null &&
+    filesSettledRecordReads.some(
+      (read) => read.isError || read.data?.ok === false,
+    );
+  const filesSettledRecordsTruncated = filesSettledRecordReads.some(
+    (read) =>
+      read.data?.ok === true &&
+      (read.data.model.truncated ||
+        read.data.model.matchingTotal > read.data.model.items.length),
+  );
+  const filesSettledRecordsFetching = filesSettledRecordReads.some(
+    (read) => read.isFetching,
+  );
+  const rereadFilesSettledRecords = () => {
+    for (const read of filesSettledRecordReads) {
+      void read.refetch({ cancelRefetch: false });
+    }
+  };
   const filesSettledDecisionFor = (
     item: ManualPreviewItemModel,
   ): FilesSettledDecision | null => {
@@ -1180,13 +1278,38 @@ export function ManualOrganizeDialog({
     }
     const fact = filesTaskItemFacts.get(item.itemId);
     const status = taskItemSettledStatus(fact);
-    if (fact === undefined || status === null) return null;
     if (
-      item.problemTaskItemId !== null &&
-      item.problemTaskItemId !== fact.itemId
-    )
-      return null;
-    return { taskItemId: fact.itemId, status };
+      fact !== undefined &&
+      status !== null &&
+      (item.problemTaskItemId === null ||
+        item.problemTaskItemId === fact.itemId)
+    ) {
+      return { taskItemId: fact.itemId, status };
+    }
+    // A later exact summary may stop publishing a settled file altogether.
+    // Only the same Task's durable TaskItem remains then: the exact published
+    // link first, otherwise the proven Storage identity of this source.
+    const identity = filesSourceIdentity(item.sourceStorageId, item.sourcePath);
+    const durable =
+      item.problemTaskItemId === null
+        ? undefined
+        : filesSettledRecords.find(
+            (record) => record.taskItemId === item.problemTaskItemId,
+          );
+    if (durable !== undefined) {
+      return { taskItemId: durable.taskItemId, status: durable.status };
+    }
+    const sameSource =
+      identity === null
+        ? undefined
+        : filesSettledRecords.find(
+            (record) =>
+              filesSourceIdentity(record.storageId, record.sourcePath) ===
+              identity,
+          );
+    return sameSource === undefined
+      ? null
+      : { taskItemId: sameSource.taskItemId, status: sameSource.status };
   };
   /**
    * Every settled result this exact summary's linked TaskItems prove. The
@@ -1289,35 +1412,47 @@ export function ManualOrganizeDialog({
     });
   }
 
-  const activeSelection = useMemo(() => {
-    const settledIds = new Set(
-      items
-        .filter((item) => {
-          const local = filesDecisionResults[item.itemId];
-          return (
-            local !== undefined &&
-            (item.problemTaskItemId === null ||
-              local.taskItemId === item.problemTaskItemId)
-          );
-        })
-        .map((item) => item.itemId),
-    );
-    const requested = executableIds.filter(
-      (itemId) => !excluded.has(itemId) && !settledIds.has(itemId),
-    );
+  /**
+   * The entered selection is the exact executable candidates minus every
+   * durable terminal result. A settled skip/ignore must never re-enter a
+   * fresh confirmation even when an older readable summary still lists it.
+   */
+  const settledSelectionIds = new Set(
+    items
+      .filter((item) => filesSettledDecisionFor(item) !== null)
+      .map((item) => item.itemId),
+  );
+  const activeSelection = executableIds
+    .filter(
+      (itemId) => !excluded.has(itemId) && !settledSelectionIds.has(itemId),
+    )
     // Already-admitted siblings are never part of a fresh confirmation: the
     // filter runs over the exact candidate list, so stale local state or a
     // reload can never re-submit a completed, failed or uncertain sibling.
-    return requested.filter((itemId) => !admittedItemIds.has(itemId));
-  }, [admittedItemIds, excluded, executableIds, filesDecisionResults, items]);
+    .filter((itemId) => !admittedItemIds.has(itemId));
+  /** One overview row, backed by the current plan, its record, or both. */
+  interface FilesOverviewRow {
+    readonly item: ManualPreviewItemModel | null;
+    readonly record: FilesSettledRecord | null;
+    readonly settled: FilesSettledDecision | null;
+    readonly status: OrganizeOverviewStatus;
+    /** The stable row identity used for focus and merge checks. */
+    readonly key: string;
+  }
   /**
    * The one Files overview projection: the counts, row groups, footer and
    * batch omission all read these exact rows and their settled results.
+   *
+   * A current plan row and a durable record of the same proven file identity
+   * are one row: the record updates that row in place. A record whose file no
+   * longer appears in any newer plan stays as its own read-only row, so a
+   * skipped or ignored result never disappears from the original overview.
    */
-  const filesOverviewRows = items.map((item) => {
+  const planOverviewRows: FilesOverviewRow[] = items.map((item) => {
     const settled = filesSettledDecisionFor(item);
     return {
       item,
+      record: null,
       settled,
       status: overviewStatusFor(
         item,
@@ -1326,8 +1461,36 @@ export function ManualOrganizeDialog({
         excluded,
         settled,
       ),
+      key: item.itemId,
     };
   });
+  const planOverviewTaskItemIds = new Set(
+    items
+      .map((item) => item.problemTaskItemId)
+      .filter((value): value is string => value !== null),
+  );
+  const planOverviewIdentities = new Set(
+    items
+      .map((item) => filesSourceIdentity(item.sourceStorageId, item.sourcePath))
+      .filter((value): value is string => value !== null),
+  );
+  const recordOnlyOverviewRows: FilesOverviewRow[] = filesSettledRecords
+    .filter((record) => {
+      if (planOverviewTaskItemIds.has(record.taskItemId)) return false;
+      const identity = filesSourceIdentity(record.storageId, record.sourcePath);
+      return identity === null || !planOverviewIdentities.has(identity);
+    })
+    .map((record) => ({
+      item: null,
+      record,
+      settled: { taskItemId: record.taskItemId, status: record.status },
+      status: "recorded" as const,
+      key: `record:${record.taskItemId}`,
+    }));
+  const filesOverviewRows: FilesOverviewRow[] = [
+    ...planOverviewRows,
+    ...recordOnlyOverviewRows,
+  ];
   const filesOverviewCount = (status: OrganizeOverviewStatus) =>
     filesOverviewRows.filter((row) => row.status === status).length;
   /**
@@ -1339,10 +1502,10 @@ export function ManualOrganizeDialog({
     (row) => row.status === "pending" && row.settled === null,
   );
   const filesStaleSettledRows = filesOverviewRows.filter(
-    (row) => !row.item.current && row.settled !== null,
+    (row) => row.item !== null && !row.item.current && row.settled !== null,
   );
   const filesStaleLiveRows = filesOverviewRows.filter(
-    (row) => !row.item.current && row.settled === null,
+    (row) => row.item !== null && !row.item.current && row.settled === null,
   );
 
   // ---- render-time synchronisation of identity-keyed state ------------
@@ -1890,23 +2053,17 @@ export function ManualOrganizeDialog({
     confirmationIsBoundToSelection && allowOverwrite;
   const effectiveAllowSourceCleanup =
     confirmationIsBoundToSelection && allowSourceCleanup;
-  const requiresOverwrite = useMemo(
-    () =>
-      (preview?.items ?? []).some(
-        (item) =>
-          activeSelection.includes(item.itemId) &&
-          item.destructiveImplications?.overwriteRequired === true,
-      ),
-    [activeSelection, preview],
+  // The entered selection is recomputed from the same durable reads on every
+  // render; these two facts are cheap boolean scans of the current summary.
+  const requiresOverwrite = (preview?.items ?? []).some(
+    (item) =>
+      activeSelection.includes(item.itemId) &&
+      item.destructiveImplications?.overwriteRequired === true,
   );
-  const requiresCleanup = useMemo(
-    () =>
-      (preview?.items ?? []).some(
-        (item) =>
-          activeSelection.includes(item.itemId) &&
-          item.destructiveImplications?.sourceCleanupRequired === true,
-      ),
-    [activeSelection, preview],
+  const requiresCleanup = (preview?.items ?? []).some(
+    (item) =>
+      activeSelection.includes(item.itemId) &&
+      item.destructiveImplications?.sourceCleanupRequired === true,
   );
   const selectionOverlapsAdmitted = (preview?.items ?? []).some(
     (item) =>
@@ -2554,6 +2711,19 @@ export function ManualOrganizeDialog({
     if (position < 0) return;
     setIndex(position);
     setAnchorItemId(itemId);
+    setFilesRecordDetail(null);
+    setStep("review");
+    setFilesOverviewVisible(false);
+    setFilesOverviewNotice(null);
+  };
+
+  const openFilesOverviewRecord = (taskItemId: string) => {
+    const record = filesSettledRecords.find(
+      (value) => value.taskItemId === taskItemId,
+    );
+    if (record === undefined) return;
+    clearAnalysisReadback();
+    setFilesRecordDetail(record);
     setStep("review");
     setFilesOverviewVisible(false);
     setFilesOverviewNotice(null);
@@ -2561,13 +2731,17 @@ export function ManualOrganizeDialog({
 
   const returnToFilesOverview = () => {
     clearAnalysisReadback();
+    const record = filesRecordDetail;
+    setFilesRecordDetail(null);
     setStep("review");
     setFilesOverviewVisible(true);
     setFilesDecisionReturn(null);
     setFilesOverviewFocus(
-      currentItemId === null
-        ? { kind: "heading" }
-        : { kind: "item", itemId: currentItemId },
+      record !== null
+        ? { kind: "item", itemId: `record:${record.taskItemId}` }
+        : currentItemId === null
+          ? { kind: "heading" }
+          : { kind: "item", itemId: currentItemId },
     );
   };
 
@@ -2614,7 +2788,12 @@ export function ManualOrganizeDialog({
           ? `「${action.filename}」已按当前决定跳过，未纳入本次整理；来源与现有目标保持原状。`
           : `「${action.filename}」已忽略，未纳入本次整理；审核记录保留该结果，来源与现有目标保持原状。`,
     });
-    setFilesOverviewFocus({ kind: "item", itemId: settled.itemId });
+    setFilesOverviewFocus({
+      kind: "item",
+      itemId: items.some((value) => value.itemId === settled.itemId)
+        ? settled.itemId
+        : `record:${settled.taskItemId}`,
+    });
     setFilesOverviewVisible(true);
     setStep("review");
   }, [
@@ -2623,6 +2802,7 @@ export function ManualOrganizeDialog({
     filesHost,
     filesOverviewVisible,
     filesSettledDecision,
+    items,
     step,
   ]);
 
@@ -2704,10 +2884,12 @@ export function ManualOrganizeDialog({
     if (executable) {
       setFilesOverviewNotice({
         kind: "success",
+        title: "已重新分析",
+        planUpdated: true,
         text:
           item.operation === "SKIP"
-            ? `「${filesDecisionReturn.filename}」已重新分析，并按当前决定明确跳过文件操作。`
-            : `「${filesDecisionReturn.filename}」已重新分析，现在可以纳入本次整理。`,
+            ? `「${filesDecisionReturn.filename}」已重新分析，并按当前决定明确跳过文件操作；整理尚未提交。`
+            : `「${filesDecisionReturn.filename}」已可确认。整理方案已更新，整理尚未提交。`,
       });
       setFilesDecisionReturn(null);
       clearAnalysisReadback();
@@ -3763,9 +3945,67 @@ export function ManualOrganizeDialog({
             : "本次没有可确认的文件，仍可查看每项的当前状态。";
     const renderRow = ({
       item,
+      record,
       settled,
       status,
-    }: (typeof filesOverviewRows)[number]) => {
+      key,
+    }: FilesOverviewRow) => {
+      if (item === null && record !== null) {
+        // The durable result of a file a newer plan no longer publishes. It
+        // stays readable and never offers a decision, analysis or execution.
+        return (
+          <li
+            key={`overview-${key}`}
+            className="mf-organize-overview-item mf-organize-overview-item-recorded"
+          >
+            <div className="mf-organize-overview-row">
+              <div className="mf-organize-overview-main">
+                <span
+                  className="mf-organize-overview-file-icon"
+                  aria-hidden="true"
+                >
+                  ▤
+                </span>
+                <div className="mf-organize-overview-file-copy">
+                  <button
+                    type="button"
+                    className="mf-link-button mf-organize-overview-file"
+                    data-organize-overview-item={key}
+                    aria-label={`查看 ${record.filename}`}
+                    // eslint-disable-next-line react-hooks/refs
+                    onClick={() => openFilesOverviewRecord(record.taskItemId)}
+                  >
+                    {record.filename}
+                  </button>
+                </div>
+              </div>
+              <div className="mf-organize-overview-side">
+                <span className="mf-organize-overview-status mf-organize-overview-status-recorded">
+                  已有记录
+                </span>
+              </div>
+            </div>
+            <p className="mf-organize-overview-reason" role="status">
+              {settledDecisionReason(record.status)}
+            </p>
+            <p className="mf-organize-overview-facts">
+              {record.status === "skipped" ? "已跳过" : "已忽略"} · 来源保留 ·
+              未纳入本次整理 · 无媒体变更
+            </p>
+            <details className="mf-organize-overview-route">
+              <summary>查看精确路径与任务记录</summary>
+              <p className="mf-exact-identity">
+                来源 {record.storageId}:{record.sourcePath}
+              </p>
+              <p>
+                原整理任务保留该决定结果；该文件已不在当前方案中，不会重放分析或执行。
+              </p>
+              <p>任务条目 {record.taskItemId}</p>
+            </details>
+          </li>
+        );
+      }
+      if (item === null) return null;
       const itemName = item.sourceFilename ?? item.itemId;
       const target =
         item.targetPath ?? item.destination?.storageRelativePath ?? null;
@@ -3795,7 +4035,7 @@ export function ManualOrganizeDialog({
             }`;
       return (
         <li
-          key={`overview-${item.itemId}`}
+          key={`overview-${key}`}
           className={`mf-organize-overview-item mf-organize-overview-item-${status}`}
           onClick={
             compact
@@ -3823,7 +4063,7 @@ export function ManualOrganizeDialog({
                 <button
                   type="button"
                   className="mf-link-button mf-organize-overview-file"
-                  data-organize-overview-item={item.itemId}
+                  data-organize-overview-item={key}
                   aria-label={`查看 ${itemName}`}
                   // Opening a row retires any in-flight readback for the
                   // previous file; this is an event handler, not render.
@@ -3937,14 +4177,14 @@ export function ManualOrganizeDialog({
       );
     };
     return (
-      <section
-        aria-label="本次整理概览"
-        aria-labelledby="mf-organize-overview-title"
-        className="mf-organize-overview"
-      >
+      <section aria-label="本次整理概览" className="mf-organize-overview">
         <FilesStatusCard
           tag={tag}
-          title="本次整理概览"
+          title={
+            filesOverviewNotice?.planUpdated === true
+              ? "整理方案已更新"
+              : "本次整理概览"
+          }
           copy={copy}
           tone={
             blocker !== null
@@ -3965,12 +4205,40 @@ export function ManualOrganizeDialog({
             title={
               filesOverviewNotice.title ??
               (filesOverviewNotice.kind === "success"
-                ? "重新分析已读回"
+                ? "已重新分析"
                 : "出现新的待处理问题")
             }
           >
             <p role="status">{filesOverviewNotice.text}</p>
           </StatusBanner>
+        ) : null}
+        {filesSettledRecordsUnreadable ? (
+          <StatusBanner
+            variant="warning"
+            title="暂时无法读取原任务的已结算记录"
+          >
+            <p role="status">
+              原任务 {filesOrganizeTaskId}{" "}
+              的跳过与忽略记录读取失败；当前只显示可读的方案行。已结算文件不会因此重新可确认，也不会重放分析或执行。
+            </p>
+            <div className="mf-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={filesSettledRecordsFetching}
+                onClick={rereadFilesSettledRecords}
+              >
+                {filesSettledRecordsFetching
+                  ? "正在重新读取…"
+                  : "重新读取已结算记录"}
+              </Button>
+            </div>
+          </StatusBanner>
+        ) : null}
+        {filesSettledRecordsTruncated ? (
+          <p className="mf-organize-overview-note" role="status">
+            原任务的已结算记录超出本次有界读取范围；以下仅显示已读取的跳过与忽略记录，重新读取不会改变任何文件状态。
+          </p>
         ) : null}
         <dl
           className="mf-organize-overview-counts"
@@ -4028,6 +4296,83 @@ export function ManualOrganizeDialog({
     );
   };
 
+  /**
+   * One durable skipped/ignored file that no current summary lists. The page
+   * is the same read-only result an in-plan settled row shows; it offers no
+   * decision, analysis or execution control.
+   */
+  const renderFilesRecordDetail = () => {
+    const record = filesRecordDetail;
+    if (record === null) return null;
+    return (
+      <>
+        <header className="mf-organize-file-head mf-organize-files-file-head">
+          <div className="mf-organize-file-title">
+            <h3>
+              <span className="mf-organize-file-eyebrow">文件记录</span>
+              <span className="mf-organize-file-name mf-exact-identity">
+                {record.filename}
+              </span>
+            </h3>
+            <p className="mf-organize-file-path mf-dashboard-meta">
+              {record.storageId}:{record.sourcePath}
+            </p>
+          </div>
+        </header>
+        <section
+          className="mf-organize-section mf-organize-section-primary"
+          aria-label="当前状态"
+        >
+          <div className="mf-organize-section-head">
+            <h4>当前状态</h4>
+            <span className="mf-organize-section-note">
+              已读取该文件的决定结果
+            </span>
+          </div>
+          <StatusBanner
+            variant="info"
+            title={
+              record.status === "skipped" ? "此文件已跳过" : "此文件已忽略"
+            }
+          >
+            <p role="status">{settledDecisionReason(record.status)}</p>
+          </StatusBanner>
+          <dl className="mf-organize-facts">
+            <div>
+              <dt>结果</dt>
+              <dd>
+                {record.status === "skipped"
+                  ? "已按当前决定跳过，未执行文件操作"
+                  : "已按允许的决定忽略，未执行文件操作"}
+              </dd>
+            </div>
+            <div>
+              <dt>来源</dt>
+              <dd className="mf-exact-identity">
+                {record.storageId}:{record.sourcePath}
+              </dd>
+            </div>
+            <div>
+              <dt>来源与目标</dt>
+              <dd>保持原状；没有媒体变更，也没有新的执行授权。</dd>
+            </div>
+          </dl>
+        </section>
+        <details className="mf-organize-diagnostics">
+          <summary>查看该条目的依据与任务记录</summary>
+          <dl>
+            <dt>任务条目</dt>
+            <dd>{record.taskItemId}</dd>
+            <dt>任务记录</dt>
+            <dd>
+              原整理任务保留该决定结果；该文件已不在当前方案中，本页不会重放分析或执行。
+            </dd>
+          </dl>
+        </details>
+      </>
+    );
+  };
+
   const renderReview = () => {
     if (items.length === 0 || currentItem === undefined) {
       return (
@@ -4053,6 +4398,12 @@ export function ManualOrganizeDialog({
       !organizeFlowEnded &&
       organizeTaskId !== null &&
       problemTaskItemId !== null;
+    /**
+     * The Files journey owns the approved file → problem → options body: the
+     * decision card is the whole primary content and the footer carries the
+     * action. The in-place Task Center continuation keeps its Slice53 body.
+     */
+    const filesDecisionLayout = filesHost && hasNativeProblem;
     const metadataTechnicalFailure =
       filesHost && previewItemTechnicalStage(item) === "metadata";
     const decisionStatus = currentDecisionStatus;
@@ -4070,6 +4421,16 @@ export function ManualOrganizeDialog({
     const attachmentWarnings = item.attachments.filter(
       (attachment) => attachment.nextAction !== null,
     );
+    /** The one per-file notice that survives the approved decision layout. */
+    const visibleNotice =
+      notice !== undefined &&
+      !(
+        notice.kind === "success" &&
+        hasNativeProblem &&
+        decisionStatus !== null
+      )
+        ? notice
+        : undefined;
     const hasCurrentProblem =
       settledDecision !== null ||
       item.conflicts.length > 0 ||
@@ -4124,7 +4485,7 @@ export function ManualOrganizeDialog({
               <span className="mf-organize-file-name mf-exact-identity">
                 {filename}
               </span>
-              {reviewStatusBadge}
+              {filesDecisionLayout ? null : reviewStatusBadge}
             </h3>
             <p className="mf-organize-file-path mf-dashboard-meta">
               {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
@@ -4226,12 +4587,16 @@ export function ManualOrganizeDialog({
 
         {hasCurrentProblem ? (
           <section
-            className="mf-organize-section mf-organize-section-primary"
+            className={
+              filesDecisionLayout
+                ? "mf-organize-section mf-organize-section-plain"
+                : "mf-organize-section mf-organize-section-primary"
+            }
             aria-label="当前状态"
           >
-            <div className="mf-organize-section-head">
-              <h4>当前状态</h4>
-              {!hasNativeProblem ? (
+            {filesDecisionLayout ? null : (
+              <div className="mf-organize-section-head">
+                <h4>当前状态</h4>
                 <span className="mf-organize-section-note">
                   {settledDecision !== null
                     ? "已读取该文件的决定结果"
@@ -4241,8 +4606,8 @@ export function ManualOrganizeDialog({
                         ? "元数据阶段技术失败"
                         : "已记录的核对信息"}
                 </span>
-              ) : null}
-            </div>
+              </div>
+            )}
             {settledDecision !== null ? (
               <StatusBanner
                 variant="info"
@@ -4256,7 +4621,7 @@ export function ManualOrganizeDialog({
                   {settledDecisionReason(settledDecision.status)}
                 </p>
               </StatusBanner>
-            ) : item.conflicts.length > 0 ? (
+            ) : item.conflicts.length > 0 && !filesDecisionLayout ? (
               <>
                 <p role="status" className="mf-organize-problem-line">
                   <strong>
@@ -4407,312 +4772,333 @@ export function ManualOrganizeDialog({
           </p>
         )}
 
-        <section
-          className="mf-organize-section"
-          aria-label={
-            filesHost
-              ? hasGeneratedScheme
-                ? "整理方案"
-                : "当前决定"
-              : "当前方案"
-          }
-        >
-          <div className="mf-organize-section-head">
-            <h4>
-              {filesHost
-                ? hasGeneratedScheme
-                  ? "整理方案"
-                  : "当前决定"
-                : "当前方案"}
-            </h4>
-            {!hasGeneratedScheme ? (
-              <span className="mf-organize-section-note">
-                {metadataTechnicalFailure
-                  ? "元数据阶段未生成方案"
-                  : "等待零变更分析"}
-              </span>
-            ) : null}
-          </div>
-          {hasGeneratedScheme ? (
-            <dl className="mf-organize-facts">
-              <div>
-                <dt>作品</dt>
-                <dd>
-                  {item.title ?? "尚未匹配作品"}
-                  {item.mediaIdentity?.year != null
-                    ? ` (${item.mediaIdentity.year})`
-                    : ""}
-                  {item.mediaIdentity?.mediaType != null
-                    ? ` · ${mediaTypeLabel(item.mediaIdentity.mediaType)}`
-                    : ""}
-                </dd>
-              </div>
-              <div>
-                <dt>识别类型</dt>
-                <dd>
-                  {recognitionTypeName ??
-                    item.recognitionType ??
-                    "识别类型尚未生成"}
-                </dd>
-              </div>
-              {hasGeneratedScheme ? (
-                <>
-                  <div className="mf-organize-source-fact">
-                    <dt>来源</dt>
-                    <dd className="mf-exact-identity">
-                      {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
-                    </dd>
-                  </div>
-                  {hasGeneratedTarget ? (
-                    <div className="mf-organize-target-fact">
-                      <dt>目标</dt>
-                      <dd className="mf-exact-identity">
-                        {item.targetStorageId ?? "—"}:{targetRelativePath}
-                      </dd>
-                    </div>
-                  ) : null}
-                  {item.analysis?.classification?.mediaLibraryId != null ? (
-                    <div>
-                      <dt>目标媒体库</dt>
-                      <dd>
-                        {item.analysis.classification.mediaLibraryId}
-                        {item.analysis.classification.matchedRuleName
-                          ? ` · 规则：${item.analysis.classification.matchedRuleName}`
-                          : ""}
-                      </dd>
-                    </div>
-                  ) : null}
-                  <div>
-                    <dt>操作</dt>
-                    <dd>
-                      {operationLabel(item.operation)}
-                      {operationRetentionLabel(item.operation) !== null
-                        ? ` · ${operationRetentionLabel(item.operation)}`
-                        : ""}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>附件</dt>
-                    <dd>
-                      {item.attachments.length === 0
-                        ? "无关联附件"
-                        : `${item.attachments.length} 个关联附件${
-                            attachmentWarnings.length > 0
-                              ? ` · ${attachmentWarnings.length} 个需核对下一步`
-                              : ""
-                          }`}
-                    </dd>
-                  </div>
-                </>
-              ) : null}
-            </dl>
-          ) : null}
-          {!hasGeneratedScheme ? (
-            <p className="mf-organize-section-note" role="status">
-              {metadataTechnicalFailure
-                ? "元数据阶段技术失败，当前文件没有生成来源、目标、操作或附件；请按当前状态核对 Metadata Provider 与原任务结果。"
-                : decisionStatus === "analysis_waiting"
-                  ? "新的零变更方案生成后，这里会显示来源、目标、操作与附件。"
-                  : decisionStatus === "analysis_refused"
-                    ? "补做同一零变更分析并生成新方案后，这里会显示来源、目标、操作与附件。"
-                    : decisionStatus === "analysis_unknown"
-                      ? "核对分析结果并生成可确认的新方案后，这里会显示来源、目标、操作与附件。"
-                      : decisionStatus === "analysis_read_pending"
-                        ? "正在确认当前分析状态；确认后会显示可核对的新方案。"
-                        : "零变更方案尚未生成：完成上方当前选择并重新分析后，这里会显示来源、目标、操作与附件。"}
-            </p>
-          ) : !hasGeneratedTarget ? (
-            <p className="mf-organize-section-note" role="status">
-              操作已经记录，但目标路径尚未生成；完成当前状态中的步骤并重新分析后即可核对完整来源与目标。
-            </p>
-          ) : item.destructiveImplications !== null &&
-            (item.destructiveImplications.overwriteRequired ||
-              item.destructiveImplications.sourceCleanupRequired) ? (
-            <p className="mf-organize-section-note" role="status">
-              危险影响：
-              {destructiveStatement(
-                item.destructiveImplications,
-                item.operation,
-              )}
-              仅在最后的整批复核中明确授权后才可能执行。
-            </p>
-          ) : null}
-          {notice !== undefined &&
-          !(
-            notice.kind === "success" &&
-            hasNativeProblem &&
-            decisionStatus !== null
-          ) ? (
+        {filesDecisionLayout ? (
+          visibleNotice !== undefined ? (
             <StatusBanner
               variant={
-                notice.kind === "success"
+                visibleNotice.kind === "success"
                   ? "success"
-                  : notice.kind === "warning"
+                  : visibleNotice.kind === "warning"
                     ? "warning"
                     : "error"
               }
-              title={notice.kind === "success" ? "已保存" : "保存/分析未完成"}
-            >
-              <p role="status">{notice.text}</p>
-            </StatusBanner>
-          ) : null}
-          {!organizeFlowEnded &&
-          !hasNativeProblem &&
-          !metadataTechnicalFailure &&
-          currentIntentItem !== undefined &&
-          intent !== undefined ? (
-            <details
-              className="mf-organize-correction mf-organize-decision"
-              open={
-                draftDirty ||
-                notice?.retryAnalysis === true ||
-                itemAnalysisReadback !== null
+              title={
+                visibleNotice.kind === "success" ? "已保存" : "保存/分析未完成"
               }
             >
-              <summary className="mf-organize-correction-summary">
-                修正识别或作品
-                {draftDirty ? "（有未保存输入）" : ""}
-              </summary>
-              <div className="mf-organize-decision-fields">
-                <label className="mf-organize-decision-field">
-                  <span className="mf-organize-decision-label">识别类型</span>
-                  <select
-                    aria-label={`识别类型 ${filename}`}
-                    value={draftRecognitionId}
-                    disabled={
-                      saveMutation.isPending || itemAnalysisReadback !== null
-                    }
-                    onChange={(event) =>
-                      patchDraft({ recognitionTypeId: event.target.value })
-                    }
-                  >
-                    <option value="">选择识别类型</option>
-                    {recognitionOptions.map((value) => (
-                      <option key={value.id} value={value.id}>
-                        {value.name ?? value.id}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {currentIntentItem.allowedMetadataIdentities.length > 0 ? (
+              <p role="status">{visibleNotice.text}</p>
+            </StatusBanner>
+          ) : null
+        ) : (
+          <section
+            className="mf-organize-section"
+            aria-label={
+              filesHost
+                ? hasGeneratedScheme
+                  ? "整理方案"
+                  : "当前决定"
+                : "当前方案"
+            }
+          >
+            <div className="mf-organize-section-head">
+              <h4>
+                {filesHost
+                  ? hasGeneratedScheme
+                    ? "整理方案"
+                    : "当前决定"
+                  : "当前方案"}
+              </h4>
+              {!hasGeneratedScheme ? (
+                <span className="mf-organize-section-note">
+                  {metadataTechnicalFailure
+                    ? "元数据阶段未生成方案"
+                    : "等待零变更分析"}
+                </span>
+              ) : null}
+            </div>
+            {hasGeneratedScheme ? (
+              <dl className="mf-organize-facts">
+                <div>
+                  <dt>作品</dt>
+                  <dd>
+                    {item.title ?? "尚未匹配作品"}
+                    {item.mediaIdentity?.year != null
+                      ? ` (${item.mediaIdentity.year})`
+                      : ""}
+                    {item.mediaIdentity?.mediaType != null
+                      ? ` · ${mediaTypeLabel(item.mediaIdentity.mediaType)}`
+                      : ""}
+                  </dd>
+                </div>
+                <div>
+                  <dt>识别类型</dt>
+                  <dd>
+                    {recognitionTypeName ??
+                      item.recognitionType ??
+                      "识别类型尚未生成"}
+                  </dd>
+                </div>
+                {hasGeneratedScheme ? (
+                  <>
+                    <div className="mf-organize-source-fact">
+                      <dt>来源</dt>
+                      <dd className="mf-exact-identity">
+                        {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
+                      </dd>
+                    </div>
+                    {hasGeneratedTarget ? (
+                      <div className="mf-organize-target-fact">
+                        <dt>目标</dt>
+                        <dd className="mf-exact-identity">
+                          {item.targetStorageId ?? "—"}:{targetRelativePath}
+                        </dd>
+                      </div>
+                    ) : null}
+                    {item.analysis?.classification?.mediaLibraryId != null ? (
+                      <div>
+                        <dt>目标媒体库</dt>
+                        <dd>
+                          {item.analysis.classification.mediaLibraryId}
+                          {item.analysis.classification.matchedRuleName
+                            ? ` · 规则：${item.analysis.classification.matchedRuleName}`
+                            : ""}
+                        </dd>
+                      </div>
+                    ) : null}
+                    <div>
+                      <dt>操作</dt>
+                      <dd>
+                        {operationLabel(item.operation)}
+                        {operationRetentionLabel(item.operation) !== null
+                          ? ` · ${operationRetentionLabel(item.operation)}`
+                          : ""}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>附件</dt>
+                      <dd>
+                        {item.attachments.length === 0
+                          ? "无关联附件"
+                          : `${item.attachments.length} 个关联附件${
+                              attachmentWarnings.length > 0
+                                ? ` · ${attachmentWarnings.length} 个需核对下一步`
+                                : ""
+                            }`}
+                      </dd>
+                    </div>
+                  </>
+                ) : null}
+              </dl>
+            ) : null}
+            {!hasGeneratedScheme ? (
+              <p className="mf-organize-section-note" role="status">
+                {metadataTechnicalFailure
+                  ? "元数据阶段技术失败，当前文件没有生成来源、目标、操作或附件；请按当前状态核对 Metadata Provider 与原任务结果。"
+                  : decisionStatus === "analysis_waiting"
+                    ? "新的零变更方案生成后，这里会显示来源、目标、操作与附件。"
+                    : decisionStatus === "analysis_refused"
+                      ? "补做同一零变更分析并生成新方案后，这里会显示来源、目标、操作与附件。"
+                      : decisionStatus === "analysis_unknown"
+                        ? "核对分析结果并生成可确认的新方案后，这里会显示来源、目标、操作与附件。"
+                        : decisionStatus === "analysis_read_pending"
+                          ? "正在确认当前分析状态；确认后会显示可核对的新方案。"
+                          : "零变更方案尚未生成：完成上方当前选择并重新分析后，这里会显示来源、目标、操作与附件。"}
+              </p>
+            ) : !hasGeneratedTarget ? (
+              <p className="mf-organize-section-note" role="status">
+                操作已经记录，但目标路径尚未生成；完成当前状态中的步骤并重新分析后即可核对完整来源与目标。
+              </p>
+            ) : item.destructiveImplications !== null &&
+              (item.destructiveImplications.overwriteRequired ||
+                item.destructiveImplications.sourceCleanupRequired) ? (
+              <p className="mf-organize-section-note" role="status">
+                危险影响：
+                {destructiveStatement(
+                  item.destructiveImplications,
+                  item.operation,
+                )}
+                仅在最后的整批复核中明确授权后才可能执行。
+              </p>
+            ) : null}
+            {visibleNotice !== undefined ? (
+              <StatusBanner
+                variant={
+                  visibleNotice.kind === "success"
+                    ? "success"
+                    : visibleNotice.kind === "warning"
+                      ? "warning"
+                      : "error"
+                }
+                title={
+                  visibleNotice.kind === "success"
+                    ? "已保存"
+                    : "保存/分析未完成"
+                }
+              >
+                <p role="status">{visibleNotice.text}</p>
+              </StatusBanner>
+            ) : null}
+            {!organizeFlowEnded &&
+            !hasNativeProblem &&
+            !metadataTechnicalFailure &&
+            currentIntentItem !== undefined &&
+            intent !== undefined ? (
+              <details
+                className="mf-organize-correction mf-organize-decision"
+                open={
+                  draftDirty ||
+                  notice?.retryAnalysis === true ||
+                  itemAnalysisReadback !== null
+                }
+              >
+                <summary className="mf-organize-correction-summary">
+                  修正识别或作品
+                  {draftDirty ? "（有未保存输入）" : ""}
+                </summary>
+                <div className="mf-organize-decision-fields">
                   <label className="mf-organize-decision-field">
-                    <span className="mf-organize-decision-label">作品身份</span>
+                    <span className="mf-organize-decision-label">识别类型</span>
                     <select
-                      aria-label={`元数据身份 ${filename}`}
-                      value={draftMetadataKey}
+                      aria-label={`识别类型 ${filename}`}
+                      value={draftRecognitionId}
                       disabled={
                         saveMutation.isPending || itemAnalysisReadback !== null
                       }
                       onChange={(event) =>
-                        patchDraft({ metadataKey: event.target.value })
+                        patchDraft({ recognitionTypeId: event.target.value })
                       }
                     >
-                      <option value="">选择已固定身份</option>
-                      {currentIntentItem.allowedMetadataIdentities.map(
-                        (value) => (
-                          <option
-                            key={metadataKey(value)}
-                            value={metadataKey(value)}
-                          >
-                            {value.title ?? value.providerId}
-                            {value.year !== null
-                              ? ` (${value.year})`
-                              : ""} · {mediaTypeLabel(value.mediaType)}
-                          </option>
-                        ),
-                      )}
+                      <option value="">选择识别类型</option>
+                      {recognitionOptions.map((value) => (
+                        <option key={value.id} value={value.id}>
+                          {value.name ?? value.id}
+                        </option>
+                      ))}
                     </select>
                   </label>
-                ) : null}
-              </div>
-              {currentIntentItem.allowedMetadataIdentities.length === 0 ? (
-                <p className="mf-organize-section-note">
-                  本文件当前没有可供选择的识别类型修正。
-                </p>
-              ) : null}
-              {draftRecognitionId !== "" && !mappingComplete ? (
-                <p className="mf-organize-section-note" role="status">
-                  当前固定配置中该识别类型缺少完整策略映射,不能保存;不能单独修改下游策略。
-                </p>
-              ) : null}
-              <p className="mf-organize-decision-hint">
-                翻页不会自动保存。保存只记录当前文件的选择并重新运行零变更分析，不会执行整理。
-              </p>
-              {!filesHost ? (
-                <div className="mf-actions">
-                  <Button
-                    type="button"
-                    disabled={currentCorrectionSaveDisabled}
-                    onClick={() => submitCurrentCorrection(item.itemId)}
-                  >
-                    {itemAnalysisReadback?.phase === "reading"
-                      ? "正在核对分析结果…"
-                      : saveMutation.isPending
-                        ? "正在保存并重新分析…"
-                        : itemAnalysisReadback?.phase === "awaiting"
-                          ? "等待新的零变更方案…"
-                          : itemAnalysisReadback?.phase === "unreadable"
-                            ? "分析结果待核对"
-                            : "保存并重新分析"}
-                  </Button>
-                  {itemAnalysisReadback?.phase === "unreadable" ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={saveMutation.isPending}
-                      onClick={() => void retryAnalysisReadback()}
-                    >
-                      重新读取分析状态
-                    </Button>
+                  {currentIntentItem.allowedMetadataIdentities.length > 0 ? (
+                    <label className="mf-organize-decision-field">
+                      <span className="mf-organize-decision-label">
+                        作品身份
+                      </span>
+                      <select
+                        aria-label={`元数据身份 ${filename}`}
+                        value={draftMetadataKey}
+                        disabled={
+                          saveMutation.isPending ||
+                          itemAnalysisReadback !== null
+                        }
+                        onChange={(event) =>
+                          patchDraft({ metadataKey: event.target.value })
+                        }
+                      >
+                        <option value="">选择已固定身份</option>
+                        {currentIntentItem.allowedMetadataIdentities.map(
+                          (value) => (
+                            <option
+                              key={metadataKey(value)}
+                              value={metadataKey(value)}
+                            >
+                              {value.title ?? value.providerId}
+                              {value.year !== null
+                                ? ` (${value.year})`
+                                : ""} · {mediaTypeLabel(value.mediaType)}
+                            </option>
+                          ),
+                        )}
+                      </select>
+                    </label>
                   ) : null}
                 </div>
-              ) : null}
-            </details>
-          ) : null}
-          {hasGeneratedScheme || !filesHost ? (
-            <div className="mf-organize-selection">
-              <label>
-                <input
-                  type="checkbox"
-                  aria-label={`纳入 ${filename}`}
-                  checked={isIncluded}
-                  disabled={
-                    !isExecutable ||
-                    saveMutation.isPending ||
-                    itemAnalysisReadback !== null
-                  }
-                  onChange={(event) => {
-                    setExcluded((previous) => {
-                      const next = new Set(previous);
-                      if (event.target.checked) next.delete(item.itemId);
-                      else next.add(item.itemId);
-                      return next;
-                    });
-                    setConfirmationSelectionKey(null);
-                  }}
-                />{" "}
-                纳入本次整理
-              </label>
-              {!isExecutable && !organizeFlowEnded ? (
-                <p className="mf-organize-section-note" role="status">
-                  {admittedItemIds.has(item.itemId)
-                    ? "该文件已受理执行,不能再纳入本次确认;已在任务中心保持独立进度与结果。"
-                    : metadataTechnicalFailure
-                      ? "该文件因元数据阶段技术失败没有生成可确认方案，不能纳入本次确认；请按当前状态核对 Metadata Provider 与原任务结果。"
-                      : decisionStatus === "analysis_waiting"
-                        ? "该文件当前未就绪；分析完成并生成新方案后可在此选择。"
-                        : decisionStatus === "analysis_refused"
-                          ? "该文件当前未就绪；先补做分析并生成新方案，再决定是否纳入。"
-                          : decisionStatus === "analysis_unknown"
-                            ? "该文件当前未就绪；分析结果未确认前不会纳入本次确认。"
-                            : "该文件当前未就绪，不能纳入本次确认；完成上方当前状态后可再生方案。"}
+                {currentIntentItem.allowedMetadataIdentities.length === 0 ? (
+                  <p className="mf-organize-section-note">
+                    本文件当前没有可供选择的识别类型修正。
+                  </p>
+                ) : null}
+                {draftRecognitionId !== "" && !mappingComplete ? (
+                  <p className="mf-organize-section-note" role="status">
+                    当前固定配置中该识别类型缺少完整策略映射,不能保存;不能单独修改下游策略。
+                  </p>
+                ) : null}
+                <p className="mf-organize-decision-hint">
+                  翻页不会自动保存。保存只记录当前文件的选择并重新运行零变更分析，不会执行整理。
                 </p>
-              ) : null}
-            </div>
-          ) : null}
-        </section>
+                {!filesHost ? (
+                  <div className="mf-actions">
+                    <Button
+                      type="button"
+                      disabled={currentCorrectionSaveDisabled}
+                      onClick={() => submitCurrentCorrection(item.itemId)}
+                    >
+                      {itemAnalysisReadback?.phase === "reading"
+                        ? "正在核对分析结果…"
+                        : saveMutation.isPending
+                          ? "正在保存并重新分析…"
+                          : itemAnalysisReadback?.phase === "awaiting"
+                            ? "等待新的零变更方案…"
+                            : itemAnalysisReadback?.phase === "unreadable"
+                              ? "分析结果待核对"
+                              : "保存并重新分析"}
+                    </Button>
+                    {itemAnalysisReadback?.phase === "unreadable" ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={saveMutation.isPending}
+                        onClick={() => void retryAnalysisReadback()}
+                      >
+                        重新读取分析状态
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </details>
+            ) : null}
+            {hasGeneratedScheme || !filesHost ? (
+              <div className="mf-organize-selection">
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label={`纳入 ${filename}`}
+                    checked={isIncluded}
+                    disabled={
+                      !isExecutable ||
+                      saveMutation.isPending ||
+                      itemAnalysisReadback !== null
+                    }
+                    onChange={(event) => {
+                      setExcluded((previous) => {
+                        const next = new Set(previous);
+                        if (event.target.checked) next.delete(item.itemId);
+                        else next.add(item.itemId);
+                        return next;
+                      });
+                      setConfirmationSelectionKey(null);
+                    }}
+                  />{" "}
+                  纳入本次整理
+                </label>
+                {!isExecutable && !organizeFlowEnded ? (
+                  <p className="mf-organize-section-note" role="status">
+                    {admittedItemIds.has(item.itemId)
+                      ? "该文件已受理执行,不能再纳入本次确认;已在任务中心保持独立进度与结果。"
+                      : metadataTechnicalFailure
+                        ? "该文件因元数据阶段技术失败没有生成可确认方案，不能纳入本次确认；请按当前状态核对 Metadata Provider 与原任务结果。"
+                        : decisionStatus === "analysis_waiting"
+                          ? "该文件当前未就绪；分析完成并生成新方案后可在此选择。"
+                          : decisionStatus === "analysis_refused"
+                            ? "该文件当前未就绪；先补做分析并生成新方案，再决定是否纳入。"
+                            : decisionStatus === "analysis_unknown"
+                              ? "该文件当前未就绪；分析结果未确认前不会纳入本次确认。"
+                              : "该文件当前未就绪，不能纳入本次确认；完成上方当前状态后可再生方案。"}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+        )}
 
-        {item.attachments.length > 0 ? (
+        {!filesDecisionLayout && item.attachments.length > 0 ? (
           <section
             className="mf-organize-section mf-organize-attachments"
             aria-label="附件"
@@ -5425,14 +5811,16 @@ export function ManualOrganizeDialog({
           </StatusBanner>
         ) : null}
         <OrganizeHistoryReminder items={items} />
-        {filesHost &&
-        filesOverviewVisible &&
-        preview !== undefined &&
-        items.length > 0
-          ? renderFilesOverview()
-          : step === "review"
-            ? renderReview()
-            : renderConfirm()}
+        {filesHost && filesRecordDetail !== null
+          ? renderFilesRecordDetail()
+          : filesHost &&
+              filesOverviewVisible &&
+              preview !== undefined &&
+              items.length > 0
+            ? renderFilesOverview()
+            : step === "review"
+              ? renderReview()
+              : renderConfirm()}
       </>
     );
 
@@ -5504,6 +5892,25 @@ export function ManualOrganizeDialog({
         </Button>
         <Button type="button" onClick={openBatchReview}>
           整批复核(已选 {activeSelection.length} 项)
+        </Button>
+      </>
+    ) : filesHost && filesRecordDetail !== null ? (
+      <>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={returnToFilesOverview}
+        >
+          返回概览
+        </Button>
+        <span className="mf-modal-footer-spacer" />
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={closeLocked}
+          onClick={attemptClose}
+        >
+          关闭
         </Button>
       </>
     ) : step === "review" ? (

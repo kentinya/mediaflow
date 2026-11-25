@@ -10852,6 +10852,15 @@ tr[aria-selected="true"] {
   margin-bottom: 0;
 }
 
+/* The Files decision body is the plain file → problem → options hierarchy. */
+.mf-organize-section.mf-organize-section-plain {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .mf-organize-section-head {
   display: flex;
   align-items: baseline;
@@ -11133,6 +11142,107 @@ tr[aria-selected="true"] {
   color: #5f6b7d;
   font-size: 12.5px;
   line-height: 1.55;
+}
+
+/* Files per-item decision: the approved body is the file → problem → options
+   hierarchy itself, without a generic card, and its one action lives in the
+   fixed footer. Task Center recovery keeps its own inline presentation. */
+.mf-organize-decision-files {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.mf-organize-decision-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #fdf3e2;
+  color: #8a4b0f;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.mf-organize-decision-title {
+  margin: 10px 0 4px;
+  color: #14223c;
+  font-size: 16px;
+  line-height: 22px;
+}
+
+.mf-organize-decision-files .mf-organize-decision-options {
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 12px;
+}
+
+.mf-organize-decision-files .mf-organize-decision-fields {
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.mf-organize-decision-files .mf-organize-decision-field-title {
+  order: 1;
+}
+
+.mf-organize-decision-files .mf-organize-decision-field-year {
+  order: 2;
+}
+
+.mf-organize-decision-files .mf-organize-decision-field-media {
+  order: 3;
+}
+
+.mf-organize-decision-target {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border: 1px solid #dfe6ef;
+  border-radius: 10px;
+  background: #fbfcff;
+}
+
+.mf-organize-decision-target > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: baseline;
+}
+
+.mf-organize-decision-target dt {
+  color: #5f6b7d;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.mf-organize-decision-target dd {
+  margin: 0;
+  color: #17233b;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-decision-ignore {
+  align-self: center;
+  border: 0;
+  background: transparent;
+  color: #0b63ce;
+  padding: 4px 2px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mf-organize-decision-ignore:focus-visible {
+  outline: 2px solid #0b63ce;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.mf-organize-decision-ignore:disabled {
+  color: #8b98ab;
+  cursor: not-allowed;
 }
 
 .mf-organize-decision-diagnostics {
@@ -11707,7 +11817,8 @@ tr[aria-selected="true"] {
   }
 
   .mf-organize-decision-fields,
-  .mf-organize-decision-options {
+  .mf-organize-decision-options,
+  .mf-organize-decision-files .mf-organize-decision-fields {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }

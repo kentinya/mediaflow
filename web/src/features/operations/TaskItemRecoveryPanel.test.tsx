@@ -1050,7 +1050,7 @@ describe("TaskItemRecoveryPanel", () => {
     );
 
     const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
-    expect(await within(panel).findByText(/目标位置已有文件/)).toBeVisible();
+    expect(await within(panel).findByText(/目标路径已有文件/)).toBeVisible();
     await user.click(within(panel).getByRole("radio", { name: /重命名目标/ }));
     await user.click(
       within(panel).getByRole("button", { name: "保存并重新分析" }),

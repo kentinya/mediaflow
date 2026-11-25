@@ -117,6 +117,20 @@ function makeBackend() {
     // analysis authority, exactly like the backend's conflict decision.
     conflictProblem: false as boolean,
     conflictResolved: false as boolean,
+    // The exact Task's durable settled items the Files overview reads back
+    // through the bounded run-items endpoint, whether or not a newer plan
+    // still publishes that file.
+    durableSettledItems: [] as {
+      readonly itemId: string;
+      readonly status: "skipped" | "ignored";
+      readonly sourcePath: string;
+      readonly taskId: string;
+    }[],
+    // A user-ignored review whose durable checkpoint is the terminal result.
+    ignoredProblem: false as boolean,
+    // Hold the bounded settled-record reads to prove a late read never moves
+    // the operator or discards the current file's draft.
+    holdSettledReads: false as boolean,
     // The backend saved the skip but its response never reaches the browser.
     loseConflictDecisionResponse: false as boolean,
     failMetadataDecision: false as boolean,
@@ -204,11 +218,13 @@ function makeBackend() {
     metadataSearchPosts: [] as Json[],
     recoveryDecisionPosts: [] as Json[],
     recoveryContinuePosts: [] as Json[],
+    settledRecordsReads: 0,
   };
   /** A deliberately stuck Execute response the test releases by hand. */
   let releasedExecute: ((response: Response) => void) | null = null;
   let holdExecute = false;
   const heldExecuteResponses: Response[] = [];
+  const settledReadReleases: (() => void)[] = [];
 
   /**
    * The exact item indices this admission plans: the file rows the real
@@ -945,7 +961,9 @@ function makeBackend() {
       retry_safety: "safe",
       checkpoint_version: "d".repeat(64),
       blocker: resolved ? null : { kind: "conflict", blocker_id: "conflict-1" },
-      permitted_action_ids: resolved ? [] : ["resolve_conflict", "ignore"],
+      // The backend offers ignore only for the recognition/metadata review
+      // families, never for a destination conflict.
+      permitted_action_ids: resolved ? [] : ["resolve_conflict"],
       refusal_reason: null,
       next_action: resolved ? null : "choose a conflict strategy",
     },
@@ -1237,6 +1255,35 @@ function makeBackend() {
         url === `/api/tasks/organize-task-1/items/problem-item-1/recovery` &&
         method === "GET"
       ) {
+        if (state.ignoredProblem) {
+          return jsonResponse({
+            task_id: "organize-task-1",
+            item_id: "problem-item-1",
+            checkpoint: {
+              status: "ignored",
+              stage: "ignored",
+              raw_stage: "ignored",
+              effects: { certainty: "none" },
+              retry_safety: "safe",
+              checkpoint_version: "f".repeat(64),
+              blocker: null,
+              permitted_action_ids: [],
+              refusal_reason: null,
+              next_action: null,
+            },
+            decision: null,
+            manualRecoveryAvailable: false,
+            native_analysis: {
+              task_id: "organize-task-1",
+              item_id: "problem-item-1",
+              readable: true,
+              queue_state: "waiting_human",
+              machine_stage: null,
+            },
+            recoveryKind: "technical_history",
+            next_action: "none",
+          });
+        }
         return jsonResponse(
           state.conflictProblem
             ? conflictRecovery(state.conflictResolved)
@@ -1244,6 +1291,25 @@ function makeBackend() {
               ? metadataCandidateRecovery(state.metadataCandidateResolved)
               : metadataCorrectionRecovery(state.metadataProblemResolved),
         );
+      }
+
+      if (
+        url === `/api/tasks/organize-task-1/items/problem-item-1/recovery` &&
+        method === "POST"
+      ) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Json;
+        if (body["actionId"] !== "ignore") {
+          return jsonResponse({ error: { code: "invalid_action" } }, 409);
+        }
+        state.ignoredProblem = true;
+        return jsonResponse({
+          task_id: "organize-task-1",
+          item_id: "problem-item-1",
+          action_id: "ignore",
+          accepted: true,
+          sideEffects: "none",
+          next_action: "reload the ignored item",
+        });
       }
 
       if (
@@ -1558,6 +1624,82 @@ function makeBackend() {
         return respond();
       }
 
+      const runItemsMatch = url.match(
+        /^\/api\/operations\/runs\/([^/?]+)\/items(?:\?|$)/,
+      );
+      if (runItemsMatch !== null && method === "GET") {
+        calls.settledRecordsReads += 1;
+        if (state.holdSettledReads) {
+          await new Promise<void>((resolve) => {
+            settledReadReleases.push(resolve);
+          });
+        }
+        const taskId = runItemsMatch[1] ?? "";
+        const params = new URLSearchParams(url.split("?")[1] ?? "");
+        const status = params.get("status");
+        const all = state.durableSettledItems.filter(
+          (row) => row.taskId === taskId,
+        );
+        const records = all.filter(
+          (row) => status === null || row.status === status,
+        );
+        const dispositions = {
+          pending: 0,
+          active: 0,
+          waiting: 0,
+          success: 0,
+          skipped: all.filter((row) => row.status === "skipped").length,
+          ignored: all.filter((row) => row.status === "ignored").length,
+          failed_partial: 0,
+          cancelled: 0,
+        };
+        return jsonResponse({
+          run_id: taskId,
+          task_id: taskId,
+          filter: { status },
+          limit: 100,
+          items: records.map((row) => ({
+            item_id: row.itemId,
+            task_id: taskId,
+            storage_id: "source",
+            resource_library_id: "library",
+            source_path: row.sourcePath,
+            status: row.status,
+            stage: row.status === "skipped" ? "conflict_resolved" : "ignored",
+            attempts: 1,
+            created_at: "2026-01-01T00:00:00+00:00",
+            updated_at: "2026-01-01T00:00:00+00:00",
+            destination_storage_id: null,
+            destination_path: null,
+            execution_status: null,
+            failure: null,
+            checkpoint: {
+              status: row.status,
+              stage: row.status === "skipped" ? "conflict_resolved" : "ignored",
+              raw_stage:
+                row.status === "skipped" ? "conflict_resolved" : "ignored",
+              blocker_kind: null,
+              blocker_id: null,
+              effect_certainty: "none",
+              retry_safety: "safe",
+              refusal_reason: null,
+              checkpoint_version: "e".repeat(64),
+              permitted_action_ids: [],
+            },
+            recovery_kind: "technical_history",
+          })),
+          total: all.length,
+          matching_total: records.length,
+          dispositions,
+          uncertain_success: 0,
+          truncated: false,
+          previous_cursor: null,
+          next_cursor: null,
+          unavailable: null,
+          sideEffects: "none",
+        });
+      }
+
       return jsonResponse({ error: { code: "not_found" } }, 404);
     },
   );
@@ -1568,6 +1710,10 @@ function makeBackend() {
     state,
     holdExecute: () => {
       holdExecute = true;
+    },
+    releaseSettledReads: () => {
+      state.holdSettledReads = false;
+      for (const resolve of settledReadReleases.splice(0)) resolve();
     },
     releaseExecute: () => {
       holdExecute = false;
@@ -1883,7 +2029,7 @@ describe("ManualOrganizeDialog", () => {
 
     // The explicit Provider search is a read; choosing its grounded candidate
     // and saving the decision re-analyzes without executing anything.
-    await user.click(screen.getByRole("button", { name: "搜索作品" }));
+    await user.click(screen.getByRole("button", { name: "搜索元数据" }));
     await waitFor(() =>
       expect(backend.calls.metadataSearchPosts).toHaveLength(1),
     );
@@ -2056,7 +2202,7 @@ describe("ManualOrganizeDialog", () => {
     expect(year).toHaveValue(2001);
     await user.clear(year);
     await user.type(year, "2024");
-    await user.click(screen.getByRole("button", { name: "搜索作品" }));
+    await user.click(screen.getByRole("button", { name: "搜索元数据" }));
     await waitFor(() =>
       expect(backend.calls.metadataSearchPosts).toHaveLength(1),
     );
@@ -2073,7 +2219,7 @@ describe("ManualOrganizeDialog", () => {
     // Provider ID an older query produced.
     await user.clear(year);
     expect(screen.queryByRole("radio", { name: /DialogRename/ })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "搜索作品" }));
+    await user.click(screen.getByRole("button", { name: "搜索元数据" }));
     await waitFor(() =>
       expect(backend.calls.metadataSearchPosts).toHaveLength(2),
     );
@@ -2110,7 +2256,7 @@ describe("ManualOrganizeDialog", () => {
     const year = screen.getByLabelText("年份（可留空）");
     await user.clear(year);
     await user.type(year, "1869");
-    await user.click(screen.getByRole("button", { name: "搜索作品" }));
+    await user.click(screen.getByRole("button", { name: "搜索元数据" }));
     await waitFor(() =>
       expect(backend.calls.metadataSearchPosts).toHaveLength(1),
     );
@@ -2136,7 +2282,7 @@ describe("ManualOrganizeDialog", () => {
     backend.state.rejectMetadataSearchYear = false;
     await user.clear(year);
     await user.type(year, "2024");
-    await user.click(screen.getByRole("button", { name: "搜索作品" }));
+    await user.click(screen.getByRole("button", { name: "搜索元数据" }));
     await waitFor(() =>
       expect(backend.calls.metadataSearchPosts).toHaveLength(2),
     );
@@ -3684,7 +3830,7 @@ describe("ManualOrganizeDialog", () => {
       name: "本次整理概览",
     });
     expect(overview).toHaveTextContent(
-      `「${filename(0)}」已重新分析，现在可以纳入本次整理。`,
+      `「${filename(0)}」已可确认。整理方案已更新，整理尚未提交。`,
     );
     expect(overview).toHaveTextContent("Resolved Movie");
     expect(backend.calls.choicePosts).toHaveLength(1);
@@ -3759,7 +3905,7 @@ describe("ManualOrganizeDialog", () => {
       name: "本次整理概览",
     });
     expect(overview).toHaveTextContent(
-      `「${filename(0)}」已重新分析，现在可以纳入本次整理。`,
+      `「${filename(0)}」已可确认。整理方案已更新，整理尚未提交。`,
     );
     expect(backend.calls.choicePosts).toHaveLength(1);
     expect(backend.calls.analyzePosts).toHaveLength(1);
@@ -3832,7 +3978,7 @@ describe("ManualOrganizeDialog", () => {
       name: "本次整理概览",
     });
     expect(overview).toHaveTextContent(
-      `「${filename(0)}」已重新分析，现在可以纳入本次整理。`,
+      `「${filename(0)}」已可确认。整理方案已更新，整理尚未提交。`,
     );
     expect(backend.calls.recoveryContinuePosts).toHaveLength(1);
     expect(backend.calls.choicePosts).toHaveLength(0);
@@ -3851,7 +3997,7 @@ describe("ManualOrganizeDialog", () => {
     const title = screen.getByLabelText("搜索标题");
     await user.clear(title);
     await user.type(title, "DialogRename");
-    await user.click(screen.getByRole("button", { name: "搜索作品" }));
+    await user.click(screen.getByRole("button", { name: "搜索元数据" }));
     await user.click(
       await screen.findByRole("radio", { name: /DialogRename/ }),
     );
@@ -4526,5 +4672,278 @@ describe("ManualOrganizeDialog", () => {
       within(overview).getByRole("button", { name: "查看 Movie.01.mkv" }),
     );
     expect(await screen.findByText("此文件已跳过")).toBeVisible();
+  }, 30_000);
+
+  it("Task59.1 A59-06 renders the approved Files decision body with one footer action", async () => {
+    const user = userEvent.setup();
+    await openDialog(user, (value) => {
+      value.state.conflictProblem = true;
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+
+    const decision = (
+      await screen.findByRole("radiogroup", { name: "冲突处理方式" })
+    ).closest(".mf-organize-decision-files") as HTMLElement;
+    expect(decision).not.toBeNull();
+    // The body is the file, its current problem and a concise reason, then
+    // the server-allowed options. The old status/plan cards are gone.
+    expect(within(decision).getByText("冲突处理")).toBeVisible();
+    expect(
+      within(decision).getByRole("heading", { name: "处理目标冲突" }),
+    ).toBeVisible();
+    expect(
+      within(decision).getByText(
+        "目标路径已有文件。选择处理方式，然后核对重新分析生成的计划。",
+      ),
+    ).toBeVisible();
+    expect(within(card()).queryByText("当前状态")).toBeNull();
+    expect(
+      within(card()).queryByRole("heading", { name: "当前决定" }),
+    ).toBeNull();
+    expect(
+      within(card()).queryByRole("heading", { name: "整理方案" }),
+    ).toBeNull();
+    // The existing target is stated once, before the options.
+    expect(within(card()).getAllByText("已有目标")).toHaveLength(1);
+    const target = "Movies/Movie.01 (2001)/Movie.01.mkv";
+    expect(within(card()).getAllByText(target)).toHaveLength(1);
+    const options = within(decision).getByRole("radiogroup", {
+      name: "冲突处理方式",
+    });
+    expect(within(options).getAllByRole("radio")).toHaveLength(2);
+    // A conflict has no ignore action; the one legal save lives in the fixed
+    // footer, never in the scrolling body.
+    expect(
+      within(card()).queryByRole("button", { name: "忽略此文件" }),
+    ).toBeNull();
+    const save = within(card()).getByRole("button", {
+      name: "保存并重新分析",
+    });
+    expect(save.closest(".mf-modal-footer")).not.toBeNull();
+  }, 30_000);
+
+  it("Task59.1 A59-06 orders the work search as title, year and media type", async () => {
+    const user = userEvent.setup();
+    await openDialog(user, (value) => {
+      value.state.metadataProblem = true;
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+    await screen.findByRole("button", { name: "搜索元数据" });
+
+    const title = screen.getByLabelText("搜索标题");
+    const year = screen.getByLabelText("年份（可留空）");
+    const mediaType = screen.getByLabelText("作品类型");
+    const follows = (first: HTMLElement, second: HTMLElement) =>
+      (first.compareDocumentPosition(second) &
+        Node.DOCUMENT_POSITION_FOLLOWING) !==
+      0;
+    expect(follows(title, year)).toBe(true);
+    expect(follows(year, mediaType)).toBe(true);
+    expect(screen.getByRole("button", { name: "搜索元数据" })).toBeVisible();
+  }, 30_000);
+
+  it("Task59.1 A59-06 allows the backend-permitted ignore beside the save action", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.metadataCandidateProblem = true;
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+    await screen.findByRole("heading", { name: "确认作品" });
+    const ignore = within(card()).getByRole("button", {
+      name: "忽略此文件",
+    });
+    expect(ignore.closest(".mf-modal-footer")).not.toBeNull();
+
+    await user.click(ignore);
+    await waitFor(() => expect(backend.state.ignoredProblem).toBe(true));
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    expect(
+      within(overview).getByText(/「Movie\.01\.mkv」已忽略/),
+    ).toBeVisible();
+    const row = within(overview).getByText("Movie.01.mkv").closest("li");
+    expect(row).not.toBeNull();
+    await waitFor(() =>
+      expect(within(row as HTMLElement).getByText("已有记录")).toBeVisible(),
+    );
+    expect(
+      within(row as HTMLElement).getByText(/该文件已忽略，未纳入本次整理/),
+    ).toBeVisible();
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 A59-07 keeps a durable skipped record whose file a newer plan no longer lists", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.previewItemPaths = Array.from(
+          { length: FILE_COUNT - 1 },
+          (_, index) => `Movies/${filename(index + 1)}`,
+        );
+        value.state.durableSettledItems = [
+          {
+            itemId: "settled-item-1",
+            status: "skipped",
+            sourcePath: `Movies/${filename(0)}`,
+            taskId: "organize-task-1",
+          },
+        ];
+      },
+      undefined,
+      "overview",
+    );
+
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    const row = within(overview).getByText("Movie.01.mkv").closest("li");
+    expect(row).not.toBeNull();
+    await waitFor(() =>
+      expect(within(row as HTMLElement).getByText("已有记录")).toBeVisible(),
+    );
+    // The proof is read from the same Task, not invented from the summary.
+    expect(backend.calls.settledRecordsReads).toBeGreaterThan(0);
+    expect(
+      within(row as HTMLElement).getByText(/已按当前决定跳过，未纳入本次整理/),
+    ).toBeVisible();
+    const counts = overview.querySelectorAll(
+      ".mf-organize-overview-counts div",
+    );
+    const countFacts = Object.fromEntries(
+      [...counts].map((entry) => [
+        entry.querySelector("dt")?.textContent ?? "",
+        entry.querySelector("dd")?.textContent ?? "",
+      ]),
+    );
+    expect(countFacts).toMatchObject({
+      "已选 / 可确认": "9 / 9",
+      需要处理: "0",
+      已有记录: "1",
+    });
+    // One row per proven file identity: the durable result does not duplicate.
+    expect(
+      within(overview).getAllByRole("button", { name: "查看 Movie.01.mkv" }),
+    ).toHaveLength(1);
+
+    await user.click(
+      within(overview).getByRole("button", { name: "查看 Movie.01.mkv" }),
+    );
+    expect(await screen.findByText("此文件已跳过")).toBeVisible();
+    expect(within(card()).queryByRole("radio")).toBeNull();
+    expect(within(card()).queryByText("纳入本次整理")).toBeNull();
+
+    // Returning to the overview keeps the record row and its exact count.
+    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    const reopened = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    const reopenedRow = within(reopened)
+      .getByText("Movie.01.mkv")
+      .closest("li");
+    expect(
+      within(reopenedRow as HTMLElement).getByText("已有记录"),
+    ).toBeVisible();
+
+    // The batch still spans only the nine current legal files.
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    const summary = card().querySelector(".mf-organize-batch-summary");
+    expect(summary).toHaveTextContent(/本次确认\s*9 项/);
+    expect(
+      within(card()).getByRole("region", { name: "来源与目标" }),
+    ).not.toHaveTextContent("Movie.01.mkv");
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("Task59.1 A59-07 updates an existing plan row instead of adding a second record row", async () => {
+    const user = userEvent.setup();
+    await openDialog(
+      user,
+      (value) => {
+        value.state.conflictProblem = true;
+        value.state.durableSettledItems = [
+          {
+            itemId: "problem-item-1",
+            status: "skipped",
+            sourcePath: `Movies/${filename(0)}`,
+            taskId: "organize-task-1",
+          },
+        ];
+      },
+      undefined,
+      "overview",
+    );
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    const rows = within(overview)
+      .getAllByRole("button", { name: "查看 Movie.01.mkv" })
+      .map((button) => button.closest("li"));
+    expect(rows).toHaveLength(1);
+    await waitFor(() =>
+      expect(
+        within(rows[0] as HTMLElement).getByText("已有记录"),
+      ).toBeVisible(),
+    );
+    expect(
+      within(rows[0] as HTMLElement).getByText(
+        /已按当前决定跳过，未纳入本次整理/,
+      ),
+    ).toBeVisible();
+    const countPairs = overview.querySelectorAll(
+      ".mf-organize-overview-counts div",
+    );
+    const countFacts = Object.fromEntries(
+      [...countPairs].map((entry) => [
+        entry.querySelector("dt")?.textContent ?? "",
+        entry.querySelector("dd")?.textContent ?? "",
+      ]),
+    );
+    expect(countFacts["已有记录"]).toBe("1");
+    expect(countFacts["需要处理"]).toBe("0");
+  }, 30_000);
+
+  it("Task59.1 A59-07 keeps the current file and draft when the record read lands late", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(user, (value) => {
+      value.state.metadataProblem = true;
+      value.state.holdSettledReads = true;
+      value.state.durableSettledItems = [
+        {
+          itemId: "settled-sibling",
+          status: "ignored",
+          sourcePath: `Movies/${filename(1)}`,
+          taskId: "organize-task-1",
+        },
+      ];
+    });
+    await screen.findByRole("heading", { name: /第 1 \/ 10 个/ });
+    const title = screen.getByLabelText("搜索标题");
+    await user.clear(title);
+    await user.type(title, "LateReadback");
+
+    backend.releaseSettledReads();
+    await waitFor(() =>
+      expect(backend.calls.settledRecordsReads).toBeGreaterThan(0),
+    );
+    // The late result updates rows only: the same file and its unsaved input
+    // stay exactly where the operator left them.
+    expect(screen.getByLabelText("搜索标题")).toHaveValue("LateReadback");
+    expect(
+      screen.getByRole("heading", { name: /第 1 \/ 10 个/ }),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    const siblingRow = within(overview).getByText("Movie.02.mkv").closest("li");
+    expect(
+      within(siblingRow as HTMLElement).getByText("已有记录"),
+    ).toBeVisible();
+    const currentRow = within(overview).getByText("Movie.01.mkv").closest("li");
+    expect(within(currentRow as HTMLElement).getByText("待处理")).toBeVisible();
   }, 30_000);
 });

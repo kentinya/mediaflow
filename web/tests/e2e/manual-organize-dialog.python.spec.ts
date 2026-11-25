@@ -561,7 +561,7 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
     await expect(card.locator('select[aria-label^="元数据身份 "]')).toHaveCount(
       0,
     );
-    await expect(card.getByText("选择正确的作品")).toBeVisible({
+    await expect(card.getByText("确认作品")).toBeVisible({
       timeout: 30_000,
     });
     if (index === 1) {
@@ -569,7 +569,7 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
       // third nested card. Its candidate options remain individually bordered
       // and selectable.
       const embeddedDecision = card
-        .locator(".mf-organize-section-primary .mf-organize-decision")
+        .locator(".mf-organize-decision-files")
         .first();
       const decisionSurface = await embeddedDecision.evaluate((element) => {
         const style = window.getComputedStyle(element);
@@ -1403,7 +1403,7 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
     await card.getByRole("button", { name: "下一项" }).click();
   }
   await expect(card.getByText(conflictFile).first()).toBeVisible();
-  await expect(card.getByText("目标已有文件").first()).toBeVisible({
+  await expect(card.getByText("目标路径已有文件").first()).toBeVisible({
     timeout: 30_000,
   });
   const executePosts = () =>
@@ -1644,7 +1644,7 @@ test("Task59.1 A59-01 a real conflict skip returns to the overview with the dura
   await conflictRow
     .getByRole("button", { name: `查看 ${conflictFile}` })
     .click();
-  await expect(card.getByText("目标已有文件").first()).toBeVisible({
+  await expect(card.getByText("目标路径已有文件").first()).toBeVisible({
     timeout: 30_000,
   });
   await card.getByRole("radio", { name: /跳过此条目/ }).check();
@@ -1843,7 +1843,7 @@ test("Task59.1 A59-01 a lost decision response returns from the durable same-ite
   await conflictRow
     .getByRole("button", { name: `查看 ${conflictFile}` })
     .click();
-  await expect(card.getByText("目标已有文件").first()).toBeVisible({
+  await expect(card.getByText("目标路径已有文件").first()).toBeVisible({
     timeout: 30_000,
   });
   await card.getByRole("radio", { name: /跳过此条目/ }).check();
@@ -2016,7 +2016,7 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
   await overviewRow(conflictFile)
     .getByRole("button", { name: `查看 ${conflictFile}` })
     .click();
-  await expect(card.getByText("目标已有文件").first()).toBeVisible({
+  await expect(card.getByText("目标路径已有文件").first()).toBeVisible({
     timeout: 30_000,
   });
   await card.getByRole("radio", { name: /跳过此条目/ }).check();
@@ -2036,19 +2036,27 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
   await overviewRow(renameFile)
     .getByRole("button", { name: `查看 ${renameFile}` })
     .click();
-  await expect(card.getByText("确认识别类型")).toBeVisible({
+  await expect(card.getByText("选择识别类型")).toBeVisible({
     timeout: 30_000,
   });
   await card.getByRole("radio", { name: /Normal Movie/ }).check();
   await saveNativeDecision(page, card);
   await driveDiscoveryFor(page, request, mixedDiscoveryId as string);
   await expect(overview).toBeVisible({ timeout: 30_000 });
+  // The read-back is stated in the first region with the exact file and the
+  // fact that nothing has been submitted yet.
+  await expect(
+    card.getByRole("heading", { name: "整理方案已更新" }),
+  ).toBeVisible();
+  await expect(
+    card.getByText(`「${renameFile}」已可确认。整理方案已更新，整理尚未提交。`),
+  ).toBeVisible();
 
   // 3. Metadata: two grounded candidates remain tied.
   await overviewRow(metadataFile)
     .getByRole("button", { name: `查看 ${metadataFile}` })
     .click();
-  await expect(card.getByText("选择正确的作品")).toBeVisible({
+  await expect(card.getByText("确认作品")).toBeVisible({
     timeout: 30_000,
   });
   await card.getByRole("radio", { name: /候选 2/ }).check();
@@ -2065,7 +2073,7 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
     timeout: 30_000,
   });
   await card.getByLabel("搜索标题").fill("CorrectedSearch");
-  await card.getByRole("button", { name: "搜索作品" }).click();
+  await card.getByRole("button", { name: "搜索元数据" }).click();
   await expect(card.getByText(/搜索结果/)).toBeVisible({ timeout: 30_000 });
   await card.getByRole("radio", { name: /CorrectedSearch/ }).check();
   await saveNativeDecision(page, card);
@@ -2077,7 +2085,7 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
   await overviewRow(classifyFile)
     .getByRole("button", { name: `查看 ${classifyFile}` })
     .click();
-  await expect(card.getByText("选择整理目标")).toBeVisible({
+  await expect(card.getByText("选择分类目标")).toBeVisible({
     timeout: 30_000,
   });
   await card.getByRole("radio", { name: /目标 1/ }).check();
@@ -2085,12 +2093,39 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
   await driveDiscoveryFor(page, request, mixedDiscoveryId as string);
   await expect(overview).toBeVisible({ timeout: 30_000 });
 
+  // The later sibling analyses publish plans without the already-settled
+  // conflict. Its durable TaskItem still keeps the same original row.
+  const settledConflictRow = overview
+    .locator(".mf-organize-overview-item")
+    .filter({ hasText: conflictFile });
+  await expect(settledConflictRow).toHaveCount(1);
+  await expect(settledConflictRow).toContainText("已有记录");
+  await expect(settledConflictRow).toContainText("已按当前决定跳过");
+  await expect(settledConflictRow).not.toContainText("待处理");
+  await expect(settledConflictRow).not.toContainText("需要处理");
+
+  // A refresh from the same preparation restores the same durable record and
+  // never duplicates the row.
+  await page.reload();
+  card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  const reloadedOverview = card.getByRole("region", {
+    name: "本次整理概览",
+  });
+  await expect(reloadedOverview).toBeVisible({ timeout: 30_000 });
+  const reloadedConflictRow = reloadedOverview
+    .locator(".mf-organize-overview-item")
+    .filter({ hasText: conflictFile });
+  await expect(reloadedConflictRow).toHaveCount(1);
+  await expect(reloadedConflictRow).toContainText("已有记录");
+  await expect(reloadedConflictRow).toContainText("已按当前决定跳过");
+
   // Every decision went through its own durable command; only the four
   // resolved items are included and the skip issued no analysis.
   expect(posts(/\/recovery\/decision$/)).toHaveLength(5);
   expect(posts(/\/recovery\/continue$/)).toHaveLength(4);
   expect(posts(/\/previews\/[^/]+\/execute$/)).toHaveLength(1);
-  const countFacts = await overview
+  const countFacts = await reloadedOverview
     .locator(".mf-organize-overview-counts > div")
     .evaluateAll((rows) =>
       Object.fromEntries(
@@ -2105,6 +2140,7 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
   expect(countFacts).toMatchObject({
     "已选 / 可确认": "4 / 4",
     需要处理: "0",
+    已有记录: "1",
   });
 
   // Before the single confirmation, no media changed beyond the explicit
@@ -2116,6 +2152,19 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
     });
   }
   expect(await stateFor(conflictFile)).toEqual(copied);
+
+  // The durable record opens as a read-only file record, not a decision.
+  await reloadedConflictRow
+    .getByRole("button", { name: `查看 ${conflictFile}` })
+    .click();
+  await expect(card.getByText("此文件已跳过")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(card.getByRole("radio", { name: /跳过此条目/ })).toHaveCount(0);
+  await card.getByRole("button", { name: "返回概览" }).click();
+  await expect(
+    card.getByRole("region", { name: "本次整理概览" }),
+  ).toBeVisible();
 
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(card.getByRole("region", { name: "整批复核" })).toBeVisible();
@@ -2798,13 +2847,15 @@ test("Task59.1 a missing metadata candidate is corrected on the current file and
   expect(discoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, discoveryId as string);
   await openOverviewFile(card);
-  await expect(card.getByRole("heading", { name: "当前状态" })).toBeVisible();
   // The renamed file no longer matches a RecognitionRule, so the operator
-  // first selects one recognition type on this same file.
-  await expect(card.getByText("确认识别类型")).toBeVisible();
+  // first selects one recognition type on this same file. The approved body
+  // names the problem directly instead of a generic status heading.
+  await expect(
+    card.getByRole("heading", { name: "选择识别类型" }),
+  ).toBeVisible();
   await card.getByRole("radio", { name: /Normal Movie/ }).check();
   await saveNativeDecision(page, card);
-  await expect(card.getByText("确认识别类型")).toHaveCount(0);
+  await expect(card.getByText("选择识别类型")).toHaveCount(0);
   await driveDiscoveryFor(page, request, discoveryId as string);
   await expect(card.getByRole("region", { name: "本次整理概览" })).toBeVisible({
     timeout: 30_000,
@@ -2841,7 +2892,7 @@ test("Task59.1 a missing metadata candidate is corrected on the current file and
   // nothing; the rename source and its still-absent target stay untouched.
   expect(await stateFor(renamedFile)).toEqual(before);
 
-  await card.getByRole("button", { name: "搜索作品" }).click();
+  await card.getByRole("button", { name: "搜索元数据" }).click();
   await expect(card.getByText(/搜索结果/)).toBeVisible({ timeout: 30_000 });
   await card.getByRole("radio", { name: /DialogRename/ }).check();
   await saveNativeDecision(page, card);
@@ -3067,7 +3118,7 @@ test("Task59.1 keeps the exact admitted preparation across a cancelled browser B
   expect(discoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, discoveryId as string);
   await openOverviewFile(card);
-  await expect(card.getByText("选择正确的作品")).toBeVisible({
+  await expect(card.getByText("确认作品")).toBeVisible({
     timeout: 30_000,
   });
   await card.getByRole("radio", { name: /候选 2/ }).check();
@@ -3110,7 +3161,7 @@ test("Task59.1 keeps the exact admitted preparation across a cancelled browser B
   expect(new URL(page.url()).pathname).toBe("/resourcelib/files");
   await openOverviewFile(card);
   await expect(card.getByText(backFile).first()).toBeVisible();
-  await expect(card.getByText("选择正确的作品")).toBeVisible({
+  await expect(card.getByText("确认作品")).toBeVisible({
     timeout: 30_000,
   });
   await expect(card.getByRole("radio", { name: /候选 1/ })).toBeVisible();

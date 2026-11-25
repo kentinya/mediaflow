@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -241,6 +241,44 @@ const DIALOG_DECISION_INTROS: Readonly<Record<TaskItemDecisionKind, string>> = {
     "目标位置已有文件。请选择本次处理方式；这里不会自动覆盖、删除或移动任何文件。",
 };
 
+/**
+ * The Files-owned decision body approved for the manual-organize dialog: one
+ * problem family badge, the current problem and a short reason, then the
+ * server-provided options. The Task Center keeps its own inline wording.
+ */
+const FILES_DECISION_HEADINGS: Readonly<
+  Record<
+    TaskItemDecisionKind,
+    { readonly badge: string; readonly title: string; readonly hint: string }
+  >
+> = {
+  recognition: {
+    badge: "识别恢复",
+    title: "选择识别类型",
+    hint: "现有规则没有匹配到唯一类型。所选类型决定后续使用的策略。",
+  },
+  metadata: {
+    badge: "元数据恢复",
+    title: "确认作品",
+    hint: "标题命中多个候选，请根据年份和作品类型选择。",
+  },
+  metadata_correction: {
+    badge: "元数据恢复",
+    title: "修正作品搜索",
+    hint: "没有找到匹配的作品。修改搜索信息并搜索，再选择正确的候选；保存前不会执行整理。",
+  },
+  classification: {
+    badge: "分类恢复",
+    title: "选择分类目标",
+    hint: "当前分类规则未给出唯一目的地。以下位置来自本任务允许的分类策略。",
+  },
+  conflict: {
+    badge: "冲突处理",
+    title: "处理目标冲突",
+    hint: "目标路径已有文件。选择处理方式，然后核对重新分析生成的计划。",
+  },
+};
+
 function conflictStrategyTitle(strategy: string): string {
   return strategy === "skip"
     ? "跳过此条目"
@@ -454,14 +492,15 @@ export function TaskItemRecoveryPanel({
   const [actionBarTarget, setActionBarTarget] = useState<HTMLElement | null>(
     null,
   );
-  useEffect(() => {
+  useLayoutEffect(() => {
     const target =
       actionBarTargetId === undefined
         ? null
         : document.getElementById(actionBarTargetId);
     if (target === actionBarTarget) return;
     // The Files footer is a sibling of this body; its DOM node exists only
-    // after the parent commit, so this effect is the portal-target lookup.
+    // after the parent commit. Resolving it in the layout boundary keeps the
+    // one legal save action out of the scrolling body even on the first paint.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setActionBarTarget(target);
   }, [actionBarTargetId, actionBarTarget]);
@@ -1794,7 +1833,7 @@ export function TaskItemRecoveryPanel({
               }
             }}
             onIgnore={() => void ignoreDecision()}
-            canIgnore={false}
+            canIgnore={permitted.has("ignore")}
             permitted={permitted}
             busy={busy}
             presentation="dialog"
@@ -2162,27 +2201,30 @@ function DecisionForm(props: {
     <button
       type="button"
       className={
-        recovery
-          ? "mf-link-button mf-recovery-ignore"
-          : "mf-button mf-button-secondary"
+        dialog
+          ? "mf-link-button mf-organize-decision-ignore"
+          : recovery
+            ? "mf-link-button mf-recovery-ignore"
+            : "mf-button mf-button-secondary"
       }
       disabled={props.disabled}
       onClick={props.onIgnore}
     >
-      忽略此条目
+      {dialog ? "忽略此文件" : "忽略此条目"}
     </button>
   ) : null;
-  const actionGroup = recovery ? (
-    <div className="mf-actions">
-      {ignoreButton}
-      {saveButton}
-    </div>
-  ) : (
-    <div className="mf-actions">
-      {saveButton}
-      {ignoreButton}
-    </div>
-  );
+  const actionGroup =
+    dialog || recovery ? (
+      <div className="mf-actions">
+        {ignoreButton}
+        {saveButton}
+      </div>
+    ) : (
+      <div className="mf-actions">
+        {saveButton}
+        {ignoreButton}
+      </div>
+    );
   const optionName = compact
     ? `organize-${decision.kind}-choice`
     : "recovery-choice";
@@ -2254,24 +2296,40 @@ function DecisionForm(props: {
         recovery
           ? "mf-organize-decision mf-recovery-decision"
           : dialog
-            ? "mf-count-section mf-organize-decision"
+            ? "mf-organize-decision-files"
             : "mf-count-section"
       }
       aria-label={`${DECISION_LABELS[decision.kind]}决策`}
     >
-      <h6>
-        {compact
-          ? DIALOG_DECISION_TITLES[decision.kind]
-          : `待处理的${DECISION_LABELS[decision.kind]}决策`}
-      </h6>
-      {decision.status && !compact && (
-        <p className="mf-dashboard-meta">审核状态：{decision.status}</p>
+      {dialog ? (
+        <>
+          <span className="mf-organize-decision-type">
+            {FILES_DECISION_HEADINGS[decision.kind].badge}
+          </span>
+          <h4 className="mf-organize-decision-title">
+            {FILES_DECISION_HEADINGS[decision.kind].title}
+          </h4>
+          <p className="mf-organize-decision-intro">
+            {FILES_DECISION_HEADINGS[decision.kind].hint}
+          </p>
+        </>
+      ) : (
+        <>
+          <h6>
+            {compact
+              ? DIALOG_DECISION_TITLES[decision.kind]
+              : `待处理的${DECISION_LABELS[decision.kind]}决策`}
+          </h6>
+          {decision.status && !compact && (
+            <p className="mf-dashboard-meta">审核状态：{decision.status}</p>
+          )}
+          {compact ? (
+            <p className="mf-organize-decision-intro">
+              {DIALOG_DECISION_INTROS[decision.kind]}
+            </p>
+          ) : null}
+        </>
       )}
-      {compact ? (
-        <p className="mf-organize-decision-intro">
-          {DIALOG_DECISION_INTROS[decision.kind]}
-        </p>
-      ) : null}
       {decision.kind === "metadata_correction" && decision.reason ? (
         <p
           className={
@@ -2299,7 +2357,7 @@ function DecisionForm(props: {
         ))}
       {compact && decision.kind === "recognition" && (
         <div
-          className="mf-organize-decision-options"
+          className={`mf-organize-decision-options${dialog ? " mf-organize-decision-options-files" : ""}`}
           role="radiogroup"
           aria-label="识别类型"
         >
@@ -2332,7 +2390,7 @@ function DecisionForm(props: {
         ))}
       {compact && decision.kind === "metadata" && (
         <div
-          className="mf-organize-decision-options"
+          className={`mf-organize-decision-options${dialog ? " mf-organize-decision-options-files" : ""}`}
           role="radiogroup"
           aria-label="作品候选"
         >
@@ -2348,7 +2406,7 @@ function DecisionForm(props: {
                 choice.description === null
                   ? null
                   : `原名 ${choice.description}`,
-                recovery ? `ID ${choice.providerId ?? "—"}` : null,
+                choice.providerId === null ? null : `ID ${choice.providerId}`,
               ]
                 .filter((part): part is string => part !== null)
                 .join(" · "),
@@ -2449,19 +2507,6 @@ function DecisionForm(props: {
                 onChange={(event) => props.onSearchText(event.target.value)}
               />
             </label>
-            <label className="mf-organize-decision-field mf-organize-decision-field-media">
-              <span className="mf-organize-decision-label">
-                {recovery ? "作品类型" : "媒体类型"}
-              </span>
-              <select
-                value={props.mediaType}
-                disabled={props.disabled}
-                onChange={(event) => props.onMediaType(event.target.value)}
-              >
-                <option value="movie">电影</option>
-                <option value="tv">剧集</option>
-              </select>
-            </label>
             <label className="mf-organize-decision-field mf-organize-decision-field-year">
               <span className="mf-organize-decision-label">年份（可留空）</span>
               <input
@@ -2474,10 +2519,20 @@ function DecisionForm(props: {
                 onChange={(event) => props.onCorrectedYear(event.target.value)}
               />
             </label>
+            <label className="mf-organize-decision-field mf-organize-decision-field-media">
+              <span className="mf-organize-decision-label">作品类型</span>
+              <select
+                value={props.mediaType}
+                disabled={props.disabled}
+                onChange={(event) => props.onMediaType(event.target.value)}
+              >
+                <option value="movie">电影</option>
+                <option value="tv">剧集</option>
+              </select>
+            </label>
           </div>
           <p className="mf-organize-decision-hint">
-            标题、年份和{recovery ? "作品类型" : "媒体类型"}
-            只用于外部元数据搜索，不会修改文件名或目录。
+            标题、年份和作品类型只用于外部元数据搜索，不会修改文件名或目录。
           </p>
           <div className="mf-actions">
             <button
@@ -2490,11 +2545,13 @@ function DecisionForm(props: {
               }
               onClick={props.onSearch}
             >
-              {props.busy ? "正在搜索…" : "搜索作品"}
+              {props.busy ? "正在搜索…" : dialog ? "搜索元数据" : "搜索作品"}
             </button>
           </div>
           {props.metadataResult && (
-            <fieldset className="mf-organize-decision-options">
+            <fieldset
+              className={`mf-organize-decision-options${dialog ? " mf-organize-decision-options-files" : ""}`}
+            >
               <legend className="mf-organize-decision-legend">
                 搜索结果（{props.metadataResult.candidates.length} 项）
               </legend>
@@ -2516,7 +2573,7 @@ function DecisionForm(props: {
                     candidate.originalTitle === null
                       ? null
                       : `原名 ${candidate.originalTitle}`,
-                    recovery ? `ID ${candidate.providerId}` : null,
+                    `ID ${candidate.providerId}`,
                   ]
                     .filter((part): part is string => part !== null)
                     .join(" · "),
@@ -2550,7 +2607,7 @@ function DecisionForm(props: {
         ))}
       {compact && decision.kind === "classification" && (
         <div
-          className="mf-organize-decision-options"
+          className={`mf-organize-decision-options${dialog ? " mf-organize-decision-options-files" : ""}`}
           role="radiogroup"
           aria-label="目标位置"
         >
@@ -2621,30 +2678,22 @@ function DecisionForm(props: {
       )}
       {compact && decision.kind === "conflict" && (
         <>
-          {recovery ? (
-            <dl className="mf-recovery-conflict-target">
-              <div>
-                <dt>已有目标</dt>
-                <dd className="mf-exact-identity">
-                  {decision.targetPath ?? "不可用"}
-                </dd>
-              </div>
-            </dl>
-          ) : (
-            <p className="mf-organize-decision-hint">
-              来源{" "}
-              <span className="mf-exact-identity">
-                {decision.sourcePath ?? "不可用"}
-              </span>{" "}
-              的目标{" "}
-              <span className="mf-exact-identity">
+          <dl
+            className={
+              recovery
+                ? "mf-recovery-conflict-target"
+                : "mf-organize-decision-target"
+            }
+          >
+            <div>
+              <dt>已有目标</dt>
+              <dd className="mf-exact-identity">
                 {decision.targetPath ?? "不可用"}
-              </span>{" "}
-              已存在。
-            </p>
-          )}
+              </dd>
+            </div>
+          </dl>
           <div
-            className="mf-organize-decision-options"
+            className={`mf-organize-decision-options${dialog ? " mf-organize-decision-options-files" : ""}`}
             role="radiogroup"
             aria-label="冲突处理方式"
           >
@@ -2715,10 +2764,8 @@ function DecisionForm(props: {
       {props.actionsTarget === null || props.actionsTarget === undefined
         ? actionGroup
         : createPortal(actionGroup, props.actionsTarget)}
-      {!recovery && (
-        <p
-          className={dialog ? "mf-organize-decision-hint" : "mf-dashboard-meta"}
-        >
+      {!compact && (
+        <p className="mf-dashboard-meta">
           保存只记录当前文件的选择并请求零变更分析，不会执行整理，也不会修改任何文件。
           分析使用此 Task 的固定配置并由常驻 Worker 处理。
         </p>

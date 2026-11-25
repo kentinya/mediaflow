@@ -133,6 +133,44 @@ export function runProblemItemsQueryOptions(
   });
 }
 
+/**
+ * One bounded page of the same organize Task's settled items.
+ *
+ * The Files overview keeps a skipped/ignored result after a newer plan stops
+ * publishing that file, so it reads the exact durable TaskItem through the
+ * same authorized run-items endpoint the Task Center uses. The filter and the
+ * bounded limit keep the read zero-mutation, and the key stays under the run
+ * items prefix so the ordinary per-item invalidation refreshes it.
+ */
+export function filesSettledRecordsQueryOptions(
+  token: string | null,
+  context: {
+    readonly runId: string;
+    readonly status: "skipped" | "ignored";
+  },
+) {
+  return queryOptions({
+    queryKey: [
+      runItemsQueryKey,
+      context.runId,
+      "files-settled",
+      context.status,
+    ],
+    queryFn: (): Promise<RunItemsRead> =>
+      fetchRunItems(token, {
+        runId: context.runId,
+        status: context.status,
+        limit: 100,
+      }),
+    enabled: token !== null && context.runId.length > 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: 5_000,
+    refetchInterval: false,
+  });
+}
+
 export function runRecordsQueryOptions(
   token: string | null,
   context: RunDetailQueryContext & {
