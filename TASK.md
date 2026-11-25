@@ -1,6 +1,6 @@
 # Task 59.1 — Files 四类决定与回概览
 
-Next Action: DEVELOPER CORRECTS A59-06 AND A59-07 IN TASK 59.1
+Next Action: DEVELOPER CORRECTS THE REMAINING A59-06 FOOTER MISMATCH IN TASK 59.1
 
 ```text
 Task ID: 59.1
@@ -8,12 +8,12 @@ Task Type: SLICE
 Parent Slice: 59
 Status: FIX REQUIRED
 Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
-Reviewed Implementation Head: 6c54559b054d75682fc9ead615191d6c0b351285
+Reviewed Implementation Head: 819c73ddcf75aa39a4686c6cd23141d7180ede99
 Planning Contract: 36f60fe0ef75c9cbb9e0b30e258c2d6f4075f24d
 Difficulty: High
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: ORIGINAL TASK 59.1 CORRECTIONS A59-06 AND A59-07
+Implementation Authorization: ORIGINAL TASK 59.1 REMAINING A59-06 CORRECTION
 ```
 
 ## 目标
@@ -112,11 +112,42 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-in
 
 ## B 复核与 Slice 59 交接
 
+### 2026-11-26 · FIX REQUIRED
+
+B 从干净的 `main` 独立复核原 Task Base 至 `819c73ddcf75aa39a4686c6cd23141d7180ede99`。
+治理、Task 和 Slice 区间空白检查、Web 类型、ESLint、Prettier 和生产构建通过。两组组件共
+94 项、真实 Python/API/SQLite/Worker 浏览器用例 11 项通过，另有一项混合批次补验通过。
+
+**A59-06 剩余阻塞（P1，RO-2 / AC-06）。** 从 Files 混合批次打开五种决定表单，正文选项、
+搜索字段顺序和冲突目标位置已对齐。决定页底栏仍显示「关闭」和「整批复核」，与本文件的处理动作
+并列。真实冲突页 390 px 底栏高 161 px，批准稿同状态为 111 px。分类选择后底栏占四行。
+
+1. 为 Files 四类决定使用批准稿的底栏分组。左侧返回概览，右侧依次显示可用翻页和适用的忽略、
+   保存或当前恢复动作。关闭走现有顶栏入口及草稿核对，整批复核从概览进入。文件序号使用正文
+   当前文件区，草稿提示跟随当前文件。依据视口布局，保持键盘顺序与视觉顺序一致。
+2. 在现有混合原生用例中增加决定页底栏可见动作和顺序的验收。覆盖五种表单、首次打开和修改草稿后、
+   1440 与 390 px。经返回概览核对原行焦点和选择，再进入整批复核并确认当前合法子集。复验顶栏关闭
+   与未保存草稿提示。用上节命令运行直接受影响的组件与原生旅程，提交候选后交 B 独立复验。
+
+[Files 逐项底栏](web/src/features/operations/ManualOrganizeDialog.tsx#L5918) ·
+[批准稿四类决定验收](SLICE.md#acceptance-criteria)
+
+**A59-07 已复验通过。** 混合批次先跳过真实冲突。四次后续分析均保留同一 `skipped` TaskItem，
+关闭后按准确准备地址重开、再刷新，概览仍有一条记录。重新分析后首区指出具体文件已可确认且尚未
+提交。整批只确认四个就绪文件，已跳过的来源和目标保持原状。任务中心原位恢复六条原生回归通过。
+
+本机日志与 1440／390 px 对照图见
+`.git/validation-evidence/819c73ddcf75aa39a4686c6cd23141d7180ede99/b-task59.1-review/`。
+`review-probe.log` 记录逐次核对和关闭重开，`offline-probe.log` 记录批准稿按钮与视口，
+`native.log` 和 `components.log` 记录实际运行。探针初跑的读回字段及场景匹配错误另存日志，修正
+探针后执行同一候选。Task 59.1 保持 `FIX REQUIRED`，继续原 Task 修正。
+
+### 此前交接
+
 候选 `6c54559b` 的原 B 交接在 `e0e45bb6:TASK.md`，进度补查在 `f2cd654e:TASK.md`，
 Files 精确复核原通过记录在 `43ab597c:TASK.md`。Task 59.2 两页签共用操作、原位续作和焦点的
 通过记录在 `171b3de6:TASK.md`。本轮 A 的五种 Files 实景、对照截图与 `live.log` 在本机
 `.git/validation-evidence/6c54559b054d75682fc9ead615191d6c0b351285/a-slice59-files-decision-parity/`。
-当前决定为 `FIX REQUIRED`，待 Developer 修正并交 B 独立复核。
 
 ### 接续安排
 
