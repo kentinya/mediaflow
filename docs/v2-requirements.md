@@ -641,18 +641,22 @@ appears as one status line. If the service has no admission record and the origi
 eligible, an explicit confirmation of that same batch uses the existing atomic admission check.
 [B acceptance](https://github.com/kentinya/mediaflow/blob/455ad4f70c645b1a2e65f4af61378101a25435d8/TASK.md#patch-20261120-3--b-验收-pass).
 
-## TARGET — Slice 59 Files manual organize and task detail content (ACTIVE)
+## TARGET — Slice 59 Files manual organize and Task Center (ACTIVE)
 
-[Slice 59](../SLICE.md) limits the presentation amendment to the organizer launched from
-ResourceLibrary Files and the selected Task detail body. Current behavior remains the accepted
-baseline until closure. Retain the product topbar, page and dialog titles, Files and Task Center
-entry points and list context. Existing precise admission, same-Task continuation, permissions,
-Task flow, Storage effects and original-request reconciliation continue to apply.
+[Slice 59](../SLICE.md) updates the organizer launched from ResourceLibrary Files, the Task Center
+inventory and the selected Task detail. Current behavior remains the accepted baseline until closure.
+Use the approved offline reference for visible hierarchy, layouts, action placement and interactions.
+Typography and spacing may adapt to the viewport and real content. Retain the product topbar,
+page and dialog titles, precise entry points and list context. Existing precise admission, same-Task
+continuation, permissions, Task flow, Storage effects and original-request reconciliation apply.
+V2-OPS-022 refines the navigation and list presentation of V2-OPS-009/012/014/016 while retaining
+all eight authorized query views.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
 | V2-OPS-020 | The Files manual organizer retains the existing preparation screens and follows the approved offline design starting with the first same-dialog overview. | Before the first overview, retain the existing presentation and actual preparation stage, scope, progress and failures. Match the approved design from the first overview through individual review, decision feedback, overview return, batch review and submission feedback. The overview identifies independently actionable, ready and recorded files. A confirmed reanalysis outcome returns the current item to the overview with its new state. Unresolved inputs, waits and refusals stay actionable in context, and late reads preserve other drafts, navigation and the exact original submission. Keep explicit effect permission and exact Task handoff. |
-| V2-OPS-021 | The Task Center detail body presents task flow and independent file/attachment outcomes with existing evidence and recovery. | Order current stage, progress and applicable actions ahead of results and expandable diagnostics. Preserve the separate outcomes and read availability under V2-TASK-012–014, the exact original preparation entry of V2-OPS-019, and native four-type evidence, same-page summary and explicit continuation under V2-OPS-012/016. Preserve the surrounding list, titles, detail tabs, deep links, history and read-only terminal boundaries. |
+| V2-OPS-021 | The Task Center detail body presents task flow and independent file/attachment outcomes with existing evidence and recovery. | Order current stage, progress and applicable actions ahead of results and expandable diagnostics. Preserve the separate outcomes and read availability under V2-TASK-012–014, the exact original preparation entry of V2-OPS-019, and native four-type evidence, same-page summary and explicit continuation under V2-OPS-012/016. Preserve the list context, titles, detail tabs, deep links, history and read-only terminal boundaries. |
+| V2-OPS-022 | Task Center presents four problem categories as filters within a shared problem-file list under Attention. | First-level views are All, Running, Attention and Ended. Attention defaults to all problems and offers Recognition, Metadata, Classification and Conflict in place. Show the matching problem-file count, exact file identity, concise reason and stage, grouped by original task with its own detail link. Activating a file directly opens its inline evidence and recovery in that task. Closing returns to the same type, date range, page, position and focus, with a usable fallback when the row has resolved. Keep all existing valid links, date range and bounded server-owned paging and counts. Task and file counts stay distinct. An aggregate file total counts each task/file once, and type counts reflect actual membership. Display read failures and legal recovery actions from current evidence. Layout and interaction follow the approved offline preview. |
 
 ## CURRENT — Organizing rules dialogs and readability (Slice54 PASS / CLOSED)
 

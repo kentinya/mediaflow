@@ -44,13 +44,14 @@ only in [the development workflow](development-workflow.md).
 | 56 — Canonical Web and API Routes | Serve the operator Web at the root and the current API at `/api/*`, retire the old prefixes, and keep existing Tasks accessible at the new addresses | PASS / CLOSED | Accepted Slice55 and current baseline `33c70735e0a8f45426dde614587ea3d43af94e9b` |
 | 57 — Single Web Administrator and Scoped API Tokens | Start from an empty database, set up one Web administrator, keep login across navigation, issue scoped API tokens for integrations, and retire configuration-owned credentials | PASS / CLOSED | Accepted Slice56, direct configuration publication and baseline `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab` |
 | 58 — Complete Retirement of the General CLI | Remove the general CLI and configuration schema 11 support. Keep four service launches, first administrator setup, password recovery and offline SQLite backup and restore | PASS / CLOSED | Accepted Slice57 and baseline `5b2e0de4ac1c9d79e3618cef82d420ae302401e7` |
-| 59 — Files Manual Organize Journey and Task Detail Content | Retain the existing Files preparation screens and match the approved design from the first overview onward. Improve the Task Center detail body and retain current titles and entry points | ACTIVE | Accepted Slice 58 and baseline `212acdef5d97c14a01353b22c103d44b911d6147` |
+| 59 — Files Manual Organize Journey and Task Center | Retain Files preparation and follow the approved design from the first overview onward. Align Task Center and its detail with the approved design, including direct recovery from grouped problem files | ACTIVE | Accepted Slice 58 and baseline `212acdef5d97c14a01353b22c103d44b911d6147` |
 
 ## Current boundary
 
 [Slice 59](../SLICE.md) is **FIX REQUIRED** after A Final Review of `6c54559b`. The Roadmap row
 stays ACTIVE during correction. B will update the original Task 59.1 for the Files decision screens
-and Task 59.3 for the task detail progress and settled item reads.
+and Task 59.3 for the task detail progress and settled item reads. B also plans the approved Task
+Center inventory and detail parity under the updated Contract.
 Slice 58 remains the latest accepted Slice.
 
 ## Accepted boundary references
