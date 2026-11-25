@@ -48,6 +48,24 @@ export interface RunDetailQueryContext {
   readonly active: boolean;
 }
 
+/**
+ * The exact server page/filter identity of the primary-item read. The same
+ * key selects this one read for an in-place terminal re-read without touching
+ * sibling pages or filters.
+ */
+export function runItemsPageQueryKey(context: {
+  readonly runId: string;
+  readonly status: string | null;
+  readonly cursor: string | null;
+}) {
+  return [
+    runItemsQueryKey,
+    context.runId,
+    context.status ?? "all",
+    context.cursor ?? null,
+  ] as const;
+}
+
 export function runItemsQueryOptions(
   token: string | null,
   context: RunDetailQueryContext & {
@@ -56,12 +74,7 @@ export function runItemsQueryOptions(
   },
 ) {
   return queryOptions({
-    queryKey: [
-      runItemsQueryKey,
-      context.runId,
-      context.status ?? "all",
-      context.cursor ?? null,
-    ],
+    queryKey: runItemsPageQueryKey(context),
     queryFn: (): Promise<RunItemsRead> =>
       fetchRunItems(token, {
         runId: context.runId,

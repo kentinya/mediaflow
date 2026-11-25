@@ -1298,6 +1298,25 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
 
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expectBatchSelected(card, 1);
+  // The auto-opened detail's first item page is a real GET answered before the
+  // Worker settles; only its delivery is held, so the browser receives a
+  // pre-terminal page after the run is already terminal.
+  let itemsPageRequests = 0;
+  let releaseFirstItemPage: (() => Promise<void>) | undefined;
+  const firstItemPageAnswered = { value: false };
+  await page.route(
+    /\/api\/operations\/runs\/[^/]+\/items(?:\?.*)?$/,
+    async (route) => {
+      itemsPageRequests += 1;
+      if (itemsPageRequests > 1) {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      firstItemPageAnswered.value = true;
+      releaseFirstItemPage = () => route.fulfill({ response });
+    },
+  );
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
@@ -1305,6 +1324,9 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   });
   const firstTaskId = new URL(page.url()).searchParams.get("run");
   expect(firstTaskId).toBeTruthy();
+  await expect
+    .poll(() => firstItemPageAnswered.value, { timeout: 30_000 })
+    .toBe(true);
   const copyWorker = await request.post(
     `${BASE}/__harness__/run-manual-worker`,
   );
@@ -1325,6 +1347,10 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   // exact run detail: the row never presents the ordinary terminal replay
   // restriction as an attention reason.
   const detail = page.getByRole("dialog", { name: "运行详情" });
+  // The settled flow issues its own current-page read instead of reusing the
+  // held in-flight one; the late first page is delivered afterwards.
+  await expect.poll(() => itemsPageRequests, { timeout: 30_000 }).toBe(2);
+  await releaseFirstItemPage?.();
   await expect(
     detail
       .getByRole("region", { name: "文件结果" })
@@ -1335,6 +1361,8 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
     .locator(".mf-run-item-row")
     .filter({ hasText: conflictFile });
   await expect(copiedRow.getByText("已验证成功")).toBeVisible();
+  await page.unroute(/\/api\/operations\/runs\/[^/]+\/items(?:\?.*)?$/);
+  await expect(copiedRow.getByText("待处理")).toHaveCount(0);
   await expect(copiedRow.getByText(/已结束的条目不再提供重放/)).toHaveCount(0);
   await copiedRow.getByRole("button", { name: "查看证据" }).click();
   const copiedEvidence = detail.getByRole("region", { name: "条目证据" });
