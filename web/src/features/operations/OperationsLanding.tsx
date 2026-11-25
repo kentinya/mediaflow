@@ -1789,6 +1789,10 @@ function RunDetailPanel({
                   <>
                     {preparationVisible && (
                       <Link
+                        // The exact Task names this entry, so a focus return
+                        // can find the same continuation after the detail body
+                        // was rebuilt by a failed then recovered read.
+                        id={`mf-run-continue-${run.runId}`}
                         className="mf-button mf-button-primary"
                         to="/operations"
                         search={preparationLinkSearch}

@@ -3695,6 +3695,17 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
     await within(dialog).findByRole("heading", { name: /第 1 \/ 1 个/ });
     expect(backend.calls.posts).toEqual([]);
+    // This direct continuation address never opened from the continue entry:
+    // closing keeps the existing detail-close focus fallback.
+    await user.click(within(dialog).getByRole("button", { name: /^关闭$/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        document.getElementById("mf-run-detail-close"),
+      ),
+    );
   });
 
   it("keeps an opened continuation's unsaved correction through a task-detail poll failure", async () => {

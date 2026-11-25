@@ -160,6 +160,20 @@ export interface ModalLayer {
   readonly layerRef: RefObject<HTMLDivElement | null>;
 }
 
+/** The focused control and its stable id at the layer's first render. */
+interface InvokingEntry {
+  readonly element: Element;
+  readonly id: string | null;
+}
+
+function captureInvokingEntry(element: Element | null): InvokingEntry | null {
+  if (element === null) return null;
+  return {
+    element,
+    id: element instanceof HTMLElement && element.id !== "" ? element.id : null,
+  };
+}
+
 /**
  * The shared keyboard/focus/background lifecycle of one modal layer.
  *
@@ -171,8 +185,10 @@ export interface ModalLayer {
  */
 export function useModalLayer(options: ModalLayerOptions): ModalLayer {
   const layerRef = useRef<HTMLDivElement | null>(null);
-  const invokerRef = useRef<Element | null>(
-    typeof document === "undefined" ? null : document.activeElement,
+  const invokerRef = useRef<InvokingEntry | null>(
+    typeof document === "undefined"
+      ? null
+      : captureInvokingEntry(document.activeElement),
   );
   const escapeRef = useRef(options.onEscape);
   const escapeDisabledRef = useRef(options.escapeDisabled);
@@ -255,11 +271,23 @@ export function useModalLayer(options: ModalLayerOptions): ModalLayer {
       if (!activeRef.current) return;
       const invoker = invokerRef.current;
       if (
-        invoker instanceof HTMLElement &&
-        invoker !== document.body &&
-        document.contains(invoker)
+        invoker !== null &&
+        invoker.element instanceof HTMLElement &&
+        invoker.element !== document.body &&
+        document.contains(invoker.element)
       ) {
-        invoker.focus({ preventScroll: true });
+        invoker.element.focus({ preventScroll: true });
+        return;
+      }
+      // A background re-render can replace the invoking control while this
+      // layer stays open: a temporarily failed then recovered detail read
+      // recreates its exact entry. The captured stable id still names that
+      // same control, so the return lands on it instead of the generic
+      // fallback.
+      const replacement =
+        invoker?.id == null ? null : document.getElementById(invoker.id);
+      if (replacement instanceof HTMLElement) {
+        replacement.focus({ preventScroll: true });
         return;
       }
       if (options.fallbackFocusId !== undefined) {

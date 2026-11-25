@@ -206,15 +206,6 @@ function StackedLayerHarness({
   );
 }
 
-function ExitHarness({ onClose }: { readonly onClose: () => void }) {
-  const exit = useModalCardExit();
-  return (
-    <button type="button" onClick={() => exit.beginClose(onClose)}>
-      {exit.closing ? "closing" : "idle"}
-    </button>
-  );
-}
-
 describe("useModalLayer stacking", () => {
   beforeEach(() => {
     cleanup();
@@ -237,6 +228,83 @@ describe("useModalLayer stacking", () => {
     expect(suspendedBackground.closest("[inert]")).toBeNull();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onEscape).toHaveBeenCalledTimes(1);
+  });
+});
+
+function ExitHarness({ onClose }: { readonly onClose: () => void }) {
+  const exit = useModalCardExit();
+  return (
+    <button type="button" onClick={() => exit.beginClose(onClose)}>
+      {exit.closing ? "closing" : "idle"}
+    </button>
+  );
+}
+
+function FocusReturnLayer() {
+  const layer = useModalLayer({
+    onEscape: () => undefined,
+    fallbackFocusId: "fallback-control",
+  });
+  return (
+    <ModalCardShell
+      layerRef={layer.layerRef}
+      closing={false}
+      busy={false}
+      title="运行详情"
+      titleId="focus-return-title"
+      description="焦点归还"
+      closeLabel="关闭"
+      closeDisabled={false}
+      onRequestClose={() => undefined}
+    >
+      <p>卡片正文</p>
+    </ModalCardShell>
+  );
+}
+
+function BackgroundEntry({ recovered }: { readonly recovered: boolean }) {
+  return (
+    <div>
+      {recovered ? (
+        <button key="recovered" type="button" id="continue-entry">
+          继续整理
+        </button>
+      ) : (
+        <button key="original" type="button" id="continue-entry">
+          继续整理
+        </button>
+      )}
+      <button type="button" id="fallback-control">
+        关闭详情
+      </button>
+    </div>
+  );
+}
+
+describe("useModalLayer focus return", () => {
+  beforeEach(() => {
+    cleanup();
+  });
+
+  it("returns to the same stable entry after a background read replaced it", () => {
+    const background = render(<BackgroundEntry recovered={false} />);
+    const original = screen.getByRole("button", { name: "继续整理" });
+    original.focus();
+    expect(document.activeElement).toBe(original);
+
+    // The layer mounts while this exact entry owns the focus.
+    const layer = render(<FocusReturnLayer />);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    // An unrelated background re-render replaced the entry with a new element
+    // carrying the same stable id while the layer stayed open.
+    background.rerender(<BackgroundEntry recovered />);
+    const recovered = screen.getByRole("button", { name: "继续整理" });
+    expect(recovered).not.toBe(original);
+
+    layer.unmount();
+    // The current exact entry takes the focus instead of the generic fallback.
+    expect(document.activeElement).toBe(recovered);
   });
 });
 

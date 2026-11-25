@@ -5458,10 +5458,17 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   if (originalViewport !== null) {
     await page.setViewportSize(originalViewport);
   }
-  // Leave the selected run on its detail tab before the continuation step.
-  await detailTab.click();
-  await expect(detailTab).toHaveAttribute("aria-current", "page");
-  await expect(page).not.toHaveURL(/tab=/);
+  // Task 59.2: continue from 操作记录 with its real 运行日志 filter. Closing
+  // the hosted card must return to this same Task, tab, filter and entry.
+  await recordsTab.click();
+  await expect(recordsTab).toHaveAttribute("aria-current", "page");
+  await expect(page).toHaveURL(/tab=records/);
+  const recordsRegion = detail.getByRole("region", {
+    name: "操作记录",
+    exact: true,
+  });
+  await recordsRegion.getByLabel("类型筛选").selectOption("log");
+  await expect(page).toHaveURL(/rkind=log/);
 
   // The list behind the detail stays mounted. Record its exact position so
   // opening the continuation can be checked as a stable background, not only
@@ -5594,12 +5601,42 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   await expect(reviewDialog.getByText("任务详情暂时无法读取")).toHaveCount(0);
   await expect(recognition).toHaveValue("B");
   await page.unroute(overviewRoute);
+  // The recovered background read rebuilt the detail body under the card, so
+  // the original continue link was replaced by the same Task's new one.
+  await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
+  expect(new URL(page.url()).searchParams.get("dialog")).toBe("organize");
+  expect(new URL(page.url()).searchParams.get("tab")).toBe("records");
+  expect(new URL(page.url()).searchParams.get("rkind")).toBe("log");
   await reviewDialog.getByRole("button", { name: "关闭整理弹窗" }).click();
   const discard = page.getByRole("alertdialog");
   await expect(discard.getByText("有尚未保存的逐文件修正草稿。")).toBeVisible();
   await discard.getByRole("button", { name: "放弃草稿并关闭" }).click();
   await expect(reviewDialog).toHaveCount(0);
-  await continueLink.click();
+  // Closing restores the same Task, tab, filter, list column and the exact
+  // continuation entry that opened the card, even though the recovered read
+  // re-rendered that entry while the card was on top.
+  await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
+  expect(new URL(page.url()).searchParams.get("dialog")).toBeNull();
+  expect(new URL(page.url()).searchParams.get("tab")).toBe("records");
+  expect(new URL(page.url()).searchParams.get("rkind")).toBe("log");
+  await expect(recordsTab).toHaveAttribute("aria-current", "page");
+  await expect(recordsRegion.getByLabel("类型筛选")).toHaveValue("log");
+  await expect(listTable).toBeAttached();
+  const listBoxRecovered = await listTable.boundingBox();
+  expect(listBoxRecovered).not.toBeNull();
+  expect(
+    Math.abs((listBoxRecovered?.x ?? 0) - (listBoxBefore?.x ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs((listBoxRecovered?.width ?? 0) - (listBoxBefore?.width ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  const restoredContinue = detail.getByRole("link", { name: "继续整理" });
+  await expect(restoredContinue).toBeFocused();
+  expect(api.filter((entry) => entry.method === "POST").length).toBe(
+    beforeNavigationPosts,
+  );
+  // The restored entry is keyboard-reachable in place and opens the same plan.
+  await page.keyboard.press("Enter");
   await expect(reviewDialog).toBeVisible({ timeout: 30_000 });
   await expect(
     reviewDialog.getByRole("heading", { name: /第 1 \/ 1 个/ }),
@@ -5778,6 +5815,10 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
       .getByRole("dialog", { name: "运行详情" })
       .getByRole("link", { name: "继续整理" }),
   ).toBeFocused();
+  // The 操作记录 acceptance above is complete; the remaining baseline journey
+  // continues from the detail tab this fixture originally reviewed.
+  await detailTab.click();
+  await expect(detailTab).toHaveAttribute("aria-current", "page");
   await page
     .getByRole("dialog", { name: "运行详情" })
     .getByRole("link", { name: "继续整理" })
