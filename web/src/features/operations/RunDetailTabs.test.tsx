@@ -2089,6 +2089,263 @@ describe("selected-run detail tabs", () => {
     expect(successReads).toBe(stableSuccessReads);
   }, 15_000);
 
+  it("keeps another task's visited item pages out of the settled run invalidation (Task 59.3 A59-05)", async () => {
+    const user = userEvent.setup();
+    const overviewOne = overviewDocument();
+    const overviewOneCompleted = overviewDocument({
+      status: "completed",
+      total_items: 4,
+      completed_items: 4,
+      failed_items: 0,
+      processed_items: 4,
+      success_items: 4,
+      partial_items: 0,
+      uncertain_effect_items: 0,
+      missing_result_items: 0,
+      progress: progressDocument({
+        known_total: 4,
+        processed: 4,
+        dispositions: {
+          pending: 0,
+          active: 0,
+          waiting: 0,
+          success: 4,
+          skipped: 0,
+          failed_partial: 0,
+          ignored: 0,
+          cancelled: 0,
+        },
+        confirmed_success: 4,
+        uncertain_success: 0,
+        effect_counts: { verified_complete: 4 },
+        results_total: 4,
+        attachment_steps: 0,
+      }),
+    });
+    const overviewTwo = overviewDocument({
+      run_id: "task-002",
+      task_id: "task-002",
+      source_scope: "Shows",
+      current_stage: "organizing",
+      total_items: 1,
+      completed_items: 0,
+      failed_items: 0,
+      processed_items: 0,
+      success_items: 0,
+      partial_items: 0,
+      uncertain_effect_items: 0,
+      missing_result_items: 0,
+      progress: progressDocument({
+        kind: "organize",
+        known_total: 1,
+        processed: 0,
+        dispositions: {
+          pending: 1,
+          active: 0,
+          waiting: 0,
+          success: 0,
+          skipped: 0,
+          failed_partial: 0,
+          ignored: 0,
+          cancelled: 0,
+        },
+        confirmed_success: 0,
+        uncertain_success: 0,
+        effect_counts: {},
+        results_total: 0,
+        attachment_steps: 0,
+      }),
+    });
+    const itemTwo = itemRow({
+      item_id: "item-two",
+      task_id: "task-002",
+      source_path: "shows/two.mkv",
+      status: "pending",
+      stage: "waiting",
+      destination_path: null,
+      execution_status: null,
+    });
+    let overviewOneReads = 0;
+    let taskTwoSuccessReads = 0;
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/auth/principal") {
+        return jsonResponse({ principal_id: "test-principal" });
+      }
+      if (url.startsWith("/api/operations/runs?")) {
+        return jsonResponse({
+          items: [overviewOne, overviewTwo],
+          limit: 20,
+          status: null,
+          command: null,
+          q: null,
+          from: null,
+          to: null,
+          attention: false,
+          total: 2,
+          truncated: false,
+          status_counts: { running: 2, completed: 0 },
+          attention_count: 0,
+          population: "unified job/task run inventory",
+          sideEffects: "none",
+          previous_cursor: null,
+          next_cursor: null,
+        });
+      }
+      if (url === "/api/operations/runs/task-001") {
+        overviewOneReads += 1;
+        return jsonResponse(
+          overviewOneReads === 1 ? overviewOne : overviewOneCompleted,
+        );
+      }
+      if (url === "/api/operations/runs/task-002") {
+        return jsonResponse(overviewTwo);
+      }
+      if (url.startsWith("/api/operations/runs/task-002/items?")) {
+        const status = new URLSearchParams(url.split("?")[1] ?? "").get(
+          "status",
+        );
+        if (status === "success") {
+          taskTwoSuccessReads += 1;
+          return jsonResponse({
+            ...itemsPageDocument({
+              run_id: "task-002",
+              task_id: "task-002",
+              filter: { status: "success" },
+              items: [],
+              total: 1,
+              matching_total: 0,
+              dispositions: {
+                pending: 1,
+                active: 0,
+                waiting: 0,
+                success: 0,
+                skipped: 0,
+                failed_partial: 0,
+                ignored: 0,
+                cancelled: 0,
+              },
+              uncertain_success: 0,
+            }),
+          });
+        }
+        return jsonResponse(
+          itemsPageDocument({
+            run_id: "task-002",
+            task_id: "task-002",
+            items: [itemTwo],
+            total: 1,
+            matching_total: 1,
+            dispositions: {
+              pending: 1,
+              active: 0,
+              waiting: 0,
+              success: 0,
+              skipped: 0,
+              failed_partial: 0,
+              ignored: 0,
+              cancelled: 0,
+            },
+            uncertain_success: 0,
+          }),
+        );
+      }
+      if (url.startsWith("/api/operations/runs/task-001/items")) {
+        return jsonResponse(itemsPageDocument());
+      }
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { queryClient, router } = renderApp("/operations?run=task-002");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const taskTwoItems = () =>
+      within(detail).getByRole("region", { name: "主条目" });
+    await within(detail).findByText("two.mkv");
+    await user.selectOptions(
+      within(taskTwoItems()).getByLabelText("状态筛选"),
+      "success",
+    );
+    await waitFor(() =>
+      expect(
+        within(taskTwoItems()).getByText("当前筛选没有条目。"),
+      ).toBeVisible(),
+    );
+    expect(taskTwoSuccessReads).toBe(1);
+    await user.selectOptions(
+      within(taskTwoItems()).getByLabelText("状态筛选"),
+      "all",
+    );
+    await waitFor(() =>
+      expect(
+        within(taskTwoItems()).getByRole("button", {
+          name: /two\.mkv，待处理；查看证据/,
+        }),
+      ).toBeVisible(),
+    );
+
+    // Switch to the other Task's real detail address and settle it.
+    await act(async () => {
+      await router.navigate({
+        to: "/operations",
+        search: { run: "task-001" },
+      });
+    });
+    await waitFor(() =>
+      expect(router.history.location.search).toContain("run=task-001"),
+    );
+    // A different selected run remounts the detail card, so the previous
+    // element is detached; read the replacement card itself.
+    const taskOneDetail = await screen.findByRole("dialog", {
+      name: "运行详情",
+    });
+    await within(taskOneDetail).findByText("a.mkv");
+    await act(async () => {
+      await queryClient.refetchQueries({
+        queryKey: [runOverviewQueryKey, "task-001"],
+        exact: true,
+      });
+    });
+    await waitFor(
+      () =>
+        expect(
+          within(taskOneDetail).getByRole("heading", {
+            name: "流程已完成",
+          }),
+        ).toBeVisible(),
+      { timeout: 5_000 },
+    );
+    expect(taskTwoSuccessReads).toBe(1);
+
+    // Returning to the still-running Task reads its own pre-settlement cache:
+    // the other Task's terminal prefix was never invalidated.
+    await act(async () => {
+      await router.navigate({
+        to: "/operations",
+        search: { run: "task-002" },
+      });
+    });
+    const taskTwoDetail = await screen.findByRole("dialog", {
+      name: "运行详情",
+    });
+    const returnedItems = () =>
+      within(taskTwoDetail).getByRole("region", { name: "主条目" });
+    await within(taskTwoDetail).findByText("two.mkv");
+    await user.selectOptions(
+      within(returnedItems()).getByLabelText("状态筛选"),
+      "success",
+    );
+    await waitFor(() =>
+      expect(
+        within(returnedItems()).getByText("当前筛选没有条目。"),
+      ).toBeVisible(),
+    );
+    expect(taskTwoSuccessReads).toBe(1);
+  }, 15_000);
+
   it("reads flow status, processed range and independent file results without standing tutorials", async () => {
     stubDetailJourney();
     authStore.setToken(TOKEN);
