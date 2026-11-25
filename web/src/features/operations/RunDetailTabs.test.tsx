@@ -1225,6 +1225,201 @@ describe("selected-run detail tabs", () => {
     expect(rowButton).toHaveFocus();
   });
 
+  it("reads this exact item page once more when the open detail reaches a terminal flow (Task 59.3)", async () => {
+    const runningOverview = overviewDocument({
+      total_items: 1,
+      completed_items: 0,
+      failed_items: 0,
+      processed_items: 0,
+      success_items: 0,
+      partial_items: 0,
+      uncertain_effect_items: 0,
+      missing_result_items: 0,
+      progress: progressDocument({
+        known_total: 1,
+        processed: 0,
+        dispositions: {
+          pending: 1,
+          active: 0,
+          waiting: 0,
+          success: 0,
+          skipped: 0,
+          failed_partial: 0,
+          ignored: 0,
+          cancelled: 0,
+        },
+        confirmed_success: 0,
+        uncertain_success: 0,
+        effect_counts: {},
+        results_total: 0,
+        attachment_steps: 0,
+      }),
+    });
+    const completedOverview = overviewDocument({
+      status: "completed",
+      total_items: 1,
+      completed_items: 1,
+      failed_items: 0,
+      processed_items: 1,
+      success_items: 1,
+      partial_items: 0,
+      uncertain_effect_items: 0,
+      missing_result_items: 0,
+      progress: progressDocument({
+        known_total: 1,
+        processed: 1,
+        dispositions: {
+          pending: 0,
+          active: 0,
+          waiting: 0,
+          success: 1,
+          skipped: 0,
+          failed_partial: 0,
+          ignored: 0,
+          cancelled: 0,
+        },
+        confirmed_success: 1,
+        uncertain_success: 0,
+        effect_counts: { verified_complete: 1 },
+        results_total: 1,
+        attachment_steps: 0,
+      }),
+    });
+    let overviewReads = 0;
+    let itemsReads = 0;
+    let releaseInitialItems: (() => void) | undefined;
+    const initialItemsGate = new Promise<void>((resolve) => {
+      releaseInitialItems = resolve;
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/auth/principal") {
+        return jsonResponse({ principal_id: "test-principal" });
+      }
+      if (url.startsWith("/api/operations/runs?")) {
+        return jsonResponse({
+          items: [overviewReads === 0 ? runningOverview : completedOverview],
+          limit: 20,
+          status: null,
+          command: null,
+          q: null,
+          from: null,
+          to: null,
+          attention: false,
+          total: 1,
+          truncated: false,
+          status_counts: { running: 1 },
+          attention_count: 0,
+          population: "unified job/task run inventory",
+          sideEffects: "none",
+          previous_cursor: null,
+          next_cursor: null,
+        });
+      }
+      if (url === "/api/operations/runs/task-001") {
+        overviewReads += 1;
+        return jsonResponse(
+          overviewReads === 1 ? runningOverview : completedOverview,
+        );
+      }
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
+        itemsReads += 1;
+        if (itemsReads === 1) {
+          // The initial page settles after three seconds, so its own next
+          // poll is scheduled after the overview's five-second terminal read.
+          await initialItemsGate;
+          return jsonResponse(
+            itemsPageDocument({
+              items: [
+                itemRow({
+                  status: "pending",
+                  stage: "waiting",
+                  destination_path: null,
+                  execution_status: null,
+                }),
+              ],
+              total: 1,
+              matching_total: 1,
+              dispositions: {
+                pending: 1,
+                active: 0,
+                waiting: 0,
+                success: 0,
+                skipped: 0,
+                failed_partial: 0,
+                ignored: 0,
+                cancelled: 0,
+              },
+              uncertain_success: 0,
+            }),
+          );
+        }
+        return jsonResponse(
+          itemsPageDocument({
+            items: [
+              itemRow({
+                destination_path: "Movies/a.mkv",
+                checkpoint: {
+                  status: "success",
+                  stage: "completed",
+                  raw_stage: "organize",
+                  blocker_kind: null,
+                  blocker_id: null,
+                  effect_certainty: "verified_complete",
+                  retry_safety: "safe",
+                  refusal_reason: null,
+                  checkpoint_version: "v2",
+                  permitted_action_ids: [],
+                },
+              }),
+            ],
+            total: 1,
+            matching_total: 1,
+            dispositions: {
+              pending: 0,
+              active: 0,
+              waiting: 0,
+              success: 1,
+              skipped: 0,
+              failed_partial: 0,
+              ignored: 0,
+              cancelled: 0,
+            },
+            uncertain_success: 0,
+          }),
+        );
+      }
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    window.setTimeout(() => releaseInitialItems?.(), 3_000);
+    // The row first reads its pre-terminal state; its own poll is due after
+    // the overview turns terminal.
+    expect(
+      await within(items).findByText("待处理", {}, { timeout: 5_000 }),
+    ).toBeVisible();
+    expect(itemsReads).toBe(1);
+
+    // The overview's own 5s poll reads the durable completion, and the same
+    // exact page is re-read once before activity settles. The row updates in
+    // place, with no filter/cursor change and no operator action.
+    await waitFor(
+      () => expect(within(items).getByText("已验证成功")).toBeVisible(),
+      { timeout: 8_000 },
+    );
+    expect(itemsReads).toBe(2);
+    expect(
+      within(detail).getByRole("heading", { name: "流程已完成" }),
+    ).toBeVisible();
+  }, 15_000);
+
   it("reads flow status, processed range and independent file results without standing tutorials", async () => {
     stubDetailJourney();
     authStore.setToken(TOKEN);

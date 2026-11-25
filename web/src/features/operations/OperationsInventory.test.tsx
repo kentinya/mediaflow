@@ -1139,6 +1139,110 @@ describe("Operations run inventory landing", () => {
     expect(backend.calls.posts).toEqual([]);
   });
 
+  it("does not count a preparation failure as an executed file before confirmation (Task 59.3)", async () => {
+    const backend = stubOrganizeHost({
+      overview: {
+        status: "running",
+        current_stage: null,
+        total_items: 2,
+        completed_items: 0,
+        processed_items: 2,
+        attention: true,
+        problem_types: ["metadata"],
+        problem_file_counts: {
+          recognition: 0,
+          metadata: 1,
+          classification: 0,
+          conflict: 0,
+        },
+        progress: progressDocument({
+          known_total: 2,
+          processed: 2,
+          dispositions: {
+            pending: 0,
+            active: 0,
+            waiting: 1,
+            success: 0,
+            skipped: 0,
+            failed_partial: 1,
+            ignored: 0,
+            cancelled: 0,
+          },
+          effect_counts: {},
+          results_total: 0,
+        }),
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const progress = await within(detail).findByRole("region", {
+      name: "处理进度",
+    });
+    // The failed sibling settled during metadata preparation and has no
+    // Result row; only the still-waiting sibling is part of the confirmation.
+    expect(
+      await within(progress).findByText(
+        "尚未执行文件操作，暂无文件结果；1 个文件等待确认，确认前不执行文件操作。",
+      ),
+    ).toBeVisible();
+    expect(within(progress).queryByText(/已执行 1 个文件/)).toBeNull();
+    expect(backend.calls.posts).toEqual([]);
+  });
+
+  it("does not call a recorded no-operation result an executed file (Task 59.3)", async () => {
+    const backend = stubOrganizeHost({
+      overview: {
+        status: "running",
+        current_stage: null,
+        total_items: 2,
+        completed_items: 0,
+        processed_items: 2,
+        attention: true,
+        problem_types: ["metadata"],
+        problem_file_counts: {
+          recognition: 0,
+          metadata: 1,
+          classification: 0,
+          conflict: 0,
+        },
+        progress: progressDocument({
+          known_total: 2,
+          processed: 2,
+          dispositions: {
+            pending: 0,
+            active: 0,
+            waiting: 1,
+            success: 0,
+            skipped: 0,
+            failed_partial: 1,
+            ignored: 0,
+            cancelled: 0,
+          },
+          effect_counts: { none: 1 },
+          results_total: 1,
+        }),
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const progress = await within(detail).findByRole("region", {
+      name: "处理进度",
+    });
+    // A formal Result can prove a refused/skipped outcome without any file
+    // operation; it stays a recorded result, never an executed file count.
+    expect(
+      await within(progress).findByText(
+        "已有文件结果，本次未执行文件操作；1 个文件等待确认，确认前不执行文件操作。",
+      ),
+    ).toBeVisible();
+    expect(within(progress).queryByText(/已执行 1 个文件/)).toBeNull();
+    expect(backend.calls.posts).toEqual([]);
+  });
+
   it("states an already-admitted confirmation and a still-waiting sibling separately (Task 59.2 AC-04/AC-05)", async () => {
     const overview = runDocument({
       status: "running",

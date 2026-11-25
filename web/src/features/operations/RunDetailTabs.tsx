@@ -1053,11 +1053,15 @@ function ProgressCard({
           ? `（分析计数${waitingNote}）`
           : `（已处理范围${waitingNote}）`
       : "";
-  // Executed files already have their own settled disposition and result;
-  // the remaining confirmation is named separately so one full bar can never
-  // imply that those waiters were executed.
-  const executedFiles =
-    progress.dispositions.success + progress.dispositions.failed_partial;
+  // A formal Result row proves execution; a preparation/analysis failure can
+  // settle as failed/partial without one. A skipped or pre-mutation result has
+  // no file operation, so only the latest mutation-attempt effect facets name
+  // the executed files. The remaining confirmation is named separately so one
+  // full bar can never imply that those waiters were executed.
+  const executedFiles = Object.entries(progress.effectCounts)
+    .filter(([certainty]) => certainty !== "none")
+    .reduce((sum, [, count]) => sum + count, 0);
+  const recordedResults = progress.resultsTotal;
   const pendingConfirmation =
     phase === "confirming" && confirmable !== null && confirmable > 0
       ? confirmable
@@ -1113,7 +1117,9 @@ function ProgressCard({
             <p className="mf-dashboard-meta">
               {executedFiles > 0
                 ? `已执行 ${executedFiles} 个文件；`
-                : "尚未执行文件操作，暂无文件结果；"}
+                : recordedResults > 0
+                  ? "已有文件结果，本次未执行文件操作；"
+                  : "尚未执行文件操作，暂无文件结果；"}
               {pendingConfirmation} 个文件等待确认，确认前不执行文件操作。
             </p>
           )}
@@ -1357,6 +1363,21 @@ function RunItemsSection({
   );
   const evidenceItem = state.evidenceItem;
   const evidencePanelId = useId();
+  // The last active poll can precede the durable item update. When the same
+  // detail reads its terminal flow, repeat this exact page/filter once before
+  // settling, cancelling any in-flight poll so the row reads post-terminal
+  // facts. The ref holds only the previous activity of this same run; remounts
+  // from filters/pages keep their own fresh read.
+  const previousActivity = useRef({ runId, active });
+  const refetchItems = query.refetch;
+  useEffect(() => {
+    const previous = previousActivity.current;
+    previousActivity.current = { runId, active };
+    if (previous.runId !== runId || !previous.active || active) {
+      return;
+    }
+    void refetchItems({ cancelRefetch: true });
+  }, [active, refetchItems, runId]);
   const itemsPage =
     query.data !== undefined && query.data.ok ? query.data.model : null;
   // The evidence belongs under its own row only when this exact server page
