@@ -1,13 +1,14 @@
 # Task 59.3 — 任务详情状态、进度与文件行
 
-Next Action: DEVELOPER IMPLEMENTS THE APPROVED RUN DETAIL STATUS AND FILE ROW PRESENTATION
+Next Action: DEVELOPER CORRECTS TASK DETAIL PREPARATION AND CONFIRMATION PROGRESS
 
 ```text
 Task ID: 59.3
 Task Type: SLICE
 Parent Slice: 59
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: d1ea5f667c5ebc08e1a6835030197c1724f4f4d2
+Reviewed Implementation Head: 91f4ebebee7033799d09b89cc722aff37dfc4155
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
@@ -31,10 +32,35 @@ Implementation Authorization: SLICE 59 RO-4 / AC-06 TASK DETAIL STATUS AND FULL-
 `.git/validation-evidence/d1ea5f667c5ebc08e1a6835030197c1724f4f4d2/b-task59.1-review/`。
 上轮阻塞见 `f97c9199:TASK.md`。
 
+**Task 59.3 — FIX REQUIRED（P1，RO-4 / AC-06）。** B 从干净的 `main` 审查完整 Task
+`d1ea5f667c5ebc08e1a6835030197c1724f4f4d2..91f4ebebee7033799d09b89cc722aff37dfc4155`
+及完整 Slice `212acdef5d97c14a01353b22c103d44b911d6147..91f4ebebee7033799d09b89cc722aff37dfc4155`。
+
+- **已通过。** 同一 `Two.2002.mkv` 任务从未确认到真实 Worker 完成，正常完成首区只显示一个
+  「流程已完成」，紧接进度，正式结果独立显示。任务中心多文件用例验证整行可点击，切换只展开
+  准确文件。浏览器验证 Enter、空格、键盘焦点和筛选外证据。390 px 实点触控验证展开、切换和收起。
+- **当前阻塞。** 从 Files 发起整理后立即关闭，打开原任务详情。准备仍在排队，Worker 尚未运行，
+  计划也尚未生成。首屏标题却为「已受理，等待执行」，提示执行后才记录结果。用户此时等的是
+  准备和分析，明确确认前尚无执行受理。准备完成后，单文件待确认的状态标题正确，但满格进度仍为
+  「已处理 1 / 1 个主条目（整理计数…）」，进度条也只叫「处理进度」。该数包括未确认文件，
+  此时文件结果为零。已执行第一部、第二部仍待确认的真实任务同样显示满格 2 / 2，实际仅一份结果。
+  `runStatusHeadline` 的 pending/排队分支直接描述执行，`ProgressCard` 用 `kind=organize` 给包含
+  待确认的流程计数命名，两个位置都缺少已经读到的 Files 准备阶段。
+  [标题选择](web/src/features/operations/OperationsLanding.tsx#L2010) ·
+  [进度口径](web/src/features/operations/RunDetailTabs.tsx#L963)
+
+**本轮实跑。** 治理、完整区间差异、类型、构建、改动文件 ESLint 和 Prettier 通过。
+130 项组件及 52 项浏览器测试通过，原生首跑 7 项通过。其中实际状态和整行触控补验见本机
+`.git/validation-evidence/91f4ebebee7033799d09b89cc722aff37dfc4155/b-task59.3-review/`。
+原生失败中，流程失败用例仍找旧「失败」短标签，真实页面显示「任务流程失败」。目的地冲突用例
+首跑在完成后短暂读到待处理行，代码与 Task Base 相同的 `4788fb0e` 和当前候选独立复跑均通过。
+Unicode 用例改用独立配置后进入 Files 概览，但仍等旧逐项标题，未完成验收。首次组合触控取证
+超时，复用真实任务入口在 390 px 单独复验通过。
+
 **Slice 59 仍为 FIX REQUIRED。** RO-1 的准备、概览和 100/101 文件边界，RO-2 的四类决定及回落，
 RO-3 的整批复核、明确确认和原任务交接均通过。RO-4 原有共用操作区、原位续作焦点及四类恢复
 沿用 Task 59.2 PASS，见 `171b3de6:TASK.md`。Task 59.3 保留原 Base，验收 A 在 `a14edf20` 批准的
-状态区与在 `45d89ce3` 批准的文件整行展开。两个合同都提交在实现之前。
+状态区与在 `45d89ce3` 批准的文件整行展开。当前返工集中于状态区的准备阶段和进度口径。
 [Slice 验收](SLICE.md#acceptance-criteria)
 
 ## 目标与真实入口
@@ -64,14 +90,18 @@ B 在 `45d89ce3` 从任务中心列表打开已有真实多条目任务。点 `A
 1. 收拢 `OperationsLanding.tsx` 中的 `runStatusHeadline` 和 `RunFlowSummary`。进度上方用
    一个标题表达实际状态或阶段。正常完成用「流程已完成」，直接接进度和文件结果。混合结果、
    恢复成功、失败、取消、效果待核对和缺失结果仍呈现各自结论、具体原因与适用入口。
-2. 「等待确认」从同一任务的当前读回取得范围，提示与共用「继续整理」的实际资格一致。
+2. Files 未生成方案时使用现有 `linkedDiscoveryQuery` 的真实阶段。排队、准备、分析和确认后的执行
+   排队各显示实际状态。准备读回产生新阶段或新方案时，联动现有状态刷新更新同一关联读。
+   「等待确认」从同一任务的当前读回取得范围，提示与共用「继续整理」的实际资格一致。
    `progress.dispositions.waiting` 还包含等待识别、元数据和分类，`filesPreparation.continuable`
    表示可打开原卡。遇到混合任务时，从现有问题读回及确切关联的准备和当前方案取得可确认范围。
-   复用原准备／方案查询与既有确认资格。只有合计或读取暂不可用时，说明能核实的等待状态和
+   复用原准备／方案查询与既有确认资格。历史或当前不能确认的方案保留实际原因和下一步。
+   只有合计或读取暂不可用时，说明能核实的等待状态和
    当前合法动作。已执行的兄弟文件继续报告自己的结果。
 3. 在 `RunDetailTabs.tsx` 的 `ProgressCard` 按实际阶段说明进度。现有 `processed` 会计入已进入
-   等待的条目，`kind=organize` 也会出现在等待确认阶段。准备或分析已满时标明其口径和待确认状态，
-   执行阶段继续使用后端真实进度，证据缺失时保留未知说明。独立文件结果继续采用既有正式结果及
+   等待的条目，`kind=organize` 也会出现在等待确认阶段。准备或分析已满时在可见文字和进度条
+   的可访问名称中标明实际口径。混合任务分别说明已执行结果和仍待确认范围，执行阶段继续使用
+   后端真实进度，证据缺失时保留未知说明。独立文件结果继续采用既有正式结果及
    效果确定性。范围限 Web 详情正文，沿用持久状态、API、动作权限、顶栏操作、页签、原位续作和记录。
    [状态区](web/src/features/operations/OperationsLanding.tsx#L1883) ·
    [进度与文件结果](web/src/features/operations/RunDetailTabs.tsx#L952)
@@ -90,6 +120,10 @@ B 在 `45d89ce3` 从任务中心列表打开已有真实多条目任务。点 `A
 
 ## 验收与测试
 
+- [ ] 从 Files 发起准备并关闭弹窗，在 Worker 运行之前从任务列表打开原任务。核对标题明确为
+  等待准备或实际准备阶段，执行提交和正式结果为零。保留详情等待 Worker 发布方案，核对同一
+  详情按当前读回从准备过渡，按适用权限提供核对入口。用两项先确认一项的原任务核对剩余范围，
+  确认后已有结果和待确认进度各自清楚。
 - [ ] 从实际 Files 留下已分析但未执行的方案，从任务中心打开同一任务。桌面和 390 px 核对单一
   「等待确认」、准确范围、合法下一步和进度口径。沿原按钮继续并明确确认，读回同一任务。
   正常完成只显示一个「流程已完成」，紧接相应进度和正式结果。
@@ -103,7 +137,7 @@ B 在 `45d89ce3` 从任务中心列表打开已有真实多条目任务。点 `A
   后回到对应行，草稿与原筛选分页保持。核对从行或独立证据关闭的焦点。实走合法的保存、分析、
   同页摘要和确认，内部操作对应同一个文件、详情保持展开。已结束文件仍可查证据与历史。
 - [ ] Developer 在 `web/` 运行类型、构建、改动文件 ESLint／Prettier 和下列受影响测试。更新
-  受新文案和入口影响的定位，按真实文件名找到行按钮。B 审查完整 Task 和 Slice，按 T3 从真实
+  旧流程失败短标签及 Files 概览入口等定位，按真实文件名找到行按钮。B 审查完整 Task 和 Slice，按 T3 从真实
   入口对照两个批准预览，核对确认前后、异常结果、两行切换、证据回迁和原生恢复，再补齐适用的
   Slice 最终门禁。各轮测试墙钟低于本轮用时一半。
 
@@ -111,7 +145,8 @@ B 在 `45d89ce3` 从任务中心列表打开已有真实多条目任务。点 `A
 npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/RunDetailTabs.test.tsx
 npm run test:e2e -- tests/e2e/task-center-layout.spec.ts tests/e2e/operations.spec.ts
 npm run test:e2e -- tests/e2e/manual-organize.spec.ts --grep 'a terminal failed Task states its durable failure'
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/task-flow.python.spec.ts tests/e2e/manual-organize-dialog.python.spec.ts tests/e2e/operations-principal-identity.python.spec.ts --grep 'initial manual preparation remains reachable in place|the selected run detail reads progress|21-file recovery pages preserve|native Metadata correction|a mixed file population completes|a saved flow failure stays authoritative|an acknowledged cancellation|real destination conflict is decided|101-file directory|a Unicode principal reconciles'
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/task-flow.python.spec.ts tests/e2e/manual-organize-dialog.python.spec.ts --grep 'initial manual preparation remains reachable in place|second confirmation on the same Task|the selected run detail reads progress|21-file recovery pages preserve|native Metadata correction|a mixed file population completes|a saved flow failure stays authoritative|an acknowledged cancellation|real destination conflict is decided|101-file directory'
+npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts
 ```
 
 [开发与验收分工](docs/development-workflow.md#6-test-levels)
