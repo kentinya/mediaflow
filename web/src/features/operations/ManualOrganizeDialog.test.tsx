@@ -131,6 +131,8 @@ function makeBackend() {
     // Hold the bounded settled-record reads to prove a late read never moves
     // the operator or discards the current file's draft.
     holdSettledReads: false as boolean,
+    // The same Task's settled-record read is temporarily unavailable.
+    failSettledRecords: false as boolean,
     // The backend saved the skip but its response never reaches the browser.
     loseConflictDecisionResponse: false as boolean,
     failMetadataDecision: false as boolean,
@@ -1629,6 +1631,9 @@ function makeBackend() {
       );
       if (runItemsMatch !== null && method === "GET") {
         calls.settledRecordsReads += 1;
+        if (state.failSettledRecords) {
+          return jsonResponse({ error: { code: "unavailable" } }, 503);
+        }
         if (state.holdSettledReads) {
           await new Promise<void>((resolve) => {
             settledReadReleases.push(resolve);
@@ -4945,5 +4950,57 @@ describe("ManualOrganizeDialog", () => {
     ).toBeVisible();
     const currentRow = within(overview).getByText("Movie.01.mkv").closest("li");
     expect(within(currentRow as HTMLElement).getByText("待处理")).toBeVisible();
+  }, 30_000);
+
+  it("Task59.1 A59-07 keeps the same-task read feedback and a legal re-read", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.failSettledRecords = true;
+        value.state.durableSettledItems = [
+          {
+            itemId: "settled-item-1",
+            status: "ignored",
+            sourcePath: `Movies/${filename(0)}`,
+            taskId: "organize-task-1",
+          },
+        ];
+      },
+      undefined,
+      "overview",
+    );
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    expect(
+      await within(overview).findByText("暂时无法读取原任务的已结算记录"),
+    ).toBeVisible();
+    expect(overview).toHaveTextContent(/原任务 organize-task-1/);
+    // The readable plan row stays, but without inventing its durable record.
+    const planRow = within(overview).getByText("Movie.01.mkv").closest("li");
+    expect(within(planRow as HTMLElement).getByText("已纳入")).toBeVisible();
+    expect(within(planRow as HTMLElement).queryByText("已有记录")).toBeNull();
+    const reread = within(overview).getByRole("button", {
+      name: "重新读取已结算记录",
+    });
+
+    backend.state.failSettledRecords = false;
+    await user.click(reread);
+    await waitFor(() =>
+      expect(
+        within(overview).queryByText("暂时无法读取原任务的已结算记录"),
+      ).toBeNull(),
+    );
+    const row = within(overview).getByText("Movie.01.mkv").closest("li");
+    await waitFor(() =>
+      expect(within(row as HTMLElement).getByText("已有记录")).toBeVisible(),
+    );
+    expect(
+      within(overview).getAllByRole("button", { name: "查看 Movie.01.mkv" }),
+    ).toHaveLength(1);
+    expect(
+      within(row as HTMLElement).getByText(/该文件已忽略，未纳入本次整理/),
+    ).toBeVisible();
   }, 30_000);
 });
