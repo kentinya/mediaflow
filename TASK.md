@@ -1,10 +1,33 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Next Action: A REVIEWS SLICE 59
+Next Action: A REVIEWS THE VERIFIED TASK 59.3 PROGRESS DISPLAY GAP
 
-Task 59.3 **PASS**。Slice 59 **READY FOR A REVIEW**。
+Task 59.3 补查结论 **FIX REQUIRED**。待 A 将进度显示差异退回原 Task。
 
 ## B 复核与 Slice 59 交接
+
+### Task 59.3 补查 — 任务详情进度显示
+
+**FIX REQUIRED（P1，RO-4 / AC-06）。** 用户从现有任务中心打开已生成方案的原任务，
+状态区显示「等待确认」，下方仍有一条填满的蓝色进度条。从同一任务入口查看已完成样本，也有
+同样的条形控件。用户确认的精简预览在两个状态里均用一行文字显示处理数量。B 前次将条形控件
+作为进度事实保留，漏验了这处视觉差异。在候选 `6c54559b` 的 390 px 试用站从任务中心详情
+复现了两个状态，均显示一条进度条。原生日志和截图在本机
+`.git/validation-evidence/6c54559b054d75682fc9ead615191d6c0b351285/b-task59.3-progress-presentation/`。
+[现有进度显示](web/src/features/operations/RunDetailTabs.tsx#L1115) · [合同](SLICE.md#acceptance-criteria)
+
+**退回后的 Developer 指导。** 在 Web 任务详情的 `ProgressCard` 移除条形控件和仅为条宽计算的
+显示逻辑，将当前阶段的已处理数量和总数作为文字呈现。等待确认时沿用准备与分析计数、待确认范围
+及合法下一步。任务完成时，进度文字紧接状态标题，后接独立文件结果。未知总数、错误和异常仍显示
+适用说明。范围限任务中心运行详情正文。
+
+复用原生「从 Files 留下方案 → 任务中心继续整理 → 同一任务完成」用例，在桌面和 390 px 核对
+两个状态都以文字给出进度，复验未知总数与混合结果。把 `OperationsInventory.test.tsx` 现有
+进度条断言改为真实口径和可见进度文字的断言，并检查详情中没有条形控件。Developer 运行受影响
+组件和浏览器用例，B 在新候选复审原 Task 59.3 的完整区间。原 Task Base 仍为
+`d1ea5f667c5ebc08e1a6835030197c1724f4f4d2`。
+
+### 此前 B 交接（`e0e45bb6`）
 
 ```text
 Slice: 59 — 手动整理流程与任务详情弹窗正文
