@@ -4,14 +4,14 @@
 Slice ID: 59
 Name: Files Manual Organize Journey and Task Detail Content
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: 212acdef5d97c14a01353b22c103d44b911d6147
 Implementation Head: 6c54559b054d75682fc9ead615191d6c0b351285
 Working Branch: main
-Development Authorization: TASKS 59.1, 59.2 AND 59.3 ACCEPTED BY B
+Development Authorization: ORIGINAL TASK 59.1 AND 59.3 CORRECTION SCOPE; B PLAN UPDATE PENDING
 Risk: Medium
 Target Test Level: T3
-Next Action: A REVIEWS ENTIRE SLICE BASE..IMPLEMENTATION HEAD
+Next Action: B PLANS CORRECTIONS FOR A59-04 THROUGH A59-06 IN THE ORIGINAL TASKS
 ```
 
 ## 授权、基线与设计依据
@@ -268,8 +268,8 @@ TARGET `V2-OPS-020/021` 只更新上述两处呈现，细化 `V2-OPS-018/019` �
 [任务中心布局回归](web/tests/e2e/task-center-layout.spec.ts) ·
 [原生 Task 回归](web/tests/e2e/operations-inventory.python.spec.ts)
 
-B 已验收 Task 59.1、59.2 和 59.3，并复核完整 Slice。
-[B 交接记录](TASK.md#b-复核与-slice-59-交接)涵盖合同结果、候选和验收证据。
+B 在 `e0e45bb6` 交接了 Task 59.1、59.2 和 59.3 的验收结果，随后复验出详情进度显示差异。
+[B 交接与补查](TASK.md#b-复核与-slice-59-交接)保留该候选的合同结果和证据。
 
 ## A Final Review — FIX REQUIRED
 
@@ -348,3 +348,35 @@ AC-06 逐屏复验，再提交完整 Slice 验收。对照片位于本机
 成功说明。用户确认上述精简预览。B 继续独立复核既有 Task 59.1 候选，并为 RO-4 和 AC-06 的
 新增验收范围安排 Task，沿用既有任务详情入口和真实任务读回。此前 Task 59.2 的通过证据适用
 于其原批准范围。
+
+### A 独立复验 — 6c54559b / FIX REQUIRED
+
+A 审查 `212acdef5d97c14a01353b22c103d44b911d6147..6c54559b054d75682fc9ead615191d6c0b351285`。
+复验开始时 `main` 为 `f2cd654e934477f9d09e769a413e8307530fe299`，工作区与暂存区干净，
+治理与完整区间差异检查通过。候选之后的提交仅修改管理文档。8787 和 8788 仍提供 `171b3de6`
+的静态构建。以下阻塞均以独立环境中经过摘要核对的 `6c54559b` 构建复现。
+
+- **A59-04（P1，RO-4 / AC-06，Task 59.3）。** 经 Files 生成未确认方案，从任务中心打开同一任务，
+  再经原入口确认并等待正式结果。桌面和 390 px 在等待确认和流程已完成时均显示满格进度条。
+  单一状态标题、准备与分析口径、待确认范围及文件结果已有实现。对照用户确认的预览，进度行仍需
+  按实际阶段显示为文字，并保留未知总数和异常说明。
+  [任务进度](web/src/features/operations/RunDetailTabs.tsx#L1115)
+- **A59-05（P1，RO-4 / AC-04，Task 59.3）。** 从任务中心打开正在执行的任务，先选文件状态筛选
+  「成功」，再切回「全部状态」。Worker 完成后任务详情显示「流程已完成」。再次选「成功」仍显示
+  「当前筛选没有条目」，浏览器复用了先前的空结果，服务端同一筛选已返回一项。点详情内「刷新」才出现
+  「已验证成功」。复验需覆盖任务结算时已访问过的筛选和分页，保留当前页签、筛选、证据位置和焦点。
+  [终态条目读回](web/src/features/operations/RunDetailTabs.tsx#L837)
+- **A59-06（P1，RO-2 / AC-06，Task 59.1）。** 从实际 Files 入口发起混合批量整理，从同一概览依次
+  打开识别、元数据候选及作品搜索修正、分类和冲突。真实决定、同任务重新分析、回概览和一次最终确认均
+  通过。正文仍把识别和候选铺成多栏，分类沿用旧决定卡；作品搜索在桌面将作品类型放在年份前，冲突重复
+  展示目标、说明和方案卡。对照已批准预览，文件及当前问题应优先，真实选项逐行显示，搜索字段按标题、
+  年份、作品类型排列，已有目标集中展示，保存沿用固定底部操作区。收起重复说明及空方案占位，保留实际
+  影响、异常反馈、草稿、权限与同一任务回落。此验收使用 Files 发起的整理弹窗。
+  [Files 内恢复表单](web/src/features/operations/ManualOrganizeDialog.tsx#L4305)
+
+从任务中心四类问题列表独立打开五种决定场景，确认已实现行内纵向选项，分类重新分析后显示
+「新计划摘要（零变更）」和同文件的明确确认。任务详情共用顶栏操作、单一状态标题、整行展开的通过
+证据仍适用。Files 准备、概览、整批精确目标和提交的通过证据见原验收记录与本轮原生混合流程。
+本轮桌面与 390 px 实际页面、批准预览截图及真实读回日志位于本机
+`.git/validation-evidence/6c54559b054d75682fc9ead615191d6c0b351285/a-slice59-files-recovery-visual/`。
+B 在原 Task 59.1 和 59.3 中安排修正并独立复验，再提交完整 Slice 验收包。

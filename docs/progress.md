@@ -8,8 +8,8 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice 59](../SLICE.md) is **FIX REQUIRED** after A Final Review. Task 59.1 and Task 59.2 passed B
-review. B is updating [Task 59.3](../TASK.md) for the approved task detail status and file row.
+[Slice 59](../SLICE.md) is **FIX REQUIRED** after A Final Review of `6c54559b`. B owns the
+correction plans for the original Task 59.1 and Task 59.3. Task 59.2's accepted outcomes still apply.
 Slice 58 remains the latest accepted closure.
 
 ## Latest accepted closure — Slice 58
