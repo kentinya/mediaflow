@@ -179,6 +179,9 @@ function makeBackend() {
     // Previews whose Execute the backend durably admitted. A lost response
     // changes nothing about this record.
     admittedPreviewIds: [] as string[],
+    // The plan's library ids/Storage no longer agree with the live library
+    // reads, so the batch row must keep the exact verified Storage paths.
+    mismatchedLibraries: false as boolean,
   };
   const calls = {
     discoveryPosts: [] as Json[],
@@ -989,12 +992,35 @@ function makeBackend() {
               {
                 id: "library",
                 name: "资源库A",
-                storage_id: "local-1",
-                root_path: "/library",
+                storage_id: state.mismatchedLibraries
+                  ? "other-source"
+                  : "source",
+                root_path: state.mismatchedLibraries ? "Elsewhere" : "",
                 enabled: true,
               },
             ],
           },
+        });
+      }
+
+      if (url === "/api/media-libraries" && method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              id: "movies",
+              name: "电影库",
+              enabled: true,
+              rootPath: "Movies",
+              storage: {
+                id: state.mismatchedLibraries ? "other-target" : "target",
+                name: "Storage target",
+                type: "local",
+                readOnly: false,
+              },
+            },
+          ],
+          total: 1,
+          sideEffects: "none",
         });
       }
 
@@ -2555,8 +2581,24 @@ describe("ManualOrganizeDialog", () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      within(batchList).getByRole("button", { name: "查看 Movie.01.mkv" }),
+      within(batchList).getByText("Movie.01.mkv", {
+        selector: ".mf-organize-batch-file",
+      }),
     ).toBeVisible();
+    const batchFile = within(batchList).getByText("Movie.01.mkv", {
+      selector: ".mf-organize-batch-file",
+    });
+    expect(batchFile.closest("button")).toBeNull();
+    expect(batchList).toHaveTextContent("按当前方案");
+    expect(batchList).toHaveTextContent("来源 资源库A：Movies/Movie.01.mkv");
+    expect(batchList).toHaveTextContent("目标 电影库：Movie.01.mkv");
+    expect(
+      within(batchList).getByText("移动", {
+        selector: ".mf-organize-batch-operation",
+      }),
+    ).toBeVisible();
+    await user.click(batchFile);
+    expect(screen.getByRole("region", { name: "整批复核" })).toBeVisible();
     expect(
       within(card()).getByText(/暂不能确认：替换已有目标文件需要明确授权/),
     ).toBeVisible();
@@ -3338,7 +3380,9 @@ describe("ManualOrganizeDialog", () => {
     const listed = await screen.findByRole("region", {
       name: "来源与目标",
     });
-    expect(listed).toHaveTextContent(`来源 source:Movies/${filename(0)}`);
+    expect(listed).toHaveTextContent(`来源 资源库A：Movies/${filename(0)}`);
+    expect(listed).toHaveTextContent("目标 电影库：Movie.01.mkv");
+    expect(listed).toHaveTextContent("中文字幕（.zh.srt）");
     expect(listed).toHaveTextContent("附件 2 个");
     await user.click(
       within(listed).getByText(/展开核对来源、目标、操作与原因/),
@@ -3366,6 +3410,27 @@ describe("ManualOrganizeDialog", () => {
     );
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
+
+  it("keeps exact Storage paths when the reviewed library identity cannot be confirmed", async () => {
+    const user = userEvent.setup();
+    await openDialog(
+      user,
+      (value) => {
+        value.state.mismatchedLibraries = true;
+      },
+      [filename(0)],
+    );
+
+    await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    const listed = await screen.findByRole("region", {
+      name: "来源与目标",
+    });
+    expect(listed).toHaveTextContent("来源 source:Movies/Movie.01.mkv");
+    expect(listed).toHaveTextContent("目标 target:Movies/Movie.01.mkv");
+    expect(listed).not.toHaveTextContent("资源库A：");
+    expect(listed).not.toHaveTextContent("电影库：");
+  }, 20_000);
 
   it("Task59.1 Files keeps an unchecked ready sibling in the confirmable count", async () => {
     const user = userEvent.setup();

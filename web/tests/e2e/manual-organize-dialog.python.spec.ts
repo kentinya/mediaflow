@@ -3316,16 +3316,29 @@ test("Task59.1 Files opens the same preparation dialog as an overview, enters on
   });
   await expect(returnedRow).toBeFocused();
 
-  // The batch confirmation names the exact source and destination before the
-  // single explicit execution; nothing has been submitted or mutated.
+  // The batch confirmation names the reviewed library and relative path
+  // before the single explicit execution; nothing has been submitted or
+  // mutated. The selected file name itself is plain text, so clicking it
+  // cannot leave this review for the per-file page.
   await card.getByRole("button", { name: /整批复核/ }).click();
-  await expect(card.getByRole("region", { name: "整批复核" })).toBeVisible();
   const listed = card.getByRole("region", { name: "来源与目标" });
+  await expect(listed).toContainText("按当前方案");
   await expect(listed).toContainText(
-    `来源 source-storage:${READABILITY_DIALOG_DIRECTORY}/${READABILITY_DIALOG_FILE}`,
+    `来源 Unified media source：${READABILITY_DIALOG_DIRECTORY}/${READABILITY_DIALOG_FILE}`,
   );
-  await expect(listed).toContainText("target:");
+  await expect(listed).toContainText("目标 Movies：");
+  await expect(listed).not.toContainText("source-storage:");
+  await expect(listed).not.toContainText("media-target:");
   await expect(listed).not.toContainText("无关联附件");
+  const selectedName = listed
+    .locator(".mf-organize-batch-file")
+    .filter({ hasText: READABILITY_DIALOG_FILE });
+  await expect(selectedName).toBeVisible();
+  await expect(
+    listed.getByRole("button", { name: `查看 ${READABILITY_DIALOG_FILE}` }),
+  ).toHaveCount(0);
+  await selectedName.click();
+  await expect(card.getByRole("region", { name: "整批复核" })).toBeVisible();
   expect(
     commands.filter(
       (command) =>
@@ -3544,6 +3557,7 @@ test("Task59.1 manual organize readability: ten files keep an aligned batch summ
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expectReadableBatch(page, card, { selected: 10, skipped: 0 });
   const batch = card.getByRole("region", { name: "来源与目标" });
+  await expect(batch).toContainText("按当前方案");
   await expect(batch.locator(".mf-organize-batch-list > li")).toHaveCount(10);
   const rows = await batch
     .locator(".mf-organize-batch-list > li")
@@ -3551,18 +3565,37 @@ test("Task59.1 manual organize readability: ten files keep an aligned batch summ
       items.map((item) => {
         const file = item.querySelector(".mf-organize-batch-file");
         const operation = item.querySelector(".mf-organize-batch-operation");
+        const source = item.querySelector(".mf-organize-batch-source");
         const target = item.querySelector(".mf-organize-batch-target");
+        const icon = item.querySelector(".mf-organize-batch-file-icon");
         return {
           file: file?.textContent ?? "",
+          fileTag: file?.tagName ?? "",
           operation: operation?.textContent ?? "",
+          source: source?.textContent ?? "",
           target: target?.textContent ?? "",
+          icon: icon?.textContent ?? "",
         };
       }),
     );
   expect(
-    rows.every((row) => row.file && row.operation === "移动 · 来源不保留"),
+    rows.every(
+      (row) =>
+        row.file &&
+        row.fileTag === "SPAN" &&
+        row.icon === "▤" &&
+        row.operation === "移动",
+    ),
   ).toBe(true);
-  expect(rows.every((row) => row.target.includes("media-target:"))).toBe(true);
+  expect(
+    rows.every((row) => row.source.startsWith("来源 Unified media source：")),
+  ).toBe(true);
+  expect(rows.every((row) => row.target.startsWith("目标 Movies："))).toBe(
+    true,
+  );
+  await expect(
+    batch.getByRole("button", { name: /^查看 ReadableTen/ }),
+  ).toHaveCount(0);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expectReadableBatch(page, card, { selected: 10, skipped: 0 });
@@ -3685,11 +3718,18 @@ test("Task59.1 A59-02 manual organize readability: a 100-file batch shows 90 sel
     READABILITY_READY,
   );
   await expect(
-    batch.getByRole("button", { name: `查看 ${READABILITY_LONG_CHINESE}` }),
+    batch
+      .locator(".mf-organize-batch-file")
+      .filter({ hasText: READABILITY_LONG_CHINESE }),
   ).toBeVisible();
   await expect(
-    batch.getByRole("button", { name: `查看 ${READABILITY_LONG_ENGLISH}` }),
+    batch
+      .locator(".mf-organize-batch-file")
+      .filter({ hasText: READABILITY_LONG_ENGLISH }),
   ).toBeVisible();
+  await expect(
+    batch.getByRole("button", { name: `查看 ${READABILITY_LONG_CHINESE}` }),
+  ).toHaveCount(0);
 
   const skipped = card.getByText(
     `未纳入本次确认的文件(${READABILITY_UNMATCHED} 项)`,

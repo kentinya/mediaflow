@@ -52,7 +52,12 @@ import type {
   OrganizeIntentItemModel,
   OrganizePreviewModel,
 } from "../../entities/operations/organize";
-import type { ManualPreviewItemModel } from "../../entities/operations/preview";
+import type {
+  ManualPreviewAttachmentModel,
+  ManualPreviewItemModel,
+} from "../../entities/operations/preview";
+import type { MediaLibraryListItem } from "../../entities/library/media-library-files";
+import type { SystemResourceLibrary } from "../../entities/library/system-status";
 import type { TaskItemRecoveryModel } from "../../entities/operations/task-item-recovery";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -61,6 +66,8 @@ import {
   useModalCardExit,
   useModalLayer,
 } from "../../shared/ui/modal-card";
+import { mediaLibraryListQueryOptions } from "../library/media-library-query";
+import { systemStatusQueryOptions } from "../library/system-status-query";
 import { organizeDiscoveryQueryOptions } from "./discovery-query";
 import {
   useOrganizeAdmissionWatchGroup,
@@ -205,6 +212,182 @@ function operationImpactLabel(value: string | null): string | null {
     default:
       return null;
   }
+}
+
+/** A library-confirmed path, or the exact Storage identity it falls back to. */
+interface FilesBatchLocation {
+  readonly text: string;
+  readonly exact: boolean;
+}
+
+/** Strip the Storage prefix only when the plan's path is exactly under it. */
+function libraryRelativePath(
+  value: string | null,
+  rootPath: string,
+): string | null {
+  if (value === null) return null;
+  const root = rootPath.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  if (root === "" || root === ".") return value;
+  if (value === root) return "";
+  if (!value.startsWith(`${root}/`)) return null;
+  return value.slice(root.length + 1);
+}
+
+/** One selected Files source with its verified ResourceLibrary identity. */
+function filesSourceLocation(
+  item: ManualPreviewItemModel,
+  libraries: readonly SystemResourceLibrary[],
+): FilesBatchLocation {
+  const exactText = `来源 ${item.sourceStorageId ?? "—"}:${item.sourcePath ?? "—"}`;
+  const libraryId = item.resourceLibraryId;
+  if (libraryId === null) return { text: exactText, exact: true };
+  const library = libraries.find((value) => value.id === libraryId);
+  if (
+    library === undefined ||
+    library.name === null ||
+    item.sourceStorageId !== library.storageId
+  ) {
+    return { text: exactText, exact: true };
+  }
+  const relative = libraryRelativePath(item.sourcePath, library.rootPath);
+  if (relative === null || relative === "") {
+    return { text: exactText, exact: true };
+  }
+  return { text: `来源 ${library.name}：${relative}`, exact: false };
+}
+
+/** One selected Files target with its verified MediaLibrary identity. */
+function filesTargetLocation(
+  item: ManualPreviewItemModel,
+  libraries: readonly MediaLibraryListItem[],
+): FilesBatchLocation {
+  const storageId = item.destination?.storageId ?? item.targetStorageId;
+  const targetPath =
+    item.targetPath ?? item.destination?.storageRelativePath ?? null;
+  const exactText = `目标 ${storageId ?? "—"}:${targetPath ?? "—"}`;
+  const libraryId = item.analysis?.classification?.mediaLibraryId ?? null;
+  const relativePath = item.destination?.relativePath ?? null;
+  if (libraryId === null || relativePath === null) {
+    return { text: exactText, exact: true };
+  }
+  const library = libraries.find((value) => value.id === libraryId);
+  if (
+    library === undefined ||
+    library.name === "" ||
+    storageId !== library.storage.id
+  ) {
+    return { text: exactText, exact: true };
+  }
+  const relative = libraryRelativePath(relativePath, library.rootPath);
+  if (relative === null || relative === "") {
+    return { text: exactText, exact: true };
+  }
+  return { text: `目标 ${library.name}：${relative}`, exact: false };
+}
+
+const ATTACHMENT_TYPE_LABELS: Readonly<Record<string, string>> = {
+  subtitle: "字幕",
+  nfo: "NFO",
+  poster: "海报",
+  fanart: "背景图",
+  trailer: "预告片",
+  image: "图片",
+  other: "附件",
+};
+
+const ATTACHMENT_LANGUAGE_LABELS: Readonly<Record<string, string>> = {
+  zh: "中文",
+  zho: "中文",
+  chi: "中文",
+  en: "英文",
+  eng: "英文",
+  ja: "日文",
+  jpn: "日文",
+  jp: "日文",
+  ko: "韩文",
+  kor: "韩文",
+  fr: "法文",
+  fre: "法文",
+  de: "德文",
+  ger: "德文",
+  es: "西班牙文",
+  spa: "西班牙文",
+  ru: "俄文",
+  rus: "俄文",
+  it: "意大利文",
+  ita: "意大利文",
+  pt: "葡萄牙文",
+  por: "葡萄牙文",
+};
+
+function attachmentLanguageLabel(value: string | null): string | null {
+  if (value === null) return null;
+  const base = value.trim().toLowerCase().replace(/_/g, "-").split("-")[0];
+  return ATTACHMENT_LANGUAGE_LABELS[base] ?? null;
+}
+
+function attachmentExtension(attachment: ManualPreviewAttachmentModel): string {
+  const name =
+    attachment.filename ??
+    attachment.destination?.path ??
+    attachment.source?.path ??
+    "";
+  const last = name.split("/").pop() ?? "";
+  const dot = last.lastIndexOf(".");
+  return dot > 0 ? last.slice(dot) : "";
+}
+
+/** The language/format suffix an ordinary sidecar shows without expansion. */
+function attachmentSuffixLabel(
+  attachment: ManualPreviewAttachmentModel,
+): string {
+  const extension = attachmentExtension(attachment);
+  let qualifier = (attachment.suffix ?? "").trim();
+  if (
+    qualifier !== "" &&
+    !qualifier.startsWith(".") &&
+    !qualifier.startsWith("-")
+  ) {
+    qualifier = `.${qualifier}`;
+  }
+  const language = (attachment.language ?? "").trim();
+  if (qualifier === "" && language !== "") qualifier = `.${language}`;
+  if (qualifier === "") return extension;
+  if (extension !== "" && qualifier.toLowerCase() === extension.toLowerCase()) {
+    return language === "" ? extension : `.${language}${extension}`;
+  }
+  if (
+    extension !== "" &&
+    !qualifier.toLowerCase().endsWith(extension.toLowerCase())
+  ) {
+    return `${qualifier}${extension}`;
+  }
+  return qualifier;
+}
+
+/** The plain-language sidecar brief on one selected Files row. */
+function attachmentBriefLabel(
+  attachment: ManualPreviewAttachmentModel,
+): string {
+  const type = attachment.type?.trim().toLowerCase() ?? "";
+  const typeLabel =
+    ATTACHMENT_TYPE_LABELS[type] ??
+    (attachment.type === null ? "附件" : displayEnum(attachment.type));
+  const language = attachmentLanguageLabel(attachment.language);
+  const name =
+    type === "subtitle" && language !== null
+      ? `${language}${typeLabel}`
+      : typeLabel;
+  const suffix = attachmentSuffixLabel(attachment);
+  return suffix === "" ? name : `${name}（${suffix}）`;
+}
+
+/** Nothing is rendered for a file without sidecars. */
+function attachmentBrief(
+  attachments: readonly ManualPreviewAttachmentModel[],
+): string | null {
+  if (attachments.length === 0) return null;
+  return attachments.map(attachmentBriefLabel).join("、");
 }
 
 /** The operator-facing media kind, never the raw provider enum. */
@@ -649,6 +832,17 @@ export function ManualOrganizeDialog({
   );
   const preview: OrganizePreviewModel | undefined =
     previewQuery.data?.ok === true ? previewQuery.data.model : undefined;
+  // Files rows present the reviewed library identity only when those reads
+  // confirm the plan's Storage/root. Task Center continuation keeps its Base
+  // presentation and never starts these extra reads.
+  const filesSystemStatusQuery = useQuery({
+    ...systemStatusQueryOptions(token),
+    enabled: filesHost && token !== null,
+  });
+  const filesMediaLibraryListQuery = useQuery({
+    ...mediaLibraryListQueryOptions(token),
+    enabled: filesHost && token !== null,
+  });
   const executionHistoryQuery = useQuery(
     organizeExecutionListQueryOptions(
       token,
@@ -4649,6 +4843,9 @@ export function ManualOrganizeDialog({
     const selectedItems = items.filter((item) =>
       activeSelection.includes(item.itemId),
     );
+    const filesResourceLibraries =
+      filesSystemStatusQuery.data?.resourceLibraries ?? [];
+    const filesMediaLibraries = filesMediaLibraryListQuery.data?.items ?? [];
     const skippedItems = items.filter(
       (item) => !activeSelection.includes(item.itemId),
     );
@@ -4874,7 +5071,7 @@ export function ManualOrganizeDialog({
           <div className="mf-organize-section-head">
             <h4>{filesHost ? "来源与目标" : "本次确认的文件"}</h4>
             <span className="mf-organize-section-note">
-              共 {selectedItems.length} 项
+              {filesHost ? "按当前方案" : `共 ${selectedItems.length} 项`}
             </span>
           </div>
           <ul
@@ -4884,12 +5081,63 @@ export function ManualOrganizeDialog({
           >
             {selectedItems.map((item) => {
               const retention = operationRetentionLabel(item.operation);
+              const fileName = item.sourceFilename ?? item.itemId;
+              if (filesHost) {
+                const sourceLocation = filesSourceLocation(
+                  item,
+                  filesResourceLibraries,
+                );
+                const targetLocation = filesTargetLocation(
+                  item,
+                  filesMediaLibraries,
+                );
+                const attachmentSummary = attachmentBrief(item.attachments);
+                return (
+                  <li key={`selected-${item.itemId}`}>
+                    <span
+                      className="mf-organize-overview-file-icon mf-organize-batch-file-icon"
+                      aria-hidden="true"
+                    >
+                      ▤
+                    </span>
+                    <div className="mf-organize-files-batch-main">
+                      <span className="mf-organize-batch-file">{fileName}</span>
+                      <span
+                        className={`mf-organize-batch-source${
+                          sourceLocation.exact ? " mf-exact-identity" : ""
+                        }`}
+                      >
+                        {sourceLocation.text}
+                      </span>
+                      <span
+                        className={`mf-organize-batch-target${
+                          targetLocation.exact ? " mf-exact-identity" : ""
+                        }`}
+                      >
+                        {targetLocation.text}
+                      </span>
+                      <span className="mf-organize-batch-effect">
+                        来源影响：
+                        {operationImpactLabel(item.operation) ??
+                          "按当前操作核对，尚未生成"}
+                        {attachmentSummary !== null
+                          ? ` · ${attachmentSummary}`
+                          : ""}
+                      </span>
+                      {batchAttachments(item)}
+                    </div>
+                    <span className="mf-organize-batch-operation">
+                      {operationLabel(item.operation)}
+                    </span>
+                  </li>
+                );
+              }
               return (
                 <li key={`selected-${item.itemId}`}>
                   <button
                     type="button"
                     className="mf-link-button mf-organize-batch-file"
-                    aria-label={`查看 ${item.sourceFilename ?? item.itemId}`}
+                    aria-label={`查看 ${fileName}`}
                     onClick={() => {
                       // eslint-disable-next-line react-hooks/refs
                       goTo(
@@ -4899,45 +5147,18 @@ export function ManualOrganizeDialog({
                       setFilesOverviewVisible(false);
                     }}
                   >
-                    {item.sourceFilename ?? item.itemId}
+                    {fileName}
                   </button>
-                  {filesHost ? (
-                    <>
-                      <span className="mf-organize-batch-source mf-exact-identity">
-                        来源 {item.sourceStorageId ?? "—"}:
-                        {item.sourcePath ?? "—"}
-                      </span>
-                      <span className="mf-organize-batch-target mf-exact-identity">
-                        目标 {item.targetStorageId ?? "—"}:
-                        {item.targetPath ??
-                          item.destination?.storageRelativePath ??
-                          "—"}
-                      </span>
-                      <span className="mf-organize-batch-effect">
-                        来源影响：
-                        {operationImpactLabel(item.operation) ??
-                          "按当前操作核对，尚未生成"}
-                      </span>
-                      {batchAttachments(item)}
-                      <span className="mf-organize-batch-operation">
-                        {operationLabel(item.operation)}
-                        {retention !== null ? ` · ${retention}` : ""}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="mf-organize-batch-operation">
-                        {operationLabel(item.operation)}
-                        {retention !== null ? ` · ${retention}` : ""}
-                      </span>
-                      <span className="mf-organize-batch-target mf-exact-identity">
-                        {item.targetStorageId ?? "—"}:
-                        {item.targetPath ??
-                          item.destination?.storageRelativePath ??
-                          "—"}
-                      </span>
-                    </>
-                  )}
+                  <span className="mf-organize-batch-operation">
+                    {operationLabel(item.operation)}
+                    {retention !== null ? ` · ${retention}` : ""}
+                  </span>
+                  <span className="mf-organize-batch-target mf-exact-identity">
+                    {item.targetStorageId ?? "—"}:
+                    {item.targetPath ??
+                      item.destination?.storageRelativePath ??
+                      "—"}
+                  </span>
                 </li>
               );
             })}
