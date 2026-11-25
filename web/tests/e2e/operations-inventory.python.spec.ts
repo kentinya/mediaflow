@@ -2242,7 +2242,7 @@ test("a selected execution never blocks the unselected sibling's correction and 
     card
       .locator(".mf-organize-batch-summary")
       .locator("> div")
-      .filter({ hasText: "将整理" })
+      .filter({ hasText: "本次确认" })
       .locator("dd"),
   ).toHaveText("1 项");
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
@@ -2303,7 +2303,7 @@ test("a selected execution never blocks the unselected sibling's correction and 
   });
   await expect(reanalyzedOverview).toBeVisible({ timeout: 30_000 });
   await expect(reanalyzedOverview).toContainText(
-    "已重新分析，现在可以纳入本次整理",
+    "「Tenth.2010.mkv」已可确认。整理方案已更新，整理尚未提交。",
   );
   // No second execution was admitted by the correction/re-analysis.
   expect(
@@ -2351,7 +2351,7 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
     card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();
   // The ambiguous item is not executable and offers its real candidates.
-  await expect(card.getByText("未就绪").first()).toBeVisible();
+  await expect(card.getByRole("heading", { name: "确认作品" })).toBeVisible();
   await card.getByRole("button", { name: "返回整理概览" }).click();
   await expect(
     card.getByRole("region", { name: "本次整理概览" }),
@@ -2373,7 +2373,7 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
   // Both grounded candidates are offered once on the exact current TaskItem;
   // the older intent identity select is not mounted as a second, independently
   // writable choice for the same file.
-  await expect(card.getByText("选择正确的作品")).toBeVisible();
+  await expect(card.getByRole("heading", { name: "确认作品" })).toBeVisible();
   await expect(card.getByRole("radio", { name: /候选 1/ })).toBeVisible();
   await expect(card.getByRole("radio", { name: /候选 2/ })).toBeVisible();
   await expect(card.locator('select[aria-label^="元数据身份 "]')).toHaveCount(
@@ -2411,7 +2411,7 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
   });
   await expect(reanalyzedOverview).toBeVisible({ timeout: 30_000 });
   await expect(reanalyzedOverview).toContainText(
-    "已重新分析，现在可以纳入本次整理",
+    "「Eleventh.2011.mkv」已可确认。整理方案已更新，整理尚未提交。",
   );
   // Nothing has mutated before the explicit confirmation.
   expect(
@@ -3571,7 +3571,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
   const first = await advanceRetirement();
   expect(first.status).toBe("waiting_stability");
   await expect(
-    page.getByText("等待来源稳定", { exact: true }).first(),
+    card.getByRole("heading", { name: "正在等待来源文件稳定" }),
   ).toBeVisible();
   await page.screenshot({
     path: TASK45_RECOVERY_EVIDENCE + "/retirement-wait-380.png",
@@ -3611,13 +3611,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
     if (advanced.previewId) break;
     await page.waitForTimeout(500);
   }
-  await expect(
-    card.getByRole("heading", { name: /第 [12] \/ 2 个/ }),
-  ).toBeVisible({ timeout: 30_000 });
-  for (let step = 0; step < 2; step += 1) {
-    if (await card.getByText("Thirteenth.2013.mkv").first().isVisible()) break;
-    await card.getByRole("button", { name: "下一项" }).click();
-  }
+  await openFilesOverviewFile(card, "Thirteenth.2013.mkv");
   await card
     .getByRole("checkbox", { name: /纳入 Thirteenth\.2013\.mkv/ })
     .uncheck();

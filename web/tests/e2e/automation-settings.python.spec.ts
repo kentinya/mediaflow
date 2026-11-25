@@ -1015,14 +1015,11 @@ async function organizeOneFileThroughFiles(
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
-  // The batch review opens from the same overview after leaving this file.
-  await card.getByRole("button", { name: "返回整理概览" }).click();
   await expect(
-    card.getByRole("region", { name: "本次整理概览" }),
-  ).toBeVisible();
+    card
+      .getByRole("region", { name: "本次整理概览" })
+      .getByRole("button", { name: `查看 ${file}` }),
+  ).toBeVisible({ timeout: 30_000 });
   // Nothing was mutated before the explicit confirmation.
   const before = await (
     await request.get(`/__harness__/manual-file-state?file=${file}`)
@@ -1140,12 +1137,10 @@ test("system runtime settings share one organizing allowance across automation a
     if (body.advanced && body.previewId != null) break;
   }
   await expect(
-    retryCard.getByRole("heading", { name: /第 1 \/ 1 个/ }),
+    retryCard
+      .getByRole("region", { name: "本次整理概览" })
+      .getByRole("button", { name: "查看 Two.2002.mkv" }),
   ).toBeVisible({ timeout: 30_000 });
-  await retryCard.getByRole("button", { name: "返回整理概览" }).click();
-  await expect(
-    retryCard.getByRole("region", { name: "本次整理概览" }),
-  ).toBeVisible();
   await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: /^确认整理 1 项$/ }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/);
@@ -1196,9 +1191,10 @@ test("system runtime settings keep an old summary at the current organizing capa
     if (body.advanced && body.previewId != null) break;
   }
   await expect(
-    page.getByRole("dialog", { name: "整理所选文件" }).getByRole("heading", {
-      name: /第 1 \/ 1 个/,
-    }),
+    page
+      .getByRole("dialog", { name: "整理所选文件" })
+      .getByRole("region", { name: "本次整理概览" })
+      .getByRole("button", { name: "查看 Three.2003.mkv" }),
   ).toBeVisible({ timeout: 30_000 });
 
   // Lower the published allowance to 1.  A fresh Four request is a real
@@ -1228,19 +1224,11 @@ test("system runtime settings keep an old summary at the current organizing capa
   // the shared queue, so the current allowance refuses it with no admission.
   await connectOn(page, oldSummaryUrl);
   await expect(
-    page.getByRole("dialog", { name: "整理所选文件" }).getByRole("heading", {
-      name: /第 1 \/ 1 个/,
-    }),
-  ).toBeVisible({ timeout: 30_000 });
-  await page
-    .getByRole("dialog", { name: "整理所选文件" })
-    .getByRole("button", { name: "返回整理概览" })
-    .click();
-  await expect(
     page
       .getByRole("dialog", { name: "整理所选文件" })
-      .getByRole("region", { name: "本次整理概览" }),
-  ).toBeVisible();
+      .getByRole("region", { name: "本次整理概览" })
+      .getByRole("button", { name: "查看 Three.2003.mkv" }),
+  ).toBeVisible({ timeout: 30_000 });
   const confirmation = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&

@@ -1608,7 +1608,7 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   const secondOverview = card.getByRole("region", { name: "本次整理概览" });
   await expect(secondOverview).toBeVisible({ timeout: 30_000 });
   await expect(secondOverview).toContainText(
-    `「${conflictFile}」已重新分析，现在可以纳入本次整理。`,
+    `「${conflictFile}」已可确认。整理方案已更新，整理尚未提交。`,
   );
   expect(await fileState()).toEqual(copied);
   expect(lostAnalysisResponses).toBe(1);
@@ -3375,7 +3375,9 @@ test("Task59.1 a lost direct analysis response stays locked until the same prepa
   await driveDiscoveryFor(page, request, discoveryId as string);
   const overview = card.getByRole("region", { name: "本次整理概览" });
   await expect(overview).toBeVisible({ timeout: 30_000 });
-  await expect(overview).toContainText("已重新分析，现在可以纳入本次整理");
+  await expect(overview).toContainText(
+    `「${targetFile}」已可确认。整理方案已更新，整理尚未提交。`,
+  );
   expect(analyzePosts()).toHaveLength(1);
   expect(await fileState()).toEqual(before);
 });
