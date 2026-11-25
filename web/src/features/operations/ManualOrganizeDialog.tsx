@@ -256,6 +256,17 @@ function filesSourceLocation(
   return { text: `来源 ${library.name}：${relative}`, exact: false };
 }
 
+/** The exact Storage path a MediaLibrary root composes for one library-relative path. */
+function composedStoragePath(
+  rootPath: string,
+  relativePath: string,
+): string | null {
+  const root = rootPath.trim().replace(/\/+$/, "");
+  if (root === "") return null;
+  if (root === ".") return relativePath;
+  return root === "/" ? `/${relativePath}` : `${root}/${relativePath}`;
+}
+
 /** One selected Files target with its verified MediaLibrary identity. */
 function filesTargetLocation(
   item: ManualPreviewItemModel,
@@ -278,11 +289,19 @@ function filesTargetLocation(
   ) {
     return { text: exactText, exact: true };
   }
-  const relative = libraryRelativePath(relativePath, library.rootPath);
-  if (relative === null || relative === "") {
+  // The plan's `relativePath` is already MediaLibrary-relative; the root only
+  // composes the exact Storage path. Confirm that correspondence before naming
+  // the library, so a plan from another root stays exact and a legal leading
+  // directory that repeats the root's own name is never hidden.
+  const storageRelativePath = item.destination?.storageRelativePath ?? null;
+  if (
+    relativePath === "" ||
+    storageRelativePath === null ||
+    storageRelativePath !== composedStoragePath(library.rootPath, relativePath)
+  ) {
     return { text: exactText, exact: true };
   }
-  return { text: `目标 ${library.name}：${relative}`, exact: false };
+  return { text: `目标 ${library.name}：${relativePath}`, exact: false };
 }
 
 const ATTACHMENT_TYPE_LABELS: Readonly<Record<string, string>> = {

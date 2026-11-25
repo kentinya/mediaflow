@@ -182,6 +182,13 @@ function makeBackend() {
     // The plan's library ids/Storage no longer agree with the live library
     // reads, so the batch row must keep the exact verified Storage paths.
     mismatchedLibraries: false as boolean,
+    // The plan's MediaLibrary-relative path legally starts with the root's own
+    // name (`Movies` root plus a `Movies/Anime` classification path), exactly
+    // like the real readability fixture.
+    libraryPrefixedTargets: false as boolean,
+    // The plan's exact Storage path is not under the reviewed library root, so
+    // the library name must not replace the exact Storage identity.
+    foreignTargetRoot: false as boolean,
   };
   const calls = {
     discoveryPosts: [] as Json[],
@@ -496,9 +503,19 @@ function makeBackend() {
       // stay readable without hand-writing ten plans.
       const destination = (plan["destination"] ?? null) as Json | null;
       if (destination !== null) {
+        // The real Preview plan carries the MediaLibrary-relative path plus the
+        // exact Storage path that the library root composes. The fixture
+        // library root is `Movies`, so the only legal way its own name repeats
+        // at the start of the library-relative path is a `Movies/Anime`
+        // classification result.
+        const libraryRelative = state.libraryPrefixedTargets
+          ? `Movies/Anime/${filename(index)}`
+          : filename(index);
         destination["filename"] = filename(index);
-        destination["storageRelativePath"] = `Movies/${filename(index)}`;
-        destination["relativePath"] = `Movies/${filename(index)}`;
+        destination["relativePath"] = libraryRelative;
+        destination["storageRelativePath"] = state.foreignTargetRoot
+          ? `Archive/${filename(index)}`
+          : `Movies/${libraryRelative}`;
       }
       if (state.requireOverwrite) {
         const implications = plan["destructiveImplications"] as Json;
@@ -3429,6 +3446,51 @@ describe("ManualOrganizeDialog", () => {
     expect(listed).toHaveTextContent("来源 source:Movies/Movie.01.mkv");
     expect(listed).toHaveTextContent("目标 target:Movies/Movie.01.mkv");
     expect(listed).not.toHaveTextContent("资源库A：");
+    expect(listed).not.toHaveTextContent("电影库：");
+  }, 20_000);
+
+  it("Task59.1 names a Files batch target even when it repeats the library root name", async () => {
+    const user = userEvent.setup();
+    const backend = await openDialog(
+      user,
+      (value) => {
+        value.state.libraryPrefixedTargets = true;
+      },
+      [filename(0)],
+    );
+
+    await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    const targetRow = within(card())
+      .getByText("目标", { selector: ".mf-organize-target-fact dt" })
+      .closest("div");
+    expect(targetRow).toHaveTextContent(
+      "target:Movies/Movies/Anime/Movie.01.mkv",
+    );
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    const listed = await screen.findByRole("region", {
+      name: "来源与目标",
+    });
+    expect(listed).toHaveTextContent("目标 电影库：Movies/Anime/Movie.01.mkv");
+    expect(listed).not.toHaveTextContent("目标 电影库：Anime/");
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 20_000);
+
+  it("Task59.1 keeps the exact Storage target when the plan is outside the reviewed library root", async () => {
+    const user = userEvent.setup();
+    await openDialog(
+      user,
+      (value) => {
+        value.state.foreignTargetRoot = true;
+      },
+      [filename(0)],
+    );
+
+    await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
+    await user.click(screen.getByRole("button", { name: /整批复核/ }));
+    const listed = await screen.findByRole("region", {
+      name: "来源与目标",
+    });
+    expect(listed).toHaveTextContent("目标 target:Archive/Movie.01.mkv");
     expect(listed).not.toHaveTextContent("电影库：");
   }, 20_000);
 

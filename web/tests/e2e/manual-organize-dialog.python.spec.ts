@@ -228,7 +228,11 @@ async function openReadabilityBatch(
         readonly files: readonly string[];
       }
     | "directory",
-): Promise<{ readonly card: Locator; readonly discoveryId: string }> {
+): Promise<{
+  readonly card: Locator;
+  readonly discoveryId: string;
+  readonly previewId: string;
+}> {
   if (options === "directory") {
     await page.getByRole("link", { name: "Files", exact: true }).click();
     await expect(page).toHaveURL(/\/resourcelib\/files/);
@@ -253,8 +257,107 @@ async function openReadabilityBatch(
   await expect(page).toHaveURL(/organizeDiscovery=/);
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
-  await driveDiscoveryFor(page, request, discoveryId as string);
-  return { card, discoveryId: discoveryId as string };
+  const previewId = await driveDiscoveryFor(
+    page,
+    request,
+    discoveryId as string,
+  );
+  return {
+    card,
+    discoveryId: discoveryId as string,
+    previewId,
+  };
+}
+
+interface PlannedFilesTarget {
+  readonly filename: string;
+  readonly libraryId: string | null;
+  readonly storageId: string | null;
+  readonly relativePath: string;
+  readonly storageRelativePath: string;
+}
+
+/**
+ * Read back the exact durable plan targets the batch rows must show. The Files
+ * dialog shows the plan's MediaLibrary-relative path, so the assertion uses
+ * the same Preview response the browser consumed and the real MediaLibrary
+ * root instead of a hand-written expectation.
+ */
+async function readPlannedFilesTargets(
+  request: APIRequestContext,
+  previewId: string,
+): Promise<readonly PlannedFilesTarget[]> {
+  const response = await request.get(
+    `${BASE}/api/operations/organize/previews/${encodeURIComponent(previewId)}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(response.ok()).toBe(true);
+  const document = (await response.json()) as {
+    readonly items: readonly {
+      readonly source: { readonly filename: string | null };
+      readonly plan: {
+        readonly destination: {
+          readonly storageId: string | null;
+          readonly relativePath: string | null;
+          readonly storageRelativePath: string | null;
+        } | null;
+        readonly analysis: {
+          readonly classification: {
+            readonly mediaLibraryId: string | null;
+          } | null;
+        } | null;
+      } | null;
+    }[];
+  };
+  return document.items.flatMap((item) => {
+    const destination = item.plan?.destination ?? null;
+    const filename = item.source.filename;
+    if (
+      filename === null ||
+      destination?.relativePath == null ||
+      destination.storageRelativePath == null
+    ) {
+      return [];
+    }
+    return [
+      {
+        filename,
+        libraryId: item.plan?.analysis?.classification?.mediaLibraryId ?? null,
+        storageId: destination.storageId,
+        relativePath: destination.relativePath,
+        storageRelativePath: destination.storageRelativePath,
+      },
+    ];
+  });
+}
+
+interface MediaLibraryIdentity {
+  readonly name: string;
+  readonly rootPath: string;
+  readonly storageId: string;
+}
+
+async function readMediaLibraries(
+  request: APIRequestContext,
+): Promise<ReadonlyMap<string, MediaLibraryIdentity>> {
+  const response = await request.get(`${BASE}/api/media-libraries`, {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
+  expect(response.ok()).toBe(true);
+  const document = (await response.json()) as {
+    readonly items: readonly {
+      readonly id: string;
+      readonly name: string;
+      readonly rootPath: string;
+      readonly storage: { readonly id: string };
+    }[];
+  };
+  return new Map(
+    document.items.map((item) => [
+      item.id,
+      { name: item.name, rootPath: item.rootPath, storageId: item.storage.id },
+    ]),
+  );
 }
 
 async function expectReadableBatch(
@@ -3362,11 +3465,28 @@ test("Task59.1 manual organize readability: one file separates source and target
   mkdirSync(READABILITY_OUTPUT, { recursive: true });
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await connect(page);
-  const { card } = await openReadabilityBatch(page, request, {
+  const commands = recordCommands(page);
+  const { card, previewId } = await openReadabilityBatch(page, request, {
     directory: READABILITY_ONE_DIRECTORY,
     files: [READABILITY_ONE_FILE],
   });
   await openOverviewFile(card);
+
+  // The batch row must show the plan's MediaLibrary-relative target. This
+  // fixture's MediaLibrary root is `Movies` while the plan path legally starts
+  // with `Movies/Anime`, so dropping the root a second time would silently
+  // change the destination the operator is asked to confirm.
+  const plannedTargets = await readPlannedFilesTargets(request, previewId);
+  expect(plannedTargets).toHaveLength(1);
+  const plannedTarget = plannedTargets[0]!;
+  const libraries = await readMediaLibraries(request);
+  const targetLibrary = libraries.get(plannedTarget.libraryId ?? "");
+  expect(targetLibrary).toBeTruthy();
+  expect(plannedTarget.storageId).toBe(targetLibrary!.storageId);
+  expect(plannedTarget.relativePath.startsWith("Movies/Anime/")).toBe(true);
+  expect(plannedTarget.storageRelativePath).toBe(
+    `${targetLibrary!.rootPath}/${plannedTarget.relativePath}`,
+  );
 
   const source = card.locator(".mf-organize-source-fact");
   const target = card.locator(".mf-organize-target-fact");
@@ -3376,10 +3496,16 @@ test("Task59.1 manual organize readability: one file separates source and target
     `source-storage:${READABILITY_ONE_DIRECTORY}/${READABILITY_ONE_FILE}`,
   );
   await expect(source.locator("dd")).not.toContainText("target:");
-  await expect(target.locator("dd")).toContainText("target:");
+  await expect(target.locator("dd")).toContainText(
+    `${plannedTarget.storageId}:${plannedTarget.storageRelativePath}`,
+  );
 
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(page.getByRole("region", { name: "整批复核" })).toBeVisible();
+  const batchTarget = card
+    .getByRole("region", { name: "来源与目标" })
+    .locator(".mf-organize-batch-target");
+  const expectedTarget = `目标 ${targetLibrary!.name}：${plannedTarget.relativePath}`;
   await page.setViewportSize({ width: 1280, height: 900 });
   await expectFilesConfirmFirstScreen(page, card);
   await page.screenshot({
@@ -3387,9 +3513,11 @@ test("Task59.1 manual organize readability: one file separates source and target
     fullPage: false,
   });
   await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
+  await expect(batchTarget).toHaveText(expectedTarget);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
+  await expect(batchTarget).toHaveText(expectedTarget);
   await card.locator(".mf-organize-dialog-body").evaluate((element) => {
     element.scrollTop = 0;
   });
@@ -3400,6 +3528,7 @@ test("Task59.1 manual organize readability: one file separates source and target
   });
   await page.setViewportSize({ width: 390, height: 520 });
   await expectReadableBatch(page, card, { selected: 1, skipped: 0 });
+  await expect(batchTarget).toHaveText(expectedTarget);
   await card.locator(".mf-organize-dialog-body").evaluate((element) => {
     element.scrollTop = 0;
   });
@@ -3408,6 +3537,15 @@ test("Task59.1 manual organize readability: one file separates source and target
     path: `${READABILITY_OUTPUT}/confirm-short.png`,
     fullPage: false,
   });
+  // Reading the destination at three widths confirms nothing: only the
+  // explicit confirmation control may submit this exact plan.
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
 });
 
 test("Task59.1 a metadata provider technical failure is not a candidate decision", async ({
@@ -3548,7 +3686,7 @@ test("Task59.1 manual organize readability: ten files keep an aligned batch summ
     { length: 10 },
     (_, index) => `ReadableTen${String(index + 1).padStart(2, "0")}.2011.mkv`,
   );
-  const { card } = await openReadabilityBatch(page, request, {
+  const { card, previewId } = await openReadabilityBatch(page, request, {
     directory: READABILITY_TEN_DIRECTORY,
     files,
   });
@@ -3590,9 +3728,23 @@ test("Task59.1 manual organize readability: ten files keep an aligned batch summ
   expect(
     rows.every((row) => row.source.startsWith("来源 Unified media source：")),
   ).toBe(true);
-  expect(rows.every((row) => row.target.startsWith("目标 Movies："))).toBe(
-    true,
-  );
+  // The batch shows each plan's MediaLibrary-relative target, so every row is
+  // compared with the exact plan response and the real library root.
+  const plannedTargets = await readPlannedFilesTargets(request, previewId);
+  expect(plannedTargets).toHaveLength(10);
+  const libraries = await readMediaLibraries(request);
+  for (const row of rows) {
+    const planned = plannedTargets.find((value) => value.filename === row.file);
+    expect(planned).toBeTruthy();
+    const library = libraries.get(planned!.libraryId ?? "");
+    expect(library).toBeTruthy();
+    expect(planned!.storageId).toBe(library!.storageId);
+    expect(planned!.relativePath.startsWith("Movies/Anime/")).toBe(true);
+    expect(planned!.storageRelativePath).toBe(
+      `${library!.rootPath}/${planned!.relativePath}`,
+    );
+    expect(row.target).toBe(`目标 ${library!.name}：${planned!.relativePath}`);
+  }
   await expect(
     batch.getByRole("button", { name: /^查看 ReadableTen/ }),
   ).toHaveCount(0);
