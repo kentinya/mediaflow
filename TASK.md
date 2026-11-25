@@ -1,8 +1,24 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 59.1 — Files 手动整理流程
 
-Next Action: A REVIEWS THE VERIFIED TASK 59.3 PROGRESS DISPLAY GAP
+Next Action: B UPDATES THE ORIGINAL TASK 59.1 CORRECTION PLAN
 
-Task 59.3 补查结论 **FIX REQUIRED**。待 A 将进度显示差异退回原 Task。
+```text
+Task ID: 59.1
+Task Type: SLICE
+Parent Slice: 59
+Status: FIX REQUIRED
+Task Base: 3bc9ad99137e5a2f8ff53add92041185ceb8ebbf
+Reviewed Implementation Head: 6c54559b054d75682fc9ead615191d6c0b351285
+Difficulty: High
+Test Level: T3
+Implementation Authorization: ORIGINAL TASK SCOPE; B CORRECTION PLAN PENDING
+```
+
+## A 终审退回
+
+原 Task 59.1 收到 A59-06 和 A59-07，覆盖 Files 的四类决定表单与回概览结果。
+B 按原目标、Base 和范围更新修正计划，独立复核后继续处理原 Task 59.3 的 A59-04 和 A59-05。
+[复现、证据及通过条件](SLICE.md#a-独立复验--6c54559b--fix-required) · `43ab597c:TASK.md` 保留 Task 59.1 此前的 B 验收。
 
 ## B 复核与 Slice 59 交接
 
