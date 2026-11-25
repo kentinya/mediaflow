@@ -14,6 +14,7 @@ import userEvent from "@testing-library/user-event";
 import { renderApp } from "../../../tests/utils";
 import { authStore } from "../../shared/api/auth-store";
 import manualOperationsFixture from "../../entities/operations/__fixtures__/manual-operations.json";
+import { runOverviewQueryKey } from "./run-query";
 
 const TOKEN = "detail-token";
 
@@ -1829,6 +1830,263 @@ describe("selected-run detail tabs", () => {
         within(returnedItems).getByRole("list", { name: "任务条目" }),
       ).queryByText("待处理"),
     ).toBeNull();
+  }, 15_000);
+
+  it("re-reads every visited item page when the same run settles (Task 59.3 A59-05)", async () => {
+    const user = userEvent.setup();
+    const pendingPage = itemsPageDocument({
+      items: [
+        itemRow({
+          status: "pending",
+          stage: "waiting",
+          destination_path: null,
+          execution_status: null,
+        }),
+      ],
+      total: 1,
+      matching_total: 1,
+      dispositions: {
+        pending: 1,
+        active: 0,
+        waiting: 0,
+        success: 0,
+        skipped: 0,
+        failed_partial: 0,
+        ignored: 0,
+        cancelled: 0,
+      },
+      uncertain_success: 0,
+    });
+    const settledItem = itemRow({
+      destination_path: "Movies/a.mkv",
+      checkpoint: {
+        status: "success",
+        stage: "completed",
+        raw_stage: "organize",
+        blocker_kind: null,
+        blocker_id: null,
+        effect_certainty: "verified_complete",
+        retry_safety: "safe",
+        refusal_reason: null,
+        checkpoint_version: "v2",
+        permitted_action_ids: [],
+      },
+    });
+    const settledPage = itemsPageDocument({
+      items: [settledItem],
+      total: 1,
+      matching_total: 1,
+      dispositions: {
+        pending: 0,
+        active: 0,
+        waiting: 0,
+        success: 1,
+        skipped: 0,
+        failed_partial: 0,
+        ignored: 0,
+        cancelled: 0,
+      },
+      uncertain_success: 0,
+    });
+    const runningOverview = overviewDocument({
+      total_items: 1,
+      completed_items: 0,
+      failed_items: 0,
+      processed_items: 0,
+      success_items: 0,
+      partial_items: 0,
+      uncertain_effect_items: 0,
+      missing_result_items: 0,
+      progress: progressDocument({
+        known_total: 1,
+        processed: 0,
+        dispositions: {
+          pending: 1,
+          active: 0,
+          waiting: 0,
+          success: 0,
+          skipped: 0,
+          failed_partial: 0,
+          ignored: 0,
+          cancelled: 0,
+        },
+        confirmed_success: 0,
+        uncertain_success: 0,
+        effect_counts: {},
+        results_total: 0,
+        attachment_steps: 0,
+      }),
+    });
+    const completedOverview = overviewDocument({
+      status: "completed",
+      total_items: 1,
+      completed_items: 1,
+      failed_items: 0,
+      processed_items: 1,
+      success_items: 1,
+      partial_items: 0,
+      uncertain_effect_items: 0,
+      missing_result_items: 0,
+      progress: progressDocument({
+        known_total: 1,
+        processed: 1,
+        dispositions: {
+          pending: 0,
+          active: 0,
+          waiting: 0,
+          success: 1,
+          skipped: 0,
+          failed_partial: 0,
+          ignored: 0,
+          cancelled: 0,
+        },
+        confirmed_success: 1,
+        uncertain_success: 0,
+        effect_counts: { verified_complete: 1 },
+        results_total: 1,
+        attachment_steps: 0,
+      }),
+    });
+    let overviewReads = 0;
+    let allReads = 0;
+    let successReads = 0;
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/auth/principal") {
+        return jsonResponse({ principal_id: "test-principal" });
+      }
+      if (url.startsWith("/api/operations/runs?")) {
+        return jsonResponse({
+          items: [runningOverview],
+          limit: 20,
+          status: null,
+          command: null,
+          q: null,
+          from: null,
+          to: null,
+          attention: false,
+          total: 1,
+          truncated: false,
+          status_counts: { running: 1 },
+          attention_count: 0,
+          population: "unified job/task run inventory",
+          sideEffects: "none",
+          previous_cursor: null,
+          next_cursor: null,
+        });
+      }
+      if (url === "/api/operations/runs/task-001") {
+        overviewReads += 1;
+        return jsonResponse(
+          overviewReads === 1 ? runningOverview : completedOverview,
+        );
+      }
+      if (url.startsWith("/api/operations/runs/task-001/items?")) {
+        const status = new URLSearchParams(url.split("?")[1] ?? "").get(
+          "status",
+        );
+        if (status === "success") {
+          successReads += 1;
+          const settled = overviewReads > 1;
+          return jsonResponse({
+            ...settledPage,
+            items: settled ? [settledItem] : [],
+            matching_total: settled ? 1 : 0,
+            filter: { status: "success" },
+            dispositions: settled
+              ? settledPage.dispositions
+              : pendingPage.dispositions,
+          });
+        }
+        allReads += 1;
+        return jsonResponse(overviewReads > 1 ? settledPage : pendingPage);
+      }
+      if (url.startsWith("/api/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { queryClient, router } = renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    // The filter is part of the section's key, so each filter/remount reads
+    // its own exact region instead of a detached previous list.
+    const items = () => within(detail).getByRole("region", { name: "主条目" });
+    await within(detail).findByRole("region", { name: "主条目" });
+    expect(await within(items()).findByText("待处理")).toBeVisible();
+    expect(allReads).toBe(1);
+
+    // The success filter is visited before settlement and is empty. Switching
+    // back to all keeps that exact page's cache for later.
+    await user.selectOptions(
+      within(items()).getByLabelText("状态筛选"),
+      "success",
+    );
+    await waitFor(() =>
+      expect(
+        new URLSearchParams(router.history.location.search).get("istat"),
+      ).toBe("success"),
+    );
+    await waitFor(() => expect(successReads).toBe(1));
+    await waitFor(() =>
+      expect(within(items()).getByText("当前筛选没有条目。")).toBeVisible(),
+    );
+    await user.selectOptions(within(items()).getByLabelText("状态筛选"), "all");
+    await waitFor(() =>
+      expect(
+        within(items()).getByRole("button", {
+          name: /a\.mkv，待处理；查看证据/,
+        }),
+      ).toBeVisible(),
+    );
+
+    // The overview's real bounded read publishes the durable completion.
+    await act(async () => {
+      await queryClient.refetchQueries({
+        queryKey: [runOverviewQueryKey, "task-001"],
+        exact: true,
+      });
+    });
+    await waitFor(
+      () =>
+        expect(
+          within(detail).getByRole("heading", { name: "流程已完成" }),
+        ).toBeVisible(),
+      { timeout: 5_000 },
+    );
+
+    // The visible page re-reads immediately and shows the settled row.
+    await waitFor(
+      () => expect(within(items()).getByText("已验证成功")).toBeVisible(),
+      { timeout: 5_000 },
+    );
+    expect(allReads).toBe(2);
+    expect(successReads).toBe(1);
+
+    // A hidden page visited before settlement is invalidated with the same
+    // run prefix, so selecting it reads the post-terminal result instead of
+    // reusing the fresh empty cache.
+    await user.selectOptions(
+      within(items()).getByLabelText("状态筛选"),
+      "success",
+    );
+    await waitFor(() => expect(successReads).toBe(2), { timeout: 5_000 });
+    await waitFor(() =>
+      expect(within(items()).getByText("已验证成功")).toBeVisible(),
+    );
+    expect(within(items()).queryByText("当前筛选没有条目。")).toBeNull();
+
+    // The same terminal overview read does not invalidate the pages again.
+    const stableSuccessReads = successReads;
+    await act(async () => {
+      await queryClient.refetchQueries({
+        queryKey: [runOverviewQueryKey, "task-001"],
+        exact: true,
+      });
+      await Promise.resolve();
+    });
+    expect(successReads).toBe(stableSuccessReads);
   }, 15_000);
 
   it("reads flow status, processed range and independent file results without standing tutorials", async () => {

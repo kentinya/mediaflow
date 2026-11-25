@@ -4536,3 +4536,171 @@ test("Task59.1 a 101-file directory settles as a failed preparation and the same
     destinationTargets: [],
   });
 });
+
+test("Task59.3 a running detail re-reads the visited success filter and second page after the Task settles", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+  const files = Array.from(
+    { length: 21 },
+    (_, index) => `Readable${String(index + 1).padStart(3, "0")}.2011.mkv`,
+  );
+  await openReadabilityDirectory(page, READABILITY_DIRECTORY, files[0]!);
+  await selectFiles(page, files);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await driveDiscoveryFor(page, request, discoveryId as string);
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+
+  await openBatchReview(card);
+  await expect(card.getByRole("region", { name: "整批复核" })).toBeVisible();
+  const confirm = card.getByRole("button", { name: "确认整理 21 项" });
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await expect(page).toHaveURL(/\/operations\?.*run=/, { timeout: 30_000 });
+  const taskId = new URL(page.url()).searchParams.get("run");
+  expect(taskId).toBeTruthy();
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible({ timeout: 30_000 });
+  const items = detail.getByRole("region", { name: "主条目" });
+  await expect(items.locator(".mf-run-item-row")).toHaveCount(20, {
+    timeout: 30_000,
+  });
+  const progressCard = detail.getByRole("region", { name: "状态与流程" });
+  mkdirSync("test-results/task59.3-progress", { recursive: true });
+  const progressShot = async (name: string) => {
+    await expect(progressCard).toBeVisible();
+    await progressCard.screenshot({
+      path: `test-results/task59.3-progress/${name}.png`,
+      animations: "disabled",
+    });
+  };
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await progressShot("running-1440");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await progressShot("running-390");
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  const itemReads = () =>
+    commands.filter(
+      (command) =>
+        command.method === "GET" &&
+        command.path === `/api/operations/runs/${taskId}/items`,
+    );
+  const successReads = () =>
+    itemReads().filter(
+      (command) =>
+        new URLSearchParams(command.search).get("status") === "success",
+    ).length;
+
+  // The success filter is visited while the Task still executes: the server
+  // really has no settled success yet, so this page publishes an empty list.
+  await items.getByLabel("状态筛选").selectOption("success");
+  await expect(items.getByText("当前筛选没有条目。")).toBeVisible();
+  const visitedSuccessReads = successReads();
+  expect(visitedSuccessReads).toBe(1);
+
+  // Return to all, visit the exact second server page, then return. Its cursor
+  // and real row identity are the pre-settlement cache that must not survive
+  // the Task's terminal transition.
+  await items.getByLabel("状态筛选").selectOption("all");
+  await expect(items.locator(".mf-run-item-row")).toHaveCount(20);
+  await items.getByRole("button", { name: "下一页条目" }).click();
+  await expect(items.locator(".mf-run-item-row")).toHaveCount(1);
+  const secondPageName = (
+    await items.locator(".mf-run-item-name").innerText()
+  ).trim();
+  expect(secondPageName).toMatch(/^Readable\d{3}\.2011\.mkv$/);
+  const secondPageRead = itemReads().find(
+    (command) => new URLSearchParams(command.search).get("cursor") !== null,
+  );
+  expect(secondPageRead).toBeTruthy();
+  const secondPageCursor = new URLSearchParams(secondPageRead!.search).get(
+    "cursor",
+  );
+  expect(secondPageCursor).toBeTruthy();
+  await items.getByRole("button", { name: "上一页条目" }).click();
+  await expect(items.locator(".mf-run-item-row")).toHaveCount(20);
+
+  // The real Worker settles the same Task and verifies all 21 file effects.
+  const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(worker.ok()).toBe(true);
+  expect(await worker.json()).toMatchObject({
+    completed: true,
+    taskId,
+    status: "completed",
+    itemCount: 21,
+  });
+
+  // The visible first page re-reads in place after the overview publishes the
+  // terminal flow; the operator does not press 刷新 or reselect the filter.
+  await expect(
+    items.locator(".mf-run-item-row").first().getByText("已验证成功"),
+  ).toBeVisible({ timeout: 30_000 });
+  await progressShot("completed-1440");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await progressShot("completed-390");
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // Selecting the hidden success filter reads again because the whole run
+  // prefix was invalidated at settlement, not only the visible page.
+  await items.getByLabel("状态筛选").selectOption("success");
+  await expect
+    .poll(successReads, { timeout: 10_000 })
+    .toBeGreaterThan(visitedSuccessReads);
+  await expect(items.locator(".mf-run-item-row")).toHaveCount(20);
+  await expect(
+    items.locator(".mf-run-item-row").first().getByText("已验证成功"),
+  ).toBeVisible();
+
+  // Reopen the exact second page visited earlier: the same cursor is requested
+  // again and the same durable file identity now reads its verified result.
+  await items.getByLabel("状态筛选").selectOption("all");
+  await expect(items.locator(".mf-run-item-row")).toHaveCount(20);
+  const cursorReadsBefore = itemReads().filter(
+    (command) => new URLSearchParams(command.search).get("cursor") !== null,
+  ).length;
+  await items.getByRole("button", { name: "下一页条目" }).click();
+  await expect(items.locator(".mf-run-item-row")).toHaveCount(1);
+  await expect(items.locator(".mf-run-item-name")).toHaveText(secondPageName);
+  await expect
+    .poll(
+      () =>
+        itemReads().filter(
+          (command) =>
+            new URLSearchParams(command.search).get("cursor") ===
+            secondPageCursor,
+        ).length,
+      { timeout: 10_000 },
+    )
+    .toBeGreaterThan(1);
+  expect(
+    itemReads().filter(
+      (command) => new URLSearchParams(command.search).get("cursor") !== null,
+    ).length,
+  ).toBeGreaterThan(cursorReadsBefore);
+  const settledSecondRow = items.locator(".mf-run-item-row");
+  await expect(settledSecondRow.getByText("已验证成功")).toBeVisible();
+  await expect(settledSecondRow.getByText("待处理")).toHaveCount(0);
+
+  // The exact item evidence carries the real target created by this Worker.
+  await settledSecondRow.getByRole("button", { name: "查看证据" }).click();
+  const evidence = detail.getByRole("region", { name: "条目证据" });
+  const sourceAndTarget = evidence.getByRole("region", {
+    name: "来源与目标",
+  });
+  await expect(sourceAndTarget).toContainText(secondPageName);
+  await expect(sourceAndTarget.getByText("没有已记录的目标文件")).toHaveCount(
+    0,
+  );
+  await expect(sourceAndTarget).toContainText("Movies/");
+});

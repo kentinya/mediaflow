@@ -665,7 +665,7 @@ test("the selected run detail reads flow, processed range and independent file r
   const flow = detail.getByRole("region", { name: "状态与流程" });
   await expect(flow.getByRole("heading", { name: /流程已完成/ })).toBeVisible();
   const progress = detail.getByRole("region", { name: "处理进度" });
-  await expect(progress.getByRole("progressbar")).toBeVisible();
+  await expect(progress.getByRole("progressbar")).toHaveCount(0);
   await expect(progress.getByText(/已处理 \d+ \/ \d+ 个主条目/)).toBeVisible();
 
   // The independent file outcomes follow, including the settled attempt with

@@ -827,10 +827,10 @@ describe("Operations run inventory landing", () => {
       ),
     ).toBeVisible();
     expect(
-      within(progress).getByRole("progressbar", {
-        name: "准备与分析进度（含等待确认）",
-      }),
+      within(progress).getByRole("heading", { name: "处理进度" }),
     ).toBeVisible();
+    // The processed range is text: no bar implies the waiting files ran.
+    expect(within(progress).queryByRole("progressbar")).toBeNull();
     // The zero executed files stay a separate fact from the waiting range.
     expect(
       within(progress).getByText(
@@ -946,11 +946,7 @@ describe("Operations run inventory landing", () => {
         "已进入准备与分析 0 / 1 个主条目（准备与分析计数；其余尚未结束）",
       ),
     ).toBeVisible();
-    expect(
-      within(progress).getByRole("progressbar", {
-        name: "准备与分析进度",
-      }),
-    ).toBeVisible();
+    expect(within(progress).queryByRole("progressbar")).toBeNull();
 
     // The same detail follows the durable preparation read; no reopen and no
     // invented stage in between.
@@ -1008,11 +1004,7 @@ describe("Operations run inventory landing", () => {
     await waitFor(() => expect(previewReads).toBeGreaterThan(0), {
       timeout: 8_000,
     });
-    expect(
-      within(progress).getByRole("progressbar", {
-        name: "准备与分析进度（含等待确认）",
-      }),
-    ).toBeVisible();
+    expect(within(progress).queryByRole("progressbar")).toBeNull();
     expect(
       within(progress).getByText(
         "尚未执行文件操作，暂无文件结果；1 个文件等待确认，确认前不执行文件操作。",

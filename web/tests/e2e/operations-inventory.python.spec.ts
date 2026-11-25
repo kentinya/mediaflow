@@ -5360,6 +5360,13 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   await expect(
     detail.getByText("点击「继续整理」，核对 1 个文件的方案。"),
   ).toBeVisible();
+  const waitingProgress = detail.getByRole("region", { name: "处理进度" });
+  await expect(
+    waitingProgress.getByText(
+      "已进入准备与分析 1 / 1 个主条目（准备与分析计数，含 1 个等待确认）",
+    ),
+  ).toBeVisible();
+  await expect(waitingProgress.getByRole("progressbar")).toHaveCount(0);
   await expect(
     detail.getByText("执行已受理，文件结果由后端独立记录。"),
   ).toHaveCount(0);

@@ -59,6 +59,7 @@ import {
 import {
   runItemEvidenceQueryOptions,
   runItemsPageQueryKey,
+  runItemsQueryKey,
   runItemsQueryOptions,
   runRecordsQueryOptions,
 } from "./run-detail-query";
@@ -727,17 +728,6 @@ function DurableExecutionSteps({
   );
 }
 
-function percentOf(processed: number, total: number): number | null {
-  if (total <= 0) {
-    return null;
-  }
-  const value = Math.round((processed / total) * 100);
-  if (!Number.isFinite(value) || value < 0 || value > 100) {
-    return null;
-  }
-  return value;
-}
-
 /**
  * The independent file outcomes of one run, published beside the flow status
  * and the processed range. Every number is its own durable facet: a partial
@@ -835,10 +825,11 @@ export function RunDetailTabs({
     onStateChange({ tab });
   };
   // The item page is scoped to the 任务详情 tab, but the flow settles from
-  // the overview read shared by both tabs. Keeping the terminal re-read here
-  // means 操作记录 still invalidates the exact page it unmounted: the visible
-  // page repeats the read in place, while the hidden page becomes stale so
-  // returning to it reads the post-terminal row instead of reusing its cache.
+  // the overview read shared by both tabs. Every visited item page/filter
+  // under this run was read before settlement, so the terminal transition
+  // cancels those in-flight reads and marks the whole run-items prefix stale.
+  // The visible page still repeats its read in place; every hidden page reads
+  // the post-terminal row when reopened instead of reusing its old cache.
   // The ref holds only the previous activity of this same run; page/filter
   // changes keep their own fresh read.
   const previousActivity = useRef({ runId, active });
@@ -849,21 +840,24 @@ export function RunDetailTabs({
     if (previous.runId !== runId || !previous.active || active) {
       return;
     }
+    const runItemsKey = [runItemsQueryKey, runId] as const;
     const pageKey = runItemsPageQueryKey({
       runId,
       status: itemStatus,
       cursor: itemCursor,
     });
     void (async () => {
-      await queryClient.cancelQueries({ queryKey: pageKey, exact: true });
+      await queryClient.cancelQueries({ queryKey: runItemsKey });
+      await queryClient.invalidateQueries({
+        queryKey: runItemsKey,
+        refetchType: "none",
+      });
       if (tab === "detail") {
         await queryClient.refetchQueries({
           queryKey: pageKey,
           exact: true,
         });
-        return;
       }
-      await queryClient.invalidateQueries({ queryKey: pageKey, exact: true });
     })();
   }, [active, itemCursor, itemStatus, queryClient, runId, tab]);
   const detailTabRef = useRef<HTMLButtonElement | null>(null);
@@ -1031,10 +1025,6 @@ function ProgressCard({
       </StatusBanner>
     );
   }
-  const percent =
-    !progress.indeterminate && progress.processed !== null
-      ? percentOf(progress.processed, progress.knownTotal ?? 0)
-      : null;
   // The waiting disposition already counts as processed. Only an organize
   // read with a live continuation and no current business problem names those
   // waiters as the exact Files confirmation; every other wait stays a general
@@ -1123,25 +1113,6 @@ function ProgressCard({
         </p>
       ) : (
         <>
-          <div
-            className="mf-progress-track"
-            role="progressbar"
-            aria-valuemin={0}
-            aria-valuemax={progress.knownTotal}
-            aria-valuenow={progress.processed ?? 0}
-            aria-label={
-              preExecution
-                ? phase === "confirming"
-                  ? "准备与分析进度（含等待确认）"
-                  : "准备与分析进度"
-                : "处理进度"
-            }
-          >
-            <div
-              className="mf-progress-fill"
-              style={{ width: `${percent ?? 0}%` }}
-            />
-          </div>
           <p className="mf-run-progress-count">
             {preExecution ? "已进入准备与分析" : "已处理"} {progress.processed}{" "}
             / {progress.knownTotal} 个{progress.unit}
