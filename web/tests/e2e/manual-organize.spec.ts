@@ -568,8 +568,8 @@ test.describe("manual organize journey", () => {
     const detail = page.getByRole("dialog", { name: "运行详情" });
     await expect(detail).toBeVisible();
     const evidenceButton = detail
-      .getByRole("button", { name: "查看证据" })
-      .nth(1);
+      .getByRole("region", { name: "主条目" })
+      .getByRole("button", { name: /Inception \(2010\)\.mkv/ });
     await evidenceButton.click();
     const evidence = detail.getByRole("region", { name: "条目证据" });
     await expect(
@@ -582,9 +582,6 @@ test.describe("manual organize journey", () => {
       evidence
         .getByRole("region", { name: "处理结果" })
         .getByText("文件处理已结束，结果未记录"),
-    ).toBeVisible();
-    await expect(
-      detail.getByText(/Provider failure: metadata lookup/).first(),
     ).toBeVisible();
     await expect(evidence.getByText(/元数据服务未完成查询/)).toBeVisible();
     await expect(

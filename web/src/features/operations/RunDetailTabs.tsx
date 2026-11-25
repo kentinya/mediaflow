@@ -36,6 +36,7 @@ import {
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import type { RunStatus } from "../../entities/operations/run";
 import {
   RUN_DISPOSITION_LABELS,
   RUN_DISPOSITIONS,
@@ -758,6 +759,10 @@ export interface RunDetailTabsProps {
   /** The exact canonical run identity from the overview read. */
   readonly runId: string;
   readonly progress: RunProgress | null;
+  /** The durable flow status that gives the processed range its stage. */
+  readonly status?: RunStatus;
+  /** The exact confirmable subset of the waiting range, when it is readable. */
+  readonly confirmableWaiting?: number | null;
   readonly state: RunDetailState;
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
   /** Poll the detail reads while the selected run is non-terminal. */
@@ -781,6 +786,8 @@ export interface RunDetailTabsProps {
 export function RunDetailTabs({
   runId,
   progress,
+  status,
+  confirmableWaiting = null,
   state,
   onStateChange,
   active,
@@ -904,7 +911,11 @@ export function RunDetailTabs({
             aria-label="状态与流程"
           >
             {flow}
-            <ProgressCard progress={progress} />
+            <ProgressCard
+              progress={progress}
+              status={status}
+              confirmableWaiting={confirmableWaiting}
+            />
           </section>
           <RunFileResultsCard results={results} progress={progress} />
           <RunItemsSection
@@ -949,7 +960,15 @@ export function RunDetailTabs({
  * Only a pending/active/waiting remainder is mentioned here, because those
  * are flow states rather than file results.
  */
-function ProgressCard({ progress }: { readonly progress: RunProgress | null }) {
+function ProgressCard({
+  progress,
+  status,
+  confirmableWaiting,
+}: {
+  readonly progress: RunProgress | null;
+  readonly status?: RunStatus;
+  readonly confirmableWaiting: number | null;
+}) {
   if (progress === null || !progress.available) {
     return (
       <StatusBanner variant="info" title="进度证据不可用">
@@ -965,13 +984,55 @@ function ProgressCard({ progress }: { readonly progress: RunProgress | null }) {
     !progress.indeterminate && progress.processed !== null
       ? percentOf(progress.processed, progress.knownTotal ?? 0)
       : null;
+  // The waiting disposition already counts as processed. Only an organize
+  // read with a live continuation and no current business problem names those
+  // waiters as the exact Files confirmation; every other wait stays a general
+  // pending decision. The flow status never turns the range into a success
+  // rate, and a published execution range stays the backend's own progress.
+  const waiting = progress.dispositions.waiting;
+  const active = progress.dispositions.active + progress.dispositions.pending;
+  const confirmable =
+    confirmableWaiting !== null &&
+    confirmableWaiting > 0 &&
+    status !== "completed" &&
+    status !== "failed" &&
+    status !== "cancelled"
+      ? Math.min(confirmableWaiting, waiting)
+      : null;
+  const remainingWait = waiting - (confirmable ?? 0);
+  const waitingNote =
+    waiting > 0
+      ? confirmable !== null
+        ? remainingWait > 0
+          ? `，含 ${confirmable} 个等待确认、${remainingWait} 个等待处理`
+          : `，含 ${waiting} 个等待确认`
+        : `，含 ${waiting} 个等待处理`
+      : "";
+  const basisEnd =
+    active > 0
+      ? "；其余正在处理"
+      : confirmable !== null && remainingWait === 0
+        ? "，确认前不执行文件操作"
+        : "；尚未结束";
+  const basisNote =
+    waiting > 0
+      ? progress.kind === "organize"
+        ? `（整理计数${waitingNote}${basisEnd}）`
+        : progress.kind === "analysis"
+          ? `（分析计数${waitingNote}）`
+          : `（已处理范围${waitingNote}）`
+      : "";
   const unfinished: Array<{ readonly label: string; readonly count: number }> =
     (["pending", "active", "waiting"] as const)
       .map((disposition) => ({
+        disposition,
         label: RUN_DISPOSITION_LABELS[disposition],
         count: progress.dispositions[disposition],
       }))
-      .filter((entry) => entry.count > 0);
+      .filter(
+        (entry) =>
+          entry.count > 0 && !(entry.disposition === "waiting" && waiting > 0),
+      );
   return (
     <section className="mf-run-progress" aria-label="处理进度">
       <h4>处理进度</h4>
@@ -1000,6 +1061,7 @@ function ProgressCard({ progress }: { readonly progress: RunProgress | null }) {
           <p className="mf-run-progress-count">
             已处理 {progress.processed} / {progress.knownTotal} 个
             {progress.unit}
+            {basisNote}
           </p>
           {unfinished.length > 0 && (
             <p className="mf-dashboard-meta">
@@ -1377,44 +1439,39 @@ function RunItemsSection({
                         className={`mf-run-item-row mf-run-item-row-${reading.tone}${expanded ? " mf-run-item-row-open" : ""}`}
                         data-run-item={item.itemId}
                       >
-                        <div className="mf-run-item-main">
+                        <button
+                          type="button"
+                          className="mf-run-item-row-button"
+                          data-evidence-item={item.itemId}
+                          aria-expanded={expanded}
+                          aria-controls={expanded ? evidencePanelId : undefined}
+                          aria-label={`${fileNameOf(item.sourcePath)}，${reading.disposition}；查看证据`}
+                          title={`${item.storageId}:${item.sourcePath} · ${item.itemId}`}
+                          onClick={() =>
+                            onInspectItem(expanded ? null : item.itemId)
+                          }
+                        >
                           <span className="mf-run-item-tile" aria-hidden="true">
                             ▷
                           </span>
-                          <div className="mf-run-item-copy">
-                            <p
-                              className="mf-run-item-name"
-                              title={`${item.storageId}:${item.sourcePath}`}
-                            >
+                          <span className="mf-run-item-copy">
+                            <span className="mf-run-item-name">
                               {fileNameOf(item.sourcePath)}
-                            </p>
-                            <p className="mf-run-item-summary">{summary}</p>
-                          </div>
-                          <div className="mf-run-item-side">
-                            <span
-                              className={
-                                reading.tone === "normal"
-                                  ? "mf-run-item-status"
-                                  : `mf-run-item-status mf-run-outcome-${reading.tone}`
-                              }
-                            >
-                              {reading.disposition}
                             </span>
-                            <button
-                              type="button"
-                              className="mf-link-button mf-run-item-evidence-action"
-                              data-evidence-item={item.itemId}
-                              aria-expanded={expanded}
-                              aria-controls={
-                                expanded ? evidencePanelId : undefined
-                              }
-                              title={`${item.storageId}:${item.sourcePath} · ${item.itemId}`}
-                              onClick={() => onInspectItem(item.itemId)}
-                            >
-                              查看证据
-                            </button>
-                          </div>
-                        </div>
+                            <span className="mf-run-item-summary">
+                              {summary}
+                            </span>
+                          </span>
+                          <span
+                            className={
+                              reading.tone === "normal"
+                                ? "mf-run-item-status"
+                                : `mf-run-item-status mf-run-outcome-${reading.tone}`
+                            }
+                          >
+                            {reading.disposition}
+                          </span>
+                        </button>
                         {expanded && evidence !== null && (
                           <div className="mf-run-item-evidence">{evidence}</div>
                         )}

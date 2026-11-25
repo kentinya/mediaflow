@@ -998,7 +998,9 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   // accounting/tutorial paragraphs are not printed.
   await expect(detail.getByRole("button", { name: "任务详情" })).toBeVisible();
   await expect(
-    detail.getByRole("region", { name: "状态与流程" }).getByText("流程状态"),
+    detail
+      .getByRole("region", { name: "状态与流程" })
+      .getByRole("heading", { name: "任务流程失败" }),
   ).toBeVisible();
   const progress = detail.getByRole("region", { name: "处理进度" });
   await expect(progress.getByText("已处理 5 / 6 个主条目")).toBeVisible();
@@ -5348,9 +5350,9 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   await expect(detail).toBeVisible();
   // Task 59.2 AC-04/AC-05: the durable waiting item and its still-continuable
   // Files preparation lead the first card; `running` is not an execution claim.
-  await expect(detail.getByText("等待确认后执行")).toBeVisible();
+  await expect(detail.getByRole("heading", { name: "等待确认" })).toBeVisible();
   await expect(
-    detail.getByText(/本次 Files 整理仍有 1 个文件等待确认/),
+    detail.getByText("点击「继续整理」，核对 1 个文件的方案。"),
   ).toBeVisible();
   await expect(
     detail.getByText("执行已受理，文件结果由后端独立记录。"),

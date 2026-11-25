@@ -473,7 +473,7 @@ test("inventory count card applies its server filter and the run overview opens 
   await expect(
     detail
       .getByRole("region", { name: "状态与流程" })
-      .getByText("失败", { exact: true }),
+      .getByRole("heading", { name: "任务流程失败" }),
   ).toBeVisible();
   await expect(detail.getByText("触发方式")).toBeVisible();
   await expect(detail.getByText("自动化", { exact: true })).toBeVisible();
@@ -493,7 +493,11 @@ test("inventory count card applies its server filter and the run overview opens 
     detail.getByText("共 0 条记录 · 结果 0 · 证据 0 · 日志 0 · 审计 0"),
   ).toBeVisible();
   await detail.getByRole("button", { name: "任务详情", exact: true }).click();
-  await expect(detail.getByText("流程状态", { exact: true })).toBeVisible();
+  await expect(
+    detail
+      .getByRole("region", { name: "状态与流程" })
+      .getByRole("heading", { name: "任务流程失败" }),
+  ).toBeVisible();
 
   // Closing the detail returns to the same filtered list context.
   await detail.getByRole("button", { name: "关闭详情" }).click();
@@ -657,10 +661,9 @@ test("the selected run detail reads flow, processed range and independent file r
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
 
-  // The first screen leads with the flow status, then the processed range.
+  // The first screen leads with one flow heading, then the processed range.
   const flow = detail.getByRole("region", { name: "状态与流程" });
-  await expect(flow.getByText("流程状态")).toBeVisible();
-  await expect(flow.getByText("已完成", { exact: true })).toBeVisible();
+  await expect(flow.getByRole("heading", { name: /流程已完成/ })).toBeVisible();
   const progress = detail.getByRole("region", { name: "处理进度" });
   await expect(progress.getByRole("progressbar")).toBeVisible();
   await expect(progress.getByText(/已处理 \d+ \/ \d+ 个主条目/)).toBeVisible();
@@ -762,8 +765,8 @@ test("one item's evidence opens through exact links and closes again", async ({
   await expect(items.locator('[data-run-item="item-001"]')).toBeVisible();
 
   const evidenceTrigger = items
-    .getByRole("button", { name: "查看证据" })
-    .first();
+    .locator('[data-run-item="item-001"]')
+    .getByRole("button", { name: /The Matrix \(1999\)\.mkv/ });
   await evidenceTrigger.click();
   await expect(page).toHaveURL(/item=item-001/);
   const evidence = detail.getByRole("region", { name: "条目证据" });
@@ -868,9 +871,9 @@ test("PATCH-20261107-1 keeps the mixed completed run and its independent file ou
   // A completed flow and a mixed file population are stated as their own
   // facts, not as a tutorial about what the numbers mean.
   await expect(
-    detail.getByRole("region", { name: "状态与流程" }).getByText("已完成", {
-      exact: true,
-    }),
+    detail
+      .getByRole("region", { name: "状态与流程" })
+      .getByRole("heading", { name: "流程已完成，有文件结果缺失" }),
   ).toBeVisible();
   await expect(
     detail
@@ -898,7 +901,7 @@ test("PATCH-20261107-1 keeps the mixed completed run and its independent file ou
   // The main file succeeded while its subtitle result is independently
   // readable under the same evidence entry.
   const items = detail.getByRole("region", { name: "主条目" });
-  await items.getByRole("button", { name: "查看证据" }).first().click();
+  await items.getByRole("button", { name: /The Matrix \(1999\)\.mkv/ }).click();
   const evidence = detail.getByRole("region", { name: "条目证据" });
   await expect(
     evidence.getByRole("heading", {
@@ -911,7 +914,7 @@ test("PATCH-20261107-1 keeps the mixed completed run and its independent file ou
 
   // The settled failed item has no Result row: it is not backfilled into a
   // success or an empty state.
-  await items.getByRole("button", { name: "查看证据" }).nth(1).click();
+  await items.getByRole("button", { name: /Inception \(2010\)\.mkv/ }).click();
   await expect(
     evidence.getByRole("heading", {
       name: "文件证据：Inception (2010).mkv",
@@ -947,7 +950,10 @@ test("PATCH-20261107-1 states an unconfirmed target result instead of a confirme
   await openCenterRun(page, "job-001");
   const detail = page.getByRole("dialog", { name: "运行详情" });
   const items = detail.getByRole("region", { name: "主条目" });
-  await items.getByRole("button", { name: "查看证据" }).first().click();
+  await items
+    .getByRole("button", { name: /The Matrix \(1999\)\.mkv/ })
+    .first()
+    .click();
   const evidence = detail.getByRole("region", { name: "条目证据" });
   await expect(
     evidence.getByText("目标文件结果尚未确认", { exact: true }),
@@ -1054,7 +1060,10 @@ test("PATCH-20261113-1 keeps equal-status attempts as two complete history entri
     }
   });
   const detail = page.getByRole("dialog", { name: "运行详情" });
-  await detail.getByRole("button", { name: "查看证据" }).first().click();
+  await detail
+    .getByRole("region", { name: "主条目" })
+    .getByRole("button", { name: /The Matrix \(1999\)\.mkv/ })
+    .click();
   const evidence = detail.getByRole("region", { name: "条目证据" });
   const current = evidence.getByRole("region", { name: "执行记录" });
   const history = evidence.getByRole("list", { name: "此前执行记录" });
@@ -1098,7 +1107,7 @@ test("PATCH-20261113-1 attributes different next steps within one file diagnosis
     .getByRole("region", { name: "主条目" })
     .getByRole("listitem")
     .filter({ hasText: "Inception (2010).mkv" })
-    .getByRole("button", { name: "查看证据" })
+    .getByRole("button", { name: /Inception \(2010\)\.mkv/ })
     .click();
   const evidence = detail.getByRole("region", { name: "条目证据" });
   await evidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();

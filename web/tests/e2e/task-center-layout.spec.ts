@@ -663,9 +663,17 @@ test("the detail card keeps a long file identity readable in its compact row", a
   // The row names the file and keeps the full source identity in its title;
   // the complete path is read in this file's evidence instead of a wide table.
   const row = items.locator(".mf-run-item-row").first();
-  expect(await row.getByText(fileName).getAttribute("title")).toContain(
-    LONG_ITEM_SOURCE,
-  );
+  // The whole row is the one expand control; its visible end is only status.
+  await expect(row.getByRole("button")).toHaveCount(1);
+  await expect(row.locator(".mf-run-item-status")).toHaveCount(1);
+  await expect(row.getByText("查看证据", { exact: true })).toHaveCount(0);
+  expect(
+    await row
+      .getByRole("button", {
+        name: new RegExp(fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      })
+      .getAttribute("title"),
+  ).toContain(LONG_ITEM_SOURCE);
   expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
   await items.scrollIntoViewIfNeeded();
   await page.screenshot({
@@ -694,9 +702,9 @@ test("the detail card keeps a long file identity readable in its compact row", a
 
   // The same row opens one evidence entry with the complete source path and
   // the card still closes afterwards.
-  const evidenceButton = items
-    .getByRole("button", { name: "查看证据" })
-    .first();
+  const evidenceButton = row.getByRole("button", {
+    name: new RegExp(fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  });
   await evidenceButton.scrollIntoViewIfNeeded();
   await evidenceButton.click();
   const evidence = detail.getByRole("region", { name: "条目证据" });
@@ -722,9 +730,9 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });
-  const evidenceTrigger = items
-    .getByRole("button", { name: "查看证据" })
-    .first();
+  const evidenceTrigger = items.getByRole("button", {
+    name: /The Matrix \(1999\)\.mkv/,
+  });
   await evidenceTrigger.scrollIntoViewIfNeeded();
   await evidenceTrigger.focus();
   await page.keyboard.press("Enter");
@@ -788,6 +796,13 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
   const closeEvidence = evidence.getByRole("button", { name: "关闭证据" });
   await closeEvidence.focus();
   await page.keyboard.press("Enter");
+  await expect(detail.getByRole("region", { name: "条目证据" })).toHaveCount(0);
+  await expect(evidenceTrigger).toBeFocused();
+  // Space is the same native row control, and toggling keeps focus on it.
+  await page.keyboard.press("Space");
+  await expect(detail.getByRole("region", { name: "条目证据" })).toBeVisible();
+  await expect(evidenceTrigger).toBeFocused();
+  await page.keyboard.press("Space");
   await expect(detail.getByRole("region", { name: "条目证据" })).toHaveCount(0);
   await expect(evidenceTrigger).toBeFocused();
 });

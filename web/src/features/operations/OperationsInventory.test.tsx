@@ -753,7 +753,9 @@ describe("Operations run inventory landing", () => {
     expect(within(detail).getAllByText(/进行中/).length).toBeGreaterThan(0);
     // The overview leads with the flow status and own facts; the removed
     // "processed is not organize success" tutorial is not printed.
-    expect(within(detail).getByText("流程状态")).toBeVisible();
+    expect(
+      within(detail).getByRole("region", { name: "状态与流程" }),
+    ).toBeVisible();
     expect(within(detail).queryByText(/不代表整理成功/)).toBeNull();
     // A run without a Files preparation association publishes no preparation
     // area at all, not even an empty one.
@@ -812,10 +814,15 @@ describe("Operations run inventory landing", () => {
     // The durable waiting item and the still-continuable Files preparation
     // are the first-screen evidence; a whole-Task `running` status is not an
     // admission claim.
-    expect(await within(detail).findByText("等待确认后执行")).toBeVisible();
+    expect(await within(detail).findByText("等待确认")).toBeVisible();
+    expect(
+      within(detail).getByText("点击「继续整理」，核对 1 个文件的方案。"),
+    ).toBeVisible();
+    // The processed range names its accounting basis and the still-waiting
+    // file instead of borrowing an execution or success claim.
     expect(
       within(detail).getByText(
-        "本次 Files 整理仍有 1 个文件等待确认；确认前不会执行文件操作。",
+        "已处理 1 / 1 个主条目（整理计数，含 1 个等待确认，确认前不执行文件操作）",
       ),
     ).toBeVisible();
     expect(
@@ -826,6 +833,125 @@ describe("Operations run inventory landing", () => {
     expect(within(detail).getByRole("link", { name: "继续整理" })).toHaveClass(
       "mf-button-primary",
     );
+  });
+
+  it("states one normal completion heading before the real progress and results (Task 59.3 AC-06)", async () => {
+    const overview = runDocument({
+      status: "completed",
+      current_stage: null,
+      total_items: 2,
+      completed_items: 2,
+      processed_items: 2,
+      success_items: 2,
+      progress: progressDocument({
+        known_total: 2,
+        processed: 2,
+        dispositions: {
+          pending: 0,
+          active: 0,
+          waiting: 0,
+          success: 2,
+          skipped: 0,
+          failed_partial: 0,
+          ignored: 0,
+          cancelled: 0,
+        },
+        confirmed_success: 2,
+        results_total: 2,
+        effect_counts: { verified_complete: 2 },
+      }),
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (
+        url.startsWith("/api/operations/runs?") ||
+        url === "/api/operations/runs"
+      ) {
+        return jsonResponse(pageDocument({ items: [overview] }));
+      }
+      if (url === "/api/operations/runs/task-001") {
+        return jsonResponse(overview);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const flow = await within(detail).findByRole("region", {
+      name: "状态与流程",
+    });
+    // A normal completion is one heading; the old status pill, stage line and
+    // second completion sentence are gone.
+    expect(
+      within(flow).getByRole("heading", { name: "流程已完成" }),
+    ).toBeVisible();
+    expect(within(flow).queryByText("本次整理已完成")).toBeNull();
+    expect(within(flow).queryByText("流程状态")).toBeNull();
+    expect(within(flow).queryByText("当前阶段")).toBeNull();
+    const progress = within(detail).getByRole("region", { name: "处理进度" });
+    expect(within(progress).getByText("已处理 2 / 2 个主条目")).toBeVisible();
+    const results = within(detail).getByRole("region", { name: "文件结果" });
+    expect(within(results).getByText("已验证成功")).toBeVisible();
+    // The approved reading order is unchanged: heading, progress, results.
+    expect(
+      flow.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      progress.compareDocumentPosition(results) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("Task59.3 reads the current plan's confirmable sibling beside a business problem", async () => {
+    const backend = stubOrganizeHost({
+      overview: {
+        status: "running",
+        current_stage: null,
+        total_items: 2,
+        completed_items: 0,
+        processed_items: 2,
+        attention: true,
+        problem_types: ["metadata"],
+        problem_file_counts: {
+          recognition: 0,
+          metadata: 1,
+          classification: 0,
+          conflict: 0,
+        },
+        progress: progressDocument({
+          known_total: 2,
+          processed: 2,
+          dispositions: {
+            pending: 0,
+            active: 0,
+            waiting: 2,
+            success: 0,
+            skipped: 0,
+            failed_partial: 0,
+            ignored: 0,
+            cancelled: 0,
+          },
+        }),
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    // The live plan names one confirmable sibling; the other waiting file keeps
+    // its own metadata problem and is never folded into that confirmation.
+    expect(
+      await within(detail).findByRole("heading", { name: "等待确认" }),
+    ).toBeVisible();
+    expect(
+      await within(detail).findByText(
+        "1 个文件可确认，另有 1 个等待处理。点击「继续整理」，核对 1 个文件的方案。",
+      ),
+    ).toBeVisible();
+    expect(within(detail).getByText("当前业务问题")).toBeVisible();
+    expect(backend.calls.discoveryReads).toBeGreaterThan(0);
+    expect(backend.calls.posts).toEqual([]);
   });
 
   it("states an already-admitted confirmation and a still-waiting sibling separately (Task 59.2 AC-04/AC-05)", async () => {
@@ -876,12 +1002,10 @@ describe("Operations run inventory landing", () => {
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    expect(
-      await within(detail).findByText("已有确认受理，另有文件等待确认"),
-    ).toBeVisible();
+    expect(await within(detail).findByText("等待确认")).toBeVisible();
     expect(
       within(detail).getByText(
-        "已有 1 次确认记录被受理；本次 Files 整理仍有 1 个文件等待确认，确认前不会执行该部分文件。",
+        "已有 1 次确认记录被受理；点击「继续整理」，核对 1 个文件的方案。",
       ),
     ).toBeVisible();
     expect(
@@ -1157,7 +1281,7 @@ describe("Operations run inventory landing", () => {
       renderApp("/operations?run=task-001");
 
       const detail = await screen.findByRole("dialog", { name: "运行详情" });
-      await within(detail).findByText("流程状态");
+      await within(detail).findByRole("region", { name: "状态与流程" });
       expect(
         within(detail).queryByRole("region", { name: "文件整理准备" }),
       ).toBeNull();
@@ -1211,9 +1335,8 @@ describe("Operations run inventory landing", () => {
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    expect(await within(detail).findByText("失败／准备阶段超限")).toBeVisible();
     expect(
-      within(detail).getByText("准备阶段超限，本次未执行整理"),
+      await within(detail).findByText("准备阶段超限，本次未执行整理"),
     ).toBeVisible();
     expect(
       within(detail).queryByRole("region", { name: "文件整理准备" }),
@@ -2173,7 +2296,7 @@ describe("Operations run inventory landing", () => {
     const flow = await within(detail).findByRole("region", {
       name: "状态与流程",
     });
-    await within(flow).findByText("已完成");
+    await within(flow).findByText("流程已完成，文件效果待核对");
     const progress = await within(detail).findByRole("region", {
       name: "处理进度",
     });
@@ -2266,7 +2389,7 @@ describe("Operations run inventory landing", () => {
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(detail).findByText("流程状态");
+    await within(detail).findByRole("region", { name: "状态与流程" });
     // No standing control block, withheld-control list or permission token.
     expect(
       within(detail).queryByRole("group", { name: "任务操作" }),
@@ -2490,11 +2613,11 @@ describe("Operations run inventory landing", () => {
       name: "运行详情",
     });
     expect(
-      await within(recoveredDetail).findByText("本次流程已完成（恢复成功）"),
+      await within(recoveredDetail).findByText("流程已完成（恢复成功）"),
     ).toBeVisible();
     expect(
       within(recoveredDetail).getByText(
-        /每个必要条目都有精确关联的真实成功证据/,
+        "必要文件效果均已验证，原处理记录仍可查阅。",
       ),
     ).toBeVisible();
   });
@@ -3522,13 +3645,16 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     const { router } = renderApp("/operations?run=task-001&dialog=execute");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    expect(await within(detail).findByText("流程状态")).toBeVisible();
+    expect(
+      await within(detail).findByRole("region", { name: "状态与流程" }),
+    ).toBeVisible();
     expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull();
     expect(
       screen.queryByRole("dialog", { name: "无法继续这次整理" }),
     ).toBeNull();
     expect(router.state.location.search["dialog"]).toBeUndefined();
-    expect(backend.calls.discoveryReads).toBe(0);
+    // The status summary may read this Task's own linked preparation; the
+    // dropped marker still starts no replay or mutation.
     expect(backend.calls.posts).toEqual([]);
   });
 

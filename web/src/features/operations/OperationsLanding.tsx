@@ -58,6 +58,8 @@ import {
   runOverviewQueryOptions,
 } from "./run-query";
 import { RunDetailTabs } from "./RunDetailTabs";
+import { organizeDiscoveryQueryOptions } from "./discovery-query";
+import { organizePreviewQueryOptions } from "./organize-query";
 import { RunRetainedSubmissionNotice } from "./RunRetainedSubmissionNotice";
 import { ProblemFilePanel } from "./ProblemFilePanel";
 import { TaskItemRecoverySessionProvider } from "./task-item-recovery-session";
@@ -1609,6 +1611,38 @@ function RunDetailPanel({
   // loses an unknown outcome or its reconciliation context.
   const [reconciling, setReconciling] = useState(false);
   const overview = query.data?.ok === true ? query.data.model : null;
+  // The current plan is an independent bounded read of this exact Task's
+  // linked Files preparation. It supplies the confirmable range only when the
+  // plan is current and complete; every pending/failed read stays a fallback.
+  const linkedDiscoveryId =
+    overview?.filesPreparation?.continuable === true
+      ? overview.filesPreparation.discoveryId
+      : null;
+  const linkedDiscoveryQuery = useQuery(
+    organizeDiscoveryQueryOptions(
+      token,
+      linkedDiscoveryId ?? "",
+      linkedDiscoveryId !== null,
+    ),
+  );
+  const linkedDiscovery =
+    linkedDiscoveryQuery.data?.ok === true
+      ? linkedDiscoveryQuery.data.model
+      : null;
+  const linkedPreviewId = linkedDiscovery?.previewId ?? null;
+  const linkedPreviewQuery = useQuery(
+    organizePreviewQueryOptions(
+      token,
+      linkedPreviewId ?? "",
+      linkedPreviewId !== null,
+    ),
+  );
+  const linkedPreview =
+    linkedPreviewQuery.data?.ok === true ? linkedPreviewQuery.data.model : null;
+  const planCandidateCount =
+    linkedPreview !== null && linkedPreview.current && !linkedPreview.truncated
+      ? linkedPreview.executionCandidateItemIds.length
+      : null;
   // The shared centered-card presentation: backdrop, scroll lock, inert
   // background, focus trap, Escape/exit coordination and focus return. The
   // invoking row button stays mounted, so closing returns focus to it; a
@@ -1767,13 +1801,26 @@ function RunDetailPanel({
               <RunDetailTabs
                 runId={run.runId}
                 progress={run.progress}
+                status={run.status}
+                confirmableWaiting={
+                  planCandidateCount !== null
+                    ? planCandidateCount
+                    : waitingConfirmationOpen(run)
+                      ? run.progress?.available === true
+                        ? run.progress.dispositions.waiting
+                        : null
+                      : null
+                }
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
                 statusTone={runStatusTone(run)}
                 flow={
                   <>
-                    <RunFlowSummary run={run} />
+                    <RunFlowSummary
+                      run={run}
+                      planCandidateCount={planCandidateCount}
+                    />
                     <RunRetainedSubmissionNotice run={run} />
                   </>
                 }
@@ -1864,27 +1911,106 @@ function runStatusTone(run: RunSummary): RunStatusTone {
   return "neutral";
 }
 
-/**
- * The durable item dispositions that explain what a still-running flow is
- * actually waiting on.  A whole-Task status of `running` also covers ordinary
- * human waiting and zero-mutation analysis, so it is never used on its own as
- * proof that a file execution was admitted.
- */
-function runDispositionCounts(run: RunSummary): {
-  readonly waiting: number;
-  readonly active: number;
-  readonly pending: number;
-} | null {
+/** How many durable items are in the waiting disposition, if published. */
+function waitingItemCount(run: RunSummary): number | null {
   if (run.progress?.available !== true) return null;
+  return run.progress.dispositions.waiting;
+}
+
+/**
+ * Whether the waiting disposition is the exact Files confirmation the shared
+ * "继续整理" action opens. The plan read supplies the current candidate range;
+ * before that read settles, only an organize-kind progress model with an open
+ * continuation and no current business problem can name the waiters as the
+ * same Files confirmation. A recognition/metadata/classification wait is not
+ * a plan to confirm.
+ */
+function waitingConfirmationOpen(run: RunSummary): boolean {
+  return (
+    run.filesPreparation?.continuable === true &&
+    run.progress?.available === true &&
+    run.progress.kind === "organize" &&
+    run.progress.dispositions.waiting > 0 &&
+    run.problemTypes.length === 0
+  );
+}
+
+/** The legal next step for a published waiting range. */
+function waitingNextStep(
+  run: RunSummary,
+  waiting: number,
+  confirmableRange: number | null,
+): string {
+  if (run.filesPreparation?.continuable !== true) {
+    return run.problemTypes.length > 0
+      ? "在下方展开对应文件的证据，查看原因和可用操作。"
+      : "在下方展开对应文件的证据，核对方案。";
+  }
+  if (confirmableRange !== null && confirmableRange > 0) {
+    return `点击「继续整理」，核对 ${confirmableRange} 个文件的方案。`;
+  }
+  return `点击「继续整理」，查看 ${waiting} 个待处理文件的当前状态。`;
+}
+
+/** The waiting title and its exact range, never a whole-Task running guess. */
+function waitingHeadline(
+  run: RunSummary,
+  waiting: number,
+  mixed: boolean,
+  planCandidateCount: number | null,
+): { readonly title: string; readonly copy: string } {
+  // The current plan is the exact confirmable range once it is readable. A
+  // pending/failed plan read never guesses: the durable waiting count and the
+  // existing continuation remain the verifiable facts.
+  const planConfirmable = planCandidateCount !== null;
+  const fallbackConfirmable = !planConfirmable && waitingConfirmationOpen(run);
+  const confirmable = planConfirmable
+    ? planCandidateCount > 0
+    : fallbackConfirmable;
+  const confirmableRange = planConfirmable
+    ? planCandidateCount
+    : fallbackConfirmable
+      ? waiting
+      : null;
+  const remaining =
+    confirmableRange === null ? 0 : Math.max(waiting - confirmableRange, 0);
+  const confirmed = run.manualOrganizeSubmissions.length;
+  const prefix = confirmed > 0 ? `已有 ${confirmed} 次确认记录被受理；` : "";
+  if (mixed) {
+    if (confirmable) {
+      return {
+        title: "部分文件等待确认",
+        copy: `${prefix}${confirmableRange} 个文件等待确认${remaining > 0 ? `，另有 ${remaining} 个等待处理` : ""}，其余文件正在处理或排队；已执行文件的结果保留在下方。`,
+      };
+    }
+    return {
+      title: "部分文件等待处理",
+      copy: `${prefix}${waiting} 个文件等待处理，其余文件正在处理或排队；已执行文件的结果保留在下方。`,
+    };
+  }
+  if (confirmable) {
+    return {
+      title: "等待确认",
+      copy: `${prefix}${remaining > 0 ? `${confirmableRange} 个文件可确认，另有 ${remaining} 个等待处理。` : ""}${waitingNextStep(run, waiting, confirmableRange)}`,
+    };
+  }
+  if (run.problemTypes.length > 0) {
+    return {
+      title: "等待处理",
+      copy: `${prefix}${waiting} 个文件仍处于等待。${waitingNextStep(run, waiting, confirmableRange)}`,
+    };
+  }
   return {
-    waiting: run.progress.dispositions.waiting,
-    active: run.progress.dispositions.active,
-    pending: run.progress.dispositions.pending,
+    title: "等待处理",
+    copy: `${prefix}${waiting} 个文件尚未结束。${waitingNextStep(run, waiting, confirmableRange)}`,
   };
 }
 
 /** The card title and its one-sentence truthful explanation. */
-function runStatusHeadline(run: RunSummary): {
+function runStatusHeadline(
+  run: RunSummary,
+  planCandidateCount: number | null = null,
+): {
   readonly title: string;
   readonly copy: string;
 } {
@@ -1893,46 +2019,62 @@ function runStatusHeadline(run: RunSummary): {
   const failed = run.failedOnlyItems ?? 0;
   const uncertain = run.uncertainEffectItems ?? 0;
   const missing = run.missingResultItems ?? 0;
+  const waiting = waitingItemCount(run);
   switch (run.status) {
     case "completed":
       if (run.recoveredCompletion) {
         return {
-          title: "本次流程已完成（恢复成功）",
-          copy: "每个必要条目都有精确关联的真实成功证据；原失败尝试与结果保持原样。",
+          title: "流程已完成（恢复成功）",
+          copy: "必要文件效果均已验证，原处理记录仍可查阅。",
         };
       }
       if (uncertain > 0) {
         return {
-          title: "本次流程已完成，文件效果待核对",
-          copy: "执行已尝试但目标效果尚未确认；请先核对，不要直接重放。",
+          title: "流程已完成，文件效果待核对",
+          copy: "执行已尝试但目标效果尚未确认；展开文件证据核对，不要直接重放。",
         };
       }
       if (missing > 0) {
         return {
-          title: "本次流程已完成，有文件结果缺失",
-          copy: "正式结果缺失的文件保留最后已知状态，可查看逐文件证据。",
+          title: "流程已完成，有文件结果缺失",
+          copy: "展开文件证据，查看最后已知状态。",
         };
       }
-      if (partial > 0 || failed > 0) {
+      if (partial > 0 || (failed > 0 && success > 0)) {
         return {
-          title: "本次流程已完成，文件结果不一",
-          copy: "成功、部分成功与失败分别保留逐文件结果。",
+          title: "流程已完成，文件结果不一",
+          copy: "展开对应文件的证据，核对失败原因或附件结果。",
+        };
+      }
+      if (failed > 0) {
+        return {
+          title: "流程已完成，有文件失败",
+          copy: "展开失败文件的证据，查看失败阶段和已知影响。",
         };
       }
       if (success > 0) {
-        return {
-          title: "本次整理已完成",
-          copy: "所示成功来自已验证的文件操作。",
-        };
+        return { title: "流程已完成", copy: "" };
       }
       if (run.problemTypes.length > 0) {
         return {
-          title: "本次流程已完成，仍有待处理项",
+          title: "流程已完成，仍有待处理项",
           copy: "同一任务的问题保留在对应文件中，可逐项处理。",
         };
       }
+      if (run.progress?.available === true) {
+        const control =
+          run.progress.dispositions.skipped +
+          run.progress.dispositions.ignored +
+          run.progress.dispositions.cancelled;
+        if (control > 0) {
+          return {
+            title: "流程已完成，没有执行文件操作",
+            copy: "跳过与忽略决定保留在原任务。",
+          };
+        }
+      }
       return {
-        title: "本次流程已完成",
+        title: "流程已完成",
         copy:
           run.totalItems === 0
             ? "该任务没有需要处理的文件。"
@@ -1954,49 +2096,19 @@ function runStatusHeadline(run: RunSummary): {
         copy: "未开始的操作已停止，已完成的文件效果继续保留。",
       };
     case "running": {
-      const counts = runDispositionCounts(run);
-      const filesWaiting =
-        counts !== null &&
-        counts.waiting > 0 &&
-        run.filesPreparation?.continuable === true;
-      if (
-        counts !== null &&
-        counts.waiting > 0 &&
-        (counts.active > 0 || counts.pending > 0)
-      ) {
-        const confirmed = run.manualOrganizeSubmissions.length;
-        return {
-          title: filesWaiting
-            ? "部分文件等待确认，其余正在处理"
-            : "部分文件正在处理，另有文件等待处理",
-          copy:
-            confirmed > 0
-              ? `已有 ${confirmed} 次确认记录被受理；另有 ${counts.waiting} 个文件等待确认或处理，确认前不会执行对应文件。`
-              : `另有 ${counts.waiting} 个文件等待确认或处理，确认前不会执行对应文件。`,
-        };
-      }
-      if (counts !== null && counts.waiting > 0) {
-        const confirmed = run.manualOrganizeSubmissions.length;
-        if (filesWaiting) {
-          return confirmed > 0
-            ? {
-                title: "已有确认受理，另有文件等待确认",
-                copy: `已有 ${confirmed} 次确认记录被受理；本次 Files 整理仍有 ${counts.waiting} 个文件等待确认，确认前不会执行该部分文件。`,
-              }
-            : {
-                title: "等待确认后执行",
-                copy: `本次 Files 整理仍有 ${counts.waiting} 个文件等待确认；确认前不会执行文件操作。`,
-              };
+      if (run.progress?.available === true && waiting !== null && waiting > 0) {
+        const active =
+          run.progress.dispositions.active + run.progress.dispositions.pending;
+        if (active > 0) {
+          return waitingHeadline(run, waiting, true, planCandidateCount);
         }
-        return {
-          title: "等待处理",
-          copy:
-            confirmed > 0
-              ? `已有 ${confirmed} 次确认记录被受理；另有 ${counts.waiting} 个文件等待决定或确认。`
-              : "同一任务仍有文件需要决定或确认。",
-        };
+        return waitingHeadline(run, waiting, false, planCandidateCount);
       }
-      if (counts !== null && counts.active === 0 && counts.pending > 0) {
+      if (
+        run.progress?.available === true &&
+        run.progress.dispositions.active === 0 &&
+        run.progress.dispositions.pending > 0
+      ) {
         return {
           title: "已受理，等待执行",
           copy: "后台尚未开始处理这些文件；文件结果将在执行后独立记录。",
@@ -2005,27 +2117,36 @@ function runStatusHeadline(run: RunSummary): {
       if (run.currentStage === "organizing") {
         return {
           title: "正在执行整理",
-          copy: "当前阶段为整理执行；每个文件的实际结果由后端独立记录。",
+          copy: "执行结果由后端逐文件独立记录。",
         };
       }
       if (run.currentStage === "scanning") {
         return {
           title: "正在扫描文件",
-          copy: "当前阶段为扫描；文件结果和后续阶段以后端记录为准。",
+          copy: "扫描完成后继续分析与整理；文件结果以后端记录为准。",
         };
       }
       if (run.currentStage === "processing") {
         return {
           title: "正在分析文件",
-          copy: "当前阶段为媒体分析；文件结果和后续执行以后端记录为准。",
+          copy: "分析完成后继续整理；文件结果以后端记录为准。",
+        };
+      }
+      if (run.currentStage === "multiple") {
+        return {
+          title: "正在处理多个阶段",
+          copy: "文件结果与后续阶段以后端记录为准。",
         };
       }
       return {
         title: "正在处理",
-        copy: "流程仍在进行；当前阶段和文件结果以后端记录为准。",
+        copy: "文件结果与当前阶段以后端记录为准。",
       };
     }
     case "waiting":
+      if (waiting !== null && waiting > 0) {
+        return waitingHeadline(run, waiting, false, planCandidateCount);
+      }
       return {
         title: "等待处理",
         copy: "同一任务仍有文件需要决定或确认。",
@@ -2054,28 +2175,19 @@ function runStatusHeadline(run: RunSummary): {
  * keeps the scope/time/item evidence, and the technical identifiers (Worker,
  * fixed configuration snapshot) collapse into a bounded diagnostics group.
  */
-function RunFlowSummary({ run }: { readonly run: RunSummary }) {
-  const headline = runStatusHeadline(run);
+function RunFlowSummary({
+  run,
+  planCandidateCount,
+}: {
+  readonly run: RunSummary;
+  readonly planCandidateCount: number | null;
+}) {
+  const headline = runStatusHeadline(run, planCandidateCount);
   return (
     <div className="mf-run-fact-flow">
-      <p className="mf-run-flow-line mf-run-flow-status">
-        <span className="mf-run-flow-label">流程状态</span>
-        <span
-          className={`mf-run-status-pill mf-run-status-pill-${runStatusTone(run)}`}
-        >
-          {run.recoveredCompletion ? "已完成（恢复成功）" : runStatusLabel(run)}
-        </span>
-        {run.status === "unknown" && (
-          <span className="mf-run-flow-note">（证据不足）</span>
-        )}
-      </p>
       <h3 className="mf-run-status-title">{headline.title}</h3>
-      <p className="mf-run-status-copy">{headline.copy}</p>
-      {run.currentStage !== null && (
-        <p className="mf-run-flow-line">
-          <span className="mf-run-flow-label">当前阶段</span>
-          <span>{RUN_CURRENT_STAGE_LABELS[run.currentStage]}</span>
-        </p>
+      {headline.copy !== "" && (
+        <p className="mf-run-status-copy">{headline.copy}</p>
       )}
       {run.problemTypes.length > 0 && (
         <p className="mf-run-flow-line mf-run-problem-line">

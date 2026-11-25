@@ -5615,12 +5615,36 @@ tr[aria-selected="true"] {
   background: #f8fafd;
 }
 
-.mf-run-item-main {
+/* The whole row is one native expand control: file identity and status are
+   its visible content, and the evidence panel remains its sibling. */
+.mf-run-item-row-button {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   min-width: 0;
   padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mf-run-item-row-button:hover {
+  background: #f5f8fd;
+}
+
+.mf-run-item-row-button:focus-visible {
+  outline: 2px solid #0b63ce;
+  outline-offset: -2px;
+}
+
+.mf-run-item-row-open .mf-run-item-row-button {
+  background: #f8fafd;
+  box-shadow: inset 3px 0 0 #0b63ce;
 }
 
 .mf-run-item-tile {
@@ -5645,6 +5669,7 @@ tr[aria-selected="true"] {
 }
 
 .mf-run-item-name {
+  display: block;
   margin: 0;
   color: #14223c;
   font-size: 14px;
@@ -5654,6 +5679,7 @@ tr[aria-selected="true"] {
 }
 
 .mf-run-item-summary {
+  display: block;
   margin: 0;
   color: #53698e;
   font-size: 12.5px;
@@ -5661,14 +5687,9 @@ tr[aria-selected="true"] {
   overflow-wrap: anywhere;
 }
 
-.mf-run-item-side {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 10px;
-}
-
 .mf-run-item-status {
+  flex: none;
+  margin-left: auto;
   color: #176b3a;
   font-size: 12px;
   font-weight: 600;
@@ -5686,23 +5707,6 @@ tr[aria-selected="true"] {
 
 .mf-run-item-row-muted .mf-run-item-status {
   color: #53698e;
-}
-
-.mf-run-item-evidence-action {
-  padding: 2px 0;
-  border: 0;
-  background: transparent;
-  color: #0b63ce;
-  font-size: 12.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.mf-run-item-evidence-action:focus-visible {
-  outline: 2px solid #0b63ce;
-  outline-offset: 2px;
-  border-radius: 4px;
 }
 
 .mf-run-item-evidence {
@@ -5784,14 +5788,8 @@ tr[aria-selected="true"] {
 }
 
 @media (max-width: 520px) {
-  .mf-run-item-main {
-    flex-wrap: wrap;
-  }
-
-  .mf-run-item-side {
-    width: 100%;
-    justify-content: space-between;
-    padding-left: 38px;
+  .mf-run-item-row-button {
+    align-items: flex-start;
   }
 
   .mf-run-item-name,

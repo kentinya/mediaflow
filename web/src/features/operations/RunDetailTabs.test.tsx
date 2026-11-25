@@ -1166,12 +1166,65 @@ describe("selected-run detail tabs", () => {
     expect(within(rows[0] as HTMLElement).getByText("成功")).toBeVisible();
     expect(
       within(rows[0] as HTMLElement).getByRole("button", {
-        name: "查看证据",
+        name: /a\.mkv.*查看证据$/,
       }),
-    ).toBeVisible();
+    ).toHaveAccessibleName("a.mkv，成功；查看证据");
     expect(items.querySelector("table")).toBeNull();
     expect(rows[0]!.textContent).not.toContain("source:movies/a.mkv");
   });
+  it("Task59.3 makes each file row the single expand control (AC-06)", async () => {
+    const user = userEvent.setup();
+    stubDetailJourney();
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const items = await within(detail).findByRole("region", { name: "主条目" });
+    await within(items).findByText("a.mkv");
+    const row = items.querySelector<HTMLElement>(".mf-run-item-row");
+    expect(row).not.toBeNull();
+    const rowButton = within(row!).getByRole("button", {
+      name: /a\.mkv.*查看证据$/,
+    });
+    // The whole row is one native button: icon, file identity, summary and
+    // status. Its accessible name starts with the real file name, and the row
+    // has no second evidence control.
+    expect(within(row!).getAllByRole("button")).toHaveLength(1);
+    expect(rowButton).toHaveAccessibleName("a.mkv，成功；查看证据");
+    expect(within(rowButton).getByText("成功")).toBeVisible();
+    expect(within(rowButton).getByText("a.mkv")).toBeVisible();
+
+    await user.click(rowButton);
+    const evidence = await within(items).findByRole("region", {
+      name: "条目证据",
+    });
+    expect(evidence.closest(".mf-run-item-row")).toBe(row);
+    expect(rowButton).toHaveAttribute("aria-expanded", "true");
+    expect(rowButton).toHaveAttribute("aria-controls", evidence.id);
+
+    // Clicking the same row again closes its own evidence.
+    await user.click(rowButton);
+    await waitFor(() =>
+      expect(
+        within(items).queryByRole("region", { name: "条目证据" }),
+      ).toBeNull(),
+    );
+    expect(rowButton).toHaveAttribute("aria-expanded", "false");
+
+    // Enter and Space drive the same native button and keep focus on it.
+    rowButton.focus();
+    await user.keyboard("{Enter}");
+    await within(items).findByRole("region", { name: "条目证据" });
+    expect(rowButton).toHaveFocus();
+    await user.keyboard(" ");
+    await waitFor(() =>
+      expect(
+        within(items).queryByRole("region", { name: "条目证据" }),
+      ).toBeNull(),
+    );
+    expect(rowButton).toHaveFocus();
+  });
+
   it("reads flow status, processed range and independent file results without standing tutorials", async () => {
     stubDetailJourney();
     authStore.setToken(TOKEN);
@@ -1183,7 +1236,9 @@ describe("selected-run detail tabs", () => {
     const flow = await within(detail).findByRole("region", {
       name: "状态与流程",
     });
-    expect(within(flow).getByText("流程状态")).toBeVisible();
+    expect(
+      within(flow).getByRole("heading", { name: "部分文件等待处理" }),
+    ).toBeVisible();
     const progress = await within(detail).findByRole("region", {
       name: "处理进度",
     });
@@ -1431,7 +1486,7 @@ describe("selected-run detail tabs", () => {
     // The raw stage/attempt/failure code remain available in the item's one
     // diagnostics entry once its evidence is opened.
     await user.click(
-      within(waitingRow!).getByRole("button", { name: "查看证据" }),
+      within(waitingRow!).getByRole("button", { name: /查看证据$/ }),
     );
     const evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：b.mkv");
@@ -1541,7 +1596,7 @@ describe("selected-run detail tabs", () => {
     }
 
     await user.click(
-      within(unconfirmedRow!).getByRole("button", { name: "查看证据" }),
+      within(unconfirmedRow!).getByRole("button", { name: /查看证据$/ }),
     );
     const evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：a.mkv");
@@ -2004,7 +2059,7 @@ describe("selected-run detail tabs", () => {
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText("a.mkv");
     await user.click(
-      within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
+      within(detail).getAllByRole("button", { name: /查看证据$/ })[1]!,
     );
     const recovery = await within(detail).findByRole("region", {
       name: "条目审核与恢复",
@@ -2083,7 +2138,7 @@ describe("selected-run detail tabs", () => {
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText("a.mkv");
     const inspectButtons = within(detail).getAllByRole("button", {
-      name: "查看证据",
+      name: /查看证据$/,
     });
     await user.click(inspectButtons[1]);
     const evidence = await within(detail).findByRole("region", {
@@ -2185,7 +2240,7 @@ describe("selected-run detail tabs", () => {
     const firstRow = rows[0]!;
     const secondRow = rows[1]!;
     const firstTrigger = within(firstRow).getByRole("button", {
-      name: "查看证据",
+      name: /查看证据$/,
     });
     await user.click(firstTrigger);
     const firstEvidence = await within(items).findByRole("region", {
@@ -2203,7 +2258,7 @@ describe("selected-run detail tabs", () => {
     ).toHaveLength(1);
 
     const secondTrigger = within(secondRow).getByRole("button", {
-      name: "查看证据",
+      name: /查看证据$/,
     });
     await user.click(secondTrigger);
     const secondEvidence = await within(items).findByRole("region", {
@@ -2401,7 +2456,7 @@ describe("selected-run detail tabs", () => {
       items.querySelectorAll<HTMLElement>(".mf-run-item-row"),
     );
     await user.click(
-      within(rows[0]!).getByRole("button", { name: "查看证据" }),
+      within(rows[0]!).getByRole("button", { name: /查看证据$/ }),
     );
     const loading = await within(items).findByRole("region", {
       name: "条目证据",
@@ -2409,7 +2464,7 @@ describe("selected-run detail tabs", () => {
     expect(within(loading).getByText(/正在加载条目证据/)).toBeVisible();
 
     await user.click(
-      within(rows[1]!).getByRole("button", { name: "查看证据" }),
+      within(rows[1]!).getByRole("button", { name: /查看证据$/ }),
     );
     const current = await within(items).findByRole("region", {
       name: "条目证据",
@@ -2455,7 +2510,7 @@ describe("selected-run detail tabs", () => {
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText("a.mkv");
     await user.click(
-      within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
+      within(detail).getAllByRole("button", { name: /查看证据$/ })[1]!,
     );
     const recovery = await within(detail).findByRole("region", {
       name: "条目审核与恢复",
@@ -2486,7 +2541,7 @@ describe("selected-run detail tabs", () => {
     const reopened = await screen.findByRole("dialog", { name: "运行详情" });
     await within(reopened).findAllByText("a.mkv");
     await user.click(
-      within(reopened).getAllByRole("button", { name: "查看证据" })[1]!,
+      within(reopened).getAllByRole("button", { name: /查看证据$/ })[1]!,
     );
     const reopenedRecovery = await within(reopened).findByRole("region", {
       name: "条目审核与恢复",
@@ -2547,7 +2602,7 @@ describe("selected-run detail tabs", () => {
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText("a.mkv");
     await user.click(
-      within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
+      within(detail).getAllByRole("button", { name: /查看证据$/ })[1]!,
     );
     const recovery = await within(detail).findByRole("region", {
       name: "条目审核与恢复",
@@ -2573,7 +2628,7 @@ describe("selected-run detail tabs", () => {
     const reopened = await screen.findByRole("dialog", { name: "运行详情" });
     await within(reopened).findAllByText("a.mkv");
     await user.click(
-      within(reopened).getAllByRole("button", { name: "查看证据" })[1]!,
+      within(reopened).getAllByRole("button", { name: /查看证据$/ })[1]!,
     );
     const reopenedRecovery = await within(reopened).findByRole("region", {
       name: "条目审核与恢复",
@@ -2599,7 +2654,7 @@ describe("selected-run detail tabs", () => {
       within(reopened).getByRole("button", { name: "关闭证据" }),
     );
     await user.click(
-      within(reopened).getAllByRole("button", { name: "查看证据" })[0]!,
+      within(reopened).getAllByRole("button", { name: /查看证据$/ })[0]!,
     );
     const otherRecovery = await within(reopened).findByRole("region", {
       name: "条目审核与恢复",
@@ -2610,7 +2665,7 @@ describe("selected-run detail tabs", () => {
       within(reopened).getByRole("button", { name: "关闭证据" }),
     );
     await user.click(
-      within(reopened).getAllByRole("button", { name: "查看证据" })[1]!,
+      within(reopened).getAllByRole("button", { name: /查看证据$/ })[1]!,
     );
     const backToItem = await within(reopened).findByRole("region", {
       name: "条目审核与恢复",
@@ -2671,7 +2726,7 @@ describe("selected-run detail tabs", () => {
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText("a.mkv");
     await user.click(
-      within(detail).getAllByRole("button", { name: "查看证据" })[1]!,
+      within(detail).getAllByRole("button", { name: /查看证据$/ })[1]!,
     );
     const recovery = await within(detail).findByRole("region", {
       name: "条目审核与恢复",
@@ -2719,7 +2774,7 @@ describe("selected-run detail tabs", () => {
     // item-2: the other item's panel never shows this confirmation.
     await user.click(within(detail).getByRole("button", { name: "关闭证据" }));
     await user.click(
-      within(detail).getAllByRole("button", { name: "查看证据" })[0]!,
+      within(detail).getAllByRole("button", { name: /查看证据$/ })[0]!,
     );
     const otherRecovery = await within(detail).findByRole("region", {
       name: "条目审核与恢复",
@@ -2762,7 +2817,7 @@ describe("selected-run detail tabs", () => {
     const reopened = await screen.findByRole("dialog", { name: "运行详情" });
     await within(reopened).findAllByText("a.mkv");
     await user.click(
-      within(reopened).getAllByRole("button", { name: "查看证据" })[1]!,
+      within(reopened).getAllByRole("button", { name: /查看证据$/ })[1]!,
     );
     const reopenedRecovery = await within(reopened).findByRole("region", {
       name: "条目审核与恢复",
@@ -2789,7 +2844,7 @@ describe("selected-run detail tabs", () => {
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     await within(detail).findAllByText("a.mkv");
     const inspectButtons = within(detail).getAllByRole("button", {
-      name: "查看证据",
+      name: /查看证据$/,
     });
     await user.click(inspectButtons[0]);
     const evidence = await within(detail).findByRole("region", {

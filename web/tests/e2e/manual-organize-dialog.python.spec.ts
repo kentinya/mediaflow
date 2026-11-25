@@ -4091,7 +4091,6 @@ test("Task59.1 a 101-file directory settles as a failed preparation and the same
   await submitSignIn(page, accountForToken(ADMIN_TOKEN));
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible({ timeout: 30_000 });
-  await expect(detail.getByText("失败／准备阶段超限")).toBeVisible();
   await expect(
     detail.getByRole("heading", { name: "准备阶段超限，本次未执行整理" }),
   ).toBeVisible();
