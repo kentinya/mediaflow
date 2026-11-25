@@ -1,6 +1,6 @@
 # Task 59.3 — 任务详情状态、进度与文件行
 
-Next Action: DEVELOPER READS TERMINAL FILE ROWS AFTER A SLOW FIRST PAGE READ
+Next Action: DEVELOPER REFRESHES FILE ROWS WHEN THE TASK SETTLES ON THE RECORDS TAB
 
 ```text
 Task ID: 59.3
@@ -8,7 +8,7 @@ Task Type: SLICE
 Parent Slice: 59
 Status: FIX REQUIRED
 Task Base: d1ea5f667c5ebc08e1a6835030197c1724f4f4d2
-Reviewed Implementation Head: 56dd4234865afc84aa0d78acd6aef75fce3c60c8
+Reviewed Implementation Head: 47b2a48b1aba865fb06f1505019ae131ea84c541
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
@@ -33,32 +33,31 @@ Implementation Authorization: SLICE 59 RO-4 / AC-06 TASK DETAIL STATUS AND FULL-
 上轮阻塞见 `f97c9199:TASK.md`。
 
 **Task 59.3 — FIX REQUIRED（P1，RO-4 / AC-06）。** B 从干净的 `main` 审查完整 Task
-`d1ea5f667c5ebc08e1a6835030197c1724f4f4d2..56dd4234865afc84aa0d78acd6aef75fce3c60c8`
-及完整 Slice `212acdef5d97c14a01353b22c103d44b911d6147..56dd4234865afc84aa0d78acd6aef75fce3c60c8`。
-上轮问题记录在 `22ee6198:TASK.md`。
+`d1ea5f667c5ebc08e1a6835030197c1724f4f4d2..47b2a48b1aba865fb06f1505019ae131ea84c541`
+及完整 Slice `212acdef5d97c14a01353b22c103d44b911d6147..47b2a48b1aba865fb06f1505019ae131ea84c541`。
+上轮问题记录在 `03267c9f:TASK.md`。
 
-- **已通过。** 从现有 Files 入口选择 `ProviderFail.2011.mkv` 和 `ProviderReady.2011.mkv`，
-  第一部的元数据分析失败，第二部等待确认。执行提交、确认受理和正式结果均为零，详情正确显示
-  「尚未执行文件操作」和「1 个文件等待确认」。真实复制用例中，文件行先显示待处理，Worker 完成
-  后，同一详情自动再读该行并显示「已验证成功」。整行展开、筛选回落和原位续作回归通过。
-- **当前阻塞。** 从同一 Files 用例确认复制 `DialogConflict.2022.mkv`，保留自动打开的原任务详情。
-  第一次文件分页在 Worker 完成前读到「待处理」，这份真实响应稍后才送达浏览器。此时任务概览和
-  文件结果已显示完成。旧响应送达后，文件行仍显示「待处理」，自动读回始终只有一次。点条目区
-  原「刷新」后第二次读取立即显示「已验证成功」。`RunItemsSection` 的终态读回调用
-  `refetch({cancelRefetch: true})`，首次查询还没有缓存数据时，查询库复用原在途请求，未发出新的
-  终态读取。此处只延后真实响应送达，任务及结果均由原 API 和 Worker 产生。
-  [终态读取](web/src/features/operations/RunDetailTabs.tsx#L1366) ·
-  [真实复制入口](web/tests/e2e/manual-organize-dialog.python.spec.ts#L1247)
+- **已通过。** 留在「任务详情」时，Worker 完成会对同一文件分页发出新的读取。首次文件分页真实
+  响应在终态后迟到的用例也通过，原文件行显示「已验证成功」。元数据分析失败、确认前零执行、整行
+  展开、筛选回落和原位续作的相关回归通过。
+- **当前阻塞。** 从 Files 确认复制 `DialogConflict.2022.mkv`，在自动打开的详情读到「待处理」后
+  切到「操作记录」。Worker 完成，导出可用，切回「任务详情」。首区显示「流程已完成」，结果区
+  显示「1 已验证成功」，同一文件行却仍是「待处理」及原原因。页面只有一次文件分页请求，点击
+  条目区「刷新」后才显示正确的行。终态读取放在 `RunItemsSection` 中，切到记录页时它离开页面，
+  概览在记录页读到完成时，文件页旧读回没有失效。回到详情时挂载的文件页按终态起步并复用缓存，
+  因此没有触发新读取。实跑使用现有 Task、Worker 和两页签，没有延迟或改写响应。
+  [页签切换](web/src/features/operations/RunDetailTabs.tsx#L922) ·
+  [终态读取](web/src/features/operations/RunDetailTabs.tsx#L1366)
 
-**本轮实跑。** 治理、完整区间差异、类型、构建、改动文件 ESLint 和 Prettier 通过。
-134 项组件、103 项浏览器、11 项原生组合及 1 项 Unicode 原生测试通过。另两条真实路径补验通过，
-首次分页迟到的单独补验失败，手动刷新恢复正确状态。原生日志、截图和失败轨迹在本机
-`.git/validation-evidence/56dd4234865afc84aa0d78acd6aef75fce3c60c8/b-task59.3-review/`。
+**本轮实跑。** 治理、完整区间差异、类型、构建、Web ESLint 和 Prettier 通过。206 项组件、
+103 项浏览器测试通过。原生组合 10 项通过，元数据修正的提交核对首跑超时，独立复跑通过。
+记录页往返补验失败，手动刷新读到正确文件状态。原生日志、截图和失败轨迹在本机
+`.git/validation-evidence/47b2a48b1aba865fb06f1505019ae131ea84c541/b-task59.3-review/`。
 
 **Slice 59 仍为 FIX REQUIRED。** RO-1 的准备、概览和 100/101 文件边界，RO-2 的四类决定及回落，
 RO-3 的整批复核、明确确认和原任务交接均通过。RO-4 原有共用操作区、原位续作焦点及四类恢复
 沿用 Task 59.2 PASS，见 `171b3de6:TASK.md`。Task 59.3 保留原 Base，验收 A 在 `a14edf20` 批准的
-状态区与在 `45d89ce3` 批准的文件整行展开。当前待修首次文件分页迟到时的终态读回。
+状态区与在 `45d89ce3` 批准的文件整行展开。当前待修任务在「操作记录」读到终态时的文件分页更新。
 [Slice 验收](SLICE.md#acceptance-criteria)
 
 ## 目标与真实入口
@@ -118,10 +117,10 @@ B 在 `45d89ce3` 从任务中心列表打开已有真实多条目任务。点 `A
    [文件行](web/src/features/operations/RunDetailTabs.tsx#L1209) ·
    [证据焦点](web/src/features/operations/RunDetailTabs.tsx#L833) ·
    [问题文件入口](web/src/features/operations/OperationsLanding.tsx#L706)
-6. 同一详情从进行中读到终态时，让现有查询真正发出一次当前文件分页读取。用精确分页查询键
-   取消旧请求后再读，或在旧请求收尾后串行发出终态读。覆盖已显示旧页和首次列表仍在加载的两条路径。
-   保持当前任务、服务器筛选、页码、展开项、焦点和滚动。文件行采用终态读取的真实状态与原因；
-   读取失败沿用已有说明和「刷新」。
+6. 由两页签共用的 `RunDetailTabs` 或详情容器处理同一任务的终态。复用精确分页查询键。
+   文件页可见时保留本轮取消旧请求、发出新请求的行为；在「操作记录」读到终态时标记原文件分页
+   已过期，切回「任务详情」读取该页的真实终态。保持当前任务、服务器筛选、页码、展开项、焦点和
+   滚动。读取失败沿用已有说明和「刷新」。
 
 ## 验收与测试
 
@@ -134,8 +133,9 @@ B 在 `45d89ce3` 从任务中心列表打开已有真实多条目任务。点 `A
   核对一项已执行和一项仍待确认并存时，既有结果仍可按原文件读回。
 - [ ] 从现有复制用例确认 `DialogConflict.2022.mkv` 后留在自动打开的详情，允许页面先读到待处理行。
   Worker 完成且详情读到终态后，同一文件行自动更新为「已验证成功」，对应证据可展开。
-  同一用例增加首次分页真实响应迟到的路径，核对完成后确实发出新的分页请求，且自动更新原行。
-  保留已经打开的文件及原焦点，用现有读取证明两条路径。
+  复验首次分页真实响应迟到时仍会发出新的终态分页请求。在同一复制用例中再走一遍切页签路径，
+  先看到待处理行，转到「操作记录」等导出可用，再切回「任务详情」，文件行自动显示验证结果。
+  核对原筛选及展开条目，证明这些步骤只读取同一任务。
 - [ ] 从实际 Files 留下已分析但未执行的方案，从任务中心打开同一任务。桌面和 390 px 核对单一
   「等待确认」、准确范围、合法下一步和进度口径。沿原按钮继续并明确确认，读回同一任务。
   正常完成只显示一个「流程已完成」，紧接相应进度和正式结果。
