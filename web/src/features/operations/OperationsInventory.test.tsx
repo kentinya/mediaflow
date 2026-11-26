@@ -815,7 +815,13 @@ describe("Operations run inventory landing", () => {
     await user.click(within(table).getByRole("button", { name: /预览/ }));
     await waitFor(() => expect(overviewRead).toBe(true));
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    expect(await within(detail).findByText("手动")).toBeVisible();
+    await user.click(
+      await within(detail).findByRole("button", { name: "操作记录" }),
+    );
+    await user.click(within(detail).getByText("任务信息与技术诊断"));
+    expect(within(detail).getByText("手动")).toBeVisible();
+    expect(within(detail).getByText("Library/History")).toBeVisible();
+    await user.click(within(detail).getByRole("button", { name: "任务详情" }));
     // The disposition filter option shares the status label text, so the
     // bounded presence check uses the All* variant over the detail panel.
     expect(within(detail).getAllByText(/进行中/).length).toBeGreaterThan(0);
@@ -830,10 +836,8 @@ describe("Operations run inventory landing", () => {
     expect(
       within(detail).queryByRole("region", { name: "文件整理准备" }),
     ).toBeNull();
-    // The historical source and target scope the projection publishes are
-    // part of the visible overview (absent evidence renders explicitly).
+    // The historical source stays in the visible detail title.
     expect(within(detail).getByText("Movies")).toBeVisible();
-    expect(within(detail).getByText("Library/History")).toBeVisible();
     // The former self-link back into this same task detail is gone.
     expect(within(detail).queryByText("更详细证据")).toBeNull();
     expect(
@@ -895,7 +899,7 @@ describe("Operations run inventory landing", () => {
       ),
     ).toBeVisible();
     expect(
-      within(progress).getByRole("heading", { name: "处理进度" }),
+      within(progress).getByText("处理进度", { exact: true }),
     ).toBeVisible();
     // The processed range is text: no bar implies the waiting files ran.
     expect(within(progress).queryByRole("progressbar")).toBeNull();
@@ -1137,7 +1141,7 @@ describe("Operations run inventory landing", () => {
     const progress = within(detail).getByRole("region", { name: "处理进度" });
     expect(within(progress).getByText("已处理 2 / 2 个主条目")).toBeVisible();
     const results = within(detail).getByRole("region", { name: "文件结果" });
-    expect(within(results).getByText("已验证成功")).toBeVisible();
+    expect(within(results).getByText("成功")).toBeVisible();
     // The approved reading order is unchanged: heading, progress, results.
     expect(
       flow.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -3844,7 +3848,7 @@ describe("Operations run inventory landing", () => {
       within(results)
         .getAllByRole("listitem")
         .map((item) => item.textContent),
-    ).toEqual(["6已验证成功", "2部分成功", "1失败"]);
+    ).toEqual(["成功6", "部分成功2", "失败1"]);
     expect(
       within(results).getByText(/目标文件结果尚未确认 1 个/),
     ).toBeVisible();
@@ -4006,7 +4010,6 @@ describe("Operations run inventory landing", () => {
     ).toBeNull();
     const results = within(detail).getByRole("region", { name: "文件结果" });
     const items = within(detail).getByRole("region", { name: "主条目" });
-    const facts = within(detail).getByRole("region", { name: "任务信息" });
     expect(
       toolbar.compareDocumentPosition(progress) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -4018,9 +4021,7 @@ describe("Operations run inventory landing", () => {
     expect(
       results.compareDocumentPosition(items) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(
-      items.compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(items.parentElement?.lastElementChild).toBe(items);
   });
 
   it("renders an honest scan-error run instead of rejecting the page", async () => {
@@ -4617,7 +4618,11 @@ describe("Operations run inventory landing", () => {
       within(table).getByRole("button", { name: "Shows，预览详情" }),
     );
     const second = await screen.findByRole("dialog", { name: "运行详情" });
-    await within(second).findByText("Media/Shows");
+    await user.click(
+      await within(second).findByRole("button", { name: "操作记录" }),
+    );
+    await user.click(within(second).getByText("任务信息与技术诊断"));
+    expect(within(second).getByText("Media/Shows")).toBeVisible();
     // The late first-run response can never leak into the open card.
     releaseFirstOverview(jsonResponse(runDocument()));
     await waitFor(() =>

@@ -475,8 +475,6 @@ test("inventory count card applies its server filter and the run overview opens 
       .getByRole("region", { name: "状态与流程" })
       .getByRole("heading", { name: "任务流程失败" }),
   ).toBeVisible();
-  await expect(detail.getByText("触发方式")).toBeVisible();
-  await expect(detail.getByText("自动化", { exact: true })).toBeVisible();
   await expect(
     detail
       .getByRole("region", { name: "文件结果" })
@@ -486,6 +484,9 @@ test("inventory count card applies its server filter and the run overview opens 
   // The current detail directly owns its operation-record stream. This exact
   // durable run has no result, evidence, log or audit rows.
   await detail.getByRole("button", { name: "操作记录", exact: true }).click();
+  await detail.getByText("任务信息与技术诊断").click();
+  await expect(detail.getByText("触发方式")).toBeVisible();
+  await expect(detail.getByText("自动化", { exact: true })).toBeVisible();
   await expect(
     detail.getByRole("region", { name: "操作记录", exact: true }),
   ).toBeVisible();
@@ -671,8 +672,8 @@ test("the selected run detail reads flow, processed range and independent file r
   // The independent file outcomes follow, including the settled attempt with
   // no recorded result. The removed accounting/tutorial copy stays gone.
   const results = detail.getByRole("region", { name: "文件结果" });
-  await expect(results.getByText("1已验证成功", { exact: true })).toBeVisible();
-  await expect(results.getByText("1失败", { exact: true })).toBeVisible();
+  await expect(results.getByText("成功1", { exact: true })).toBeVisible();
+  await expect(results.getByText("失败1", { exact: true })).toBeVisible();
   await expect(
     results.getByText(/文件处理已结束，结果未记录 1 个/),
   ).toBeVisible();
@@ -874,8 +875,8 @@ test("PATCH-20261107-1 keeps the mixed completed run and its independent file ou
       .getByText("已处理 2 / 2 个主条目"),
   ).toBeVisible();
   const results = detail.getByRole("region", { name: "文件结果" });
-  await expect(results.getByText("1已验证成功", { exact: true })).toBeVisible();
-  await expect(results.getByText("1失败", { exact: true })).toBeVisible();
+  await expect(results.getByText("成功1", { exact: true })).toBeVisible();
+  await expect(results.getByText("失败1", { exact: true })).toBeVisible();
   await expect(
     results.getByText(/文件处理已结束，结果未记录 1 个/),
   ).toBeVisible();

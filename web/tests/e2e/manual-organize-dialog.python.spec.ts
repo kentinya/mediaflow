@@ -848,6 +848,13 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
   await expect(
     detail.getByRole("heading", { name: "流程已完成" }),
   ).toBeVisible();
+  // Opening evidence updates the detail URL. The same mounted card must
+  // retain its entrance mode through that state change.
+  const row = detail.getByRole("button", { name: /查看证据/ }).first();
+  await row.click();
+  await expect(detail.getByRole("region", { name: "条目证据" })).toBeVisible();
+  await expect(detail.locator("..")).toHaveClass(/mf-modal-layer-handoff/);
+  await expect(row).toBeFocused();
 });
 
 test("Task59.1 an unknown Execute response is reconciled into the exact Task without a replay", async ({
@@ -1523,7 +1530,7 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   await expect(
     detail
       .getByRole("region", { name: "文件结果" })
-      .getByText("1已验证成功", { exact: true }),
+      .getByText("成功1", { exact: true }),
   ).toBeVisible({ timeout: 30_000 });
   const items = detail.getByRole("region", { name: "主条目" });
   const copiedRow = items

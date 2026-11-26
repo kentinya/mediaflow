@@ -1983,6 +1983,9 @@ function RunDetailPanel({
   // landing's per-run session store, so closing the card mid-request never
   // loses an unknown outcome or its reconciliation context.
   const [reconciling, setReconciling] = useState(false);
+  // Search edits inside this mounted card (including opening evidence)
+  // replace history state. The entrance mode belongs to the card's mount.
+  const [handoffEntrance] = useState(fromOrganizeHandoff);
   const overview = query.data?.ok === true ? query.data.model : null;
   // The current plan is an independent bounded read of this exact Task's
   // linked Files preparation. It supplies the confirmable range only when the
@@ -2132,7 +2135,7 @@ function RunDetailPanel({
     <ModalCardShell
       layerRef={modal.layerRef}
       closing={exit.closing}
-      skipEntrance={fromOrganizeHandoff}
+      skipEntrance={handoffEntrance}
       busy={query.isPending}
       title={
         overview === null
@@ -2736,9 +2739,7 @@ function runStatusHeadline(
  * The first block answers "流程到哪一步、有什么要处理": the durable flow status
  * with its honesty annotations, the run's current title, the bounded current
  * stage and its real business problems. Progress and applicable actions are
- * rendered by `RunDetailTabs` inside this same card; the bounded facts list
- * keeps the scope/time/item evidence, and the technical identifiers (Worker,
- * fixed configuration snapshot) collapse into a bounded diagnostics group.
+ * rendered by `RunDetailTabs` inside this same card.
  */
 function RunFlowSummary({
   run,
@@ -2775,9 +2776,9 @@ function RunDetailFacts({ run }: { readonly run: RunSummary }) {
   const hasDiagnostics =
     run.workerId !== null || run.configurationSnapshotId !== null;
   return (
-    <div className="mf-run-facts">
+    <details className="mf-run-fact-diagnostics">
+      <summary>任务信息与技术诊断</summary>
       <section className="mf-run-fact-meta" aria-label="任务信息">
-        <h4>任务信息</h4>
         <dl className="mf-dashboard-facts">
           <div>
             <dt>触发方式</dt>
@@ -2798,24 +2799,21 @@ function RunDetailFacts({ run }: { readonly run: RunSummary }) {
         </dl>
       </section>
       {hasDiagnostics && (
-        <details className="mf-run-fact-diagnostics">
-          <summary>技术诊断</summary>
-          <dl className="mf-dashboard-facts">
-            {run.workerId !== null && (
-              <div>
-                <dt>Worker</dt>
-                <dd>{run.workerId}</dd>
-              </div>
-            )}
-            {run.configurationSnapshotId !== null && (
-              <div>
-                <dt>固定配置</dt>
-                <dd>{run.configurationSnapshotId}</dd>
-              </div>
-            )}
-          </dl>
-        </details>
+        <dl className="mf-dashboard-facts">
+          {run.workerId !== null && (
+            <div>
+              <dt>Worker</dt>
+              <dd>{run.workerId}</dd>
+            </div>
+          )}
+          {run.configurationSnapshotId !== null && (
+            <div>
+              <dt>固定配置</dt>
+              <dd>{run.configurationSnapshotId}</dd>
+            </div>
+          )}
+        </dl>
       )}
-    </div>
+    </details>
   );
 }

@@ -863,6 +863,8 @@ test("server-side filtered selection and return keep the list context", async ({
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   await expect(detail.getByText(/失败/).first()).toBeVisible();
+  await detail.getByRole("button", { name: "操作记录", exact: true }).click();
+  await detail.getByText("任务信息与技术诊断").click();
   await expect(detail.getByText("触发方式")).toBeVisible();
 
   // Closing returns to the same filtered list; the reset clears the filters,
@@ -1008,11 +1010,9 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   // The success cell is the progress read model's confirmed split, not the
   // recorded success status count: one verified file beside one unconfirmed
   // success, one failure and one normal skip.
-  await expect(
-    fileResults.getByText("1已验证成功", { exact: true }),
-  ).toBeVisible();
-  await expect(fileResults.getByText("1失败", { exact: true })).toBeVisible();
-  await expect(fileResults.getByText("1跳过", { exact: true })).toBeVisible();
+  await expect(fileResults.getByText("成功1", { exact: true })).toBeVisible();
+  await expect(fileResults.getByText("失败1", { exact: true })).toBeVisible();
+  await expect(fileResults.getByText(/其他结果 1 项（跳过 1）/)).toBeVisible();
   await expect(
     fileResults.getByText(/目标文件结果尚未确认 1 个/),
   ).toBeVisible();

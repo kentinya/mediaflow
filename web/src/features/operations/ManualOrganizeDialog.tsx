@@ -62,6 +62,7 @@ import type { SystemResourceLibrary } from "../../entities/library/system-status
 import type { TaskItemRecoveryModel } from "../../entities/operations/task-item-recovery";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
   ModalCardShell,
   useModalCardExit,
@@ -95,8 +96,10 @@ import {
 } from "./organize-query";
 import {
   filesSettledRecordsQueryOptions,
+  runItemsQueryOptions,
   taskItemRecoveryQueryOptions,
 } from "./run-detail-query";
+import { runOverviewQueryOptions } from "./run-query";
 import {
   PREPARATION_STATUS_LABELS,
   REASON_LABELS,
@@ -1207,6 +1210,8 @@ export function ManualOrganizeDialog({
   /** Releasing the route blocker for the one deliberate task-center handoff. */
   const handoffBypassRef = useRef(false);
   const handoffDoneRef = useRef(false);
+  const [openingTaskDetail, setOpeningTaskDetail] = useState(false);
+  const showOpeningTaskDetail = useReadReveal(openingTaskDetail);
   /** Keys whose admission evidence already settled in this mount. */
   const settledRetainedRef = useRef<Set<string>>(new Set());
 
@@ -1252,13 +1257,13 @@ export function ManualOrganizeDialog({
         // exact Task. Keep the retained request and never guess a run.
         return;
       }
-      clearOrganizeConfirmation(
-        principalId,
-        confirmationWork,
-        entry.submission,
-      );
-      refreshRetained();
-      handleHandoff(model.taskId);
+      void handleHandoff(model.taskId, () => {
+        clearOrganizeConfirmation(
+          principalId,
+          confirmationWork,
+          entry.submission,
+        );
+      });
       return;
     }
     if (model.outcome === "not_admitted") {
@@ -2000,7 +2005,7 @@ export function ManualOrganizeDialog({
       setResult(null);
       setAmbiguousRefusal(null);
     },
-    onSuccess: (outcome, submission) => {
+    onSuccess: async (outcome, submission) => {
       if (outcome.kind === "duplicate") return;
       const value = outcome.value;
       if (value.ok) {
@@ -2009,15 +2014,15 @@ export function ManualOrganizeDialog({
         });
         const taskId = value.model.taskId;
         if (taskId !== "") {
-          if (principalId !== null) {
-            clearOrganizeConfirmation(
-              principalId,
-              confirmationWork,
-              submission,
-            );
-            refreshRetained();
-          }
-          handleHandoff(taskId);
+          await handleHandoff(taskId, () => {
+            if (principalId !== null) {
+              clearOrganizeConfirmation(
+                principalId,
+                confirmationWork,
+                submission,
+              );
+            }
+          });
           return;
         }
         // The execution was admitted but its task identity is not provable
@@ -2076,10 +2081,50 @@ export function ManualOrganizeDialog({
     },
   });
 
-  /** One deliberate handoff: releases the route block, then navigates. */
-  const handleHandoff = (taskId: string) => {
+  /** One deliberate handoff to the Task named by the admission evidence. */
+  const handleHandoff = async (
+    taskId: string,
+    clearConfirmation: () => void,
+  ) => {
     if (handoffDoneRef.current) return;
     handoffDoneRef.current = true;
+    if (filesHost) {
+      setOpeningTaskDetail(true);
+      // Prepare the first detail screen while the existing card stays visible.
+      // Read the items after the overview so a terminal overview cannot
+      // reuse an item page read before the Task settled.
+      const reads = queryClient
+        .fetchQuery({
+          ...runOverviewQueryOptions(token, taskId),
+          staleTime: 0,
+        })
+        .then((overview) => {
+          if (!overview.ok) return;
+          return queryClient.prefetchQuery({
+            ...runItemsQueryOptions(token, {
+              runId: taskId,
+              status: null,
+              cursor: null,
+              active: false,
+            }),
+            staleTime: 0,
+          });
+        })
+        .catch(() => {
+          // The detail owns authorization, failures and rereading.
+        });
+      let timer: number | undefined;
+      await Promise.race([
+        reads,
+        new Promise<void>((resolve) => {
+          timer = window.setTimeout(resolve, 500);
+        }),
+      ]);
+      window.clearTimeout(timer);
+      if (layer.layerRef.current === null) return;
+    }
+    clearConfirmation();
+    refreshRetained();
     handoffBypassRef.current = true;
     onHandoff(taskId);
   };
@@ -2236,6 +2281,7 @@ export function ManualOrganizeDialog({
     confirmationBlockedByHistory ||
     executionHistoryQuery.isFetching ||
     executeMutation.isPending ||
+    openingTaskDetail ||
     retained.length > 0 ||
     activeSelection.length === 0 ||
     (requiresOverwrite && !effectiveAllowOverwrite) ||
@@ -2391,7 +2437,8 @@ export function ManualOrganizeDialog({
   const closeLocked =
     session.phase === "submitting" ||
     saveMutation.isPending ||
-    executeMutation.isPending;
+    executeMutation.isPending ||
+    openingTaskDetail;
   const hasUnsavedDecisionDrafts = Object.values(decisionDrafts).some(
     (draft) => draft.dirty,
   );
@@ -6506,6 +6553,7 @@ export function ManualOrganizeDialog({
         <Button
           type="button"
           variant="secondary"
+          disabled={openingTaskDetail}
           onClick={() => {
             if (filesHost) returnToFilesOverview();
             else setStep("review");
@@ -6630,7 +6678,7 @@ export function ManualOrganizeDialog({
       size="detail"
       bodyClassName="mf-modal-body-scroll mf-organize-dialog-body"
       cardClassName="mf-organize-dialog"
-      footer={footer}
+      footer={showOpeningTaskDetail ? undefined : footer}
       footerClassName={
         filesDecisionFooter
           ? `mf-organize-files-decision-footer${filesReanalysisWaiting || filesSummaryReadback !== null ? " mf-organize-reanalysis-footer" : ""}`
@@ -6676,7 +6724,13 @@ export function ManualOrganizeDialog({
         aria-label="整理内容"
         tabIndex={-1}
       >
-        {body}
+        {showOpeningTaskDetail ? (
+          <StatusBanner variant="info" title="整理请求已受理">
+            <p role="status">正在打开对应任务，查看处理进度和文件结果。</p>
+          </StatusBanner>
+        ) : (
+          body
+        )}
       </div>
     </ModalCardShell>
   );

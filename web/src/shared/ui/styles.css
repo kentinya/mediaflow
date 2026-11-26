@@ -5285,13 +5285,6 @@ tr[aria-selected="true"] {
   overflow-wrap: anywhere;
 }
 
-/* Readable fact hierarchy inside the card: the flow/status strip first,
-   then the bounded fact list; technical diagnostics collapse. */
-.mf-run-facts {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
 .mf-run-fact-flow {
   display: flex;
   flex-direction: column;
@@ -5429,32 +5422,27 @@ tr[aria-selected="true"] {
 }
 
 .mf-run-progress {
-  background: transparent;
-  border: 0;
-  border-top: 1px solid var(--line, #e2e7ef);
-  border-radius: 0;
-  padding: 10px 0 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
-.mf-run-progress h4 {
+.mf-run-progress-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
   margin: 0;
 }
 
-.mf-run-progress-count {
-  margin: 0;
-  font-weight: 600;
+.mf-run-progress-line strong {
+  color: var(--ink);
 }
 
 /* File result distribution: the three file outcomes are the primary numbers
    after the processed range, with the caveat facets as short exception lines. */
 .mf-run-results {
-  background: var(--panel, #fff);
-  border: 1px solid var(--line, #e2e7ef);
-  border-radius: 8px;
-  padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -5469,31 +5457,42 @@ tr[aria-selected="true"] {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--line, #e2e7ef);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
 }
 
 .mf-file-result-grid li {
-  background: #f8fafc;
-  border: 1px solid #e2e7ef;
-  border-radius: 8px;
-  padding: 8px 6px;
+  padding: 9px clamp(8px, 2vw, 13px);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  text-align: center;
+}
+
+.mf-file-result-grid li + li {
+  border-left: 1px solid var(--line, #e2e7ef);
+}
+
+.mf-run-result-note {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mf-run-results > .mf-run-result-note {
+  margin: 0;
 }
 
 .mf-file-result-value {
-  font-size: 1.45rem;
-  font-weight: 700;
-  line-height: 1.1;
+  font-size: 21px;
+  font-weight: 750;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
 }
 
 .mf-file-result-label {
-  font-size: 0.8rem;
-  color: #475569;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .mf-run-outcome {
@@ -5743,6 +5742,10 @@ tr[aria-selected="true"] {
   border-top: 1px solid #e9edf5;
   background: #f7f9fd;
   overflow-wrap: anywhere;
+}
+
+.mf-run-item-evidence:has(> [hidden]) {
+  display: none;
 }
 
 @media (max-width: 640px) {
@@ -10044,9 +10047,28 @@ tr[aria-selected="true"] {
    blanket section border.  Long exact paths stay readable without widening the
    card: identity text word-breaks instead of truncating. */
 .mf-modal-card.mf-organize-dialog {
-  width: min(900px, 100%);
-  height: min(90dvh, 900px);
-  max-height: min(90dvh, 900px);
+  width: min(var(--mf-organize-card-width), 100%);
+  height: var(--mf-organize-card-height);
+  max-height: var(--mf-organize-card-height);
+}
+
+.mf-modal-layer {
+  --mf-organize-card-width: 900px;
+  --mf-organize-card-height: min(90dvh, 900px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mf-modal-layer-handoff > .mf-run-detail-card {
+    max-height: none;
+    animation: mf-organize-to-task 200ms ease-out;
+  }
+}
+
+@keyframes mf-organize-to-task {
+  from {
+    width: min(var(--mf-organize-card-width), 100%);
+    height: var(--mf-organize-card-height);
+  }
 }
 
 .mf-modal-card.mf-organize-dialog .mf-modal-header {

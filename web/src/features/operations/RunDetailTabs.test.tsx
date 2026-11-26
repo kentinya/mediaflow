@@ -2372,7 +2372,7 @@ describe("selected-run detail tabs", () => {
     const results = await within(detail).findByRole("region", {
       name: "文件结果",
     });
-    expect(within(results).getByText("已验证成功")).toBeVisible();
+    expect(within(results).getByText("成功")).toBeVisible();
     expect(within(results).getByText("部分成功")).toBeVisible();
     expect(within(results).getByText("失败")).toBeVisible();
     expect(
@@ -2412,7 +2412,7 @@ describe("selected-run detail tabs", () => {
     const results = await within(detail).findByRole("region", {
       name: "文件结果",
     });
-    await within(results).findByText("已验证成功");
+    await within(results).findByText("成功");
     // The first screen reads top-down: flow state, processed range, then the
     // independent file outcomes.
     expect(
@@ -2492,19 +2492,11 @@ describe("selected-run detail tabs", () => {
     ).toBeNull();
     const results = within(detail).getByRole("region", { name: "文件结果" });
     const items = await within(detail).findByRole("region", { name: "主条目" });
-    const facts = within(detail).getByText("触发方式");
     expect(
       results.compareDocumentPosition(items) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(
-      items.compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    // The technical diagnostics live with the facts, after the items.
-    const diagnostics = within(detail).getByText("技术诊断");
-    expect(
-      items.compareDocumentPosition(diagnostics) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(items.parentElement?.lastElementChild).toBe(items);
+    expect(within(detail).queryByText("触发方式")).toBeNull();
 
     // 操作记录 reads the same toolbar: the exact continue entry stays mounted
     // and focusable instead of disappearing with the detail tab.
@@ -2513,6 +2505,12 @@ describe("selected-run detail tabs", () => {
       name: "操作记录",
     });
     expect(records).toBeVisible();
+    const factsDisclosure = within(detail).getByText("任务信息与技术诊断");
+    expect(factsDisclosure.parentElement).not.toHaveAttribute("open");
+    await user.click(factsDisclosure);
+    expect(
+      within(detail).getByRole("region", { name: "任务信息" }),
+    ).toBeVisible();
     expect(within(toolbar).getByRole("link", { name: "继续整理" })).toBe(
       continueLink,
     );
@@ -2545,7 +2543,7 @@ describe("selected-run detail tabs", () => {
       within(results)
         .getAllByRole("listitem")
         .map((item) => item.textContent),
-    ).toEqual(["1已验证成功"]);
+    ).toEqual(["成功1"]);
     expect(
       within(results).getByText(/目标文件结果尚未确认 2 个/),
     ).toBeVisible();

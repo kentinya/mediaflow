@@ -224,13 +224,11 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
 
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
-  await detail
-    .getByRole("button", { name: "刷新", exact: true })
-    .first()
-    .click();
-  await expect(detail.getByText("2已验证成功", { exact: true })).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(
+    detail
+      .getByRole("region", { name: "文件结果" })
+      .getByText("成功2", { exact: true }),
+  ).toBeVisible({ timeout: 15_000 });
 
   const final = await providerState(page);
   expect(mutations(final).length).toBe(4);

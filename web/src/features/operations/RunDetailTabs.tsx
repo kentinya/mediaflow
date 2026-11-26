@@ -2,9 +2,9 @@
  * The selected-run `任务详情` / `操作记录` detail (Slice 42 RO-3).
  *
  * One bounded read journey beside the run inventory: the 任务详情 tab shows
- * the durable progress accounting, the exact run facts, a server-filtered,
+ * the durable progress accounting, a server-filtered,
  * server-paged primary-item list and one item's durable evidence; the
- * 操作记录 tab pages the exactly-linked result/evidence/log/audit stream on
+ * 操作记录 tab keeps the exact run facts and pages the linked records on
  * the server. Every filter, cursor, tab and inspected item lives in the URL
  * (see `run-detail-state.ts`), so refresh/history/401-reconnect restore the
  * exact context, and the shared bounded polling policy settles once the run
@@ -36,6 +36,7 @@ import {
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { useReadReveal } from "../../shared/ui/read-reveal";
 import type { RunStatus } from "../../entities/operations/run";
 import {
   RUN_DISPOSITION_LABELS,
@@ -777,7 +778,7 @@ export interface RunDetailTabsProps {
   readonly flow?: ReactNode;
   /** The independent per-file outcome counts shown after the status card. */
   readonly results?: RunFileResults | null;
-  /** Secondary run facts rendered after the file results. */
+  /** Secondary run facts available from the records tab. */
   readonly facts?: ReactNode;
   /**
    * The backend-advertised task-level controls (continue, cancel). They share
@@ -960,7 +961,11 @@ export function RunDetailTabs({
               phase={progressPhase}
             />
           </section>
-          <RunFileResultsCard results={results} progress={progress} />
+          <RunFileResultsCard
+            results={results}
+            progress={progress}
+            active={active}
+          />
           <RunItemsSection
             key={JSON.stringify([
               runId,
@@ -977,7 +982,6 @@ export function RunDetailTabs({
             evidenceDecisionDrafts={evidenceDecisionDrafts}
             onEvidenceDecisionDraftChange={updateEvidenceDecisionDraft}
           />
-          {facts}
         </div>
       ) : (
         <div className="mf-run-tab-panel">
@@ -989,6 +993,7 @@ export function RunDetailTabs({
             onInspectItem={inspectItem}
             active={active}
           />
+          {facts}
         </div>
       )}
     </section>
@@ -1016,13 +1021,17 @@ function ProgressCard({
 }) {
   if (progress === null || !progress.available) {
     return (
-      <StatusBanner variant="info" title="进度证据不可用">
-        <p>
+      <section className="mf-run-progress" aria-label="处理进度">
+        <p className="mf-run-progress-line">
+          <strong>处理进度</strong>
+          <span>进度证据不可用</span>
+        </p>
+        <p className="mf-dashboard-meta">
           {progress !== null && !progress.available
             ? progress.reason
             : "该运行没有可发布的持久进度证据。"}
         </p>
-      </StatusBanner>
+      </section>
     );
   }
   // The waiting disposition already counts as processed. Only an organize
@@ -1103,21 +1112,25 @@ function ProgressCard({
       );
   return (
     <section className="mf-run-progress" aria-label="处理进度">
-      <h4>处理进度</h4>
-      {progress.indeterminate || progress.knownTotal === null ? (
-        <p>
-          总数未知
-          {progress.scanDiscoveryComplete === false
-            ? "（文件发现仍在进行）"
-            : "（该任务尚无可知的总数）"}
-        </p>
-      ) : (
-        <>
-          <p className="mf-run-progress-count">
+      <p className="mf-run-progress-line">
+        <strong>处理进度</strong>
+        {progress.indeterminate || progress.knownTotal === null ? (
+          <span>
+            总数未知
+            {progress.scanDiscoveryComplete === false
+              ? "（文件发现仍在进行）"
+              : "（该任务尚无可知的总数）"}
+          </span>
+        ) : (
+          <span>
             {preExecution ? "已进入准备与分析" : "已处理"} {progress.processed}{" "}
             / {progress.knownTotal} 个{progress.unit}
             {basisNote}
-          </p>
+          </span>
+        )}
+      </p>
+      {!progress.indeterminate && progress.knownTotal !== null && (
+        <>
           {pendingConfirmation !== null && (
             <p className="mf-dashboard-meta">
               {executedFiles > 0
@@ -1156,7 +1169,7 @@ function confirmedSuccessLabel(progress: RunProgressAvailable): string {
     case "analysis":
       return "分析完成";
     case "organize":
-      return "已验证成功";
+      return "成功";
     case "transfer":
       return "已验证传输";
     case "direct":
@@ -1178,9 +1191,11 @@ function confirmedSuccessLabel(progress: RunProgressAvailable): string {
 function RunFileResultsCard({
   results,
   progress,
+  active,
 }: {
   readonly results: RunFileResults | null | undefined;
   readonly progress: RunProgress | null;
+  readonly active: boolean;
 }) {
   // A published progress read splits success into confirmed and uncertain
   // facts. The run-row `success_items` count is only the durable recorded
@@ -1208,6 +1223,17 @@ function RunFileResultsCard({
   const known = success !== null || partial !== null || failed !== null;
   const uncertain = results?.uncertain ?? 0;
   const missingResult = results?.missingResult ?? 0;
+  if (
+    active &&
+    (success ?? 0) === 0 &&
+    (partial ?? 0) === 0 &&
+    (failed ?? 0) === 0 &&
+    extras.length === 0 &&
+    uncertain === 0 &&
+    missingResult === 0
+  ) {
+    return null;
+  }
   // An unknown effect or a settled attempt without a Result is a real file
   // outcome. It stays visible even when the three primary counts are not
   // published, instead of leaving a run with no result summary at all.
@@ -1217,35 +1243,39 @@ function RunFileResultsCard({
   return (
     <section className="mf-run-results" aria-label="文件结果">
       <h4>文件结果</h4>
-      {(known || extras.length > 0) && (
+      {known && (
         <ul className="mf-file-result-grid">
           {success !== null && (
             <li>
-              <span className="mf-file-result-value">{success}</span>
               <span className="mf-file-result-label">{successLabel}</span>
+              <span className="mf-file-result-value">{success}</span>
             </li>
           )}
           {partial !== null && (
             <li>
-              <span className="mf-file-result-value">{partial}</span>
               <span className="mf-file-result-label">部分成功</span>
+              <span className="mf-file-result-value">{partial}</span>
             </li>
           )}
           {failed !== null && (
             <li>
-              <span className="mf-file-result-value">{failed}</span>
               <span className="mf-file-result-label">失败</span>
+              <span className="mf-file-result-value">{failed}</span>
             </li>
           )}
-          {extras.map((entry) => (
-            <li key={entry.disposition}>
-              <span className="mf-file-result-value">{entry.count}</span>
-              <span className="mf-file-result-label">
-                {RUN_DISPOSITION_LABELS[entry.disposition]}
-              </span>
-            </li>
-          ))}
         </ul>
+      )}
+      {extras.length > 0 && (
+        <p className="mf-run-result-note">
+          其他结果 {extras.reduce((sum, entry) => sum + entry.count, 0)} 项（
+          {extras
+            .map(
+              ({ disposition, count }) =>
+                `${RUN_DISPOSITION_LABELS[disposition]} ${count}`,
+            )
+            .join("、")}
+          ），可在对应文件中核对。
+        </p>
       )}
       {uncertain > 0 && (
         <p className="mf-run-outcome mf-run-outcome-warning">
@@ -1413,6 +1443,7 @@ function RunItemsSection({
   const evidence =
     evidenceItem !== null ? (
       <RunEvidenceSection
+        key={evidenceItem}
         id={evidencePanelId}
         runId={runId}
         itemId={evidenceItem}
@@ -1567,7 +1598,7 @@ function RunItemsSection({
                   label="条目"
                 />
               )}
-              <p className="mf-dashboard-meta">
+              <p className="mf-run-result-note">
                 {page.statusFilter === null
                   ? `共 ${page.total} 条`
                   : `匹配 ${page.matchingTotal} / 共 ${page.total} 条`}
@@ -1951,15 +1982,22 @@ function RunEvidenceSection({
   const query = useQuery(
     runItemEvidenceQueryOptions(token, { runId, itemId, active }),
   );
+  const pending = token !== null && query.isPending;
+  const showWait = useReadReveal(pending);
   return (
-    <section id={id} className="mf-run-evidence" aria-label="条目证据">
+    <section
+      id={id}
+      className="mf-run-evidence"
+      aria-label="条目证据"
+      hidden={pending && !showWait}
+    >
       <AuthorizedReadBoundary query={query} unavailableTitle="条目证据暂不可用">
         {({ data }) => {
           if (data === undefined) {
             return (
-              <StatusBanner variant="info" title="正在加载条目证据">
-                <p>正在读取该文件的处理结果、来源与目标、处理依据和记录。</p>
-              </StatusBanner>
+              <p className="mf-dashboard-meta" role="status">
+                正在加载条目证据…
+              </p>
             );
           }
           if (!data.ok) {
