@@ -183,3 +183,18 @@ B 独立验收待完成。
 类型检查、变动文件 ESLint 与 Prettier、生产构建和治理通过。验证记录位于本机
 `.git/validation-evidence/71787a05/slice59-local-site/` 的 `recovery-finish-*`。
 B 独立验收待完成。
+
+## 用户补充修正 — 任务详情「继续整理」入口
+
+沿用 Task 59.6、原 Base 与 T3。起点为 `main` 的 `74497c55`，治理通过，暂存区为空。
+工作区已有 `OperationsLanding.tsx`、`RunDetailTabs.test.tsx` 和
+`operations-inventory.python.spec.ts` 的同一入口修正草稿，本次延续这些改动。
+
+任务详情仅在「等待确认」、原准备允许继续且账号有确认权限时显示顶部入口及对应提示。
+准备、执行、文件等待处理和终态隐藏入口。四类恢复由对应文件证据进入，原准备的准确地址继续可读。
+已整理一个子集后，剩余文件若仍在等待确认，可以通过原入口复核。
+
+124 项组件测试、3 条真实 Python 浏览器旅程、类型检查、变动文件 ESLint 和 Prettier、
+生产构建及治理检查通过。隔离测试站 `127.0.0.1:4195` 在桌面和 390 px 验证等待确认时
+可打开原整理弹窗，已完成时隐藏入口。日志保存在本机
+`.git/validation-evidence/74497c55/task59-continue/`。B 独立验收待完成。

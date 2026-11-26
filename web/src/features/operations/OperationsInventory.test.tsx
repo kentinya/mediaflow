@@ -20,6 +20,16 @@ import { beginOrganizeConfirmationRetention } from "./organize-confirmation-sess
 
 const TOKEN = "operations-inventory-token";
 
+function signInForOrganize() {
+  authStore.setSession({
+    principalId: TOKEN,
+    accountId: "operations-account",
+    username: "operator",
+    roles: [],
+    permissions: ["read", "submit_dry_run", "execute_manual_organize"],
+  });
+}
+
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
@@ -879,7 +889,7 @@ describe("Operations run inventory landing", () => {
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
-    authStore.setToken(TOKEN);
+    signInForOrganize();
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
@@ -1185,7 +1195,7 @@ describe("Operations run inventory landing", () => {
         }),
       },
     });
-    authStore.setToken(TOKEN);
+    signInForOrganize();
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
@@ -1352,7 +1362,7 @@ describe("Operations run inventory landing", () => {
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
-    authStore.setToken(TOKEN);
+    signInForOrganize();
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
@@ -1383,7 +1393,7 @@ describe("Operations run inventory landing", () => {
   it("PATCH-20261113-3 continues the exact Files preparation above the preserved task center", async () => {
     const user = userEvent.setup();
     const backend = stubOrganizeHost();
-    authStore.setToken(TOKEN);
+    signInForOrganize();
     const { router } = renderApp("/operations");
 
     const table = await screen.findByRole("table");
@@ -1397,10 +1407,8 @@ describe("Operations run inventory landing", () => {
     const toolbar = within(detail).getByRole("navigation", {
       name: "运行详情与操作记录",
     });
-    expect(within(toolbar).getByRole("link", { name: "继续整理" })).toHaveClass(
-      "mf-button-primary",
-    );
-    const link = await within(detail).findByRole("link", { name: "继续整理" });
+    const link = await within(toolbar).findByRole("link", { name: "继续整理" });
+    expect(link).toHaveClass("mf-button-primary");
     // The continue address is the task center itself: exact Task + closed
     // marker, never a browser-supplied discovery or library identity.
     expect(link.getAttribute("href")).toContain("run=task-001");
@@ -1444,18 +1452,13 @@ describe("Operations run inventory landing", () => {
     expect(backend.calls.posts).toEqual([]);
   });
 
-  it("Task59.4 reopens an in-progress hosted preparation and follows its real stages", async () => {
+  it("Task59.4 reads an in-progress hosted preparation from its exact address", async () => {
     const user = userEvent.setup();
     const backend = stubOrganizeHost();
     backend.state.preparationPhase = "waiting";
-    authStore.setToken(TOKEN);
-    const { router } = renderApp("/operations");
-
-    const table = await screen.findByRole("table");
-    await user.click(within(table).getByRole("button", { name: /预览/ }));
+    signInForOrganize();
+    const { router } = renderApp("/operations?run=task-001&dialog=organize");
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
-    const link = await within(detail).findByRole("link", { name: "继续整理" });
-    await user.click(link);
 
     const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
     // The hosted entry now reads the same real first preparation step and
@@ -1497,19 +1500,18 @@ describe("Operations run inventory landing", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
     );
-    // Closing keeps the exact Task detail behind it and returns focus to the
-    // continue entry that opened this in-progress preparation.
+    // Closing the exact address keeps the same Task detail behind it.
     expect(screen.getByRole("dialog", { name: "运行详情" })).toBe(detail);
     const closed = new URLSearchParams(router.history.location.search);
     expect(closed.get("run")).toBe("task-001");
     expect(closed.get("dialog")).toBeNull();
-    await waitFor(() => expect(document.activeElement).toBe(link));
+    expect(backend.calls.posts).toEqual([]);
   }, 20_000);
 
   it("Task59.2 continues from 操作记录 and returns to the same tab and control", async () => {
     const user = userEvent.setup();
     const backend = stubOrganizeHost();
-    authStore.setToken(TOKEN);
+    signInForOrganize();
     const { router } = renderApp("/operations");
 
     const table = await screen.findByRole("table");
@@ -1521,7 +1523,7 @@ describe("Operations run inventory landing", () => {
     const recordsTab = within(toolbar).getByRole("button", {
       name: "操作记录",
     });
-    const link = within(toolbar).getByRole("link", { name: "继续整理" });
+    const link = await within(toolbar).findByRole("link", { name: "继续整理" });
 
     // The continue entry leaves the detail tab; 操作记录 keeps the same one.
     await user.click(recordsTab);
@@ -1777,6 +1779,7 @@ describe("Operations run inventory landing", () => {
     const requested: { url: string; method: string }[] = [];
     let overview = runDocument({
       status: "running",
+      progress: progressDocument(),
       filesPreparation: {
         discoveryId: "discovery-1",
         resourceLibraryId: "source",
@@ -1797,7 +1800,7 @@ describe("Operations run inventory landing", () => {
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
-    authStore.setToken(TOKEN);
+    signInForOrganize();
     const { router } = renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
@@ -4975,6 +4978,7 @@ function stubOrganizeHost(
       }
       return jsonResponse(
         runDocument({
+          progress: progressDocument(),
           filesPreparation: {
             discoveryId: HOST_DISCOVERY_ID,
             resourceLibraryId: "source",
@@ -5577,7 +5581,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
   it("protects unsaved drafts against leaving the task center without losing the card", async () => {
     const user = userEvent.setup();
     const backend = stubOrganizeHost();
-    authStore.setToken(TOKEN);
+    signInForOrganize();
     const { router } = renderApp("/operations");
 
     const table = await screen.findByRole("table");

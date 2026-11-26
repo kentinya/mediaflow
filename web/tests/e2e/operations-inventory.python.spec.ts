@@ -6394,17 +6394,11 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   expect(copiedInPlace.destinationTargets).toHaveLength(1);
   expect(copiedInPlace.destinationTargets[0]).toContain("Two (2002)");
 
-  // The same durable entry still reopens the exact preparation after the
-  // execution finished, where the independent existing execution is visible.
-  await page
-    .getByRole("dialog", { name: "运行详情" })
-    .getByRole("button", { name: "刷新", exact: true })
-    .first()
-    .click();
+  // The open detail polls the original Task and reads its completed flow.
   const completedDetail = page.getByRole("dialog", { name: "运行详情" });
-  await expect(completedDetail.getByText("已完成").first()).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(
+    completedDetail.getByRole("heading", { name: "流程已完成", exact: true }),
+  ).toBeVisible({ timeout: 15_000 });
   // PATCH-20261111-5: an ended Task detail no longer repeats a "文件整理准备"
   // heading, ending notice, empty action area or either old navigation entry.
   // The real flow, file result and history evidence remain the detail.
@@ -6534,7 +6528,7 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   expect(executePosts()).toHaveLength(1);
 });
 
-test("Task59.4 reopens an in-progress preparation from Task Center at its real stage", async ({
+test("Task 59.6 hides Continue during Task Center preparation and recognition recovery", async ({
   page,
   request,
 }) => {
@@ -6558,8 +6552,7 @@ test("Task59.4 reopens an in-progress preparation from Task Center at its real s
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
 
-  // Leave the exact admitted preparation before any Worker pass. Its durable
-  // state, not browser memory, is what Task Center must reopen.
+  // Leave the exact admitted preparation before any Worker pass.
   await expect(card.getByText(/已受理，等待后台处理|检查所选范围/)).toBeVisible(
     { timeout: 15_000 },
   );
@@ -6597,8 +6590,22 @@ test("Task59.4 reopens an in-progress preparation from Task Center at its real s
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible({ timeout: 30_000 });
   const continueLink = detail.getByRole("link", { name: "继续整理" });
-  await expect(continueLink).toBeVisible();
-  await continueLink.click();
+  const preparationHeadings: Record<string, string> = {
+    queued: "准备已受理，正在排队",
+    running: "正在检查所选文件",
+    waiting_stability: "正在等待来源文件稳定",
+  };
+  await expect(
+    detail.getByRole("heading", {
+      name: preparationHeadings[discovery.status],
+    }),
+  ).toBeVisible();
+  await expect(continueLink).toHaveCount(0);
+  await expect(detail.getByText(/点击「继续整理」/)).toHaveCount(0);
+
+  // An existing exact hosted address still reads the admitted preparation.
+  await page.goto(`${BASE}/operations?run=${taskId}&dialog=organize`);
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
 
   const reopened = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(reopened).toBeVisible({ timeout: 30_000 });
@@ -6665,11 +6672,35 @@ test("Task59.4 reopens an in-progress preparation from Task Center at its real s
 
   await reopened.getByRole("button", { name: /^关闭$/ }).click();
   await expect(reopened).toHaveCount(0);
-  // The exact Task detail stays behind the card; focus returns to the same
-  // continue entry, preserving the original Task Center context.
+  // The task detail stays on the same Task while the Worker analyzes the
+  // unrecognized fixture. That business wait still uses the file evidence.
   await expect(detail).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
-  await expect(continueLink).toBeFocused();
+  await expect(continueLink).toHaveCount(0);
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
+        discoveryId as string,
+      )}`,
+    );
+    expect(advanced.ok()).toBe(true);
+    const state = (await advanced.json()) as {
+      readonly previewId?: string | null;
+    };
+    if (state.previewId != null) break;
+  }
+  await expect(
+    detail.getByRole("heading", { name: "等待处理", exact: true }),
+  ).toBeVisible();
+  await expect(continueLink).toHaveCount(0);
+  await expect(detail.getByText(/点击「继续整理」/)).toHaveCount(0);
+  await detail
+    .getByRole("button", { name: /Task59Reopen\.2049\.mkv.*查看证据/ })
+    .click();
+  await expect(
+    detail.getByRole("button", { name: "保存并重新分析" }),
+  ).toBeVisible();
+  await expect(reopened).toHaveCount(0);
   expect(organizePosts()).toEqual(postsBeforeReopen);
 });
 

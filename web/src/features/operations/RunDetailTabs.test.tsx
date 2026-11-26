@@ -37,6 +37,7 @@ function stubFetch(
 }
 
 afterEach(() => {
+  cleanup();
   authStore.clearToken();
   authStore.clearIntendedPath();
   vi.unstubAllGlobals();
@@ -112,6 +113,34 @@ function overviewDocument(overrides: Record<string, unknown> = {}) {
     progress: progressDocument(),
     ...overrides,
   };
+}
+
+function linkedWaitingOverview(pending: number, waiting: number) {
+  const progress = progressDocument();
+  return overviewDocument({
+    filesPreparation: {
+      discoveryId: "discovery-1",
+      resourceLibraryId: "movies",
+      continuable: true,
+    },
+    progress: {
+      ...progress,
+      processed: waiting + 2,
+      dispositions: { ...progress.dispositions, pending, waiting },
+    },
+  });
+}
+
+function signInForTaskDetail(canConfirm: boolean) {
+  authStore.setSession({
+    principalId: TOKEN,
+    accountId: "detail-account",
+    username: "test",
+    roles: [],
+    permissions: canConfirm
+      ? ["read", "submit_dry_run", "execute_manual_organize"]
+      : ["read"],
+  });
 }
 
 function itemRow(overrides: Record<string, unknown> = {}) {
@@ -2440,15 +2469,9 @@ describe("selected-run detail tabs", () => {
   it("Task59.2 keeps the same task actions in the shared toolbar on both tabs", async () => {
     const user = userEvent.setup();
     stubDetailJourney([], {
-      overview: overviewDocument({
-        filesPreparation: {
-          discoveryId: "discovery-1",
-          resourceLibraryId: "movies",
-          continuable: true,
-        },
-      }),
+      overview: linkedWaitingOverview(0, 2),
     });
-    authStore.setToken(TOKEN);
+    signInForTaskDetail(true);
     renderApp("/operations?run=task-001");
 
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
@@ -2518,6 +2541,29 @@ describe("selected-run detail tabs", () => {
     expect(continueLink.getAttribute("href")).toContain("tab=records");
     expect(exportButton).toBeVisible();
   });
+
+  it.each([
+    { title: "部分文件等待确认", pending: 1, waiting: 1, canConfirm: true },
+    { title: "等待确认", pending: 0, waiting: 2, canConfirm: false },
+  ])(
+    "hides the continue entry and its hint for $title (can confirm: $canConfirm)",
+    async ({ title, pending, waiting, canConfirm }) => {
+      stubDetailJourney([], {
+        overview: linkedWaitingOverview(pending, waiting),
+      });
+      signInForTaskDetail(canConfirm);
+      renderApp("/operations?run=task-001");
+
+      const detail = await screen.findByRole("dialog", { name: "运行详情" });
+      expect(
+        await within(detail).findByRole("heading", { name: title }),
+      ).toBeVisible();
+      expect(
+        within(detail).queryByRole("link", { name: "继续整理" }),
+      ).toBeNull();
+      expect(within(detail).queryByText(/点击「继续整理」/)).toBeNull();
+    },
+  );
 
   it("Task59.2 reads the progress success split and its unknown or missing caveats", async () => {
     stubDetailJourney([], {

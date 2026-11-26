@@ -25,7 +25,7 @@ import {
   useSearch,
   Link,
 } from "@tanstack/react-router";
-import { useAuthToken } from "../../shared/api/auth-context";
+import { useAuthAccount, useAuthToken } from "../../shared/api/auth-context";
 import {
   mutateLifecycle,
   type LifecycleMutationResult,
@@ -1978,6 +1978,11 @@ function RunDetailPanel({
   readonly suspended: boolean;
 }) {
   const token = useAuthToken();
+  const account = useAuthAccount();
+  // Manual organize preparation shares the published DryRun permission.
+  const canConfirmOrganize =
+    account?.permissions.includes("submit_dry_run") === true &&
+    account.permissions.includes("execute_manual_organize");
   const queryClient = useQueryClient();
   // In-flight flags only: the submission outcomes themselves live in the
   // landing's per-run session store, so closing the card mid-request never
@@ -1989,7 +1994,8 @@ function RunDetailPanel({
   const overview = query.data?.ok === true ? query.data.model : null;
   // The current plan is an independent bounded read of this exact Task's
   // linked Files preparation. It supplies the confirmable range only when the
-  // plan is current and complete; every pending/failed read stays a fallback.
+  // plan is current and complete. An unavailable read can only fall back to
+  // the Task's published waiting disposition.
   const linkedDiscoveryId =
     overview?.filesPreparation?.continuable === true
       ? overview.filesPreparation.discoveryId
@@ -2036,8 +2042,12 @@ function RunDetailPanel({
   );
   const linkedPreview =
     linkedPreviewQuery.data?.ok === true ? linkedPreviewQuery.data.model : null;
-  const planCandidateCount =
-    linkedPreview !== null && linkedPreview.current && !linkedPreview.truncated
+  // Subset execution can retire the linked plan while another file remains
+  // durably waiting. The stale plan is not executable; the remaining file
+  // can still reopen the original preparation for a fresh review.
+  const planCandidateCount = linkedPreview?.truncated
+    ? 0
+    : linkedPreview?.current
       ? linkedPreview.executionCandidateItemIds.length
       : null;
   // The shared centered-card presentation: backdrop, scroll lock, inert
@@ -2185,17 +2195,12 @@ function RunDetailPanel({
               result: controlResult,
               locked,
             });
-          const executionOwnsRemainingFiles =
-            run.manualOrganizeSubmissions.length > 0 &&
-            run.progress?.available === true &&
-            run.progress.kind === "organize" &&
-            run.progress.dispositions.waiting === 0 &&
-            run.progress.dispositions.pending +
-              run.progress.dispositions.active >
-              0;
-          const preparationVisible =
-            run.filesPreparation?.continuable === true &&
-            !executionOwnsRemainingFiles;
+          const headline = runStatusHeadline(
+            run,
+            planCandidateCount,
+            preparationStage,
+            canConfirmOrganize,
+          );
           const confirmableWaiting =
             planCandidateCount !== null
               ? planCandidateCount
@@ -2242,11 +2247,7 @@ function RunDetailPanel({
                 statusTone={runStatusTone(run)}
                 flow={
                   <>
-                    <RunFlowSummary
-                      run={run}
-                      planCandidateCount={planCandidateCount}
-                      preparationStage={preparationStage}
-                    />
+                    <RunFlowSummary run={run} headline={headline} />
                     <RunRetainedSubmissionNotice run={run} />
                   </>
                 }
@@ -2260,7 +2261,7 @@ function RunDetailPanel({
                 facts={<RunDetailFacts run={run} />}
                 taskActions={
                   <>
-                    {preparationVisible && (
+                    {headline.showContinue && (
                       <Link
                         // The exact Task names this entry, so a focus return
                         // can find the same continuation after the detail body
@@ -2422,7 +2423,7 @@ function preparationHeadline(stage: RunPreparationStage): {
     case "unreadable":
       return {
         title: "准备状态暂时无法读取",
-        copy: "任务状态与文件结果以下方持久记录为准；点击「继续整理」可重新读取同一准备。",
+        copy: "任务状态与文件结果以下方持久记录为准。",
       };
     case "queued":
       return {
@@ -2457,26 +2458,15 @@ function preparationHeadline(stage: RunPreparationStage): {
     case "stopped":
       return {
         title: "准备未完成",
-        copy: "本次没有生成可确认方案；点击「继续整理」查看当前状态。",
+        copy: "本次没有生成可确认方案。可展开对应文件的证据查看原因。",
       };
   }
 }
 
-/** The legal next step for a published waiting range. */
-function waitingNextStep(
-  run: RunSummary,
-  waiting: number,
-  confirmableRange: number | null,
-): string {
-  if (run.filesPreparation?.continuable !== true) {
-    return run.problemTypes.length > 0
-      ? "在下方展开对应文件的证据，查看原因和可用操作。"
-      : "在下方展开对应文件的证据，核对方案。";
-  }
-  if (confirmableRange !== null && confirmableRange > 0) {
-    return `点击「继续整理」，核对 ${confirmableRange} 个文件的方案。`;
-  }
-  return `点击「继续整理」，查看 ${waiting} 个待处理文件的当前状态。`;
+interface RunHeadline {
+  readonly title: string;
+  readonly copy: string;
+  readonly showContinue?: boolean;
 }
 
 /** The waiting title and its exact range, never a whole-Task running guess. */
@@ -2485,26 +2475,18 @@ function waitingHeadline(
   waiting: number,
   mixed: boolean,
   planCandidateCount: number | null,
-): { readonly title: string; readonly copy: string } {
+  canConfirmOrganize: boolean,
+): RunHeadline {
   // The current plan is the exact confirmable range once it is readable. A
   // pending/failed plan read never guesses: the durable waiting count and the
   // existing continuation remain the verifiable facts.
-  const planConfirmable = planCandidateCount !== null;
-  const fallbackConfirmable = !planConfirmable && waitingConfirmationOpen(run);
-  const confirmable = planConfirmable
-    ? planCandidateCount > 0
-    : fallbackConfirmable;
-  const confirmableRange = planConfirmable
-    ? planCandidateCount
-    : fallbackConfirmable
-      ? waiting
-      : null;
-  const remaining =
-    confirmableRange === null ? 0 : Math.max(waiting - confirmableRange, 0);
+  const confirmableRange =
+    planCandidateCount ?? (waitingConfirmationOpen(run) ? waiting : 0);
+  const remaining = Math.max(waiting - confirmableRange, 0);
   const confirmed = run.manualOrganizeSubmissions.length;
   const prefix = confirmed > 0 ? `已有 ${confirmed} 次确认记录被受理；` : "";
   if (mixed) {
-    if (confirmable) {
+    if (confirmableRange > 0) {
       return {
         title: "部分文件等待确认",
         copy: `${prefix}${confirmableRange} 个文件等待确认${remaining > 0 ? `，另有 ${remaining} 个等待处理` : ""}，其余文件正在处理或排队；已执行文件的结果保留在下方。`,
@@ -2515,33 +2497,39 @@ function waitingHeadline(
       copy: `${prefix}${waiting} 个文件等待处理，其余文件正在处理或排队；已执行文件的结果保留在下方。`,
     };
   }
-  if (confirmable) {
+  if (confirmableRange > 0) {
+    const showContinue =
+      canConfirmOrganize &&
+      run.filesPreparation?.continuable === true &&
+      run.lifecycle?.cancellationRequested !== true;
+    const nextStep = showContinue
+      ? `点击「继续整理」，核对 ${confirmableRange} 个文件的方案。`
+      : `${confirmableRange} 个文件等待确认。可展开对应文件的证据核对方案。`;
     return {
       title: "等待确认",
-      copy: `${prefix}${remaining > 0 ? `${confirmableRange} 个文件可确认，另有 ${remaining} 个等待处理。` : ""}${waitingNextStep(run, waiting, confirmableRange)}`,
+      copy: `${prefix}${remaining > 0 ? `${confirmableRange} 个文件可确认，另有 ${remaining} 个等待处理。` : ""}${nextStep}`,
+      showContinue,
     };
   }
   if (run.problemTypes.length > 0) {
     return {
       title: "等待处理",
-      copy: `${prefix}${waiting} 个文件仍处于等待。${waitingNextStep(run, waiting, confirmableRange)}`,
+      copy: `${prefix}${waiting} 个文件仍处于等待。在下方展开对应文件的证据，查看原因和可用操作。`,
     };
   }
   return {
     title: "等待处理",
-    copy: `${prefix}${waiting} 个文件尚未结束。${waitingNextStep(run, waiting, confirmableRange)}`,
+    copy: `${prefix}${waiting} 个文件尚未结束。可展开对应文件的证据查看当前状态。`,
   };
 }
 
 /** The card title and its one-sentence truthful explanation. */
 function runStatusHeadline(
   run: RunSummary,
-  planCandidateCount: number | null = null,
-  preparationStage: RunPreparationStage | null = null,
-): {
-  readonly title: string;
-  readonly copy: string;
-} {
+  planCandidateCount: number | null,
+  preparationStage: RunPreparationStage | null,
+  canConfirmOrganize: boolean,
+): RunHeadline {
   const success = run.successItems ?? 0;
   const partial = run.partialItems ?? 0;
   const failed = run.failedOnlyItems ?? 0;
@@ -2633,33 +2621,19 @@ function runStatusHeadline(
         copy: "未开始的操作已停止，已完成的文件效果继续保留。",
       };
     case "running": {
-      const confirmable =
-        planCandidateCount !== null
-          ? planCandidateCount > 0
-          : waitingConfirmationOpen(run);
       if (knownPreparation) {
         return preparationHeadline(preparationStage);
-      }
-      if (
-        confirmable &&
-        run.progress?.available === true &&
-        waiting !== null &&
-        waiting > 0
-      ) {
-        const active =
-          run.progress.dispositions.active + run.progress.dispositions.pending;
-        if (active > 0) {
-          return waitingHeadline(run, waiting, true, planCandidateCount);
-        }
-        return waitingHeadline(run, waiting, false, planCandidateCount);
       }
       if (run.progress?.available === true && waiting !== null && waiting > 0) {
         const active =
           run.progress.dispositions.active + run.progress.dispositions.pending;
-        if (active > 0) {
-          return waitingHeadline(run, waiting, true, planCandidateCount);
-        }
-        return waitingHeadline(run, waiting, false, planCandidateCount);
+        return waitingHeadline(
+          run,
+          waiting,
+          active > 0,
+          planCandidateCount,
+          canConfirmOrganize,
+        );
       }
       // Only a reading/unreadable preparation remains here; a published
       // waiting range above is the stronger verifiable fact.
@@ -2706,33 +2680,35 @@ function runStatusHeadline(
       };
     }
     case "waiting":
-      if (knownPreparation) {
-        return preparationHeadline(preparationStage);
-      }
-      if (waiting !== null && waiting > 0) {
-        return waitingHeadline(run, waiting, false, planCandidateCount);
-      }
-      if (preparationStage !== null) {
-        return preparationHeadline(preparationStage);
-      }
-      return {
-        title: "等待处理",
-        copy: "同一任务仍有文件需要决定或确认。",
-      };
     case "pending":
       if (knownPreparation) {
         return preparationHeadline(preparationStage);
       }
       if (waiting !== null && waiting > 0) {
-        return waitingHeadline(run, waiting, false, planCandidateCount);
+        const mixed =
+          run.progress?.available === true &&
+          run.progress.dispositions.active + run.progress.dispositions.pending >
+            0;
+        return waitingHeadline(
+          run,
+          waiting,
+          mixed,
+          planCandidateCount,
+          canConfirmOrganize,
+        );
       }
       if (preparationStage !== null) {
         return preparationHeadline(preparationStage);
       }
-      return {
-        title: "已受理，等待执行",
-        copy: "后台尚未开始处理；文件结果将在执行后独立记录。",
-      };
+      return run.status === "waiting"
+        ? {
+            title: "等待处理",
+            copy: "同一任务仍有文件需要决定或确认。",
+          }
+        : {
+            title: "已受理，等待执行",
+            copy: "后台尚未开始处理；文件结果将在执行后独立记录。",
+          };
     default:
       return {
         title: "任务状态证据不足",
@@ -2752,14 +2728,11 @@ function runStatusHeadline(
  */
 function RunFlowSummary({
   run,
-  planCandidateCount,
-  preparationStage,
+  headline,
 }: {
   readonly run: RunSummary;
-  readonly planCandidateCount: number | null;
-  readonly preparationStage: RunPreparationStage | null;
+  readonly headline: RunHeadline;
 }) {
-  const headline = runStatusHeadline(run, planCandidateCount, preparationStage);
   return (
     <div className="mf-run-fact-flow">
       <h3 className="mf-run-status-title">{headline.title}</h3>
