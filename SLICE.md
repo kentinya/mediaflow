@@ -427,3 +427,11 @@ B 在原 Task 59.1 和 59.3 中安排修正并独立复验，再提交完整 Sli
   真实读回后，Files 回概览，任务中心在原文件证据内显示新计划。错误和未明确受理沿用安全读回。
   对照证据见 `.git/validation-evidence/71787a05/slice59-local-site/` 的 `before-*` 与
   `offline-reanalyzing-*`。沿用原 Slice Base 与 Tasks 59.1–59.5 的既有 B 结果。
+
+### A59-09 — 文件证据和动作后的画面连续性
+
+用户从原测试站报告三处界面缺口。RO-4 的证据展开仍显示重复刷新、关闭证据和旧版多段正文。
+RO-2 的重新分析在新摘要读取时短暂显示准备首屏。RO-3 的真实确认交接在任务详情出现时从完全透明
+重新淡入。已从混合 Files 和已完成任务复现，原始对照与逐帧记录保存在
+`.git/validation-evidence/71787a05/slice59-local-site/visual-followup-baseline.log`。
+按原批准稿核对证据正文及相邻行切换。两个交接按同一准备或任务的真实读取稳定显示。

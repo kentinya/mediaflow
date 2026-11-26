@@ -4,12 +4,12 @@
 Task ID: 59.6
 Task Type: SLICE
 Parent Slice: 59
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 71787a05f18a089753966fbc9b1469c7fb3b4877
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: USER-REQUESTED A59-08 CORRECTION
+Implementation Authorization: USER-REQUESTED A59-08 / A59-09 CORRECTION
 ```
 
 ## 目标与实施范围
@@ -33,7 +33,21 @@ src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/R
 B 独立检查 Task Base 到候选差异、浏览器关键旅程与相应 T3 安全门禁，提交 Slice 终验包。
 原交接保存在 `71787a05:TASK.md`。
 
-## Developer 交接
+## 本轮修正 A59-09
+
+在原 Task 内修正用户报告的等待页、交接和文件行展开。任务 Base 保持不变。
+
+1. 文件行展开按批准稿组织当前结果、来源、可用目标、操作与影响以及适用附件和未知效果。
+   处理依据和技术记录折叠。点同一行收起。列表及证据正常状态移除重复刷新。
+   读取失败、离开筛选页和四类决定保留可用下一步。
+2. 保存后稳定显示同一条目。新方案读取期间留在重新分析交接，避免回到首次准备页或重复淡入。
+   回落由原有真实读回和同条目守卫决定。
+3. 确认受理后交接到现有任务详情，消除从透明开始的第二次入场。验证确定和未知响应路径。
+
+开发使用受影响组件、原生 Playwright 和原测试站的桌面及 390 px 录帧验证三处问题。
+B 独立复核准确任务、权限、读取失败与重开的安全边界。
+
+## 上一候选交接
 
 两入口显示统一的重新分析区，复用原保存、分析与回落。保存前的入口与底栏已恢复原样。
 受影响组件回归 143 项通过。原生浏览器验证混合四类、十项逐个处理后的单次确认、
