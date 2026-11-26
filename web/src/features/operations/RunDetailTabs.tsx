@@ -28,11 +28,16 @@ import {
 } from "react";
 import { AttachmentResults } from "./AttachmentResults";
 import { formatRunDateTime } from "./run-time";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   fetchRunExportPackage,
   type RunExportRead,
+  type RunItemEvidenceRead,
 } from "../../shared/api/api-client";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
@@ -59,6 +64,7 @@ import {
   type RunRecordsPage,
 } from "../../entities/operations/run-detail";
 import {
+  runItemEvidenceQueryKey,
   runItemEvidenceQueryOptions,
   runItemsPageQueryKey,
   runItemsQueryKey,
@@ -836,7 +842,7 @@ export function RunDetailTabs({
   // The ref holds only the previous activity of this same run; page/filter
   // changes keep their own fresh read.
   const previousActivity = useRef({ runId, active });
-  const { itemStatus, itemCursor, tab } = state;
+  const { itemStatus, itemCursor, tab, evidenceItem } = state;
   useEffect(() => {
     const previous = previousActivity.current;
     previousActivity.current = { runId, active };
@@ -852,6 +858,19 @@ export function RunDetailTabs({
     void queryClient.invalidateQueries({
       queryKey: [runRecordsQueryKey, runId],
     });
+    // The overview may settle just before the evidence poll. Refresh the
+    // visible file at the same boundary as its page and mark closed evidence
+    // stale for the next open.
+    void queryClient.invalidateQueries({
+      queryKey: [runItemEvidenceQueryKey, runId],
+      refetchType: "none",
+    });
+    if (tab === "detail" && evidenceItem !== null) {
+      void queryClient.refetchQueries({
+        queryKey: [runItemEvidenceQueryKey, runId, evidenceItem],
+        exact: true,
+      });
+    }
     void (async () => {
       await queryClient.cancelQueries({ queryKey: runItemsKey });
       await queryClient.invalidateQueries({
@@ -865,7 +884,7 @@ export function RunDetailTabs({
         });
       }
     })();
-  }, [active, itemCursor, itemStatus, queryClient, runId, tab]);
+  }, [active, evidenceItem, itemCursor, itemStatus, queryClient, runId, tab]);
   const detailTabRef = useRef<HTMLButtonElement | null>(null);
   // Unsaved decision inputs belong to this exact run + item, not to the
   // filtered/paged list that happens to render the evidence right now.  The
@@ -981,6 +1000,7 @@ export function RunDetailTabs({
             results={results}
             progress={progress}
             active={active}
+            revealInPlace={evidenceItem !== null}
           />
           <RunItemsSection
             key={JSON.stringify([
@@ -1194,10 +1214,12 @@ function RunFileResultsCard({
   results,
   progress,
   active,
+  revealInPlace,
 }: {
   readonly results: RunFileResults | null | undefined;
   readonly progress: RunProgress | null;
   readonly active: boolean;
+  readonly revealInPlace: boolean;
 }) {
   // A published progress read splits success into confirmed and uncertain
   // facts. The run-row `success_items` count is only the durable recorded
@@ -1243,7 +1265,14 @@ function RunFileResultsCard({
     return null;
   }
   return (
-    <section className="mf-run-results" aria-label="文件结果">
+    <section
+      className={
+        revealInPlace
+          ? "mf-run-results mf-run-results-reveal"
+          : "mf-run-results"
+      }
+      aria-label="文件结果"
+    >
       <h4>文件结果</h4>
       {known && (
         <ul className="mf-file-result-grid">
@@ -1399,6 +1428,13 @@ function RunItemsSection({
     }),
   );
   const evidenceItem = state.evidenceItem;
+  const evidenceQuery = useQuery(
+    runItemEvidenceQueryOptions(token, {
+      runId,
+      itemId: evidenceItem ?? "",
+      active,
+    }),
+  );
   const evidencePanelId = useId();
   const itemsPage =
     query.data !== undefined && query.data.ok ? query.data.model : null;
@@ -1462,6 +1498,7 @@ function RunItemsSection({
         id={evidencePanelId}
         runId={runId}
         itemId={evidenceItem}
+        query={evidenceQuery}
         filePosition={evidencePosition}
         active={active}
         decisionDraft={evidenceDecisionDrafts[evidenceItem]}
@@ -1545,10 +1582,24 @@ function RunItemsSection({
                 <ul className="mf-run-item-list" aria-label="任务条目">
                   {page.items.map((item) => {
                     const expanded = evidenceItem === item.itemId;
-                    const reading = itemRowReading(item);
+                    // Use the same reading for the open row and its evidence.
+                    // Page/filter membership remains owned by the list read.
+                    const evidenceRead = evidenceQuery.data;
+                    const rowItem =
+                      expanded &&
+                      state.itemStatus === null &&
+                      !evidenceQuery.isError &&
+                      evidenceRead?.ok === true &&
+                      evidenceRead.model.itemId === item.itemId
+                        ? {
+                            ...evidenceRead.model.item,
+                            checkpoint: evidenceRead.model.checkpoint,
+                          }
+                        : item;
+                    const reading = itemRowReading(rowItem);
                     const summary =
                       reading.reason === "—"
-                        ? itemRowSummary(item)
+                        ? itemRowSummary(rowItem)
                         : reading.reason;
                     return (
                       <li
@@ -1983,6 +2034,7 @@ function RunEvidenceSection({
   runId,
   itemId,
   active,
+  query,
   filePosition,
   decisionDraft,
   onDecisionDraftChange,
@@ -1991,15 +2043,13 @@ function RunEvidenceSection({
   readonly runId: string;
   readonly itemId: string;
   readonly active: boolean;
+  readonly query: UseQueryResult<RunItemEvidenceRead>;
   readonly filePosition?: { readonly index: number; readonly total: number };
   /** The same file's unsaved decision inputs, owned outside the paged list. */
   readonly decisionDraft?: TaskItemDecisionDraft;
   readonly onDecisionDraftChange?: (draft: TaskItemDecisionDraft) => void;
 }) {
   const token = useAuthToken();
-  const query = useQuery(
-    runItemEvidenceQueryOptions(token, { runId, itemId, active }),
-  );
   const pending = token !== null && query.isPending;
   const showWait = useReadReveal(pending);
   return (

@@ -2185,8 +2185,17 @@ function RunDetailPanel({
               result: controlResult,
               locked,
             });
+          const executionOwnsRemainingFiles =
+            run.manualOrganizeSubmissions.length > 0 &&
+            run.progress?.available === true &&
+            run.progress.kind === "organize" &&
+            run.progress.dispositions.waiting === 0 &&
+            run.progress.dispositions.pending +
+              run.progress.dispositions.active >
+              0;
           const preparationVisible =
-            run.filesPreparation !== null && run.filesPreparation.continuable;
+            run.filesPreparation?.continuable === true &&
+            !executionOwnsRemainingFiles;
           const confirmableWaiting =
             planCandidateCount !== null
               ? planCandidateCount

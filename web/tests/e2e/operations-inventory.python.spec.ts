@@ -326,16 +326,26 @@ async function confirmNativeRecovery(
         readonly executionId: string;
       };
       expect(confirmation.taskId).toBe(seeded.taskId);
+      const detail = page.getByRole("dialog", { name: "运行详情" });
       await expect(
-        summary.getByRole("button", { name: "正在读取结果…" }),
+        detail.getByRole("heading", { name: "已受理，等待执行" }),
+      ).toBeVisible();
+      await expect(
+        summary.getByRole("button", { name: "正在提交…" }),
       ).toBeDisabled();
-      await expect(summary.getByText("已受理", { exact: true })).toBeVisible();
+      await expect(summary.getByText("已受理", { exact: true })).toHaveCount(0);
+      expect(
+        Math.abs((await geometry()).height - submitting.height),
+      ).toBeLessThan(2);
       await expect(confirm).toHaveCount(0);
       releaseEvidence();
       await expect(summary).toHaveCount(0);
       await expect(
-        recovery.getByText(/已受理 1 项；常驻 Worker 将执行已确认的精确子集/),
-      ).toBeVisible();
+        detail.getByRole("region", { name: "条目证据" }),
+      ).toContainText("当前结果");
+      await expect(
+        detail.getByText("恢复操作状态", { exact: true }),
+      ).toHaveCount(0);
     } finally {
       releaseExecute();
       releaseEvidence();
@@ -471,7 +481,7 @@ async function confirmNativeRecovery(
     }
 
     await expect(
-      recovery.getByText(/本次确认已经受理|已受理 1 项；常驻 Worker/),
+      page.getByRole("region", { name: "条目证据" }).getByText("当前结果"),
     ).toBeVisible({ timeout: 15_000 });
     await expect(page).toHaveURL(new RegExp(`run=${seeded.taskId}`));
     await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
@@ -585,6 +595,24 @@ async function finishNativeRecovery(
   expect(state.sourceExists).toBe(false);
   expect(state.sourceResultHistory.length).toBeGreaterThan(0);
   expect(state.sourceResultHistory.at(-1).status).toBe("SUCCESS");
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  const evidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(
+    detail.getByRole("heading", { name: /^流程已完成/ }),
+  ).toBeVisible();
+  await expect(evidence.getByText("文件已整理")).toBeVisible();
+  await expect(
+    detail.locator(".mf-run-item-row-open .mf-run-item-status"),
+  ).toHaveText("已验证成功");
+  // The file finishing must not re-open recovery, remount the dialog, or
+  // replace the selected file's evidence with an execution-route handoff.
+  await expect(detail.getByRole("region", { name: "新计划摘要" })).toHaveCount(
+    0,
+  );
+  await expect(
+    detail.getByText(/常驻 Worker 将执行已确认的精确子集/),
+  ).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.taskId}`));
   if (confirmationScenario !== "normal") {
     expect(state.executionIds).toHaveLength(1);
     expect(state.sourceResultHistory).toHaveLength(1);

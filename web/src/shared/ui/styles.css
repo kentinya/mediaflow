@@ -5206,6 +5206,14 @@ tr[aria-selected="true"] {
   background: #f6f9ff;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .mf-run-status-card {
+    transition:
+      background-color 240ms ease,
+      border-color 240ms ease;
+  }
+}
+
 .mf-run-status-card-pending,
 .mf-run-status-card-running {
   background: #f6f9ff;
@@ -5450,6 +5458,23 @@ tr[aria-selected="true"] {
 
 .mf-run-results h4 {
   margin: 0;
+}
+
+@supports (interpolate-size: allow-keywords) {
+  @media (prefers-reduced-motion: no-preference) {
+    .mf-run-results-reveal {
+      interpolate-size: allow-keywords;
+      block-size: auto;
+      overflow: clip;
+      transition: block-size 240ms ease-out;
+    }
+
+    @starting-style {
+      .mf-run-results-reveal {
+        block-size: 0;
+      }
+    }
+  }
 }
 
 .mf-file-result-grid {

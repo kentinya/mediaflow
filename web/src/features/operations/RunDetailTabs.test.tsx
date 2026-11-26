@@ -3972,9 +3972,8 @@ describe("selected-run detail tabs", () => {
     );
     expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull();
 
-    // Reopening reads the persisted admission instead of resubmitting it; the
-    // panel states the known admission fact and offers no execution-page
-    // navigation.
+    // Reopening shows the exact file's state without a duplicate admission
+    // banner or a navigation to another page.
     await user.click(
       within(table).getByRole("button", { name: "Movies，整理详情" }),
     );
@@ -3983,16 +3982,13 @@ describe("selected-run detail tabs", () => {
     await user.click(
       within(reopened).getAllByRole("button", { name: /查看证据$/ })[1]!,
     );
-    const reopenedRecovery = await within(reopened).findByRole("region", {
-      name: "条目审核与恢复",
-    });
+    const reopenedEvidence = await findInlineEvidence(reopened);
     expect(
-      await within(reopenedRecovery).findByText(
-        /已受理 1 项；常驻 Worker 将执行已确认的精确子集/,
-      ),
+      await within(reopenedEvidence).findByText("待处理", { exact: true }),
     ).toBeVisible();
+    expect(within(reopenedEvidence).queryByText("恢复操作状态")).toBeNull();
     expect(
-      within(reopenedRecovery).queryByRole("button", {
+      within(reopenedEvidence).queryByRole("button", {
         name: "查看关联执行结果",
       }),
     ).toBeNull();

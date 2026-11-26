@@ -44,7 +44,7 @@ export interface SamePagePlanSummaryProps {
    * reviewed full findings.
    */
   readonly compact?: boolean;
-  readonly confirmationPhase?: "submitting" | "admitted";
+  readonly submitting?: boolean;
   /** Operator-facing confirm verb, defaulting to the recovery copy. */
   readonly confirmLabel?: (count: number) => string;
   /**
@@ -96,7 +96,6 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
   const confirmLabel =
     props.confirmLabel ?? ((count: number) => `确认继续整理 ${count} 项`);
   const compact = props.compact === true;
-  const confirmationPhase = props.confirmationPhase;
   const fileNameOf = (item: ManualPreviewItemModel): string =>
     item.sourceFilename ?? item.itemId;
   const sourceEffect = (item: ManualPreviewItemModel): string => {
@@ -135,13 +134,7 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
         {compact ? (
           preview?.current &&
           executableIds.length > 0 && (
-            <span>
-              {confirmationPhase === "admitted"
-                ? "已受理"
-                : confirmationPhase === "submitting"
-                  ? "提交中"
-                  : "等待明确确认"}
-            </span>
+            <span>{props.submitting ? "提交中" : "等待明确确认"}</span>
           )
         ) : (
           <RefreshControl
@@ -179,11 +172,7 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
                   .map(fileNameOf)
                   .join("、")}{" "}
                 已生成可确认的新方案。
-                {confirmationPhase === "admitted"
-                  ? "整理已受理。"
-                  : confirmationPhase === "submitting"
-                    ? "正在提交。"
-                    : "整理尚未提交。"}
+                {props.submitting ? "正在提交。" : "整理尚未提交。"}
               </p>
             </StatusBanner>
           ) : !preview.current ? (
@@ -367,9 +356,7 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
           >
             {props.busy
               ? compact
-                ? confirmationPhase === "admitted"
-                  ? "正在读取结果…"
-                  : "正在提交…"
+                ? "正在提交…"
                 : "正在受理…"
               : confirmLabel(activeSelection.length)}
           </button>

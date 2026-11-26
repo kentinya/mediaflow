@@ -1359,7 +1359,9 @@ export function TaskItemRecoveryPanel({
           submission,
         );
         updateRecoverySession({
-          message: `已受理 ${result.model.selectedItemIds.length} 项；常驻 Worker 将执行已确认的精确子集。`,
+          message: hostedDiagnostics
+            ? null
+            : `已受理 ${result.model.selectedItemIds.length} 项；常驻 Worker 将执行已确认的精确子集。`,
           repeatLocked: false,
           submittedConfirmation: null,
           admittedConfirmation: submission,
@@ -2022,10 +2024,6 @@ export function TaskItemRecoveryPanel({
   // session state stays intact for the next render.
   const hasLiveRecoveryAction =
     owesRecoveryAction || activePreparation !== null;
-  if (hostedDiagnostics && !hasLiveRecoveryAction && !hasSessionFeedback) {
-    return null;
-  }
-
   const submittingConfirmation = busy && pendingAction === "confirm";
   const matchingConfirmation = submittingConfirmation
     ? submittedConfirmation
@@ -2047,15 +2045,21 @@ export function TaskItemRecoveryPanel({
     : owesRecoveryAction && activePreparation?.status === "prepared"
       ? activePreparation.previewId
       : null;
-  const confirmationPhase =
-    hostedDiagnostics && planPreviewId !== null
-      ? submittingConfirmation
-        ? "submitting"
-        : handingOffSelectedFile
-          ? "admitted"
-          : undefined
-      : undefined;
-  const displayedConfirmation = confirmationPhase ? matchingConfirmation : null;
+  // The regular handoff has no separate acknowledgement screen. Keep the
+  // submitted summary unchanged until this exact file's evidence replaces it.
+  const holdingSummary =
+    hostedDiagnostics &&
+    planPreviewId !== null &&
+    (submittingConfirmation || handingOffSelectedFile);
+  if (
+    hostedDiagnostics &&
+    !hasLiveRecoveryAction &&
+    !hasSessionFeedback &&
+    !holdingSummary
+  ) {
+    return null;
+  }
+  const displayedConfirmation = holdingSummary ? matchingConfirmation : null;
 
   return (
     <section
@@ -2164,7 +2168,8 @@ export function TaskItemRecoveryPanel({
       )}
       {busy &&
         pendingAction !== null &&
-        confirmationPhase !== "submitting" &&
+        !holdingSummary &&
+        !(hostedDiagnostics && submittingConfirmation && !recoveryExpected) &&
         !(pendingAction === "continue" && savedDecisionAnalysisVisible) &&
         !(
           hostedDiagnostics &&
@@ -2179,7 +2184,8 @@ export function TaskItemRecoveryPanel({
           </StatusBanner>
         )}
       {confirmationStatusText !== null &&
-        confirmationPhase !== "submitting" && (
+        !holdingSummary &&
+        !(hostedDiagnostics && submittingConfirmation && !recoveryExpected) && (
           <p className="mf-dashboard-meta" role="status">
             {confirmationStatusText}
           </p>
@@ -2209,15 +2215,15 @@ export function TaskItemRecoveryPanel({
             displayedConfirmation?.allowSourceCleanup ?? allowCleanupConfirm
           }
           onAllowCleanup={setAllowCleanupConfirm}
-          busy={busy || repeatLocked || confirmationPhase === "admitted"}
-          confirmationPhase={confirmationPhase}
+          busy={busy || repeatLocked || holdingSummary}
+          submitting={holdingSummary}
           onConfirm={() => void confirmPreparation()}
           heading="新计划摘要（零变更）"
           compact={hostedDiagnostics}
         />
       )}
       {message &&
-        confirmationPhase !== "admitted" &&
+        !holdingSummary &&
         submittedConfirmation === null &&
         !savedDecisionAnalysisVisible &&
         !(activePreparation !== null && message.startsWith("选择已保存")) && (
