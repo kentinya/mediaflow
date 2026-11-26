@@ -2498,10 +2498,14 @@ function waitingHeadline(
     };
   }
   if (confirmableRange > 0) {
+    const filesRecoveryConfirmationPending =
+      run.progress?.available === true &&
+      run.progress.filesRecoveryConfirmationPending;
     const showContinue =
       canConfirmOrganize &&
       run.filesPreparation?.continuable === true &&
-      run.lifecycle?.cancellationRequested !== true;
+      run.lifecycle?.cancellationRequested !== true &&
+      !filesRecoveryConfirmationPending;
     const nextStep = showContinue
       ? `点击「继续整理」，核对 ${confirmableRange} 个文件的方案。`
       : `${confirmableRange} 个文件等待确认。可展开对应文件的证据核对方案。`;

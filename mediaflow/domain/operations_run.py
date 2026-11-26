@@ -629,6 +629,8 @@ class OperationsRunProgress:
     #: the basis for distinguishing analysis completion from organize
     #: success.  Read together with the counts in the same snapshot.
     execute_authorized: bool = False
+    #: A Files plan has a waiting source with its own saved four-type decision.
+    files_recovery_confirmation_pending: bool = False
 
 
 @dataclass(frozen=True)

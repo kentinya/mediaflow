@@ -189,6 +189,7 @@ export interface RunProgressAvailable {
   readonly effectCounts: Readonly<Record<string, number>>;
   readonly resultsTotal: number;
   readonly resultsComplete: boolean;
+  readonly filesRecoveryConfirmationPending: boolean;
 }
 
 export type RunProgress = RunProgressUnavailable | RunProgressAvailable;
@@ -317,6 +318,8 @@ export function normalizeRunProgress(payload: unknown): RunProgress {
     effectCounts,
     resultsTotal: count(source, "results_total"),
     resultsComplete: flag(source, "results_complete"),
+    filesRecoveryConfirmationPending:
+      nullableFlag(source, "files_recovery_confirmation_pending") ?? false,
   };
 }
 

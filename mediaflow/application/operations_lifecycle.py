@@ -2146,6 +2146,7 @@ def run_progress_document(progress, *, command: object) -> dict[str, object]:
         "effect_counts": {str(key): int(value) for key, value in progress.effect_counts.items()},
         "results_total": int(progress.results_total),
         "results_complete": bool(progress.results_complete),
+        "files_recovery_confirmation_pending": progress.files_recovery_confirmation_pending,
         "sideEffects": "none",
     }
 

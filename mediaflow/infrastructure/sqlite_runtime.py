@@ -6843,6 +6843,29 @@ class SQLiteTaskRepository:
         known_total = None if indeterminate else total
         if uncertain_success > dispositions.get("success", 0):
             uncertain_success = dispositions.get("success", 0)
+        # Both a blocked conflict and a ready plan use waiting_confirm. A
+        # still-open conflict after an earlier decision is not a ready recovery
+        # and must not hide the ordinary confirmation of another file.
+        files_recovery_confirmation_pending = (
+            not terminal
+            and status_counts.get(TaskItemStatus.WAITING_CONFIRM.value, 0) > 0
+            and self._connection.execute(
+                f"""SELECT 1
+                FROM media_discoveries discovery
+                JOIN task_items i ON i.task_id = discovery.organize_task_id
+                WHERE discovery.organize_task_id = ?
+                  AND discovery.preview_id IS NOT NULL
+                  AND i.status = 'waiting_confirm'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM conflict_confirmations conflict
+                      WHERE conflict.item_id = i.item_id AND conflict.status = 'pending'
+                  )
+                  AND {self._native_current_decision_kind_sql("i")} IS NOT NULL
+                LIMIT 1""",
+                (task_id,),
+            ).fetchone()
+            is not None
+        )
         return OperationsRunProgress(
             available=True,
             known_total=known_total,
@@ -6858,6 +6881,7 @@ class SQLiteTaskRepository:
             scan_progress=scan_progress,
             primary_unit="task_items",
             execute_authorized=execute_authorized,
+            files_recovery_confirmation_pending=files_recovery_confirmation_pending,
         )
 
     def operations_run_items_window(

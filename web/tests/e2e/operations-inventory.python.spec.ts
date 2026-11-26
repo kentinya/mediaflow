@@ -530,6 +530,9 @@ async function finishNativeRecovery(
   if (await prepare.isVisible()) await prepare.click();
   await expect(summary).toBeVisible();
   await expect(summary.getByText("等待明确确认")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "继续整理", exact: true }),
+  ).toHaveCount(0);
   await expect(summary.getByRole("button", { name: "刷新" })).toHaveCount(0);
   await expect(summary).toContainText(seeded.sourcePath);
   state = await (
@@ -2052,6 +2055,13 @@ test("the opened item reconciles the exact sibling subset admission it did not s
 
   // Both zero-mutation analyses are complete; the opened file's own summary
   // now waits for the operator's explicit subset confirmation.
+  await page.reload();
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(detail.getByRole("heading", { name: "等待确认" })).toBeVisible();
+  await expect(
+    detail.getByRole("link", { name: "继续整理", exact: true }),
+  ).toHaveCount(0);
+  await expect(detail.getByText(/点击「继续整理」/)).toHaveCount(0);
   await openEvidence("Fifteenth.2015.mkv");
   const summary = detail.getByRole("region", { name: "新计划摘要" });
   await expect(summary).toBeVisible({ timeout: 30_000 });

@@ -2623,6 +2623,9 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             )
             first_result = value.repository.list_results(task_id)[0]
             self.assertTrue((self.source_root / "Movies/Two.2002.mkv").exists())
+            status, waiting_run = self.request(value, f"/api/operations/runs/{task_id}")
+            self.assertEqual(200, status, waiting_run)
+            self.assertFalse(waiting_run["progress"]["files_recovery_confirmation_pending"])
             remaining = self._analyze(value, task_id, discovery)
             self.assertEqual(1, len(remaining["items"]))
             task = self._execute(value, task_id, remaining, [remaining["items"][0]["itemId"]])
@@ -2702,8 +2705,14 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             saved = self._decide_recognition(value, task_id, item)
             status, accepted = self._continue_from_task_center(value, task_id, item.item_id, saved)
             self.assertEqual(202, status, accepted)
+            status, analyzing_run = self.request(value, f"/api/operations/runs/{task_id}")
+            self.assertEqual(200, status, analyzing_run)
+            self.assertFalse(analyzing_run["progress"]["files_recovery_confirmation_pending"])
             discovery = self._drive(value, task_id)
 
+            status, waiting_run = self.request(value, f"/api/operations/runs/{task_id}")
+            self.assertEqual(200, status, waiting_run)
+            self.assertTrue(waiting_run["progress"]["files_recovery_confirmation_pending"])
             status, detail = self.request(
                 value, f"/api/tasks/{task_id}/items/{item.item_id}/recovery"
             )
@@ -2756,6 +2765,9 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             )
             self.assertEqual(202, status, confirmed)
             self.assertEqual(task_id, confirmed["taskId"])
+            status, confirmed_run = self.request(value, f"/api/operations/runs/{task_id}")
+            self.assertEqual(200, status, confirmed_run)
+            self.assertFalse(confirmed_run["progress"]["files_recovery_confirmation_pending"])
             self.assertEqual([], value.source.mutations)
             self.assertEqual(1, len(value.repository.list_tasks()))
 
