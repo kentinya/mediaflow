@@ -1,113 +1,106 @@
-# Task 59.3 — 任务详情文字进度与结算后的文件读回
+# Task 59.4 — 整理弹窗共用真实阶段的准备页
 
-Next Action: DEVELOPER CORRECTS A59-04 AND A59-05 IN TASK 59.3
+Next Action: DEVELOPER IMPLEMENTS TASK 59.4
 
 ```text
-Task ID: 59.3
+Task ID: 59.4
 Task Type: SLICE
 Parent Slice: 59
-Status: FIX REQUIRED
-Task Base: d1ea5f667c5ebc08e1a6835030197c1724f4f4d2
-Reviewed Implementation Head: 6c54559b054d75682fc9ead615191d6c0b351285
+Status: PLANNED
+Task Base: bccfb2c4c014eb181d33ebc5b99140c1c722b446
 Planning Contract: 36f60fe0ef75c9cbb9e0b30e258c2d6f4075f24d
-Working Head at Planning: f4c739e461e79412d4dbf032186f10caf4d0391a
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
-Implementation Authorization: ORIGINAL TASK 59.3 CORRECTIONS A59-04 AND A59-05
 ```
 
 ## B 复核与 Slice 59 交接
 
-**Task 59.1 · PASS。** B 独立审查 `3bc9ad99137e5a2f8ff53add92041185ceb8ebbf..88f5d536610a7d9a31d5aa4cfe5ce04e02d8ba38`。
-从真实 Files 混合批次在 1440 和 390 px 打开五种决定表单，修改前后均核对底栏动作分组和顺序。
-草稿提示位于当前文件，顶栏关闭要求核对未保存的草稿。返回概览保留当前文件的焦点、草稿和已选
-范围。跳过结果在新版摘要与刷新后保留。一次确认只执行四个合法文件，源文件与已有目标保持原状。
-Task 59.2 的通过范围见 `171b3de6:TASK.md`，本轮任务中心同页恢复六项复验通过。
+- **Task 59.3 · PASS。** 独立复核 `d1ea5f667c5ebc08e1a6835030197c1724f4f4d2..bccfb2c4c014eb181d33ebc5b99140c1c722b446`
+  和完整 Slice 区间。Task 范围及上轮退回事项见 `ae98701c:TASK.md`。
+- **A59-04。** 从 Files 留下未确认方案，经任务中心原位重开并由真实 Worker 完成同一任务。
+  在 1440 和 390 px 对照批准稿，等待确认时显示实际准备和分析计数、待确认范围及合法动作。
+  完成后显示「流程已完成」「已处理 1 / 1 个主条目」及独立文件结果。两个状态都使用文字进度。
+  等待页保留预览之外的准备计数口径和零媒体变更说明，避免把已准备解读为已执行。
+  另核对未知总数、读取失败、混合结果和效果待核对。
+- **A59-05。** 用 A 当时的复现路径核对，结算前访问「成功」为空，结算后回访的实际请求从 1 次增至
+  2 次，直接显示同一文件的已验证结果和真实目标。21 文件真实旅程回访相同游标的第二页时重发请求，
+  条目身份相同且显示结算结果。组件复验操作记录停留、迟到的旧响应、另一任务缓存隔离、
+  相同终态重复读回，原生浏览器复验筛选、分页、证据与焦点。
+- 治理、两段 Git 区间空白检查、Web 类型、Lint、Prettier、构建通过。组件 110 项、Node 浏览器
+  14 项、真实 Python/API/SQLite/Worker 浏览器 12 项通过。另跑一次 A 的复现路径并通过。
+  原始日志及截图位于 `.git/validation-evidence/bccfb2c4c014eb181d33ebc5b99140c1c722b446/b-task59.3-review/`。
+  `a-regression.log` 和 `a-regression-probe/screens/` 记录同一任务前后对照，`approved-detail/`
+  是固定离线稿的相同状态对照，`settlement.log` 记录分页结算用例。
+- Task 59.1 的通过记录见 `ae98701c:TASK.md`，59.2 的既有通过范围见 `171b3de6:TASK.md`。
 
-- 治理、Task 和 Slice 完整区间空白检查、Web 类型、ESLint、Prettier 与构建通过。组件 108 项、
-  Node 浏览器 77 项、真实 Python/API/SQLite/Worker 原生浏览器累计 19 项通过。
-- 首轮三条任务中心相关回归和两条容量用例使用旧文案或旧页面位置。B 对照失败现场更新测试定位，
-  保留提交条件、精确子集、持久任务和媒体效果断言，并复跑对应五条及两条受同一回落文案影响的用例。
-  测试提交 `f4c739e4` 仅改变三个测试文件。生产、配置及夹具与实施候选相同，沿用未改变输入的通过结果。
-- 本机原始通过、失败与重跑日志、截图及区间清单位于
-  `.git/validation-evidence/88f5d536610a7d9a31d5aa4cfe5ce04e02d8ba38/b-task59.1-review/`。
-  上轮 A59-07 的关闭及准确重开、逐次跳过持久读回在 `6f2477b8:TASK.md` 有固定记录。
-
-B 按用户授权接续原 Task 59.3。规划时 `main` 位于上述 Working Head，工作区和暂存区干净，治理
-检查通过。原 Task Base 沿用，启用范围以最新批准预览和提交合同为准。
-[终审合同](SLICE.md#a-独立复验--6c54559b--fix-required)
+Slice 59 仍为 `FIX REQUIRED`。已通过的概览、四类决定、精确整批确认与任务详情可作为本轮回归基线。
+准备首屏差距纳入本 Task，任务中心「需要处理」的四类问题文件列表及入口按 RO-5 接续规划。
+全部结果通过后交独立 A 终验。
 
 ## 目标
 
-操作者从任务中心打开已准备的任务，能读出准备或分析到了多少、几个文件尚待确认，以及「继续整理」
-是否可用。显式确认并等待原任务完成后，能读到流程进度和独立文件结果。再次打开结算前已访问过的
-筛选和游标页时，页面自动查询原任务的正式结果。原页签、当前筛选和文件证据仍可继续使用。
+从 Files 选择单文件、文件夹或混合范围，使用原按钮或右键打开现有整理弹窗。首次概览前，用户
+一眼看到当前动作、来源、范围与真实进度。完整准备依次显示「检查所选范围」和「生成整理方案」。
+进入时只剩生成或读取等一步，直接显示那一步。任务中心从合法的「继续整理」重开原准备时使用
+同一首屏，若原方案已可用便进入原复核。遇到中断时说明本次受理、已知影响及可以采取的下一步。
+适用 Slice 59 RO-1、AC-01、AC-05/06，以及 AC-07 的原准备重开。设计依据见提交版 [SLICE.md](SLICE.md)。
 
-## 范围与实施步骤
+## 实施步骤
 
-1. **A59-04。** 按批准预览调整 `ProgressCard`。任务状态标题及适用说明下方用「处理进度」和当前
-   阶段的数量文字呈现，移除该卡的条形控件及宽度计算。等待确认明确列出准备或分析口径、待确认文件数
-   与当前合法动作。正常完成时，进度文字后接独立的文件结果。未知总数、进度证据暂不可读、扫描错误
-   及异常情况继续说明真实状态、已知结果和适用的下一步。
-   [任务进度](web/src/features/operations/RunDetailTabs.tsx#L1012)
-2. **A59-05。** 在两页签共用的 `RunDetailTabs` 观察到同一任务从进行中进入终态时，按
-   `[runItemsQueryKey, runId]` 前缀取消该任务结算前的条目读取，并让同前缀的已访问缓存失效。
-   当前条目页立即重读，隐藏页重新打开时读回。复用现有 Query 取消和失效机制，避免旧响应覆盖终态。
-   保留当前页签、筛选、游标、行内证据和焦点。切换到另一任务时按其自身状态读回，同任务的重复终态
-   读回维持稳定。
-   [当前终态读取](web/src/features/operations/RunDetailTabs.tsx#L837) ·
-   [条目查询键](web/src/features/operations/run-detail-query.ts#L56)
-3. 本轮实现限任务详情进度与条目读回，复用现有任务状态、结果口径、有界分页及后端动作资格。
-
-A 的对照与读取日志位于本机
-`.git/validation-evidence/6c54559b054d75682fc9ead615191d6c0b351285/a-slice59-files-recovery-visual/`。
-`progress-and-filter.log` 有成功筛选回访沿用旧结果的请求证据。
+1. 在 `ManualOrganizeDialog` 收敛 Files 和任务中心托管时的首次准备正文。当前 Files 使用阶段卡，
+   托管入口落到另一套等待正文。共用批准稿的状态区、准备进度和按需范围明细。阶段只读同一准备的
+   受理状态、发现进度、方案关联和摘要读回。收起路径、排除原因及技术详情，阻止或拒绝原因与
+   合法动作就近呈现。
+2. 完整准备中，排队、检查和等待稳定随读回呈现第一步，完成检查并开始等候生成或分析时呈现
+   第二步。生成后的摘要读取属于这次完整准备的收尾。进入时只需生成、读取原状态或读取已生成
+   方案，显示实际单步。快速完成直接到可读结果。同阶段轮询保持动效、焦点、展开项及滚动稳定，
+   减少动态效果时即时呈现真实新阶段。
+3. 在现有受理、查询和重读边界接入失败及等待状态。区分后台不可用、来源读取错误、部分未受理、
+   无主文件、取消、范围不完整、超限及摘要读取失败。保持原任务与已受理范围。读取失败时重读
+   同一准备或摘要，等待期间保留适用提示。只有后端允许时可以补做原分析。第 101 个合格主文件
+   按现有规则使整批停止。部分未受理时，其他已合法受理且有完整方案的项仍可复核。
+4. 保持现有进入条件和关卡。Files 首份有效方案读回后进入原概览，任务中心关联的原方案就绪时
+   进入现有托管复核。关闭恢复原列表或文件背景上下文。工作边界是首次准备正文和它的入口交接。
+   复用既有 API、查询、权限、失败处理和确认边界。
 
 ## 验收
 
-- [ ] 从 Files 留下同一份未确认方案，从任务中心续作并通过真实 Worker 完成。桌面和 390 px 查看等待确认、
-  完成两个状态的标题和文字进度，核对预执行计数及正式文件结果。复验未知总数、读回失败、混合结果和
-  效果待核对。
-- [ ] Worker 完成前访问「成功」见空列表，回「全部状态」等待结算，再选「成功」。检查请求实际重发，
-  页面显示原文件「已验证成功」及目标。验证用户停在「操作记录」时后台结算，切回文件详情显示更新结果。
-  保留旧条目请求迟到的隔离用例，核对新的查询结果在迟到响应后仍准确。
-- [ ] 用 21 个已就绪文件覆盖结算前访问第二页、回第一页、结算后再访问第二页。核对第二页的游标、
-  原任务、条目身份与实际读回。复验筛选隐藏、跨页证据和关闭后焦点。组件覆盖另一任务的缓存隔离及
-  相同终态重复读回。
+- [ ] 原 Files 单文件、批量、文件夹与混合入口打开同一弹窗。桌面和 390 px 对照离线稿，观察
+  完整两步，由真实 Worker 的不同阶段切换。进入时只需生成或读取的场景显示实际单步，
+  进度与发现计数一致，未知总数保留原义，方案可读后即时到概览。
+- [ ] 从任务中心合法重开进行中的原准备，正文的当前阶段与原任务一致。重开已就绪方案直达复核。
+  关闭回到原弹窗或列表、页签和入口焦点。刷新和迟到读回仍关联准确 Task 和准备。
+- [ ] 核对排队、等待稳定、暂不可用 Worker、来源读取失败、部分未受理、无主文件、取消、完整范围
+  不足、100 项和第 101 项、摘要暂不可读及同摘要重读。终止时结束动效并解释影响，未完整的
+  截断范围不能确认。已受理项依据自身结果进入复核。确认前媒体根无变化。
+- [ ] 相同阶段的轮询保持展开、滚动与焦点，阶段变化清楚可读。键盘和 reduced-motion 可访问，
+  桌面、390 px 与矮视口保留原标题、背景、关闭和可用动作。
 
 ## 测试
 
-Developer 在 `web/` 运行以下命令，交接精确候选、实际结果与桌面和 390 px 对照图。组件覆盖进度口径、
-缓存失效和迟到结果。原生用例覆盖任务中心原位续作、真实复制结算与分页。将筛选和分页跨结算的具体断言
-加入对应旅程。
-
-```sh
-npm run typecheck
-npm run build
-npx eslint src/features/operations/{OperationsInventory.test.tsx,RunDetailTabs.tsx,RunDetailTabs.test.tsx,run-detail-query.ts} tests/e2e/{operations-inventory,manual-organize-dialog}.python.spec.ts
-npx prettier --check src/features/operations/{OperationsInventory.test.tsx,RunDetailTabs.tsx,RunDetailTabs.test.tsx,run-detail-query.ts} tests/e2e/{operations-inventory,manual-organize-dialog}.python.spec.ts
-npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/RunDetailTabs.test.tsx
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/manual-organize-dialog.python.spec.ts --grep 'initial manual preparation remains reachable in place|real destination conflict is decided|21-file recovery pages preserve'
-```
-
-B 审查原 Task Base 至精确实现候选与完整 Slice 区间，独立复跑上列组件及原生验收。从真实入口对照
-等待确认、流程完成及异常的文字进度，核对另一个筛选、游标页、页签往返和迟到响应。仓库根目录运行
-治理及区间空白检查，在 `web/` 运行 `npm run lint`、`npm run format:check`，并补跑任务中心布局与原位恢复。
+Developer 运行新增及直接受影响的组件和真实入口测试。补充阶段切换、稳定同阶段、单步生成或
+读取、已就绪重开、摘要失败和 reduced-motion 断言。扩展原生 Files 准备及任务中心继续整理用例，
+覆盖真实 Worker 驱动的首屏交接及进行中重开。保留原零变更、身份与确认断言。
 
 ```sh
 # 仓库根目录
 python3 scripts/check_governance.py
-git diff --check d1ea5f667c5ebc08e1a6835030197c1724f4f4d2..HEAD
+git diff --check
 # web/
-npm run test:e2e -- tests/e2e/task-center-layout.spec.ts
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'native recognition recovery|native Metadata candidate recovery|native Metadata correction|native Classification recovery reconciles|native conflict recovery renames|policy-permitted overwrite'
+npm run typecheck
+npm run build
+npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx src/features/operations/OperationsInventory.test.tsx
+npx eslint src/features/operations/{ManualOrganizeDialog,ManualOrganizeDialog.test,OrganizeContinuationCard}.tsx tests/e2e/{manual-organize-dialog,operations-inventory}.python.spec.ts
+npx prettier --check src/features/operations/{ManualOrganizeDialog,ManualOrganizeDialog.test,OrganizeContinuationCard}.tsx src/shared/ui/styles.css tests/e2e/{manual-organize-dialog,operations-inventory}.python.spec.ts
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/manual-organize-dialog.python.spec.ts tests/e2e/operations-inventory.python.spec.ts --grep 'completed walk into the same preparation|first-plan preparation while the linked summary|re-reads its exact summary|no primary file|human-waiting frozen preparation|101-file directory|initial manual preparation remains reachable'
 ```
 
-[开发与验收分工](docs/development-workflow.md#6-test-levels)
+B 运行上述验收组、新用例以及 Web 全量 Lint 和格式检查，审查 Task Base 与完整 Slice 区间。
+用临时媒体根从原入口走完真实准备、暂停阅读、重开、等待、失败及首份方案交接。留存批准稿与
+候选在 1440、390 px 和适用矮屏的对照图、阶段和请求证据。等级依据见 [开发与验收分工](docs/development-workflow.md#6-test-levels)。
 
-## Slice 接续
+## 范围边界
 
-Slice 59 仍为 `FIX REQUIRED`。59.3 通过后重新核对剩余结果。共用准备页仍需按真实状态呈现检查范围、
-生成方案或正在执行的单步。任务中心仍需把「需要处理」下的四类筛选和问题文件接到原任务详情、同文件恢复
-与返回定位。后续按完整旅程分别规划，通过后交独立 A 终验。
+批量或逐文件复核正文、四类决定与回落、任务详情进度、任务中心问题列表由原任务或后续 Task 管辖。
+保持现行数据读模、阶段定义、持久任务、执行条件、后端权限及安全边界。
