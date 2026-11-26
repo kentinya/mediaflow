@@ -4921,6 +4921,220 @@ test("Task59.4 a preparation cancelled from another tab keeps the shared Files f
   await other.close();
 });
 
+test("Task59.4 a cancellation during the first linked-summary read keeps the terminal preparation and its late read-only summary", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const authHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  const actionFile = "DialogPrepCancel.2048.mkv";
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await connect(page);
+  const commands = recordCommands(page);
+  await openDialogDirectory(page, actionFile);
+  await selectFiles(page, [actionFile]);
+
+  // Hold only the browser's first linked-summary GET. Python, the linked Task
+  // and the real Worker settle normally while the card keeps its first screen.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const summaryReads: { readonly status: number; readonly path: string }[] = [];
+  await page.route(
+    /\/api\/operations\/organize\/previews\/[^/?]+(?:\?.*)?$/,
+    async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      summaryReads.push({
+        status: response.status(),
+        path: new URL(route.request().url()).pathname,
+      });
+      await gate;
+      await route.fulfill({ response });
+    },
+  );
+
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  const address = `${BASE}/api/operations/organize/discoveries/${encodeURIComponent(
+    discoveryId as string,
+  )}`;
+  const durable = async () => {
+    const response = await request.get(address, { headers: authHeaders });
+    expect(response.ok()).toBe(true);
+    return (await response.json()) as {
+      readonly status: string;
+      readonly previewId: string | null;
+      readonly organizeTaskId: string;
+      readonly organizeFlow: {
+        readonly status: string;
+        readonly continuable: boolean;
+      };
+    };
+  };
+  const other = await page.context().newPage();
+  const linkedPlan = { id: "" };
+  try {
+    const plan = await driveDiscoveryFor(page, request, discoveryId as string);
+    linkedPlan.id = plan;
+    await expect.poll(() => summaryReads.length, { timeout: 15_000 }).toBe(1);
+    expect(summaryReads[0]).toEqual({
+      status: 200,
+      path: `/api/operations/organize/previews/${plan}`,
+    });
+    await expect(
+      card.getByRole("heading", { name: "正在读取整理方案" }),
+    ).toBeVisible();
+    await expect(
+      card.getByRole("region", { name: "本次整理概览" }),
+    ).toHaveCount(0);
+    const before = await durable();
+    expect(before.previewId).toBe(plan);
+    expect(before.organizeFlow).toMatchObject({
+      status: "running",
+      continuable: true,
+    });
+
+    // A second tab cancels the exact linked Task through its real Task Center
+    // control, while the first tab still holds the first summary response.
+    await other.goto(
+      `${BASE}/operations?run=${encodeURIComponent(before.organizeTaskId)}`,
+    );
+    await submitSignIn(other, accountForToken(ADMIN_TOKEN));
+    const detail = other.getByRole("dialog", { name: "运行详情" });
+    await expect(detail).toBeVisible({ timeout: 30_000 });
+    await detail.getByRole("button", { name: "取消运行" }).click();
+    await expect(
+      other.getByText(/取消请求已受理|任务已取消/).first(),
+    ).toBeVisible({ timeout: 30_000 });
+
+    // The linked Task and the exact preparation both persist the cancellation.
+    await expect
+      .poll(async () => (await durable()).status, { timeout: 30_000 })
+      .toBe("cancelled");
+    const settled = await durable();
+    expect(settled.previewId).toBe(plan);
+    expect(settled.organizeFlow).toMatchObject({
+      status: "cancelled",
+      continuable: false,
+    });
+    const taskRead = await request.get(
+      `${BASE}/api/tasks/${before.organizeTaskId}`,
+      { headers: authHeaders },
+    );
+    expect(taskRead.ok()).toBe(true);
+    const settledTask = (await taskRead.json()) as {
+      readonly status?: string;
+      readonly taskStatus?: string;
+    };
+    expect(settledTask.status ?? settledTask.taskStatus).toBe("cancelled");
+
+    // Before the held summary is released, the same first screen reads the
+    // real cancellation and ends in its terminal state, not the reading state.
+    await expect(
+      card.getByRole("heading", { name: "整理准备已取消" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(
+      card.getByText(
+        "后台已停止检查。本次不再提供确认；已生成的原计划摘要保留为只读历史，原文件仍在。",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(
+      card.getByText("在准备阶段停止", { exact: true }),
+    ).toBeVisible();
+    await expect(card.getByText("来源资源库", { exact: true })).toBeVisible();
+    await expect(card.getByText("受理范围", { exact: true })).toBeVisible();
+    await expect(card.getByText("1 个文件", { exact: true })).toBeVisible();
+    await expect(card.getByText("准备进度", { exact: true })).toBeVisible();
+    await expect(card.locator(".mf-organize-preparation-spinner")).toHaveCount(
+      0,
+    );
+    await expect(card.getByText("本次整理工作已结束")).toHaveCount(0);
+    await expect(
+      card.getByRole("region", { name: "本次整理概览" }),
+    ).toHaveCount(0);
+    await expect(card.getByRole("button", { name: /整批复核/ })).toHaveCount(0);
+    await expect(
+      card.getByRole("button", { name: "返回文件页" }),
+    ).toBeVisible();
+    await expect(
+      card.getByText(/正在读取原计划摘要作为只读历史/),
+    ).toBeVisible();
+    await page.screenshot({
+      path: "test-results/task59.4-cancelled-summary-pending-1440.png",
+      fullPage: false,
+    });
+  } finally {
+    release();
+  }
+
+  // The late summary joins the same terminal first screen as read-only
+  // content. It never turns the page into a confirmable overview.
+  const history = card.getByRole("region", { name: "只读原计划摘要" });
+  await expect(history).toBeVisible({ timeout: 15_000 });
+  expect(linkedPlan.id).not.toBe("");
+  await expect(history).toContainText(linkedPlan.id);
+  await expect(
+    card.getByRole("heading", { name: "整理准备已取消" }),
+  ).toBeVisible();
+  await expect(card.getByText("来源资源库", { exact: true })).toBeVisible();
+  await expect(card.getByText("受理范围", { exact: true })).toBeVisible();
+  await expect(card.getByText("准备进度", { exact: true })).toBeVisible();
+  await expect(card.getByRole("region", { name: "本次整理概览" })).toHaveCount(
+    0,
+  );
+  await expect(card.getByRole("button", { name: /整批复核/ })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: /确认整理/ })).toHaveCount(0);
+  await expect(
+    card.getByRole("button", { name: "保存并重新分析" }),
+  ).toHaveCount(0);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/organize\/discoveries\/[^/]+\/analyze$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(card.getByRole("button", { name: "返回文件页" })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/task59.4-cancelled-summary-readonly-390.png",
+    fullPage: false,
+  });
+
+  // The Files return keeps the existing close/focus contract after the late
+  // summary has already been read as history.
+  await card.getByRole("button", { name: "返回文件页" }).click();
+  await expect(card).toHaveCount(0);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
+  expect(new URL(page.url()).searchParams.get("organizeDiscovery")).toBeNull();
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.activeElement?.textContent?.trim() ?? ""),
+    )
+    .toBe("批量整理");
+  await other.close();
+});
+
 test("Task59.3 a running detail re-reads the visited success filter and second page after the Task settles", async ({
   page,
   request,

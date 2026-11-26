@@ -3600,7 +3600,7 @@ describe("ManualOrganizeDialog", () => {
     );
   }, 30_000);
 
-  it("keeps a linked summary as read-only history when a first preparation is cancelled", async () => {
+  it("keeps a cancelled first preparation on the shared first screen while its linked summary read resolves late", async () => {
     const user = userEvent.setup();
     const backend = await openPreparationDialog(user, (value) => {
       value.state.queuedReads = 1;
@@ -3610,6 +3610,9 @@ describe("ManualOrganizeDialog", () => {
     });
 
     expect(await screen.findByText("已受理，等待后台处理")).toBeVisible();
+    // The first summary read is still held. The same preparation read settles
+    // the other-tab cancellation, so the shared first screen ends in its real
+    // terminal state instead of waiting for the summary to decide the screen.
     await screen.findByText("整理准备已取消", {}, { timeout: 10_000 });
     expect(
       screen.getByText(
@@ -3617,11 +3620,21 @@ describe("ManualOrganizeDialog", () => {
         { exact: true },
       ),
     ).toBeVisible();
+    expect(screen.getByText("在准备阶段停止")).toBeVisible();
+    expect(screen.getByText("来源资源库")).toBeVisible();
+    expect(screen.getByText("受理范围")).toBeVisible();
+    expect(screen.getByText("准备进度")).toBeVisible();
+    expect(screen.getByText("1 个文件夹")).toBeVisible();
+    expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
+    expect(screen.queryByText("本次整理工作已结束")).toBeNull();
+    expect(screen.getByRole("button", { name: "返回文件页" })).toBeVisible();
     // The linked summary stays a separate read-only history section; the
     // cancellation copy does not claim that no summary was ever generated.
     expect(
       await screen.findByText(/正在读取原计划摘要作为只读历史/),
     ).toBeVisible();
+    expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /整批复核/ })).toBeNull();
     backend.releasePreviewRead();
     const history = await screen.findByRole("region", {
       name: "只读原计划摘要",
@@ -3630,9 +3643,31 @@ describe("ManualOrganizeDialog", () => {
     expect(
       within(history).getAllByText(/Movie\.01\.mkv/).length,
     ).toBeGreaterThan(0);
+    // The late summary joins the same terminal first screen as read-only
+    // content; it never changes the page into a confirmable overview.
+    expect(screen.getByText("整理准备已取消")).toBeVisible();
+    expect(screen.getByText("来源资源库")).toBeVisible();
+    expect(screen.getByText("受理范围")).toBeVisible();
+    expect(screen.getByText("准备进度")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /整批复核/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存并重新分析" })).toBeNull();
     expect(backend.calls.executePosts).toHaveLength(0);
     expect(backend.calls.analyzePosts).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "返回文件页" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    expect(
+      new URLSearchParams(window.location.search).get("organizeDiscovery"),
+    ).toBeNull();
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.textContent).toBe(
+        "批量整理",
+      ),
+    );
   }, 30_000);
 
   it("renders the linked plan as read-only history when an ended flow kept it", async () => {

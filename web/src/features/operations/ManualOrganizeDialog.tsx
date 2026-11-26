@@ -919,9 +919,14 @@ export function ManualOrganizeDialog({
     setPreparationObservedLive(true);
   }
   const [preparationPlanObserved, setPreparationPlanObserved] = useState(false);
-  if (preview !== undefined && !preparationPlanObserved) {
+  // A plan read that resolves only after the linked flow stopped is history,
+  // not an entry into review: the shared preparation screen keeps its own
+  // terminal state and the late summary joins it as read-only content.
+  if (preview !== undefined && !organizeFlowEnded && !preparationPlanObserved) {
     setPreparationPlanObserved(true);
   }
+  const preparationEnteredReview =
+    preparationObservedLive && preparationPlanObserved;
   // Files rows present the reviewed library identity only when those reads
   // confirm the plan's Storage/root. Task Center continuation keeps its Base
   // presentation and never starts these extra reads.
@@ -2366,16 +2371,28 @@ export function ManualOrganizeDialog({
     preparation.primarySourceCount > 0 &&
     preparation.progress.materialRefusal === null &&
     (preparation.autoPrepare || preparation.frozen);
+  /**
+   * A linked summary read is still part of this first preparation until the
+   * exact plan is actually handed to the review. Keep reading the same durable
+   * preparation so a cancellation from another tab settles the shared first
+   * screen instead of being discovered only after the late summary arrives.
+   */
+  const preparationAwaitingPlanHandoff =
+    preparation !== undefined &&
+    preparation.previewId !== null &&
+    !organizeFlowEnded &&
+    !preparationEnteredReview;
   const preparationPolling =
     preparationStatus !== undefined &&
     !organizeFlowEnded &&
-    preparation?.previewId == null &&
-    !["failed", "cancelled", "paused"].includes(preparationStatus) &&
-    (["queued", "running", "waiting_stability", "analyzing"].includes(
-      preparationStatus,
-    ) ||
-      preparationPlanExpected ||
-      primaryLimitAwaitingSettlement);
+    ((preparation?.previewId == null &&
+      !["failed", "cancelled", "paused"].includes(preparationStatus) &&
+      (["queued", "running", "waiting_stability", "analyzing"].includes(
+        preparationStatus,
+      ) ||
+        preparationPlanExpected ||
+        primaryLimitAwaitingSettlement)) ||
+      preparationAwaitingPlanHandoff);
   useEffect(() => {
     if (!preparationPolling) return;
     // An interval, not a self-rescheduling timeout: a poll whose response is
@@ -3296,8 +3313,6 @@ export function ManualOrganizeDialog({
     }
     return null;
   })();
-  const preparationEnteredReview =
-    preparationObservedLive && preparationPlanObserved;
   const preparationTerminalFirstScreen =
     organizeFlowEnded &&
     preparationStoppedTitle !== null &&
