@@ -1,6 +1,6 @@
 # Task 59.4 — 整理弹窗共用真实阶段的准备页
 
-Next Action: DEVELOPER CORRECTS FIRST-READ SETTLEMENT IN TASK 59.4
+Next Action: DEVELOPER CORRECTS CANCELLATION DURING THE FIRST PLAN READ IN TASK 59.4
 
 ```text
 Task ID: 59.4
@@ -9,13 +9,38 @@ Parent Slice: 59
 Status: FIX REQUIRED
 Task Base: bccfb2c4c014eb181d33ebc5b99140c1c722b446
 Planning Contract: 36f60fe0ef75c9cbb9e0b30e258c2d6f4075f24d
-Reviewed Implementation Head: 5a20e866a4e9f158bc2fae2e0baa5ae959efca58
+Reviewed Implementation Head: 9845da5236e5bcfa6c4f262ff180841ccfdd4d4e
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
 ```
 
 ## Task 59.4 B 复核
+
+**`9845da52` · FIX REQUIRED · RO-1 / AC-01、AC-06。** 复核原 Task Base 至本候选及完整 Slice
+区间。首次读取前已超限结算、经历两次读回后超限结算、排队期间从另一标签页取消均通过。
+桌面与 390 px 的准备终态保留状态、原受理范围、进度和返回动作，准确历史地址仍可只读核对。
+
+从 Files 选中 `DialogPrepAction.2026.mkv`，由真实 Worker 生成方案。暂缓浏览器的首份摘要
+响应，在任务中心另一标签页取消同一任务。API 读回准备与任务均为 `cancelled`，`continuable`
+为 `false`，原 `previewId` 仍在。Files 弹窗一直显示「正在读取整理方案」。释放先前已取得的
+摘要后，弹窗进入「本次整理概览」并显示「整批复核」。浏览器没有发送执行或分析请求。
+
+1. 首份摘要读取或重读期间，继续核对关联的原准备，直到首次正式交接或确认结算。原准备已停止时，
+   以该终态结束动效并阻止旧摘要触发概览。正常可用摘要及时交接，保持现有查询边界和原任务身份。
+2. 只在可继续的方案实际交接给复核界面时记录已进入复核。终态下迟到的摘要作为只读内容加入
+   共用准备页，保留取消标题、原受理范围、进度和「返回文件页」。通过准确历史地址或已进入
+   复核后结算的任务仍沿用原只读路径。
+3. 增加真实浏览器回归，暂缓首份摘要响应，经任务中心取消并验证原任务已持久结算。分别在
+   释放摘要前后核对准备终态、范围、只读边界、返回焦点及零分析和执行请求。保留快速方案交接、
+   首读超限、两次读回超限、排队取消及准确历史地址覆盖。
+
+治理、Task 与 Slice 区间空白检查、Web 类型、Lint、格式、构建及夹具 Ruff 检查通过。
+组件测试 150 项、计划内真实浏览器 11 项通过。补充的摘要等待取消用例复现上述阻塞。
+日志与截图位于 `.git/validation-evidence/9845da5236e5bcfa6c4f262ff180841ccfdd4d4e/b-task59.4-review/`。
+`cancel-first-summary-retry.log` 与对应浏览器产物记录取消事实和释放摘要前后的页面。
+
+### 上一轮复核
 
 **`5a20e866` · FIX REQUIRED · RO-1 / AC-01、AC-06。** 复核原 Task Base 到本候选及完整 Slice
 区间。标准超限旅程在 1440 和 390 px 保留了「超出主文件上限」、来源、范围、准备进度和返回动作。
@@ -40,7 +65,7 @@ Web 类型、Lint、格式、构建、治理、区间空白检查、148 项组�
 `.git/validation-evidence/5a20e866a4e9f158bc2fae2e0baa5ae959efca58/b-task59.4-review/`。
 `probe.log` 记录首次读回，`limit-visual.log` 与 `cancel-fixture.log` 记录标准超限和取消。
 
-### 上轮复核
+### 早期复核
 
 上轮复核了 `bccfb2c4c014eb181d33ebc5b99140c1c722b446..523628eab5b0f3c3ea7287e16f88c0642f5f4110`
 和完整 Slice 区间。治理、区间空白检查、Web 类型、Lint、格式、构建及夹具 Ruff 检查通过。
