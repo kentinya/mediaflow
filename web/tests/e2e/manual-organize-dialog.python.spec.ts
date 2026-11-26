@@ -931,6 +931,7 @@ test("Task59.1 a Task reopened after a lost Execute reconciles its original acce
   // yet read the durable outcome.
   let dropped = false;
   let blockAdmission = true;
+  let forwardedExecuteStatus: number | undefined;
   await page.route(
     /\/api\/operations\/organize\/previews\/[^/]+\/execute$/,
     async (route) => {
@@ -939,7 +940,7 @@ test("Task59.1 a Task reopened after a lost Execute reconciles its original acce
         return;
       }
       dropped = true;
-      await route.fetch();
+      forwardedExecuteStatus = (await route.fetch()).status();
       await route.abort("connectionreset");
     },
   );
@@ -971,8 +972,9 @@ test("Task59.1 a Task reopened after a lost Execute reconciles its original acce
   expect(executePreviewId).toBeTruthy();
   const commandMark = commands.length;
 
-  // The real Worker finishes the durable original Task before the operator
-  // reopens the Task Center.
+  // The UI can show its pending check before the forwarded Execute commits.
+  // Wait for the upstream admission before asking the real Worker to claim it.
+  await expect.poll(() => forwardedExecuteStatus).toBe(202);
   const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect(worker.ok()).toBe(true);
   const workerBody = (await worker.json()) as {
