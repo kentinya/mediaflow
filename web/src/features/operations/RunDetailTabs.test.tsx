@@ -2738,8 +2738,7 @@ describe("selected-run detail tabs", () => {
     ).toBeVisible();
   });
 
-  it("Task59.2 keeps the records failure reason and re-reads it in place", async () => {
-    const user = userEvent.setup();
+  it("Task59.2 keeps the records failure reason and automatically re-reads it in place", async () => {
     let recordsFail = true;
     stubFetch(async (input) => {
       const url = String(input);
@@ -2770,11 +2769,10 @@ describe("selected-run detail tabs", () => {
       within(records).getByText(/Reload the current Active runtime/),
     ).toBeVisible();
     recordsFail = false;
-    const refresh = within(records).getAllByRole("button", {
-      name: "刷新",
-    })[0];
-    await user.click(refresh);
-    expect(await within(records).findByText(/共 4 条记录/)).toBeVisible();
+    expect(within(records).queryByRole("button", { name: "刷新" })).toBeNull();
+    expect(
+      await within(records).findByText(/共 4 条记录/, {}, { timeout: 4_000 }),
+    ).toBeVisible();
   });
 
   it("PATCH-20261107-1 keeps a successful main file and a failed subtitle as independent results", async () => {
@@ -3211,6 +3209,10 @@ describe("selected-run detail tabs", () => {
     );
     expect(await screen.findByLabelText("操作记录")).toBeVisible();
     expect(await screen.findByText(/organizer.execution_result/)).toBeVisible();
+    const records = within(detail).getByRole("region", { name: "操作记录" });
+    expect(
+      within(records).queryByRole("button", { name: /刷新|查看条目/ }),
+    ).toBeNull();
     // The tab name is not repeated as a visible heading, the default option
     // is plain, and the unfiltered count is one population total plus the
     // backend kind counts without the standing server tutorial.
@@ -3893,6 +3895,8 @@ describe("selected-run detail tabs", () => {
     // out of the Task Center recovery surface.
     expect(within(summary).getByText("来源与目标")).toBeVisible();
     expect(within(summary).getByText("按当前方案")).toBeVisible();
+    expect(await within(summary).findByText("等待明确确认")).toBeVisible();
+    expect(within(summary).queryByRole("button", { name: "刷新" })).toBeNull();
     expect(within(summary).queryByText("识别类型策略")).toBeNull();
     await user.click(
       await within(summary).findByRole("button", {

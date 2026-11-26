@@ -62,7 +62,6 @@ import type { SystemResourceLibrary } from "../../entities/library/system-status
 import type { TaskItemRecoveryModel } from "../../entities/operations/task-item-recovery";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
-import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
   ModalCardShell,
   useModalCardExit,
@@ -457,6 +456,7 @@ const OVERVIEW_STATUS_LABELS: Readonly<Record<OrganizeOverviewStatus, string>> =
 
 /** The Files footer slot that owns the current legal per-file save action. */
 const FILES_REVIEW_ACTION_ID = "mf-organize-files-review-action";
+const FILES_ANALYSIS_RETURN_MS = 380;
 
 type FilesStatusTone = "blue" | "green" | "amber" | "red" | "neutral";
 
@@ -1084,6 +1084,11 @@ export function ManualOrganizeDialog({
   }
   const [filesDecisionReturn, setFilesDecisionReturn] =
     useState<DecisionReturn | null>(null);
+  const [filesAnalysisArrival, setFilesAnalysisArrival] = useState<{
+    readonly decision: DecisionReturn;
+    readonly previewId: string;
+    readonly notice: NonNullable<typeof filesOverviewNotice>;
+  } | null>(null);
   const [continuationDecisionReturn, setContinuationDecisionReturn] =
     useState<DecisionReturn | null>(null);
   /**
@@ -1211,7 +1216,6 @@ export function ManualOrganizeDialog({
   const handoffBypassRef = useRef(false);
   const handoffDoneRef = useRef(false);
   const [openingTaskDetail, setOpeningTaskDetail] = useState(false);
-  const showOpeningTaskDetail = useReadReveal(openingTaskDetail);
   /** Keys whose admission evidence already settled in this mount. */
   const settledRetainedRef = useRef<Set<string>>(new Set());
 
@@ -2580,6 +2584,14 @@ export function ManualOrganizeDialog({
     filesReturningToSameFile && preview === undefined && !organizeFlowEnded
       ? filesDecisionReturn
       : null;
+  const filesAnalysisArrivalView =
+    filesAnalysisArrival !== null &&
+    filesReturningToSameFile &&
+    !organizeFlowEnded &&
+    filesAnalysisArrival.decision === filesDecisionReturn &&
+    filesAnalysisArrival.previewId === preview?.previewId
+      ? filesAnalysisArrival
+      : null;
   // Adopt the durable anchor as soon as items exist (first entry), and
   // re-adopt once when a newer summary no longer contains it, so a later
   // reorder can never fall back to a stale array position.
@@ -2986,6 +2998,18 @@ export function ManualOrganizeDialog({
       ? ""
       : previewItemResultSignature(filesDecisionReturnItem);
   useLayoutEffect(() => {
+    if (filesAnalysisArrivalView === null) return;
+    const timer = window.setTimeout(() => {
+      setFilesOverviewNotice(filesAnalysisArrivalView.notice);
+      setFilesOverviewFocus({ kind: "heading" });
+      setFilesOverviewVisible(true);
+      setFilesDecisionReturn(null);
+      setFilesAnalysisArrival(null);
+      clearAnalysisReadback();
+    }, FILES_ANALYSIS_RETURN_MS);
+    return () => window.clearTimeout(timer);
+  }, [clearAnalysisReadback, filesAnalysisArrivalView]);
+  useLayoutEffect(() => {
     if (!filesHost || filesDecisionReturn === null) return;
     // The operator already moved to another file, the batch review or the
     // overview: the late read still updates data, but never navigates or
@@ -3011,20 +3035,35 @@ export function ManualOrganizeDialog({
       clearAnalysisReadback();
       return;
     }
+    if (filesAnalysisArrivalView !== null) return;
+    const arriveAtOverview = (
+      notice: NonNullable<typeof filesOverviewNotice>,
+    ) => {
+      if (
+        window.matchMedia?.("(prefers-reduced-motion: no-preference)").matches
+      ) {
+        setFilesAnalysisArrival({
+          decision: filesDecisionReturn,
+          previewId: preview.previewId,
+          notice,
+        });
+        return;
+      }
+      setFilesOverviewNotice(notice);
+      setFilesDecisionReturn(null);
+      clearAnalysisReadback();
+      setFilesOverviewFocus({ kind: "heading" });
+      setFilesOverviewVisible(true);
+    };
     const item = filesDecisionReturnItem;
     if (item === undefined) {
       // The exact item is absent from the newly linked exact summary. That is
       // this item's own read-back result (for example an explicit ignore),
       // not a sibling's change; return to the overview without inventing a row.
-      setFilesOverviewNotice({
+      arriveAtOverview({
         kind: "warning",
         text: `「${filesDecisionReturn.filename}」已重新分析，但未出现在当前方案中；请核对当前范围。`,
       });
-      setFilesDecisionReturn(null);
-      clearAnalysisReadback();
-      setFilesOverviewFocus({ kind: "heading" });
-      setFilesOverviewVisible(true);
-      setStep("review");
       return;
     }
     if (filesDecisionReturnSignature === filesDecisionReturn.signature) {
@@ -3053,7 +3092,7 @@ export function ManualOrganizeDialog({
     const problem = previewItemProblemKind(item, false);
     const executable = item.current && executableIds.includes(item.itemId);
     if (executable) {
-      setFilesOverviewNotice({
+      arriveAtOverview({
         kind: "success",
         title: "已重新分析",
         planUpdated: true,
@@ -3062,26 +3101,16 @@ export function ManualOrganizeDialog({
             ? `「${filesDecisionReturn.filename}」已重新分析，并按当前决定明确跳过文件操作；整理尚未提交。`
             : `「${filesDecisionReturn.filename}」已可确认。整理方案已更新，整理尚未提交。`,
       });
-      setFilesDecisionReturn(null);
-      clearAnalysisReadback();
-      setFilesOverviewFocus({ kind: "heading" });
-      setFilesOverviewVisible(true);
-      setStep("review");
       return;
     }
     if (
       problem !== null &&
       problemFamily(problem) !== problemFamily(filesDecisionReturn.problem)
     ) {
-      setFilesOverviewNotice({
+      arriveAtOverview({
         kind: "warning",
         text: `「${filesDecisionReturn.filename}」已重新分析，当前出现新的待处理问题：${problemKindLabel(problem)}。`,
       });
-      setFilesDecisionReturn(null);
-      clearAnalysisReadback();
-      setFilesOverviewFocus({ kind: "heading" });
-      setFilesOverviewVisible(true);
-      setStep("review");
       return;
     }
     if (problem !== null) {
@@ -3125,6 +3154,7 @@ export function ManualOrganizeDialog({
   }, [
     clearAnalysisReadback,
     executableIds,
+    filesAnalysisArrivalView,
     filesDecisionReturn,
     filesDecisionReturnItem,
     filesDecisionReturnSignature,
@@ -6145,20 +6175,20 @@ export function ManualOrganizeDialog({
     );
   };
 
-  const reviewFile = filesSummaryReadback?.itemId ?? currentItemId ?? "";
-  const stageTransitionKey = showOpeningTaskDetail
-    ? "handoff"
-    : firstPlanPreparationView
-      ? `preparation:${preparationStep ?? preparationStatusView?.title ?? "loading"}`
-      : organizeFlowEnded
-        ? "history"
-        : filesRecordDetail !== null
-          ? `record:${filesRecordDetail.taskItemId}`
-          : filesHost && filesOverviewVisible
-            ? "overview"
-            : step === "confirm"
-              ? "confirm"
-              : `review:${reviewFile}${filesReanalysisView || filesSummaryReadback !== null ? ":analysis" : ""}`;
+  const analysisReadbackFile =
+    filesAnalysisArrivalView?.decision ?? filesSummaryReadback;
+  const reviewFile = analysisReadbackFile?.itemId ?? currentItemId ?? "";
+  const stageTransitionKey = firstPlanPreparationView
+    ? `preparation:${preparationStep ?? preparationStatusView?.title ?? "loading"}`
+    : organizeFlowEnded
+      ? "history"
+      : filesRecordDetail !== null
+        ? `record:${filesRecordDetail.taskItemId}`
+        : filesHost && filesOverviewVisible
+          ? "overview"
+          : step === "confirm"
+            ? "confirm"
+            : `review:${reviewFile}${filesReanalysisView || analysisReadbackFile !== null ? ":analysis" : ""}`;
   const stageRef = useRef<HTMLDivElement | null>(null);
   const renderedStageKey = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -6174,6 +6204,15 @@ export function ManualOrganizeDialog({
     if (document.activeElement === document.body)
       stage.focus({ preventScroll: true });
     stage.removeAttribute("data-organize-arrival");
+    // Keep the file identity and the first overview fully readable on their
+    // first frame. Only preparation-to-preparation and deliberate review
+    // navigation animate the body.
+    if (
+      stageTransitionKey.endsWith(":analysis") ||
+      (stageTransitionKey === "overview" &&
+        (previous.startsWith("preparation:") || previous.endsWith(":analysis")))
+    )
+      return;
     stage.getBoundingClientRect();
     stage.setAttribute("data-organize-arrival", "");
   }, [stageTransitionKey]);
@@ -6185,7 +6224,7 @@ export function ManualOrganizeDialog({
       renderPreparationContent()
     ) : organizeFlowEnded ? (
       renderPreparationContent()
-    ) : filesSummaryReadback !== null ? (
+    ) : analysisReadbackFile !== null ? (
       <>
         <header className="mf-organize-file-head mf-organize-files-file-head mf-organize-reanalysis-file">
           <span className="mf-organize-reanalysis-file-icon" aria-hidden="true">
@@ -6194,18 +6233,22 @@ export function ManualOrganizeDialog({
           <div className="mf-organize-file-title">
             <h3>
               <span className="mf-organize-file-eyebrow">
-                {filesSummaryReadback.pageLabel}
+                {analysisReadbackFile.pageLabel}
               </span>
               <span className="mf-organize-file-name mf-exact-identity">
-                {filesSummaryReadback.filename}
+                {analysisReadbackFile.filename}
               </span>
             </h3>
             <p className="mf-organize-file-path mf-dashboard-meta">
-              {filesSummaryReadback.source}
+              {analysisReadbackFile.source}
             </p>
           </div>
         </header>
-        {preparationSummaryReadFailed ? (
+        {filesAnalysisArrivalView !== null ? (
+          <StatusBanner variant="info" title="新方案已读回">
+            <p role="status">正在返回整理概览。</p>
+          </StatusBanner>
+        ) : preparationSummaryReadFailed ? (
           <StatusBanner variant="warning" title="新方案暂时无法读取">
             <p>当前文件的新方案尚未读回，整理尚未提交。</p>
             <Button
@@ -6221,8 +6264,8 @@ export function ManualOrganizeDialog({
           <OrganizeReanalysis
             phase="waiting"
             savedChoice={
-              filesSummaryReadback.savedChoice ??
-              notices[filesSummaryReadback.itemId]?.acceptedAnalysis
+              analysisReadbackFile.savedChoice ??
+              notices[analysisReadbackFile.itemId]?.acceptedAnalysis
                 ?.savedChoice
             }
           />
@@ -6271,7 +6314,7 @@ export function ManualOrganizeDialog({
   // re-analysis entry.
   const preparationOnlyFooter =
     !organizeFlowEnded &&
-    filesSummaryReadback === null &&
+    analysisReadbackFile === null &&
     (preview === undefined || items.length === 0 || !preparationPlanObserved);
   const filesOverviewFooter =
     filesHost &&
@@ -6560,9 +6603,11 @@ export function ManualOrganizeDialog({
               executeMutation.mutate(submission);
             }}
           >
-            {executeMutation.isPending
-              ? "正在提交..."
-              : `确认整理 ${activeSelection.length} 项`}
+            {openingTaskDetail
+              ? "正在打开任务详情…"
+              : executeMutation.isPending
+                ? "正在提交..."
+                : `确认整理 ${activeSelection.length} 项`}
           </Button>
         </div>
       </>
@@ -6608,10 +6653,10 @@ export function ManualOrganizeDialog({
       size="detail"
       bodyClassName="mf-modal-body-scroll mf-organize-dialog-body"
       cardClassName="mf-organize-dialog"
-      footer={showOpeningTaskDetail ? undefined : footer}
+      footer={footer}
       footerClassName={
         filesDecisionFooter
-          ? `mf-organize-files-decision-footer${filesReanalysisWaiting || filesSummaryReadback !== null ? " mf-organize-reanalysis-footer" : ""}`
+          ? `mf-organize-files-decision-footer${filesReanalysisWaiting || analysisReadbackFile !== null ? " mf-organize-reanalysis-footer" : ""}`
           : undefined
       }
     >
@@ -6654,13 +6699,7 @@ export function ManualOrganizeDialog({
         aria-label="整理内容"
         tabIndex={-1}
       >
-        {showOpeningTaskDetail ? (
-          <StatusBanner variant="info" title="整理请求已受理">
-            <p role="status">正在打开对应任务，查看处理进度和文件结果。</p>
-          </StatusBanner>
-        ) : (
-          body
-        )}
+        {body}
       </div>
     </ModalCardShell>
   );

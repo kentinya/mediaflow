@@ -21,6 +21,7 @@ import {
   Fragment,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -62,6 +63,7 @@ import {
   runItemsPageQueryKey,
   runItemsQueryKey,
   runItemsQueryOptions,
+  runRecordsQueryKey,
   runRecordsQueryOptions,
 } from "./run-detail-query";
 import type { RunDetailState, RunDetailTab } from "./run-detail-state";
@@ -847,6 +849,9 @@ export function RunDetailTabs({
       status: itemStatus,
       cursor: itemCursor,
     });
+    void queryClient.invalidateQueries({
+      queryKey: [runRecordsQueryKey, runId],
+    });
     void (async () => {
       await queryClient.cancelQueries({ queryKey: runItemsKey });
       await queryClient.invalidateQueries({
@@ -881,6 +886,8 @@ export function RunDetailTabs({
   const pendingEvidenceFocusRef = useRef<{
     readonly trigger: HTMLElement | null;
     readonly itemId: string;
+    readonly scroller: HTMLElement | null;
+    readonly scrollTop: number;
   } | null>(null);
   const inspectItem = (itemId: string | null) => {
     if (itemId !== null) {
@@ -888,9 +895,14 @@ export function RunDetailTabs({
       evidenceTriggerRef.current =
         activeElement instanceof HTMLElement ? activeElement : null;
     } else if (state.evidenceItem !== null) {
+      const scroller =
+        detailTabRef.current?.closest<HTMLElement>(".mf-modal-body-scroll") ??
+        null;
       pendingEvidenceFocusRef.current = {
         trigger: evidenceTriggerRef.current,
         itemId: state.evidenceItem,
+        scroller,
+        scrollTop: scroller?.scrollTop ?? 0,
       };
       evidenceTriggerRef.current = null;
     }
@@ -900,9 +912,10 @@ export function RunDetailTabs({
     });
   };
   // Closing returns focus to the exact control that opened the evidence, or
-  // to the same item's row when the original entry (操作记录/问题文件/批量)
-  // left the tab.  Background refreshes never move focus on their own.
-  useEffect(() => {
+  // to the same item's row when the original entry is gone. Collapsing a
+  // long evidence block can shorten the scroll range. Restore the prior
+  // reading position up to the new bottom before the browser paints.
+  useLayoutEffect(() => {
     if (state.evidenceItem !== null) {
       return;
     }
@@ -915,11 +928,14 @@ export function RunDetailTabs({
       pending.trigger !== null && pending.trigger.isConnected
         ? pending.trigger
         : Array.from(
-            document.querySelectorAll<HTMLButtonElement>(
+            pending.scroller?.querySelectorAll<HTMLButtonElement>(
               "button[data-evidence-item]",
-            ),
+            ) ?? [],
           ).find((button) => button.dataset["evidenceItem"] === pending.itemId);
     (trigger ?? detailTabRef.current)?.focus({ preventScroll: true });
+    if (pending.scroller !== null) {
+      pending.scroller.scrollTop = pending.scrollTop;
+    }
   }, [state.evidenceItem]);
 
   return (
@@ -990,7 +1006,6 @@ export function RunDetailTabs({
             state={state}
             onKindChange={changeRecordKind}
             onStateChange={onStateChange}
-            onInspectItem={inspectItem}
             active={active}
           />
           {facts}
@@ -2412,14 +2427,12 @@ function RunRecordsSection({
   state,
   onKindChange,
   onStateChange,
-  onInspectItem,
   active,
 }: {
   readonly runId: string;
   readonly state: RunDetailState;
   readonly onKindChange: (kind: RunRecordKind | null) => void;
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
-  readonly onInspectItem: (itemId: string) => void;
   readonly active: boolean;
 }) {
   const token = useAuthToken();
@@ -2431,6 +2444,47 @@ function RunRecordsSection({
       active,
     }),
   );
+  const { refetch } = query;
+  const temporarilyUnavailable =
+    query.isError ||
+    (query.data?.ok === false && query.data.failure.kind === "unavailable");
+  // Record reads recover automatically without resubmitting any task action.
+  // Scope the retry budget to the current page/filter and stop when it is
+  // left, when the read succeeds, or when permission changes.
+  useEffect(() => {
+    if (!temporarilyUnavailable) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    let attempts = 0;
+    function schedule() {
+      if (cancelled || attempts >= 3) return;
+      timer = window.setTimeout(
+        async () => {
+          attempts += 1;
+          const result = await refetch({ cancelRefetch: false });
+          if (
+            result.isError ||
+            (result.data?.ok === false &&
+              result.data.failure.kind === "unavailable")
+          ) {
+            schedule();
+          }
+        },
+        1000 * 2 ** attempts,
+      );
+    }
+    schedule();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    refetch,
+    runId,
+    state.recordCursor,
+    state.recordKind,
+    temporarilyUnavailable,
+  ]);
   return (
     <section className="mf-count-section" aria-label="操作记录">
       <div className="mf-run-items-head">
@@ -2450,9 +2504,6 @@ function RunRecordsSection({
             </option>
           ))}
         </select>
-        <RefreshControl
-          onRefresh={() => query.refetch({ cancelRefetch: false })}
-        />
       </div>
       <AuthorizedReadBoundary query={query} unavailableTitle="操作记录暂不可用">
         {({ data }) => {
@@ -2463,11 +2514,6 @@ function RunRecordsSection({
             return (
               <StatusBanner variant="error" title={data.failure.title}>
                 <p>{data.failure.nextAction}</p>
-                <div className="mf-actions">
-                  <RefreshControl
-                    onRefresh={() => query.refetch({ cancelRefetch: false })}
-                  />
-                </div>
               </StatusBanner>
             );
           }
@@ -2491,15 +2537,6 @@ function RunRecordsSection({
                       <p className="mf-run-record-summary">
                         {recordSummary(record)}
                       </p>
-                      {record.itemId !== null && (
-                        <button
-                          type="button"
-                          className="mf-link-button mf-run-record-item"
-                          onClick={() => onInspectItem(record.itemId ?? "")}
-                        >
-                          查看条目
-                        </button>
-                      )}
                     </li>
                   ))}
                 </ul>

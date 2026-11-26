@@ -769,7 +769,7 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
       const stage = card.locator(".mf-organize-stage");
       await expect(stage).toHaveAttribute("data-reanalysis-frame", "seen");
       await expect(stage).not.toHaveAttribute("data-reanalysis-residue");
-      await expect(stage).toHaveCSS("animation-duration", "0.3s");
+      await expect(stage).toHaveCSS("animation-name", "none");
       // The replaced save control must not drop keyboard focus onto the inert
       // Files background: the same stage boundary takes it back.
       await expect
@@ -784,6 +784,12 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
     }
 
     await driveDiscovery(request, true);
+    if (index === 1) {
+      await expect(
+        card.getByRole("heading", { name: "新方案已读回" }),
+      ).toBeVisible();
+      await expect(card.getByRole("radio", { name: /候选 2/ })).toHaveCount(0);
+    }
     const overview = card.getByRole("region", { name: "本次整理概览" });
     await expect(overview).toBeVisible({ timeout: 30_000 });
     // The exact file's new summary is read back before the card returns here;
@@ -863,6 +869,10 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
   await expect(detail).toHaveAttribute("data-first-frame-opacity", "1");
   await expect(detail).toHaveAttribute("data-first-frame-backdrop", "1");
   await expect(detail).toHaveCSS("animation-duration", "0.34s");
+  await expect(detail.locator(".mf-modal-body")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
   expect(executePosts()).toHaveLength(1);
   expect(executePosts()[0]?.body?.["itemIds"]).toHaveLength(10);
 

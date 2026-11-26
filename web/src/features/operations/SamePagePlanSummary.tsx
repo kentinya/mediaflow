@@ -124,12 +124,20 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
     return effects.join(" · ");
   };
   return (
-    <section className="mf-count-section" aria-label="新计划摘要">
-      <div className="mf-run-items-head">
+    <section
+      className={compact ? "mf-recovery-plan" : "mf-count-section"}
+      aria-label="新计划摘要"
+    >
+      <div className={compact ? "mf-recovery-plan-head" : "mf-run-items-head"}>
         <h6>{props.heading}</h6>
-        <RefreshControl
-          onRefresh={() => previewQuery.refetch({ cancelRefetch: false })}
-        />
+        {compact ? (
+          preview?.current &&
+          executableIds.length > 0 && <span>等待明确确认</span>
+        ) : (
+          <RefreshControl
+            onRefresh={() => previewQuery.refetch({ cancelRefetch: false })}
+          />
+        )}
       </div>
       {previewQuery.data === undefined ? (
         <StatusBanner variant="info" title="正在读取计划摘要">
@@ -138,11 +146,23 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
       ) : previewQuery.data.ok !== true ? (
         <StatusBanner variant="warning" title={previewQuery.data.failure.title}>
           <p>{previewQuery.data.failure.nextAction}</p>
+          {compact && previewQuery.data.failure.kind === "unavailable" && (
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              disabled={previewQuery.isFetching}
+              onClick={() =>
+                void previewQuery.refetch({ cancelRefetch: false })
+              }
+            >
+              重新读取计划
+            </button>
+          )}
         </StatusBanner>
       ) : preview === undefined ? null : compact ? (
         <>
-          {executableIds.length > 0 ? (
-            <StatusBanner variant="success" title="可确认方案已就绪">
+          {preview.current && executableIds.length > 0 ? (
+            <StatusBanner variant="success" title="方案已更新">
               <p>
                 {preview.items
                   .filter((item) => executableIds.includes(item.itemId))
@@ -151,14 +171,14 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
                 已生成可确认的新方案。整理尚未提交。
               </p>
             </StatusBanner>
-          ) : (
+          ) : executableIds.length === 0 ? (
             <StatusBanner variant="warning" title="当前方案没有可确认文件">
               <p>
                 {preview.nextAction ??
                   "按当前方案逐项核对原因，处理后再生成新的精确方案。"}
               </p>
             </StatusBanner>
-          )}
+          ) : null}
           <OrganizeHistoryReminder items={preview.items} />
           <div className="mf-recovery-plan-head">
             <h6>来源与目标</h6>
@@ -223,7 +243,9 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
                         : ""}
                     </p>
                   </div>
-                  <span className="mf-recovery-plan-operation">
+                  <span
+                    className={`mf-recovery-plan-operation${item.operation === "MOVE" ? " mf-recovery-plan-operation-move" : ""}`}
+                  >
                     {displayEnum(safeValue(item.operation))}
                   </span>
                 </li>

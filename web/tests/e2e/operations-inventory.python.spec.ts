@@ -255,12 +255,12 @@ async function chooseNativeRecoveryDecision(
     );
   } else {
     await expect(recovery.getByText(/请求响应未送达/).first()).toBeVisible();
-    await recovery
-      .getByRole("button", { name: "重新读取条目后再继续" })
-      .click();
-    await expect(
-      recovery.getByRole("button", { name: "重新读取条目后再继续" }),
-    ).toHaveCount(0);
+    const reread = recovery.getByRole("button", {
+      name: "重新读取条目",
+      exact: true,
+    });
+    await reread.click();
+    await expect(reread).toHaveCount(0);
   }
 }
 
@@ -461,15 +461,15 @@ async function finishNativeRecovery(
     expect(state.conflictTargetPreserved).toBe(true);
   }
   await request.post(`${BASE}/__harness__/register-manual-worker`);
-  await recovery.getByRole("button", { name: "刷新" }).click();
+  const summary = page.getByRole("region", { name: "新计划摘要" });
   const prepare = recovery.getByRole("button", {
     name: "生成计划摘要并在此确认",
   });
-  if ((await prepare.count()) > 0) {
-    await prepare.click();
-  }
-  const summary = page.getByRole("region", { name: "新计划摘要" });
+  await expect(summary.or(prepare)).toBeVisible();
+  if (await prepare.isVisible()) await prepare.click();
   await expect(summary).toBeVisible();
+  await expect(summary.getByText("等待明确确认")).toBeVisible();
+  await expect(summary.getByRole("button", { name: "刷新" })).toHaveCount(0);
   await expect(summary).toContainText(seeded.sourcePath);
   state = await (
     await request.get(
@@ -1106,6 +1106,33 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
   await expect(evidence.getByText("精确关联日志(1)")).toBeVisible();
 
+  // Collapsing from deep in a long evidence block clamps the existing
+  // scroll position to the shorter body's range, rather than resetting it.
+  const originalViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 460 });
+  const arrivalToggle = arrivalRow.getByRole("button", { name: "查看证据" });
+  const previousScroll = await arrivalToggle.evaluate((button) => {
+    button.focus({ preventScroll: true });
+    const scroller = button.closest<HTMLElement>(".mf-modal-body-scroll")!;
+    scroller.scrollTop = scroller.scrollHeight;
+    return scroller.scrollTop;
+  });
+  await arrivalToggle.press("Enter");
+  await expect(evidence).toHaveCount(0);
+  const { scrollTop, maxScroll } = await detail
+    .locator(".mf-modal-body-scroll")
+    .evaluate((node) => ({
+      scrollTop: node.scrollTop,
+      maxScroll: node.scrollHeight - node.clientHeight,
+    }));
+  expect(previousScroll).toBeGreaterThan(0);
+  expect(maxScroll).toBeGreaterThan(0);
+  expect(
+    Math.abs(scrollTop - Math.min(previousScroll, maxScroll)),
+  ).toBeLessThanOrEqual(1);
+  await expect(arrivalToggle).toBeFocused();
+  await page.setViewportSize(originalViewport);
+
   // The historical unconfirmed success keeps its own attempt and target in
   // the same evidence host instead of being read as a confirmed success.
   await uncertainRow.getByRole("button", { name: "查看证据" }).click();
@@ -1139,6 +1166,9 @@ test("the selected run detail reads progress, filtered items, evidence and recor
     exact: true,
   });
   await expect(records.locator(".mf-run-record")).toHaveCount(5);
+  await expect(
+    records.getByRole("button", { name: /刷新|查看条目/ }),
+  ).toHaveCount(0);
   await expect(records.getByText("organizer.execution_result")).toBeVisible();
   // The kind labels also exist as options of the type filter, so the proof
   // names the rendered record rows, not the hidden option nodes.
@@ -1941,13 +1971,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   // Both zero-mutation analyses are complete; the opened file's own summary
   // now waits for the operator's explicit subset confirmation.
   await openEvidence("Fifteenth.2015.mkv");
-  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
   const summary = detail.getByRole("region", { name: "新计划摘要" });
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    if (await summary.isVisible().catch(() => false)) break;
-    await recovery.getByRole("button", { name: "刷新" }).click();
-    await page.waitForTimeout(250);
-  }
   await expect(summary).toBeVisible({ timeout: 30_000 });
   // The new summary carries the exact source/target itself; the historical
   // empty target never reappears above it.

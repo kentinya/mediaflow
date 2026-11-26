@@ -5814,11 +5814,6 @@ tr[aria-selected="true"] {
   line-height: 19px;
 }
 
-.mf-run-record-item {
-  align-self: flex-start;
-  font-size: 12.5px;
-}
-
 @media (max-width: 520px) {
   .mf-run-item-row-button {
     align-items: flex-start;
@@ -5908,12 +5903,21 @@ tr[aria-selected="true"] {
   border-radius: 4px;
 }
 
+.mf-recovery-plan {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mf-recovery-plan > .mf-actions {
+  margin-top: 0;
+}
+
 .mf-recovery-plan-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  margin: 12px 0 6px;
 }
 
 .mf-recovery-plan-head h6 {
@@ -5938,8 +5942,9 @@ tr[aria-selected="true"] {
 }
 
 .mf-recovery-plan-row {
-  display: flex;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   gap: 10px;
   min-width: 0;
   padding: 10px 12px;
@@ -5963,7 +5968,6 @@ tr[aria-selected="true"] {
 
 .mf-recovery-plan-copy {
   display: grid;
-  flex: 1 1 auto;
   gap: 2px;
   min-width: 0;
 }
@@ -6003,7 +6007,9 @@ tr[aria-selected="true"] {
 }
 
 .mf-recovery-plan-operation {
-  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 2px 8px;
   border-radius: 999px;
   background: #eef3fb;
@@ -6013,7 +6019,16 @@ tr[aria-selected="true"] {
   line-height: 18px;
 }
 
-.mf-recovery-plan-row-blocked .mf-recovery-plan-operation {
+.mf-recovery-plan-operation::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.mf-recovery-plan-row-blocked .mf-recovery-plan-operation,
+.mf-recovery-plan-operation-move {
   background: #fdf1db;
   color: #8a4b0f;
 }
@@ -6021,14 +6036,6 @@ tr[aria-selected="true"] {
 @media (max-width: 640px) {
   .mf-recovery-decision .mf-organize-decision-fields {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .mf-recovery-plan-row {
-    flex-wrap: wrap;
-  }
-
-  .mf-recovery-plan-operation {
-    margin-left: 26px;
   }
 }
 
@@ -10066,10 +10073,6 @@ tr[aria-selected="true"] {
   .mf-modal-layer-handoff > .mf-run-detail-card {
     max-height: none;
     animation: mf-organize-to-task 340ms var(--mf-organize-arrival-ease);
-  }
-
-  .mf-modal-layer-handoff > .mf-run-detail-card > .mf-modal-body {
-    animation: mf-organize-arrival 300ms var(--mf-organize-arrival-ease);
   }
 }
 
