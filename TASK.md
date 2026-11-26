@@ -1,6 +1,6 @@
 # Task 59.5 — 任务中心按问题文件直达原位恢复
 
-Next Action: DEVELOPER FIXES TASK 59.5 PAGINATION, LINK COMPATIBILITY, COUNTS AND TESTS
+Next Action: DEVELOPER PRESERVES TASK 59.5 PROBLEM-LIST RETURN AND DATE FILTER CONTEXT
 
 ```text
 Task ID: 59.5
@@ -133,3 +133,24 @@ B 复核 `5d20ae33c7b5e1d5b84fc908c3d1204084005b72..493680ea3e80215471fe5c9e1927
   原生两项在隔离 `5d20ae33` 上复现概览入口断言超时。通过的逐项恢复、分页进入及手动重开记录见原始日志。
 - 验收证据保存在本机。`independent/` 包含复现脚本、原始读回、桌面和 390 px 截图及 Base 对照日志。
   [日志与原生 trace](.git/validation-evidence/493680ea3e80215471fe5c9e1927b66666440f62/b-task59.5-review/)
+
+## B 复验 — `36b4f715` · FIX REQUIRED
+
+复验候选 `36b4f7159bd36c72f65999045a16340118d15460`。开始时 `main` 工作区和暂存区干净。
+治理检查、Task 与 Slice 区间空白检查通过。来回翻页、筛选计数、读取失败显示未知及回到第一页通过。
+合法的旧链接读回准确任务、类型、页和文件，刷新后仍可打开。原先两项 Files 元数据回归和 Web
+类型检查通过。Task 59.5 的剩余修正属于 RO-5 / AC-07 的列表上下文。
+
+1. 从有效 `problemRun` 的元数据文件清单打开同一任务的文件证据。390 × 700 视口下，将 21 文件
+   夹具的 `Metadata16.mkv` 行滚到视口中部并用 Enter 打开。关闭详情后同一地址和文件仍可读，
+   列表却重新挂载到顶部，焦点落在清单标题。打开详情时保留原清单背景及滚动容器。关闭和浏览器
+   返回时恢复原触发控件及滚动。文件已离开当前页时，再回到相邻可用控件。复验长页、第二页、
+   关闭与浏览器返回，保留原任务、类型和当页游标。
+2. 在「需要处理 → 元数据」第二页设置创建日期，页面丢掉 `problemType=metadata` 并切到「全部」。
+   批准离线稿只更新日期。设置及清除日期时保留当前类型，按新日期范围从第一页读取，继续遵守服务端
+   游标约束。复验改变日期、日期筛空与清除日期后，类型、文件、真实计数和详情返回保持一致。
+
+Python 任务中心 31 项、Web 组件 147 项、Node 浏览器 39 项、真实 API / SQLite / Worker 浏览器
+20 项通过。Ruff、Web 类型、Lint、格式及生产构建通过。浏览器组合保留四类同任务恢复与手动续作。
+上述两项另用真实浏览器走查复现。截图、测量和原始命令在本机
+[验收证据](.git/validation-evidence/36b4f7159bd36c72f65999045a16340118d15460/b-task59.5-recheck/)。
