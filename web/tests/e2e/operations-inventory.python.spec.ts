@@ -3464,6 +3464,37 @@ test("dated views and 21-file recovery pages preserve exact evidence context", a
       .getByText(secondPageFileName)
       .first(),
   ).toBeVisible();
+
+  // A new creation day narrows this same metadata population: only the dates
+  // change, the type stays selected, the old page cursor is dropped and an
+  // empty range remains visibly empty. Clearing returns to page one of the
+  // same filter with its real count and server paging.
+  await page.getByLabel("开始日期").fill("2999-01-01");
+  await expect(page).toHaveURL(/from=2999-01-01/);
+  await expect(page).toHaveURL(/problemType=metadata/);
+  await expect(page).not.toHaveURL(/problemCursor=/);
+  await expect(
+    page.getByRole("heading", { name: "当前日期范围没有问题文件" }),
+  ).toBeVisible();
+  await page
+    .getByRole("region", { name: "运行筛选" })
+    .getByRole("button", { name: "清除", exact: true })
+    .click();
+  await expect(page).toHaveURL(/problemType=metadata/);
+  await expect(page).not.toHaveURL(/from=|problemCursor=/);
+  await expect(
+    page
+      .getByRole("region", { name: "问题文件" })
+      .getByText(new RegExp(`${metadataTotal} 个文件`))
+      .first(),
+  ).toBeVisible();
+  const resetInbox = page.getByRole("region", { name: "问题文件" });
+  await expect(
+    resetInbox.getByRole("button", { name: "上一页" }),
+  ).toBeDisabled();
+  await expect(
+    resetInbox.getByRole("button", { name: "下一页" }),
+  ).toBeEnabled();
 });
 
 test("a committed per-run problem link keeps its exact Task, type and page", async ({
@@ -3565,6 +3596,60 @@ test("a committed per-run problem link keeps its exact Task, type and page", asy
       .getByText(secondFile)
       .first(),
   ).toBeVisible();
+
+  // At 390 px the per-run panel is the scroll container for the long first
+  // page. A row from the middle opens its exact detail without remounting the
+  // panel; closing and browser Back return to the same row, page cursor and
+  // scroll offset.
+  await page.setViewportSize({ width: 390, height: 700 });
+  const pagedPanel = page.getByRole("region", { name: "问题文件处理" });
+  await pagedPanel.getByRole("button", { name: "上一页" }).click();
+  await expect(page).toHaveURL(/problemDir=backward/);
+  await expect(page).toHaveURL(/problemRun=/);
+  const returnRow = pagedPanel
+    .getByRole("listitem")
+    .filter({ hasText: "Metadata16.mkv" })
+    .getByRole("button");
+  await expect(returnRow).toBeVisible();
+  await pagedPanel.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await returnRow.evaluate((element) =>
+    element.scrollIntoView({ block: "center" }),
+  );
+  const scrollBefore = await pagedPanel.evaluate(
+    (element) => element.scrollTop,
+  );
+  expect(scrollBefore).toBeGreaterThan(0);
+  await returnRow.focus();
+  await page.keyboard.press("Enter");
+  const reopened = page.getByRole("dialog", { name: "运行详情" });
+  await expect(reopened).toBeVisible();
+  await expect(page).toHaveURL(new RegExp("item="));
+  await expect(pagedPanel).toBeVisible();
+  expect(await pagedPanel.evaluate((element) => element.scrollTop)).toBe(
+    scrollBefore,
+  );
+  await reopened.getByRole("button", { name: "关闭详情" }).click();
+  await expect(reopened).toHaveCount(0);
+  await expect(returnRow).toBeFocused();
+  expect(await pagedPanel.evaluate((element) => element.scrollTop)).toBe(
+    scrollBefore,
+  );
+  await expect(page).toHaveURL(/problemRun=/);
+  await expect(page).toHaveURL(/problemDir=backward/);
+
+  await returnRow.press("Enter");
+  await expect(reopened).toBeVisible();
+  await page.goBack();
+  await expect(reopened).toHaveCount(0);
+  await expect(returnRow).toBeFocused();
+  expect(await pagedPanel.evaluate((element) => element.scrollTop)).toBe(
+    scrollBefore,
+  );
+  await expect(page).toHaveURL(/problemRun=/);
+  await expect(page).toHaveURL(/problemDir=backward/);
+
   // No read in this whole journey handed the per-run cursor to the aggregate
   // collection, including while the run detail was open over the panel.
   expect(

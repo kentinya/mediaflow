@@ -225,7 +225,11 @@ function ProblemItemCard({
 }: {
   readonly item: TaskItemSummary;
   readonly problem: RunProblemType;
-  readonly onOpenEvidence: (taskId: string, itemId: string) => void;
+  readonly onOpenEvidence: (
+    taskId: string,
+    itemId: string,
+    trigger: HTMLElement,
+  ) => void;
 }) {
   const checkpoint = item.checkpoint;
   const explanation = failureCopy(item.failure, problem);
@@ -294,7 +298,10 @@ function ProblemItemCard({
         type="button"
         className="mf-button mf-button-secondary"
         disabled={item.taskId === ""}
-        onClick={() => onOpenEvidence(item.taskId, item.itemId)}
+        onClick={(event) =>
+          onOpenEvidence(item.taskId, item.itemId, event.currentTarget)
+        }
+        data-problem-file-row="true"
       >
         查看该文件证据与恢复记录
       </button>
@@ -315,7 +322,11 @@ export function ProblemFilePanel({
   readonly problem: RunProblemType;
   readonly cursor: string | null;
   readonly onPage: (cursor: string, direction: "forward" | "backward") => void;
-  readonly onOpenEvidence: (taskId: string, itemId: string) => void;
+  readonly onOpenEvidence: (
+    taskId: string,
+    itemId: string,
+    trigger: HTMLElement,
+  ) => void;
   readonly onClose: () => void;
   /** Return to this Task/type's first file page after a refused stale cursor. */
   readonly onResetPage: () => void;
@@ -362,6 +373,7 @@ export function ProblemFilePanel({
         </h3>
         <button
           type="button"
+          id="mf-problem-panel-return"
           className="mf-button mf-button-secondary"
           onClick={onClose}
         >

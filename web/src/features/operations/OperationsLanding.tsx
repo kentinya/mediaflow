@@ -17,7 +17,7 @@
  * replaces it.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch, Link } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -518,6 +518,29 @@ export function OperationsLanding() {
     },
     [],
   );
+  // The file rows visible when a problem file opens its exact detail. The
+  // card returns to the invoking row while it is still present; when a live
+  // problem read removed that row while the card was open, the nearest
+  // remaining row is the next safe return target instead of the list heading.
+  const problemReturnRows = useRef<readonly HTMLElement[]>([]);
+  const rememberProblemReturn = (trigger: HTMLElement) => {
+    const rows = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-problem-file-row]"),
+    );
+    const index = rows.indexOf(trigger);
+    problemReturnRows.current =
+      index < 0
+        ? [trigger]
+        : [...rows.slice(index), ...rows.slice(0, index).reverse()];
+  };
+  const resolveProblemReturn = (): HTMLElement | null => {
+    for (const candidate of problemReturnRows.current) {
+      if (candidate.isConnected && candidate.closest("[inert]") === null) {
+        return candidate;
+      }
+    }
+    return null;
+  };
   // A legacy recovery view still selects its own type. Attention starts from
   // the whole overlapping set and uses the operator's explicit filter, so a
   // file carrying several current problems is never guessed into one type.
@@ -530,7 +553,6 @@ export function OperationsLanding() {
   // own server cursor, so neither the page nor its file position is replayed
   // against the aggregate collection.
   const problemRunLink = problemRunId !== "" && problemFileType !== null;
-  const legacyProblemPanelOpen = selectedId === "" && problemRunLink;
   // The selected run's detail view (tab/filters/cursors/inspected item) lives
   // in the URL for the same reconnect reasons as the list state itself.
   const detailState = readRunDetailState(searchParams);
@@ -632,12 +654,28 @@ export function OperationsLanding() {
     return search;
   };
 
+  /**
+   * A submitted creation range narrows the current problem population. An
+   * explicit type filter stays selected (the approved offline flow updates
+   * only the dates), while the page restarts because the old cursor was
+   * minted for the previous range.
+   */
+  const filteredProblemSearch = (
+    nextFilters: RunListFilters,
+  ): Record<string, RunSearchValue> => {
+    const search = listStateSearch(nextFilters, view);
+    if (problemSurface && !isRecoveryView(view) && problemFileType !== null) {
+      search["problemType"] = problemFileType;
+    }
+    return search;
+  };
+
   const applyFilters = (next: Partial<RunListFilters>) => {
     // A submitted filter always starts from the first page: a cursor minted
     // for the previous population is never carried into a new one.
     void navigate({
       to: "/operations",
-      search: listStateSearch({ ...filters, ...next }, view),
+      search: filteredProblemSearch({ ...filters, ...next }),
       replace: true,
     });
   };
@@ -689,7 +727,7 @@ export function OperationsLanding() {
   const resetFilters = () => {
     void navigate({
       to: "/operations",
-      search: listStateSearch(defaultFilters(), view),
+      search: filteredProblemSearch(defaultFilters()),
       replace: true,
     });
   };
@@ -792,7 +830,12 @@ export function OperationsLanding() {
    * same Task and TaskItem identity is carried to the existing native
    * recovery surface.
    */
-  const openProblemItemEvidence = (taskId: string, itemId: string) => {
+  const openProblemItemEvidence = (
+    taskId: string,
+    itemId: string,
+    trigger: HTMLElement,
+  ) => {
+    rememberProblemReturn(trigger);
     void navigate({
       to: "/operations",
       search: {
@@ -1080,20 +1123,20 @@ export function OperationsLanding() {
                       </div>
                     </section>
                     {problemRunLink ? (
-                      // The per-run link owns this area: while its detail is
-                      // open the panel returns with the same page on close.
-                      legacyProblemPanelOpen ? (
-                        <ProblemFilePanel
-                          key={`${problemRunId}:${problemFileType}`}
-                          runId={problemRunId}
-                          problem={problemFileType}
-                          cursor={problemPage.cursor}
-                          onPage={turnProblemPage}
-                          onOpenEvidence={openProblemItemEvidence}
-                          onClose={closeProblemRun}
-                          onResetPage={resetProblemRunPage}
-                        />
-                      ) : null
+                      // The per-run link owns this area. The panel stays
+                      // mounted while the exact file detail is open, so
+                      // closing or going Back restores its own scroll
+                      // container and invoking row without a new read.
+                      <ProblemFilePanel
+                        key={`${problemRunId}:${problemFileType}`}
+                        runId={problemRunId}
+                        problem={problemFileType}
+                        cursor={problemPage.cursor}
+                        onPage={turnProblemPage}
+                        onOpenEvidence={openProblemItemEvidence}
+                        onClose={closeProblemRun}
+                        onResetPage={resetProblemRunPage}
+                      />
                     ) : problemSurface ? (
                       <ProblemInbox
                         query={problemQuery}
@@ -1206,10 +1249,15 @@ export function OperationsLanding() {
                   preparationLinkSearch={preparationLinkSearch}
                   fallbackFocusId={
                     problemRunLink
-                      ? "mf-problem-panel-title"
+                      ? "mf-problem-panel-return"
                       : problemSurface
                         ? "mf-problem-filter-all"
                         : "mf-operations-heading"
+                  }
+                  fallbackFocus={
+                    problemRunLink || problemSurface
+                      ? resolveProblemReturn
+                      : undefined
                   }
                   // The hosted organizer is the topmost card: the run detail
                   // keeps its content and state but must not keep its own focus
@@ -1409,7 +1457,11 @@ function ProblemInbox({
   readonly showWait: boolean;
   readonly onFilter: (next: RunProblemType | null) => void;
   readonly onOpenTask: (runId: string) => void;
-  readonly onOpenItem: (taskId: string, itemId: string) => void;
+  readonly onOpenItem: (
+    taskId: string,
+    itemId: string,
+    trigger: HTMLElement,
+  ) => void;
   readonly onPage: (cursor: string, direction: "forward" | "backward") => void;
   readonly filtered: boolean;
   readonly onClearFilters: () => void;
@@ -1603,8 +1655,13 @@ function ProblemInbox({
                       <button
                         type="button"
                         className="mf-problem-file-row"
-                        onClick={() =>
-                          onOpenItem(entry.run.runId, entry.item.itemId)
+                        data-problem-file-row="true"
+                        onClick={(event) =>
+                          onOpenItem(
+                            entry.run.runId,
+                            entry.item.itemId,
+                            event.currentTarget,
+                          )
                         }
                         aria-label={`${fileNameOf(entry.item.sourcePath)}，${entry.problemTypes
                           .map((type) => RUN_PROBLEM_LABELS[type])
@@ -1881,6 +1938,7 @@ function RunDetailPanel({
   onControlSession,
   preparationLinkSearch,
   fallbackFocusId,
+  fallbackFocus,
   suspended,
 }: {
   readonly query: UseQueryResult<RunOverviewRead, Error>;
@@ -1896,6 +1954,8 @@ function RunDetailPanel({
   readonly preparationLinkSearch: Record<string, RunSearchValue>;
   /** The nearest still-present list control when the invoking row resolved. */
   readonly fallbackFocusId: string;
+  /** A nearer mounted row/control when the invoking file row left the page. */
+  readonly fallbackFocus?: () => HTMLElement | null;
   /**
    * Whether a stacked card above owns interaction. The detail keeps its
    * content, scroll and state, but yields the focus trap and background
@@ -1972,6 +2032,7 @@ function RunDetailPanel({
   const modal = useModalLayer({
     onEscape: () => exit.beginClose(onClose),
     fallbackFocusId,
+    fallbackFocus,
     active: !suspended,
   });
 

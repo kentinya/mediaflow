@@ -148,6 +148,11 @@ export interface ModalLayerOptions {
   /** Focus target when the invoking control no longer exists. */
   readonly fallbackFocusId?: string;
   /**
+   * A nearer still-mounted return target for owners whose live list can drop
+   * the invoking row. It is consulted before `fallbackFocusId`.
+   */
+  readonly fallbackFocus?: () => HTMLElement | null;
+  /**
    * Whether this layer currently owns keyboard trapping and background
    * inertness. A lower layer suspends itself while a stacked card above it is
    * open, so only the topmost card handles Tab/Escape and Escape can never
@@ -192,6 +197,7 @@ export function useModalLayer(options: ModalLayerOptions): ModalLayer {
   );
   const escapeRef = useRef(options.onEscape);
   const escapeDisabledRef = useRef(options.escapeDisabled);
+  const fallbackFocusRef = useRef(options.fallbackFocus);
   const active = options.active ?? true;
   // The unmount cleanup below reads the latest owner state instead of the
   // value captured when the focus-return lifetime started.
@@ -199,6 +205,7 @@ export function useModalLayer(options: ModalLayerOptions): ModalLayer {
   useEffect(() => {
     escapeRef.current = options.onEscape;
     escapeDisabledRef.current = options.escapeDisabled;
+    fallbackFocusRef.current = options.fallbackFocus;
     activeRef.current = active;
   });
 
@@ -288,6 +295,18 @@ export function useModalLayer(options: ModalLayerOptions): ModalLayer {
         invoker?.id == null ? null : document.getElementById(invoker.id);
       if (replacement instanceof HTMLElement) {
         replacement.focus({ preventScroll: true });
+        return;
+      }
+      // The owner's live list may have replaced or removed the invoking row.
+      // Use its nearest still-mounted control before the generic fallback.
+      const nearby = fallbackFocusRef.current?.();
+      if (
+        nearby !== null &&
+        nearby !== undefined &&
+        nearby.isConnected &&
+        nearby.closest("[inert]") === null
+      ) {
+        nearby.focus({ preventScroll: true });
         return;
       }
       if (options.fallbackFocusId !== undefined) {

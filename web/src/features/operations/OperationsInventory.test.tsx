@@ -15,6 +15,7 @@ import {
 import { renderApp } from "../../../tests/utils";
 import manualOperationsFixture from "../../entities/operations/__fixtures__/manual-operations.json";
 import { localDayEndIso, localDayStartIso } from "./run-time";
+import { runProblemFilesQueryKey } from "./run-query";
 import { beginOrganizeConfirmationRetention } from "./organize-confirmation-session";
 
 const TOKEN = "operations-inventory-token";
@@ -2773,6 +2774,272 @@ describe("Operations run inventory landing", () => {
     ).toBe(true);
   });
 
+  it("keeps the selected problem type when a creation range starts a new page", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    const datedRun = runDocument({
+      run_id: "task-dated-page",
+      task_id: "task-dated-page",
+      status: "waiting",
+      attention: true,
+      problem_types: ["metadata"],
+    });
+    const inventory = pageDocument({
+      items: [datedRun],
+      status_counts: { waiting: 1 },
+      attention_count: 1,
+      total: 1,
+      attention: true,
+      view: "attention",
+      summary: summaryDocument({
+        total: 1,
+        running: 1,
+        attention: 1,
+        ended: 0,
+      }),
+    });
+    const entry = (itemId: string, fileName: string) => ({
+      run: datedRun,
+      item: problemFileItemDocument({
+        item_id: itemId,
+        task_id: "task-dated-page",
+        source_path: `Movies/${fileName}`,
+      }),
+      problem_types: ["metadata"],
+    });
+    const firstPage = problemFilesPageDocument({
+      problem: "metadata",
+      items: [entry("item-one", "one.mkv")],
+      total: 2,
+      problem_file_total: 2,
+      task_total: 1,
+      problem_file_counts: {
+        recognition: 0,
+        metadata: 2,
+        classification: 0,
+        conflict: 0,
+      },
+      next_cursor: "metadata-page-two",
+    });
+    const secondPage = problemFilesPageDocument({
+      problem: "metadata",
+      items: [entry("item-two", "two.mkv")],
+      total: 2,
+      problem_file_total: 2,
+      task_total: 1,
+      problem_file_counts: {
+        recognition: 0,
+        metadata: 2,
+        classification: 0,
+        conflict: 0,
+      },
+      previous_cursor: "metadata-page-one",
+    });
+    const emptyRange = problemFilesPageDocument({
+      problem: "metadata",
+      from: "2999-01-01T00:00:00+00:00",
+      to: "2999-01-01T23:59:59.999999+00:00",
+    });
+    stubFetch(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.startsWith("/api/operations/problem-items")) {
+        const params = new URL(url, "http://mediaflow.test").searchParams;
+        if (params.get("from") !== null) return jsonResponse(emptyRange);
+        return jsonResponse(
+          params.get("cursor") === "metadata-page-two" ? secondPage : firstPage,
+        );
+      }
+      if (url.startsWith("/api/operations/runs")) {
+        return jsonResponse(inventory);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      "/operations?view=attention&problemType=metadata&problemCursor=metadata-page-two&problemDir=forward",
+    );
+
+    const inbox = await screen.findByRole("region", { name: "问题文件" });
+    expect(await within(inbox).findByText("two.mkv")).toBeVisible();
+    // The second page is narrowed by a new creation day: only the date
+    // changes, the submitted problem type stays selected and the old page
+    // cursor is never replayed against the new population.
+    fireEvent.change(screen.getByLabelText("开始日期"), {
+      target: { value: "2999-01-01" },
+    });
+    await waitFor(() =>
+      expect(router.history.location.search).toContain("from=2999-01-01"),
+    );
+    expect(
+      await within(inbox).findByText("当前日期范围没有问题文件"),
+    ).toBeVisible();
+    const narrowed = new URL(
+      router.history.location.search,
+      "http://mediaflow.test",
+    ).searchParams;
+    expect(narrowed.get("view")).toBe("attention");
+    expect(narrowed.get("problemType")).toBe("metadata");
+    expect(narrowed.get("problemCursor")).toBeNull();
+    expect(narrowed.get("problemDir")).toBeNull();
+    expect(
+      requested.some((url) => {
+        if (!url.startsWith("/api/operations/problem-items")) return false;
+        const params = new URL(url, "http://mediaflow.test").searchParams;
+        return (
+          params.get("problem") === "metadata" &&
+          params.get("from") !== null &&
+          params.get("cursor") === null
+        );
+      }),
+    ).toBe(true);
+
+    // Clearing the date keeps the same type, restarts at the first page and
+    // restores that filter's real files and counts.
+    await user.click(
+      within(screen.getByRole("region", { name: "运行筛选" })).getByRole(
+        "button",
+        { name: "清除" },
+      ),
+    );
+    expect(await within(inbox).findByText("one.mkv")).toBeVisible();
+    expect(within(inbox).getByText("2 个文件", { exact: true })).toBeVisible();
+    const cleared = new URL(
+      router.history.location.search,
+      "http://mediaflow.test",
+    ).searchParams;
+    expect(cleared.get("problemType")).toBe("metadata");
+    expect(cleared.get("from")).toBeNull();
+    expect(cleared.get("problemCursor")).toBeNull();
+    expect(within(inbox).getByRole("button", { name: "下一页" })).toBeEnabled();
+  });
+
+  it("returns to the nearest remaining file row when the opener settled", async () => {
+    const user = userEvent.setup();
+    const problemRun = runDocument({
+      run_id: "task-neighbor",
+      task_id: "task-neighbor",
+      status: "waiting",
+      attention: true,
+      problem_types: ["metadata"],
+      problem_file_counts: {
+        recognition: 0,
+        metadata: 3,
+        classification: 0,
+        conflict: 0,
+      },
+    });
+    const entry = (itemId: string, fileName: string) => ({
+      run: problemRun,
+      item: problemFileItemDocument({
+        item_id: itemId,
+        task_id: "task-neighbor",
+        source_path: `Movies/${fileName}`,
+      }),
+      problem_types: ["metadata"],
+    });
+    const page = problemFilesPageDocument({
+      problem: "metadata",
+      items: [
+        entry("item-one", "one.mkv"),
+        entry("item-two", "two.mkv"),
+        entry("item-three", "three.mkv"),
+      ],
+      total: 3,
+      problem_file_total: 3,
+      task_total: 1,
+      problem_file_counts: {
+        recognition: 0,
+        metadata: 3,
+        classification: 0,
+        conflict: 0,
+      },
+    });
+    let problemReads = 0;
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/operations/problem-items")) {
+        problemReads += 1;
+        return jsonResponse(
+          problemReads === 1
+            ? page
+            : {
+                ...page,
+                items: [
+                  entry("item-one", "one.mkv"),
+                  entry("item-three", "three.mkv"),
+                ],
+                total: 2,
+                problem_file_total: 2,
+                problem_file_counts: {
+                  recognition: 0,
+                  metadata: 2,
+                  classification: 0,
+                  conflict: 0,
+                },
+              },
+        );
+      }
+      if (url === "/api/operations/runs/task-neighbor") {
+        return jsonResponse(problemRun);
+      }
+      if (url.startsWith("/api/operations/runs")) {
+        return jsonResponse(
+          pageDocument({
+            items: [problemRun],
+            total: 1,
+            view: "attention",
+            attention: true,
+            status_counts: { waiting: 1 },
+            attention_count: 1,
+            summary: summaryDocument({
+              total: 1,
+              running: 1,
+              attention: 1,
+              ended: 0,
+            }),
+          }),
+        );
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router, queryClient } = renderApp(
+      "/operations?view=attention&problemType=metadata",
+    );
+
+    const inbox = await screen.findByRole("region", { name: "问题文件" });
+    const opener = within(
+      (await within(inbox).findByText("two.mkv")).closest("li") ?? inbox,
+    ).getByRole("button");
+    await user.click(opener);
+    await screen.findByRole("dialog", { name: "运行详情" });
+    // A live problem read settles the opened file while its detail is open;
+    // the exact row leaves the background list.
+    await queryClient.refetchQueries({
+      queryKey: [runProblemFilesQueryKey, "metadata", "", "", null],
+    });
+    const currentInbox = screen.getByRole("region", { name: "问题文件" });
+    await waitFor(() =>
+      expect(within(currentInbox).queryByText("two.mkv")).toBeNull(),
+    );
+    expect(within(currentInbox).getByText("2 个文件")).toBeVisible();
+    const neighbor = within(
+      within(currentInbox).getByText("three.mkv").closest("li") ?? currentInbox,
+    ).getByRole("button");
+    await user.click(
+      within(screen.getByRole("dialog", { name: "运行详情" })).getByRole(
+        "button",
+        { name: "关闭详情" },
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
+    );
+    expect(neighbor).toHaveFocus();
+    expect(router.history.location.search).toContain("problemType=metadata");
+  });
+
   it("resets a refused problem-file cursor to the same filter's first page", async () => {
     const user = userEvent.setup();
     const requested: string[] = [];
@@ -3096,12 +3363,14 @@ describe("Operations run inventory landing", () => {
       requested.some((url) => url.startsWith("/api/operations/problem-items")),
     ).toBe(false);
 
-    await user.click(
-      within(panel).getByRole("button", {
-        name: "查看该文件证据与恢复记录",
-      }),
-    );
+    const evidenceButton = within(panel).getByRole("button", {
+      name: "查看该文件证据与恢复记录",
+    });
+    await user.click(evidenceButton);
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    // The detail card overlays the panel; the panel and its scroll container
+    // stay mounted instead of restarting at their heading.
+    expect(screen.getByRole("region", { name: "问题文件处理" })).toBe(panel);
     await waitFor(() =>
       expect(router.history.location.search).toContain("run=task-legacy"),
     );
@@ -3110,10 +3379,12 @@ describe("Operations run inventory landing", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
     );
-    // Closing returns to the exact Task/type page the link named.
+    // Closing returns to the exact Task/type page and the invoking row.
     const restored = await screen.findByRole("region", {
       name: "问题文件处理",
     });
+    expect(restored).toBe(panel);
+    expect(evidenceButton).toHaveFocus();
     expect(
       (await within(restored).findAllByText(/Movies\/legacy-b\.mkv/)).length,
     ).toBeGreaterThan(0);
@@ -3121,6 +3392,18 @@ describe("Operations run inventory landing", () => {
     expect(router.history.location.search).toContain(
       "problemCursor=legacy-page-two",
     );
+
+    // Browser Back closes the same detail with the same mounted page and
+    // returns focus to the row that opened it.
+    await user.click(evidenceButton);
+    await screen.findByRole("dialog", { name: "运行详情" });
+    router.history.back();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "运行详情" })).toBeNull(),
+    );
+    expect(screen.getByRole("region", { name: "问题文件处理" })).toBe(panel);
+    expect(evidenceButton).toHaveFocus();
+    expect(router.history.location.search).toContain("problemRun=task-legacy");
   });
 
   it("resets a refused per-run problem cursor to the same Task's first page", async () => {
