@@ -4342,6 +4342,203 @@ test("Task59.1 A59-02 manual organize readability: a 100-file batch shows 90 sel
   ).toHaveLength(0);
 });
 
+// This case must run before the same-directory small-batch re-entry below: that
+// re-entry leaves an open preparation holding the 101st primary, so a later
+// full walk of the same folder reads only 100 and links a plan instead of
+// reaching the durable primary bound.
+test("Task59.4 a 101-file directory whose first read is already settled keeps the shared Files first screen", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  const authHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await connect(page);
+  const commands = recordCommands(page);
+
+  // The real Files directory is the admitted scope. Its real walk stops at the
+  // durable 100-primary bound.
+  await page.getByRole("link", { name: "Files", exact: true }).click();
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
+  await page
+    .getByRole("button", { name: /source/ })
+    .first()
+    .click();
+  await expect(page.getByRole("table")).toBeVisible();
+  await page
+    .getByRole("checkbox", { name: `选择 ${PRIMARY_LIMIT_DIRECTORY}` })
+    .check();
+
+  // Hold only the browser's first preparation GET. The admitted card mounts
+  // and stays on its reading state while Python, the linked Task and the real
+  // Worker settle normally.
+  const firstReadGateControl: { release: () => void } = {
+    release: () => {},
+  };
+  const firstReadGate = new Promise<void>((resolve) => {
+    firstReadGateControl.release = resolve;
+  });
+  const browserReads: {
+    readonly status: string;
+    readonly flow: string | undefined;
+    readonly continuable: boolean | undefined;
+  }[] = [];
+  await page.route(
+    /\/api\/operations\/organize\/discoveries\/[^/?]+(?:\?.*)?$/,
+    async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      await firstReadGate;
+      const response = await route.fetch();
+      const document = (await response.json()) as {
+        readonly status: string;
+        readonly organizeFlow?: {
+          readonly status?: string;
+          readonly continuable?: boolean;
+        };
+      };
+      browserReads.push({
+        status: document.status,
+        flow: document.organizeFlow?.status,
+        continuable: document.organizeFlow?.continuable,
+      });
+      await route.fulfill({ response });
+    },
+  );
+
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+
+  await expect(
+    card.getByText("正在读取准备状态", { exact: true }),
+  ).toBeVisible();
+  const address = `${BASE}/api/operations/organize/discoveries/${encodeURIComponent(
+    discoveryId as string,
+  )}`;
+  const current = async () => {
+    const response = await request.get(address, { headers: authHeaders });
+    expect(response.ok()).toBe(true);
+    return (await response.json()) as {
+      readonly status: string;
+      readonly progress: { readonly materialRefusal: string | null };
+      readonly organizeFlow?: {
+        readonly status?: string;
+        readonly continuable?: boolean;
+      };
+    };
+  };
+  expect((await current()).organizeFlow?.continuable).toBe(true);
+  try {
+    // The real Worker advances exactly this named preparation and its linked
+    // Task; each pass is one real Task claim. The held browser read is released
+    // only after the linked Task settles.
+    await expect
+      .poll(
+        async () => {
+          const worker = await request.post(
+            `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
+              discoveryId as string,
+            )}`,
+          );
+          expect(worker.ok()).toBe(true);
+          return (await current()).organizeFlow?.continuable;
+        },
+        { timeout: 60_000, intervals: [250, 500, 1_000] },
+      )
+      .toBe(false);
+    const settled = await current();
+    expect(settled.status).toBe("partial_success");
+    expect(settled.organizeFlow?.status).toBe("failed");
+    expect(settled.progress.materialRefusal).toBe("primary_limit");
+  } finally {
+    firstReadGateControl.release();
+  }
+
+  // The very first durable read the card receives is already the settled
+  // flow. It still owns the shared preparation first screen: the original
+  // scope, the real progress and the Files return stay, with no generic
+  // ended-history replacement and no fabricated summary claim.
+  await expect
+    .poll(() => browserReads.length, { timeout: 15_000 })
+    .toBeGreaterThan(0);
+  expect(browserReads[0]).toMatchObject({
+    status: "partial_success",
+    flow: "failed",
+    continuable: false,
+  });
+  await expect(
+    card.getByRole("heading", { name: "超出主文件上限" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    card.getByText(PRIMARY_LIMIT_SETTLED, { exact: true }),
+  ).toBeVisible();
+  await expect(card.getByText("来源资源库")).toBeVisible();
+  await expect(card.getByText("1 个文件夹", { exact: true })).toBeVisible();
+  await expect(
+    card.getByText(PRIMARY_LIMIT_PROGRESS, { exact: true }),
+  ).toBeVisible();
+  const firstReadScope = card.locator("details.mf-organize-scope-details");
+  await firstReadScope.getByText(/查看确切路径（1 项）/).click();
+  await expect(
+    firstReadScope.getByText(PRIMARY_LIMIT_DIRECTORY, { exact: true }),
+  ).toBeVisible();
+  await expect(card.locator(".mf-organize-preparation-spinner")).toHaveCount(0);
+  await expect(card.getByText("本次整理工作已结束")).toHaveCount(0);
+  await expect(card.getByText(/原计划摘要保留为只读历史/)).toHaveCount(0);
+  await expect(card.getByText(/本次整理从未生成过计划摘要/)).toHaveCount(0);
+  await expect(card.getByText("此阶段无媒体变更")).toBeVisible();
+  await expect(card.getByRole("button", { name: /确认整理/ })).toHaveCount(0);
+  await expect(
+    card.getByRole("button", { name: "保存并重新分析" }),
+  ).toHaveCount(0);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/organize\/discoveries\/[^/]+\/analyze$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+
+  await page.screenshot({
+    path: "test-results/task59.4-first-read-settled-1440.png",
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(card.getByRole("button", { name: "返回文件页" })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/task59.4-first-read-settled-390.png",
+    fullPage: false,
+  });
+
+  // The Files return action is the same close/focus lifecycle as every other
+  // preparation end: it clears only the exact preparation marker and returns
+  // focus to the invoking batch control.
+  await card.getByRole("button", { name: "返回文件页" }).click();
+  await expect(card).toHaveCount(0);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
+  expect(new URL(page.url()).searchParams.get("organizeDiscovery")).toBeNull();
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.activeElement?.textContent?.trim() ?? ""),
+    )
+    .toBe("批量整理");
+});
+
 test("Task59.1 a 101-file directory settles as a failed preparation and the same source re-enters a small batch", async ({
   page,
   request,
@@ -4572,6 +4769,9 @@ test("Task59.4 a preparation cancelled from another tab keeps the shared Files f
 }) => {
   test.setTimeout(120_000);
   const authHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  // The standalone case registers the same Worker readiness its Files
+  // admission needs instead of relying on an earlier test in this file.
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
   await page.setViewportSize({ width: 1440, height: 900 });
   await connect(page);
   const commands = recordCommands(page);

@@ -902,9 +902,11 @@ export function ManualOrganizeDialog({
   const preview: OrganizePreviewModel | undefined =
     previewQuery.data?.ok === true ? previewQuery.data.model : undefined;
   /**
-   * The shared preparation first screen owns a settlement only while this
-   * mounted card saw the same work as live and had not handed over to a plan
-   * review. A bounded-address reopen of an already ended flow, or a terminal
+   * The shared preparation first screen owns a settlement when this same card
+   * initiated the preparation or saw the same work as live, and had not
+   * handed over to a plan review. That identity is captured on mount, so it
+   * still holds when the very first durable read already returns the settled
+   * flow. A bounded-address reopen of an already ended flow, or a terminal
    * state reached after the operator entered the review, keeps the existing
    * read-only history entry instead.
    */
@@ -3294,11 +3296,13 @@ export function ManualOrganizeDialog({
     }
     return null;
   })();
+  const preparationEnteredReview =
+    preparationObservedLive && preparationPlanObserved;
   const preparationTerminalFirstScreen =
     organizeFlowEnded &&
-    preparationObservedLive &&
-    !preparationPlanObserved &&
-    preparationStoppedTitle !== null;
+    preparationStoppedTitle !== null &&
+    !preparationEnteredReview &&
+    (preparationStartedFull || preparationObservedLive);
   const firstPlanPreparationView =
     session.phase === "submitting" ||
     preparationUnavailable ||

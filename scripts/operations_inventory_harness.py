@@ -3307,7 +3307,7 @@ def release_primary_limit_settlement_gate(state: AppState) -> dict[str, object]:
     return {"released": True}
 
 
-def _run_discovery_step(state: AppState):
+def _run_discovery_step(state: AppState, *, task_id: str | None = None):
     service = state.api._media_discovery
     gate = state.preparation_freeze_gate
     persist_frozen = getattr(service, "_persist_frozen", None)
@@ -3337,6 +3337,13 @@ def _run_discovery_step(state: AppState):
             for item in state.repository.list_media_discoveries(limit=100)
             if not item.terminal and item.organize_task_id
         ]
+        if task_id is not None:
+            # A named journey advances exactly the Task it asked about.  An
+            # unrelated unfinished preparation on the shared fixture must not
+            # hold that journey back, and a named call never advances it.
+            linked = [value for value in linked if value == task_id]
+            if not linked:
+                return None
         if linked:
             task = _run_manual_task_once(state, task_id=linked[0])
             return state.repository.get_media_discovery_for_task(task.task_id) if task else None
@@ -3385,17 +3392,21 @@ def run_discovery_worker_for(state: AppState, *, discovery_id: str) -> dict[str,
 
     The generic Worker route claims whichever record is next; this one advances
     the record the browser actually asked about, so a journey can hold one
-    admitted preparation back while another one is driven.  It still goes
-    through the real ``MediaDiscoveryWorker`` claim/lease/publication boundary
-    and never fabricates a stage.
+    admitted preparation back while another one is driven.  Its own linked
+    Task is claimed by exact identity, so unrelated unfinished preparations on
+    the shared fixture neither block nor consume this pass.  It still goes
+    through the real Task claim/lease/publication boundary and never
+    fabricates a stage.
     """
 
     service = getattr(state.api, "_media_discovery", None)
     if service is None:
         return {"advanced": False, "reason": "no media discovery service"}
     with state._manual_lock:
+        named = state.repository.get_media_discovery(discovery_id)
+        named_task_id = named.organize_task_id if named is not None else None
         for _ in range(16):
-            advanced = _run_discovery_step(state)
+            advanced = _run_discovery_step(state, task_id=named_task_id)
             if advanced is None:
                 break
             if advanced.discovery_id == discovery_id:
