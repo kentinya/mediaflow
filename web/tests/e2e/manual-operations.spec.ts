@@ -247,6 +247,8 @@ test("Files row admits one eligible file into the durable Organize journey", asy
   await expect(page).toHaveURL(
     /\/resourcelib\/files\?.*organizeDiscovery=organize-discovery-e2e-001/,
   );
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await overview.getByRole("button", { name: "查看 One.2001.mkv" }).click();
   await expect(
     card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();

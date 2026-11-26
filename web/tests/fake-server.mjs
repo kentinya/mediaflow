@@ -3363,6 +3363,8 @@ function organizeDiscoveryDocument(discovery) {
   const limited = discovery.limited === true;
   const autoPrepare = discovery.autoPrepare === true;
   const prepared = autoPrepare && discovery.previewId != null;
+  const flowEnded =
+    discovery.status === "cancelled" || discovery.status === "failed";
   return {
     actions: {
       cancel: {
@@ -3411,11 +3413,16 @@ function organizeDiscoveryDocument(discovery) {
     intentId: discovery.intentId,
     journey: "discovery",
     autoPrepare,
-    // PATCH-20261109-3: the backend always publishes `organizeFlow`; the fake
-    // discovers no durable organizing Task (the real backend links one when a
-    // Files selection is admitted), so its real association semantics are an
-    // explicit `null` — never an omitted required key.
-    organizeFlow: null,
+    // Files admission owns the Task that later executes this exact plan.
+    // The first-plan handoff verifies this association on a fresh read.
+    organizeTaskId: autoPrepare ? ORGANIZE_TASK_ID : null,
+    organizeFlow: autoPrepare
+      ? {
+          taskId: ORGANIZE_TASK_ID,
+          status: flowEnded ? discovery.status : "running",
+          continuable: !flowEnded,
+        }
+      : null,
     prepared,
     previewId: discovery.previewId ?? null,
     nextAction: prepared

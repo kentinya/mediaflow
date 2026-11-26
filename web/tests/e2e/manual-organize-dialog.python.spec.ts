@@ -1331,7 +1331,7 @@ test("Task59.1 manual organize readability: a pending owned file beside a new si
   expect(firstDiscoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, firstDiscoveryId as string);
   await openOverviewFile(firstCard);
-  await firstCard.getByRole("button", { name: "关闭", exact: true }).click();
+  await firstCard.getByRole("button", { name: "关闭整理弹窗" }).click();
   await expect(firstCard).toHaveCount(0);
   expect(executeOrAnalyzePosts(commands)).toHaveLength(0);
 
@@ -3177,7 +3177,7 @@ test("Task59.1 a missing metadata candidate is corrected on the current file and
   // This correction belongs to the exact current TaskItem and is not saved
   // yet.  Leaving through the ordinary close pins the existing discard choice;
   // continuing keeps the operator's title and year instead of losing them.
-  await card.getByRole("button", { name: "关闭", exact: true }).click();
+  await card.getByRole("button", { name: "关闭整理弹窗" }).click();
   const discardPrompt = card.getByRole("alertdialog");
   await expect(
     discardPrompt.getByText("有尚未保存的逐文件修正草稿。"),

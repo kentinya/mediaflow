@@ -4279,6 +4279,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // Active pin changed while the response was in flight.
     const user = userEvent.setup();
     const discoveryPosts: Record<string, unknown>[] = [];
+    const discoveryReads: string[] = [];
     const provedDiscovery = {
       actions: {
         cancel: { available: true, method: "POST", path: "/x" },
@@ -4362,11 +4363,13 @@ describe("Files entry state and ResourceLibrary strip", () => {
         // The recovered admission opens the one in-context preparation
         // workspace, which reads the discovery detail.  The echoed identity
         // is what drives recovery, so the detail carries it.
-        onDiscoveryDetail: () =>
-          jsonResponse({
+        onDiscoveryDetail: (discoveryId) => {
+          discoveryReads.push(discoveryId);
+          return jsonResponse({
             ...provedDiscovery,
             admissionRequestId: String(discoveryPosts[0]?.requestId ?? ""),
-          }),
+          });
+        },
         onDiscoveries: () =>
           jsonResponse({
             items: [
@@ -4400,8 +4403,9 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // Slice53: the recovered admission opens the preparation card on this
     // same Files page for exactly this durable discovery, not a duplicate
     // admission and not the legacy full page.
-    expect(screen.getByText("正在准备")).toBeVisible();
+    expect(await screen.findByText("准备已完成，等待生成方案")).toBeVisible();
     expect(router.state.location.pathname).toBe("/resourcelib/files");
+    expect(new Set(discoveryReads)).toEqual(new Set(["proved-original"]));
     expect(screen.queryByRole("heading", { name: "新建整理任务" })).toBeNull();
     // The page really did submit its own generated identity.
     expect(discoveryPosts).toHaveLength(1);
