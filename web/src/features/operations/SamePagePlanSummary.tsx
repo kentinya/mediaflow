@@ -171,6 +171,10 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
                 已生成可确认的新方案。整理尚未提交。
               </p>
             </StatusBanner>
+          ) : !preview.current ? (
+            <StatusBanner variant="warning" title="当前方案已失效">
+              <p>{preview.nextAction ?? "请核对原条目的当前状态。"}</p>
+            </StatusBanner>
           ) : executableIds.length === 0 ? (
             <StatusBanner variant="warning" title="当前方案没有可确认文件">
               <p>
@@ -206,7 +210,7 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
                       type="checkbox"
                       aria-label={`选择 ${fileNameOf(item)}`}
                       checked={activeSelection.includes(item.itemId)}
-                      disabled={!isExecutable || props.busy}
+                      disabled={!preview.current || !isExecutable || props.busy}
                       onChange={(event) =>
                         props.onSelected(
                           event.target.checked
@@ -293,26 +297,41 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
         </>
       )}
       {requiresOverwrite && (
-        <label>
+        <label className={compact ? "mf-recovery-plan-consent" : undefined}>
           <input
             type="checkbox"
             checked={props.allowOverwrite}
-            disabled={props.busy}
+            disabled={props.busy || (compact && !preview?.current)}
             onChange={(event) => props.onAllowOverwrite(event.target.checked)}
           />
-          我确认允许按此精确摘要替换现有目标文件
+          {compact
+            ? `按已审阅的方案替换 ${
+                preview?.items.filter(
+                  (item) =>
+                    activeSelection.includes(item.itemId) &&
+                    item.destructiveImplications?.overwriteRequired === true,
+                ).length ?? 0
+              } 个已有目标`
+            : "我确认允许按此精确摘要替换现有目标文件"}
         </label>
       )}
       {requiresCleanup && (
-        <label>
+        <label className={compact ? "mf-recovery-plan-consent" : undefined}>
           <input
             type="checkbox"
             checked={props.allowCleanup}
-            disabled={props.busy}
+            disabled={props.busy || (compact && !preview?.current)}
             onChange={(event) => props.onAllowCleanup(event.target.checked)}
           />
-          我确认允许删除整理后为空的来源目录
+          {compact
+            ? "允许清理整理后为空的来源目录"
+            : "我确认允许删除整理后为空的来源目录"}
         </label>
+      )}
+      {compact && preview?.current && !destructiveConfirmed && !props.busy && (
+        <p className="mf-dashboard-meta">
+          勾选上方对应的授权后，才能提交这份方案。
+        </p>
       )}
       <div className="mf-actions">
         {props.showConfirm === false ? (
@@ -325,12 +344,17 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
             className="mf-button"
             disabled={
               props.busy ||
+              (compact && !preview?.current) ||
               activeSelection.length === 0 ||
               !destructiveConfirmed
             }
             onClick={props.onConfirm}
           >
-            {props.busy ? "正在受理…" : confirmLabel(activeSelection.length)}
+            {props.busy
+              ? compact
+                ? "正在提交…"
+                : "正在受理…"
+              : confirmLabel(activeSelection.length)}
           </button>
         )}
       </div>

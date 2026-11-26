@@ -5833,46 +5833,140 @@ tr[aria-selected="true"] {
   min-width: 0;
 }
 
-.mf-recovery-decision {
-  margin-top: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
+.mf-recovery-file {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-bottom: 16px;
+}
+
+.mf-recovery-file > div {
+  min-width: 0;
+}
+
+.mf-recovery-file h5 {
+  margin: 10px 0 16px;
+  color: #14223c;
+  font-size: 20px;
+  line-height: 1.27;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+
+.mf-recovery-file p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mf-recovery-file-position {
+  color: #536480;
+  font-size: 12px;
+}
+
+.mf-recovery-file .mf-exact-identity {
+  color: #3a4a6c;
+  font:
+    12px/1.55 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
+
+.mf-recovery-decision .mf-organize-decision-type {
+  background: #fff3de;
+  color: #854500;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.mf-recovery-decision .mf-organize-decision-type::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.mf-recovery-decision .mf-organize-decision-title {
+  margin-top: 16px;
 }
 
 .mf-recovery-decision .mf-organize-decision-fields {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.8fr) repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
-.mf-recovery-decision .mf-organize-decision-field-title {
-  order: 1;
+.mf-recovery-decision .mf-organize-decision-field {
+  gap: 3px;
 }
 
-.mf-recovery-decision .mf-organize-decision-field-year {
-  order: 2;
+.mf-recovery-decision .mf-organize-decision-label {
+  color: #536480;
+  font-size: 12px;
+  font-weight: 400;
 }
 
-.mf-recovery-decision .mf-organize-decision-field-media {
-  order: 3;
+.mf-recovery-decision .mf-organize-decision-field :is(input, select) {
+  min-height: 35px;
+  padding: 6px 8px;
+  border-radius: 7px;
 }
 
 .mf-recovery-decision .mf-organize-decision-options {
   grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+  min-width: 0;
+}
+
+.mf-recovery-decision .mf-organize-decision-option {
+  gap: 8px;
+  padding: 9px 11px;
+  border-color: #e2e9f3;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.mf-recovery-decision .mf-organize-decision-option:has(input:checked) {
+  border-color: #7793ed;
+  background: #f3f6ff;
+  box-shadow: none;
+}
+
+.mf-recovery-decision .mf-organize-decision-option input {
+  width: 14px;
+  height: 14px;
+  margin: 4px 0 0;
+}
+
+.mf-recovery-decision .mf-organize-decision-option-copy {
+  gap: 0;
+}
+
+.mf-recovery-decision .mf-organize-decision-option-title {
+  font-size: 13px;
+}
+
+.mf-recovery-decision .mf-organize-decision-option-meta {
+  font-size: 12px;
+}
+
+.mf-recovery-decision > .mf-actions {
+  margin-top: 10px;
 }
 
 .mf-recovery-conflict-target {
   margin: 10px 0 0;
-  padding: 9px 12px;
-  border: 1px solid #dfe6ef;
-  border-radius: 10px;
-  background: #fbfcff;
+  padding: 9px 14px;
+  border: 1px solid #e2e9f3;
+  border-radius: 11px;
 }
 
 .mf-recovery-conflict-target > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  align-items: baseline;
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px;
 }
 
 .mf-recovery-conflict-target dt {
@@ -5884,6 +5978,7 @@ tr[aria-selected="true"] {
   margin: 0;
   min-width: 0;
   overflow-wrap: anywhere;
+  font-size: 12px;
 }
 
 .mf-recovery-ignore {
@@ -5891,9 +5986,9 @@ tr[aria-selected="true"] {
   border: 0;
   background: transparent;
   color: #0b63ce;
-  padding: 4px 2px;
+  padding: 9px 14px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 400;
   cursor: pointer;
 }
 
@@ -5907,10 +6002,62 @@ tr[aria-selected="true"] {
   display: grid;
   gap: 10px;
   min-width: 0;
+  padding-top: 17px;
+}
+
+.mf-recovery-host .mf-organize-reanalysis-facts {
+  margin-top: 4px;
+}
+
+.mf-recovery-plan > .mf-status,
+.mf-recovery-decision > .mf-status {
+  margin: 3px 0 0;
+  padding: 10px 12px;
+  border-width: 1px;
+  font-size: 13px;
+}
+
+.mf-recovery-decision > .mf-status {
+  margin-top: 13px;
+}
+
+.mf-recovery-plan > .mf-status-success {
+  background: #edf8f3;
+  border-color: #d5eee2;
+  color: #15614d;
+}
+
+:is(.mf-recovery-plan, .mf-recovery-decision) > .mf-status-warning {
+  background: #fff7e9;
+  border-color: #f3dfbc;
+  color: #744005;
+}
+
+:is(.mf-recovery-plan, .mf-recovery-decision) > .mf-status h2 {
+  margin: 0 0 2px;
+  font-size: inherit;
+}
+
+:is(.mf-recovery-plan, .mf-recovery-decision) > .mf-status p {
+  margin: 0;
+  color: inherit;
 }
 
 .mf-recovery-plan > .mf-actions {
   margin-top: 0;
+}
+
+.mf-recovery-plan-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.mf-recovery-plan-consent input {
+  flex: none;
+  margin-top: 4px;
+  accent-color: #1268f5;
 }
 
 .mf-recovery-plan-head {
@@ -5948,7 +6095,6 @@ tr[aria-selected="true"] {
   gap: 10px;
   min-width: 0;
   padding: 10px 12px;
-  background: #fff;
 }
 
 .mf-recovery-plan-row + .mf-recovery-plan-row {
@@ -5982,9 +6128,6 @@ tr[aria-selected="true"] {
 }
 
 .mf-recovery-plan-copy p {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 8px;
   margin: 0;
   color: #263b61;
   font-size: 12.5px;
@@ -5993,12 +6136,16 @@ tr[aria-selected="true"] {
 }
 
 .mf-recovery-plan-copy .mf-exact-identity {
-  min-width: 0;
-  overflow-wrap: anywhere;
+  color: #3a4a6c;
+  font:
+    11px/1.55 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
 }
 
 .mf-recovery-plan-label {
-  flex: none;
+  margin-right: 4px;
   color: #5f6b7d;
 }
 
@@ -6033,9 +6180,26 @@ tr[aria-selected="true"] {
   color: #8a4b0f;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 560px) {
   .mf-recovery-decision .mf-organize-decision-fields {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mf-recovery-decision .mf-organize-decision-field-title {
+    grid-column: 1 / -1;
+  }
+
+  .mf-recovery-conflict-target {
+    padding-inline: 9px;
+  }
+
+  .mf-recovery-conflict-target > div {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .mf-recovery-plan-row {
+    column-gap: 6px;
+    padding-inline: 8px;
   }
 }
 

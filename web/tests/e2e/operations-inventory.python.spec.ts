@@ -206,7 +206,7 @@ async function chooseNativeRecoveryDecision(
         new URL(response.url()).pathname ===
           `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
     );
-    await recovery.getByRole("button", { name: "搜索作品" }).click();
+    await recovery.getByRole("button", { name: "搜索元数据" }).click();
     expect((await searchResponse).status()).toBe(200);
     await recovery
       .getByRole("radio", { name: new RegExp(`${seeded.providerId}$`) })
@@ -225,7 +225,7 @@ async function chooseNativeRecoveryDecision(
     await recovery.getByRole("radio", { name: "按许可替换现有目标" }).check();
     await recovery
       .getByRole("checkbox", {
-        name: "我明确选择覆盖此冲突目标；本次仍只保存决定并重新分析",
+        name: "我选择按许可覆盖此目标，执行前再次核对实际影响",
       })
       .check();
   } else {
@@ -506,7 +506,7 @@ async function finishNativeRecovery(
     await expect(confirm).toBeDisabled();
     await summary
       .getByRole("checkbox", {
-        name: "我确认允许按此精确摘要替换现有目标文件",
+        name: "按已审阅的方案替换 1 个已有目标",
       })
       .check();
     await expect(confirm).toBeEnabled();
@@ -563,8 +563,8 @@ async function runNativeRecoveryJourney(
     name: "条目审核与恢复",
   });
   await expect(recovery.getByRole("heading", { name: heading })).toBeVisible();
-  // The exact file row names the checkpoint kind the backend really returned
-  // and keeps the same concrete reason as its expanded evidence.
+  // The row retains the persisted checkpoint reason. The expanded evidence
+  // leads with the file's identity and the approved decision heading.
   const problemReason: Readonly<Record<NativeRecoveryKind, string>> = {
     recognition: "识别结果需要确认",
     metadata: "元数据候选需要确认",
@@ -591,8 +591,11 @@ async function runNativeRecoveryJourney(
   await expect(
     nativeDetail
       .getByRole("region", { name: "条目证据" })
-      .getByText(problemReason[kind]),
+      .getByRole("heading", { name: nativeFileName, exact: true }),
   ).toBeVisible();
+  await expect(
+    recovery.getByRole("button", { name: "保存并重新分析" }),
+  ).toBeDisabled();
   const metadataSearches: string[] = [];
   page.on("request", (requestValue) => {
     const url = new URL(requestValue.url());
@@ -1940,7 +1943,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   const saveRecognition = async () => {
     const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
     await expect(
-      recovery.getByRole("heading", { name: "确认识别类型" }),
+      recovery.getByRole("heading", { name: "选择识别类型" }),
     ).toBeVisible();
     await recovery.getByRole("radio", { name: "Normal Movie" }).check();
     const decision = page.waitForResponse(
@@ -1960,7 +1963,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   // a historical empty target no longer occupies the space above it.
   await expect(evidence.getByLabel("识别决策")).toBeVisible();
   await expect(
-    evidence.getByText("识别结果需要确认", { exact: true }),
+    evidence.getByRole("heading", { name: "选择识别类型" }),
   ).toBeVisible();
   await expect(evidence.getByText("没有已记录的目标文件")).toHaveCount(0);
   await saveRecognition();
@@ -2053,7 +2056,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   await expect(
     restoredDetail
       .getByRole("region", { name: "新计划摘要" })
-      .getByRole("button", { name: /确认继续整理|正在受理/ }),
+      .getByRole("button", { name: /确认继续整理|正在提交/ }),
   ).toBeDisabled();
   expect(exactExecutePosts()).toHaveLength(1);
 
@@ -4719,14 +4722,14 @@ test("PATCH-20261111-2 / PATCH-20261112-1 native recognition recovery keeps the 
   page,
   request,
 }) => {
-  await runNativeRecoveryJourney(page, request, "recognition", /确认识别类型/);
+  await runNativeRecoveryJourney(page, request, "recognition", /选择识别类型/);
 });
 
 test("PATCH-20261111-2 native Metadata candidate recovery keeps the same Task through summary and effect", async ({
   page,
   request,
 }) => {
-  await runNativeRecoveryJourney(page, request, "metadata", /选择正确的作品/);
+  await runNativeRecoveryJourney(page, request, "metadata", /确认作品/);
 });
 
 test("PATCH-20261111-2 native Metadata correction searches explicitly before the same-Task summary", async ({
@@ -4749,7 +4752,7 @@ test("PATCH-20261120-3 native Classification recovery reconciles a late original
     page,
     request,
     "classification",
-    /选择整理目标/,
+    /选择分类目标/,
     { variant: "Late", confirmation: "late" },
   );
 });
@@ -4762,7 +4765,7 @@ test("PATCH-20261120-3 native Classification recovery explicitly confirms a requ
     page,
     request,
     "classification",
-    /选择整理目标/,
+    /选择分类目标/,
     { variant: "Explicit", confirmation: "explicit" },
   );
 });
@@ -4775,7 +4778,7 @@ test("PATCH-20261120-3 native Classification recovery admits one execution when 
     page,
     request,
     "classification",
-    /选择整理目标/,
+    /选择分类目标/,
     { variant: "Race", confirmation: "race" },
   );
 });
@@ -4784,7 +4787,7 @@ test("PATCH-20261111-2 native conflict recovery renames while preserving the exi
   page,
   request,
 }) => {
-  await runNativeRecoveryJourney(page, request, "conflict", /处理目标文件冲突/);
+  await runNativeRecoveryJourney(page, request, "conflict", /处理目标冲突/);
 });
 
 test("PATCH-20261111-2 policy-permitted overwrite still needs exact same-page destructive consent", async ({
@@ -4795,7 +4798,7 @@ test("PATCH-20261111-2 policy-permitted overwrite still needs exact same-page de
     page,
     request,
     "conflict_overwrite",
-    /处理目标文件冲突/,
+    /处理目标冲突/,
   );
 });
 

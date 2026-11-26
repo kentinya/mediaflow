@@ -3172,7 +3172,7 @@ describe("selected-run detail tabs", () => {
     const recovery = await within(detail).findByRole("region", {
       name: "条目审核与恢复",
     });
-    const title = await within(recovery).findByLabelText("搜索标题");
+    const title = await within(recovery).findByLabelText("标题");
     expect(title).toHaveValue("Movie.01");
     await user.clear(title);
     await user.type(title, "Operator edited metadata title");
@@ -3188,7 +3188,7 @@ describe("selected-run detail tabs", () => {
     // moves back under its own row without dropping the unsaved title.
     const inline = await findInlineEvidence(detail);
     expect(inline.closest(".mf-run-item-row")).toHaveTextContent("b.mkv");
-    expect(within(inline).getByLabelText("搜索标题")).toHaveValue(
+    expect(within(inline).getByLabelText("标题")).toHaveValue(
       "Operator edited metadata title",
     );
     expect(
@@ -3257,9 +3257,11 @@ describe("selected-run detail tabs", () => {
       name: "条目证据",
     });
     await within(evidence).findByText("文件证据：b.mkv");
-    // The readable body names the concrete blocker and the file's own result
-    // instead of surfacing the raw review tokens as the primary facts.
-    expect(within(evidence).getByText(/元数据候选需要确认/)).toBeVisible();
+    expect(
+      await within(evidence).findByRole("heading", {
+        name: /^b\.mkv$/,
+      }),
+    ).toBeVisible();
     // The technical next action, refusal token and fixed configuration stay
     // reachable inside the collapsed diagnostics instead of the readable body.
     await user.click(within(evidence).getByText(/技术诊断/));
@@ -3330,11 +3332,17 @@ describe("selected-run detail tabs", () => {
     const evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：b.mkv");
     // The current problem and its one legal decision lead the file body.
-    const reason = within(evidence).getByText(/识别结果需要确认/);
-    expect(reason).toBeVisible();
+    const fileHeading = await within(evidence).findByRole("heading", {
+      name: /^b\.mkv$/,
+    });
+    expect(fileHeading).toBeVisible();
+    expect(within(evidence).getByText("第 2 / 4 个文件")).toBeVisible();
     const decision = await within(evidence).findByLabelText("识别决策");
     expect(
-      reason.compareDocumentPosition(decision) &
+      within(decision).getByRole("heading", { name: "选择识别类型" }),
+    ).toBeVisible();
+    expect(
+      fileHeading.compareDocumentPosition(decision) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     // Historical empty result/target blocks no longer occupy the space above
@@ -3681,10 +3689,7 @@ describe("selected-run detail tabs", () => {
     // The original request is still in flight and the reopened panel waits
     // with the form disabled instead of offering a second submission.
     expect(
-      await within(reopenedRecovery).findByText(/请求尚未返回/),
-    ).toBeVisible();
-    expect(
-      within(reopenedRecovery).getByRole("button", {
+      await within(reopenedRecovery).findByRole("button", {
         name: "正在保存并重新分析…",
       }),
     ).toBeDisabled();
@@ -3904,7 +3909,7 @@ describe("selected-run detail tabs", () => {
       }),
     );
     expect(
-      within(summary).getByRole("button", { name: "正在受理…" }),
+      within(summary).getByRole("button", { name: "正在提交…" }),
     ).toBeDisabled();
     expect(confirmPosts).toBe(1);
 

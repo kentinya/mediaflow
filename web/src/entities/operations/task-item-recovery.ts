@@ -22,6 +22,7 @@ export interface RecoveryChoice {
   readonly id: string;
   readonly name: string;
   readonly description: string | null;
+  readonly provider?: string | null;
   readonly providerId: string | null;
   readonly mediaType: string | null;
   readonly year: number | null;
@@ -244,6 +245,7 @@ function readChoice(
       id: text(source, "provider_id"),
       name: text(source, "title"),
       description: optionalText(source, "original_title"),
+      provider: optionalText(source, "provider"),
       providerId: text(source, "provider_id"),
       mediaType: text(source, "media_type"),
       year: nullableCount(source, "canonical_year"),

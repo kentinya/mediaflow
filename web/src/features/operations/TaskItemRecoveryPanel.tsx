@@ -219,35 +219,8 @@ function mediaTypeLabel(value: string | null): string {
   return value === null || value === "" ? "类型未知" : value;
 }
 
-/** The one dialog heading for each legal decision kind. */
-const DIALOG_DECISION_TITLES: Readonly<Record<TaskItemDecisionKind, string>> = {
-  recognition: "确认识别类型",
-  metadata: "选择正确的作品",
-  metadata_correction: "修正作品搜索",
-  classification: "选择整理目标",
-  conflict: "处理目标文件冲突",
-};
-
-/** Plain-language context above the one card set for a decision kind. */
-const DIALOG_DECISION_INTROS: Readonly<Record<TaskItemDecisionKind, string>> = {
-  recognition:
-    "当前文件没有唯一匹配的识别类型，请选择本次整理使用的一种。保存后使用固定策略重新分析。",
-  metadata:
-    "当前文件有多个同样合法的作品，请选择本次整理使用的那一个。保存后使用固定策略重新分析。",
-  metadata_correction:
-    "没有找到匹配的作品。修改搜索信息并搜索，再选择正确的候选；保存前不会执行整理。",
-  classification:
-    "当前文件有多个合法的目标位置，请选择本次整理使用的那一个。保存后使用固定策略重新分析。",
-  conflict:
-    "目标位置已有文件。请选择本次处理方式；这里不会自动覆盖、删除或移动任何文件。",
-};
-
-/**
- * The Files-owned decision body approved for the manual-organize dialog: one
- * problem family badge, the current problem and a short reason, then the
- * server-provided options. The Task Center keeps its own inline wording.
- */
-const FILES_DECISION_HEADINGS: Readonly<
+/** Shared problem hierarchy from the approved offline design. */
+const DECISION_HEADINGS: Readonly<
   Record<
     TaskItemDecisionKind,
     { readonly badge: string; readonly title: string; readonly hint: string }
@@ -329,6 +302,7 @@ export interface TaskItemDecisionDraft {
   readonly correctedYear: string;
   readonly mediaType: string;
   readonly selectedProviderId: string;
+  readonly keepSearchConditions?: boolean;
   readonly metadataResult: MetadataSearchModel | null;
   readonly conflictStrategy: string;
   readonly confirmOverwrite: boolean;
@@ -339,6 +313,7 @@ const EMPTY_DECISION_KEY = JSON.stringify([null, null]);
 function decisionDraftFrom(
   decision: TaskItemDecision | null,
   decisionKey: string,
+  inlineRecovery: boolean,
 ): TaskItemDecisionDraft {
   if (decision === null) {
     return {
@@ -363,7 +338,9 @@ function decisionDraftFrom(
     mediaType: decision.mediaType ?? "movie",
     selectedProviderId: "",
     metadataResult: null,
-    conflictStrategy: decision.allowedStrategies[0] ?? "",
+    conflictStrategy: inlineRecovery
+      ? ""
+      : (decision.allowedStrategies[0] ?? ""),
     confirmOverwrite: false,
   };
 }
@@ -379,6 +356,8 @@ function sameDecisionInputs(
     left.correctedYear === right.correctedYear &&
     left.mediaType === right.mediaType &&
     left.selectedProviderId === right.selectedProviderId &&
+    Boolean(left.keepSearchConditions) ===
+      Boolean(right.keepSearchConditions) &&
     left.metadataResult === right.metadataResult &&
     left.conflictStrategy === right.conflictStrategy &&
     (left.conflictStrategy !== "overwrite" ||
@@ -472,6 +451,45 @@ export interface TaskItemRecoveryPanelProps {
   readonly hostedDiagnostics?: boolean;
   /** Whether the host's evidence already reports an actionable item. */
   readonly recoveryExpected?: boolean;
+  readonly evidenceFile?: {
+    readonly name: string;
+    readonly source: string;
+    readonly position?: { readonly index: number; readonly total: number };
+    readonly blockerKind: string | null;
+  };
+}
+
+const RECOVERY_FILE_ICONS: Readonly<Record<string, string>> = {
+  recognition: "◎",
+  metadata: "≡",
+  metadata_correction: "≡",
+  classification: "↳",
+  conflict: "◇",
+};
+
+function RecoveryFileHeader({
+  file,
+  kind,
+}: {
+  readonly file: NonNullable<TaskItemRecoveryPanelProps["evidenceFile"]>;
+  readonly kind: string | null;
+}) {
+  return (
+    <header className="mf-recovery-file">
+      <span className="mf-organize-reanalysis-file-icon" aria-hidden="true">
+        {RECOVERY_FILE_ICONS[kind ?? ""] ?? "▷"}
+      </span>
+      <div>
+        <p className="mf-recovery-file-position">
+          {file.position
+            ? `第 ${file.position.index} / ${file.position.total} 个文件`
+            : "文件证据"}
+        </p>
+        <h5>{file.name}</h5>
+        <p className="mf-exact-identity">{file.source}</p>
+      </div>
+    </header>
+  );
 }
 
 /** Native per-item decisions and analysis-only recovery in the selected run. */
@@ -491,6 +509,7 @@ export function TaskItemRecoveryPanel({
   onDecisionStatusChange,
   hostedDiagnostics = false,
   recoveryExpected = true,
+  evidenceFile,
 }: TaskItemRecoveryPanelProps) {
   const decisionMode = mode === "decision";
   const [actionBarTarget, setActionBarTarget] = useState<HTMLElement | null>(
@@ -648,12 +667,14 @@ export function TaskItemRecoveryPanel({
   // the form once the real identity arrives.
   const [internalDecisionDraft, setInternalDecisionDraft] =
     useState<TaskItemDecisionDraft>(() =>
-      decisionDraftFrom(decision, decisionKey),
+      decisionDraftFrom(decision, decisionKey, hostedDiagnostics),
     );
   const [resetDecisionKey, setResetDecisionKey] = useState(decisionKey);
   if (resetDecisionKey !== decisionKey) {
     setResetDecisionKey(decisionKey);
-    setInternalDecisionDraft(decisionDraftFrom(decision, decisionKey));
+    setInternalDecisionDraft(
+      decisionDraftFrom(decision, decisionKey, hostedDiagnostics),
+    );
   }
   // A draft belongs to one exact checkpoint/decision.  While the first model
   // read is still pending (the empty identity) the caller's draft is shown so
@@ -676,7 +697,7 @@ export function TaskItemRecoveryPanel({
       ...inputs,
       dirty: !sameDecisionInputs(
         inputs,
-        decisionDraftFrom(decision, decisionKey),
+        decisionDraftFrom(decision, decisionKey, hostedDiagnostics),
       ),
     };
     if (!callerDraftMatches) setInternalDecisionDraft(next);
@@ -698,6 +719,7 @@ export function TaskItemRecoveryPanel({
       ...patch,
       metadataResult: null,
       selectedProviderId: "",
+      keepSearchConditions: false,
     });
   };
   // A stored draft belongs to one exact checkpoint/decision identity.  Once
@@ -710,8 +732,16 @@ export function TaskItemRecoveryPanel({
       return;
     }
     if (decisionDraft.decisionKey === decisionKey) return;
-    onDecisionDraftChange?.(decisionDraftFrom(decision, decisionKey));
-  }, [decision, decisionDraft, decisionKey, onDecisionDraftChange]);
+    onDecisionDraftChange?.(
+      decisionDraftFrom(decision, decisionKey, hostedDiagnostics),
+    );
+  }, [
+    decision,
+    decisionDraft,
+    decisionKey,
+    hostedDiagnostics,
+    onDecisionDraftChange,
+  ]);
 
   const refreshLinkedReads = () => {
     void queryClient.invalidateQueries({
@@ -1086,6 +1116,7 @@ export function TaskItemRecoveryPanel({
         updateRecoverySession({
           decisionReceipt: {
             checkpointVersion: updated.checkpoint.checkpointVersion,
+            kind,
             label,
           },
         });
@@ -1105,6 +1136,7 @@ export function TaskItemRecoveryPanel({
             updated.checkpoint.checkpointVersion,
             updated.decision?.kind ?? null,
           ]),
+          hostedDiagnostics,
         ),
       );
       if (updated.checkpoint.permittedActionIds.includes("retry")) {
@@ -1184,10 +1216,11 @@ export function TaskItemRecoveryPanel({
         updateDecisionDraft({
           metadataResult: result.model,
           selectedProviderId: "",
+          keepSearchConditions: false,
         });
         updateRecoverySession({
           message:
-            result.model.candidates.length === 0
+            !hostedDiagnostics && result.model.candidates.length === 0
               ? "没有找到候选项。修改标题后再搜索。"
               : null,
         });
@@ -1661,7 +1694,14 @@ export function TaskItemRecoveryPanel({
   if (query.data === undefined) {
     return (
       <section className="mf-count-section" aria-label="条目审核与恢复">
-        <h5>审核与恢复</h5>
+        {evidenceFile ? (
+          <RecoveryFileHeader
+            file={evidenceFile}
+            kind={evidenceFile.blockerKind}
+          />
+        ) : (
+          <h5>审核与恢复</h5>
+        )}
         <StatusBanner variant="info" title="正在读取条目恢复状态">
           <p>
             这里只读取已保存的决策与检查点，不会触发 Metadata Provider 搜索。
@@ -1673,7 +1713,14 @@ export function TaskItemRecoveryPanel({
   if (!query.data.ok) {
     return (
       <section className="mf-count-section" aria-label="条目审核与恢复">
-        <h5>审核与恢复</h5>
+        {evidenceFile ? (
+          <RecoveryFileHeader
+            file={evidenceFile}
+            kind={evidenceFile.blockerKind}
+          />
+        ) : (
+          <h5>审核与恢复</h5>
+        )}
         <StatusBanner variant="warning" title={query.data.failure.title}>
           <p>{query.data.failure.nextAction}</p>
           <RefreshControl onRefresh={refreshReads} />
@@ -2049,9 +2096,22 @@ export function TaskItemRecoveryPanel({
           </details>
         </>
       )}
+      {evidenceFile && activePreparation === null && (
+        <RecoveryFileHeader
+          file={evidenceFile}
+          kind={
+            decision?.kind ?? decisionReceipt?.kind ?? evidenceFile.blockerKind
+          }
+        />
+      )}
       {busy &&
         pendingAction !== null &&
-        !(pendingAction === "continue" && savedDecisionAnalysisVisible) && (
+        !(pendingAction === "continue" && savedDecisionAnalysisVisible) &&
+        !(
+          hostedDiagnostics &&
+          decision !== null &&
+          (pendingAction === "decision" || pendingAction === "search")
+        ) && (
           <StatusBanner variant="info" title="操作请求仍在进行">
             <p>
               “{PENDING_ACTION_LABELS[pendingAction] ?? pendingAction}
@@ -2132,9 +2192,17 @@ export function TaskItemRecoveryPanel({
           mediaType={effectiveDecisionDraft.mediaType}
           onMediaType={(value) => updateSearchCondition({ mediaType: value })}
           selectedProviderId={effectiveDecisionDraft.selectedProviderId}
+          keepSearchConditions={effectiveDecisionDraft.keepSearchConditions}
+          onKeepSearchConditions={() =>
+            updateDecisionDraft({
+              selectedProviderId: "",
+              keepSearchConditions: true,
+            })
+          }
           onSelectProvider={(providerId, candidateMediaType) =>
             updateDecisionDraft({
               selectedProviderId: providerId,
+              keepSearchConditions: false,
               mediaType: candidateMediaType,
             })
           }
@@ -2226,6 +2294,8 @@ function DecisionForm(props: {
   readonly onMediaType: (value: string) => void;
   readonly selectedProviderId: string;
   readonly onSelectProvider: (providerId: string, mediaType: string) => void;
+  readonly keepSearchConditions?: boolean;
+  readonly onKeepSearchConditions?: () => void;
   readonly metadataResult: MetadataSearchModel | null;
   readonly conflictStrategy: string;
   readonly onConflictStrategy: (value: string) => void;
@@ -2252,7 +2322,10 @@ function DecisionForm(props: {
   const compact = dialog || recovery;
   const canSave =
     decision.kind === "metadata_correction"
-      ? props.searchText.trim() !== ""
+      ? props.searchText.trim() !== "" &&
+        (!recovery ||
+          props.keepSearchConditions ||
+          props.selectedProviderId !== "")
       : decision.kind === "conflict"
         ? props.conflictStrategy !== "" &&
           (props.conflictStrategy !== "overwrite" || props.confirmOverwrite)
@@ -2268,22 +2341,25 @@ function DecisionForm(props: {
       {props.busy ? "正在保存并重新分析…" : "保存并重新分析"}
     </button>
   );
-  const ignoreButton = props.canIgnore ? (
-    <button
-      type="button"
-      className={
-        dialog
-          ? "mf-link-button mf-organize-decision-ignore"
-          : recovery
-            ? "mf-link-button mf-recovery-ignore"
-            : "mf-button mf-button-secondary"
-      }
-      disabled={props.disabled}
-      onClick={props.onIgnore}
-    >
-      {dialog ? "忽略此文件" : "忽略此条目"}
-    </button>
-  ) : null;
+  const ignoreButton =
+    props.canIgnore &&
+    (!recovery ||
+      (decision.kind !== "classification" && decision.kind !== "conflict")) ? (
+      <button
+        type="button"
+        className={
+          dialog
+            ? "mf-link-button mf-organize-decision-ignore"
+            : recovery
+              ? "mf-link-button mf-recovery-ignore"
+              : "mf-button mf-button-secondary"
+        }
+        disabled={props.disabled}
+        onClick={props.onIgnore}
+      >
+        {compact ? "忽略此文件" : "忽略此条目"}
+      </button>
+    ) : null;
   const actionGroup =
     dialog || recovery ? (
       <div className="mf-actions">
@@ -2365,40 +2441,33 @@ function DecisionForm(props: {
     <div
       className={
         recovery
-          ? "mf-organize-decision mf-recovery-decision"
+          ? "mf-recovery-decision"
           : dialog
             ? "mf-organize-decision-files"
             : "mf-count-section"
       }
       aria-label={`${DECISION_LABELS[decision.kind]}决策`}
     >
-      {dialog ? (
+      {compact ? (
         <>
           <span className="mf-organize-decision-type">
-            {FILES_DECISION_HEADINGS[decision.kind].badge}
+            {DECISION_HEADINGS[decision.kind].badge}
           </span>
           <h4 className="mf-organize-decision-title">
-            {FILES_DECISION_HEADINGS[decision.kind].title}
+            {DECISION_HEADINGS[decision.kind].title}
           </h4>
           <p className="mf-organize-decision-intro">
-            {FILES_DECISION_HEADINGS[decision.kind].hint}
+            {recovery && decision.kind === "metadata_correction"
+              ? "当前搜索条件没有找到匹配的作品。可以调整标题、年份或作品类型后再搜索。"
+              : DECISION_HEADINGS[decision.kind].hint}
           </p>
         </>
       ) : (
         <>
-          <h6>
-            {compact
-              ? DIALOG_DECISION_TITLES[decision.kind]
-              : `待处理的${DECISION_LABELS[decision.kind]}决策`}
-          </h6>
-          {decision.status && !compact && (
+          <h6>待处理的{DECISION_LABELS[decision.kind]}决策</h6>
+          {decision.status && (
             <p className="mf-dashboard-meta">审核状态：{decision.status}</p>
           )}
-          {compact ? (
-            <p className="mf-organize-decision-intro">
-              {DIALOG_DECISION_INTROS[decision.kind]}
-            </p>
-          ) : null}
         </>
       )}
       {decision.kind === "metadata_correction" && decision.reason ? (
@@ -2407,7 +2476,9 @@ function DecisionForm(props: {
             compact ? "mf-organize-decision-hint" : "mf-dashboard-meta"
           }
         >
-          上次修正未通过验证：{decision.reason}
+          {recovery
+            ? decision.reason
+            : `上次修正未通过验证：${decision.reason}`}
         </p>
       ) : null}
 
@@ -2470,14 +2541,18 @@ function DecisionForm(props: {
               String(choice.rank),
               props.selectedChoice === String(choice.rank),
               () => props.onSelectChoice(String(choice.rank)),
-              `候选 ${choice.rank}`,
-              `${choice.name}${choice.year === null ? "" : ` (${choice.year})`}`,
+              recovery ? null : `候选 ${choice.rank}`,
+              `${choice.name}${choice.year === null ? "" : recovery ? ` · ${choice.year}` : ` (${choice.year})`}`,
               [
                 mediaTypeLabel(choice.mediaType),
                 choice.description === null
                   ? null
                   : `原名 ${choice.description}`,
-                choice.providerId === null ? null : `ID ${choice.providerId}`,
+                choice.providerId === null
+                  ? null
+                  : recovery && choice.provider
+                    ? `${choice.provider.toUpperCase()} #${choice.providerId}`
+                    : `ID ${choice.providerId}`,
               ]
                 .filter((part): part is string => part !== null)
                 .join(" · "),
@@ -2570,7 +2645,9 @@ function DecisionForm(props: {
         <>
           <div className="mf-organize-decision-fields">
             <label className="mf-organize-decision-field mf-organize-decision-field-title">
-              <span className="mf-organize-decision-label">搜索标题</span>
+              <span className="mf-organize-decision-label">
+                {recovery ? "标题" : "搜索标题"}
+              </span>
               <input
                 value={props.searchText}
                 maxLength={500}
@@ -2579,13 +2656,15 @@ function DecisionForm(props: {
               />
             </label>
             <label className="mf-organize-decision-field mf-organize-decision-field-year">
-              <span className="mf-organize-decision-label">年份（可留空）</span>
+              <span className="mf-organize-decision-label">
+                {recovery ? "年份" : "年份（可留空）"}
+              </span>
               <input
                 type="number"
                 min="1870"
                 max="2100"
                 value={props.correctedYear}
-                placeholder="例如 2024"
+                placeholder={recovery ? "不限" : "例如 2024"}
                 disabled={props.disabled}
                 onChange={(event) => props.onCorrectedYear(event.target.value)}
               />
@@ -2602,9 +2681,11 @@ function DecisionForm(props: {
               </select>
             </label>
           </div>
-          <p className="mf-organize-decision-hint">
-            标题、年份和作品类型只用于外部元数据搜索，不会修改文件名或目录。
-          </p>
+          {!recovery && (
+            <p className="mf-organize-decision-hint">
+              标题、年份和作品类型只用于外部元数据搜索，不会修改文件名或目录。
+            </p>
+          )}
           <div className="mf-actions">
             <button
               type="button"
@@ -2616,40 +2697,65 @@ function DecisionForm(props: {
               }
               onClick={props.onSearch}
             >
-              {props.busy ? "正在搜索…" : dialog ? "搜索元数据" : "搜索作品"}
+              {props.busy ? "正在搜索…" : "搜索元数据"}
             </button>
           </div>
+          {recovery && props.metadataResult?.candidates.length === 0 && (
+            <StatusBanner variant="warning" title="当前条件没有找到合适候选">
+              <p>保留输入，调整标题、作品类型或清空年份后再搜索。</p>
+            </StatusBanner>
+          )}
           {props.metadataResult && (
             <fieldset
+              aria-label={recovery ? "可用处理选项" : undefined}
               className={`mf-organize-decision-options${dialog ? " mf-organize-decision-options-files" : ""}`}
             >
-              <legend className="mf-organize-decision-legend">
-                搜索结果（{props.metadataResult.candidates.length} 项）
-              </legend>
+              {!recovery && (
+                <legend className="mf-organize-decision-legend">
+                  搜索结果（{props.metadataResult.candidates.length} 项）
+                </legend>
+              )}
               {props.metadataResult.candidates.map((candidate, index) =>
                 dialogChoice(
-                  candidate.providerId,
-                  props.selectedProviderId === candidate.providerId,
+                  `${candidate.mediaType}:${candidate.providerId}`,
+                  props.selectedProviderId === candidate.providerId &&
+                    (!recovery || props.mediaType === candidate.mediaType),
                   () =>
                     props.onSelectProvider(
                       candidate.providerId,
                       candidate.mediaType,
                     ),
-                  `结果 ${index + 1}`,
+                  recovery ? null : `结果 ${index + 1}`,
                   `${candidate.title}${
-                    candidate.year ? ` (${candidate.year})` : ""
+                    candidate.year
+                      ? recovery
+                        ? ` · ${candidate.year}`
+                        : ` (${candidate.year})`
+                      : ""
                   }`,
                   [
                     mediaTypeLabel(candidate.mediaType),
                     candidate.originalTitle === null
                       ? null
                       : `原名 ${candidate.originalTitle}`,
-                    `ID ${candidate.providerId}`,
+                    recovery
+                      ? `${props.metadataResult?.provider.toUpperCase()} #${candidate.providerId}`
+                      : `ID ${candidate.providerId}`,
                   ]
                     .filter((part): part is string => part !== null)
                     .join(" · "),
                 ),
               )}
+              {recovery &&
+                props.onKeepSearchConditions &&
+                dialogChoice(
+                  "keep-search-conditions",
+                  props.keepSearchConditions === true,
+                  props.onKeepSearchConditions,
+                  null,
+                  "保留当前搜索条件",
+                  "交由后续分析重新匹配",
+                )}
               {props.metadataResult.truncated && (
                 <p className="mf-organize-decision-hint">
                   结果数量受策略限制；如未找到目标，请调整标题再次搜索。
@@ -2687,14 +2793,9 @@ function DecisionForm(props: {
               String(choice.rank),
               props.selectedChoice === String(choice.rank),
               () => props.onSelectChoice(String(choice.rank)),
-              `目标 ${choice.rank}`,
+              recovery ? null : `目标 ${choice.rank}`,
               recovery
-                ? `${choice.mediaLibraryId ?? "媒体库"} / ${
-                    choice.relativePath
-                      ?.split("/")
-                      .filter((part) => part !== "")
-                      .at(-1) ?? "根目录"
-                  }`
+                ? `${choice.mediaLibraryId ?? "媒体库"} / ${choice.relativePath || "根目录"}`
                 : choice.name,
               recovery
                 ? [
@@ -2768,7 +2869,12 @@ function DecisionForm(props: {
             role="radiogroup"
             aria-label="冲突处理方式"
           >
-            {decision.allowedStrategies.map((strategy) =>
+            {(recovery
+              ? ["rename", "skip", "overwrite"].filter((strategy) =>
+                  decision.allowedStrategies.includes(strategy),
+                )
+              : decision.allowedStrategies
+            ).map((strategy) =>
               dialogChoice(
                 strategy,
                 props.conflictStrategy === strategy,
@@ -2794,7 +2900,9 @@ function DecisionForm(props: {
                 }
               />
               <span>
-                我明确选择覆盖此冲突目标；本次仍只保存决定并重新分析。
+                {recovery
+                  ? "我选择按许可覆盖此目标，执行前再次核对实际影响"
+                  : "我明确选择覆盖此冲突目标；本次仍只保存决定并重新分析。"}
               </span>
             </label>
           )}

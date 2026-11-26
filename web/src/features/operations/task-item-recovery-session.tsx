@@ -23,6 +23,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { TaskItemDecisionKind } from "../../entities/operations/task-item-recovery";
+
 export type TaskItemRecoveryPendingAction =
   "decision" | "continue" | "ignore" | "search" | "prepare" | "confirm";
 
@@ -66,6 +68,7 @@ export interface TaskItemRecoverySessionState {
   readonly analysis: TaskItemRecoveryAnalysisState | null;
   readonly decisionReceipt: {
     readonly checkpointVersion: string;
+    readonly kind: TaskItemDecisionKind;
     readonly label: string;
   } | null;
 }

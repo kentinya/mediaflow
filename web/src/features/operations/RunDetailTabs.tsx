@@ -1414,6 +1414,19 @@ function RunItemsSection({
     itemsPage.items.some((item) => item.itemId === evidenceItem);
   const showStandaloneEvidence =
     evidenceItem !== null && !evidenceOnCurrentPage;
+  // The cursor and filter do not expose an ordinal in the whole task.
+  const evidencePosition =
+    evidenceOnCurrentPage &&
+    itemsPage !== null &&
+    state.itemCursor === null &&
+    state.itemStatus === null
+      ? {
+          index:
+            itemsPage.items.findIndex((item) => item.itemId === evidenceItem) +
+            1,
+          total: itemsPage.total,
+        }
+      : undefined;
   const standaloneEvidenceNotice: {
     readonly variant: "info" | "warning";
     readonly title: string;
@@ -1449,6 +1462,7 @@ function RunItemsSection({
         id={evidencePanelId}
         runId={runId}
         itemId={evidenceItem}
+        filePosition={evidencePosition}
         active={active}
         decisionDraft={evidenceDecisionDrafts[evidenceItem]}
         onDecisionDraftChange={(draft) =>
@@ -1969,6 +1983,7 @@ function RunEvidenceSection({
   runId,
   itemId,
   active,
+  filePosition,
   decisionDraft,
   onDecisionDraftChange,
 }: {
@@ -1976,6 +1991,7 @@ function RunEvidenceSection({
   readonly runId: string;
   readonly itemId: string;
   readonly active: boolean;
+  readonly filePosition?: { readonly index: number; readonly total: number };
   /** The same file's unsaved decision inputs, owned outside the paged list. */
   readonly decisionDraft?: TaskItemDecisionDraft;
   readonly onDecisionDraftChange?: (draft: TaskItemDecisionDraft) => void;
@@ -2081,19 +2097,7 @@ function RunEvidenceSection({
               <h4 className="mf-visually-hidden">
                 文件证据：{fileNameOf(item.sourcePath)}
               </h4>
-              {recoveryActionable ? (
-                <>
-                  <p className="mf-exact-identity mf-dashboard-meta">
-                    {item.storageId}:{item.sourcePath}
-                  </p>
-                  {checkpoint.blockerKind !== null && (
-                    <p className="mf-dashboard-meta">
-                      {BLOCKER_REASONS[checkpoint.blockerKind] ??
-                        "需要人工处理决定"}
-                    </p>
-                  )}
-                </>
-              ) : (
+              {!recoveryActionable && (
                 <>
                   <dl className="mf-run-evidence-facts">
                     <div>
@@ -2182,6 +2186,16 @@ function RunEvidenceSection({
                 active={active}
                 hostedDiagnostics
                 recoveryExpected={recoveryActionable}
+                evidenceFile={
+                  recoveryActionable
+                    ? {
+                        name: fileNameOf(item.sourcePath),
+                        source: `${item.storageId}:${item.sourcePath}`,
+                        position: filePosition,
+                        blockerKind: checkpoint.blockerKind,
+                      }
+                    : undefined
+                }
                 decisionDraft={decisionDraft}
                 onDecisionDraftChange={onDecisionDraftChange}
               />
