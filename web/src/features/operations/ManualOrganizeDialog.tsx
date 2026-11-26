@@ -456,7 +456,8 @@ const OVERVIEW_STATUS_LABELS: Readonly<Record<OrganizeOverviewStatus, string>> =
 
 /** The Files footer slot that owns the current legal per-file save action. */
 const FILES_REVIEW_ACTION_ID = "mf-organize-files-review-action";
-const FILES_ANALYSIS_RETURN_MS = 380;
+const FILES_ANALYSIS_RETURN_MS = 460;
+const ORGANIZE_PLAN_READING_MS = 900;
 
 type FilesStatusTone = "blue" | "green" | "amber" | "red" | "neutral";
 
@@ -767,6 +768,7 @@ function overviewStatusFor(
 ): OrganizeOverviewStatus {
   if (admittedItemIds.has(item.itemId)) return "recorded";
   if (settled !== null) return "recorded";
+  if (item.capabilities?.verdict === "capability_gap") return "recorded";
   if (!item.current || !executableIds.includes(item.itemId)) return "pending";
   return excluded.has(item.itemId) ? "ready" : "included";
 }
@@ -780,6 +782,9 @@ function overviewPendingReason(
 ): string {
   const settled = taskItemSettledStatus(taskFact);
   if (settled !== null) return settledDecisionReason(settled);
+  if (item.capabilities?.verdict === "capability_gap") {
+    return "存储不支持计划操作。该文件未进入执行，原文件未变更。";
+  }
   if (previewItemTechnicalStage(item) === "metadata") {
     return metadataTechnicalFailureSummary(organizeTaskId, false);
   }
@@ -795,12 +800,6 @@ function overviewPendingReason(
   }
   if (!item.current) {
     return "该文件已不在当前方案中；需要重新分析后才能再次核对或纳入。";
-  }
-  if (item.capabilities?.verdict === "capability_gap") {
-    const missing = item.capabilities.missing.join("、");
-    return missing === ""
-      ? "目标存储缺少所需能力；本次不会执行整理。"
-      : `目标存储缺少所需能力：${missing}；本次不会执行整理。`;
   }
   if (item.failure !== null) return item.failure.message;
   return item.nextAction ?? "该文件当前未就绪；核对当前事实后重新分析。";
@@ -910,6 +909,13 @@ export function ManualOrganizeDialog({
   );
   const preview: OrganizePreviewModel | undefined =
     previewQuery.data?.ok === true ? previewQuery.data.model : undefined;
+  const linkedPlanId = preparation?.previewId;
+  const planReadingStarted = useRef<{ id: string; time: number } | null>(null);
+  useLayoutEffect(() => {
+    planReadingStarted.current = linkedPlanId
+      ? { id: linkedPlanId, time: performance.now() }
+      : null;
+  }, [linkedPlanId]);
   /**
    * The shared preparation first screen owns a settlement when this same card
    * initiated the preparation or saw the same work as live, and had not
@@ -944,11 +950,6 @@ export function ManualOrganizeDialog({
   const preparationHandoffReadFailed =
     previewSummaryId !== undefined &&
     preparationHandoffFailure === previewSummaryId;
-  const preparationHandoffChecking =
-    previewSummaryId !== undefined &&
-    !organizeFlowEnded &&
-    !preparationPlanObserved &&
-    !preparationHandoffReadFailed;
   useEffect(() => {
     if (
       previewSummaryId === undefined ||
@@ -960,6 +961,7 @@ export function ManualOrganizeDialog({
     }
     const previewId = previewSummaryId;
     let active = true;
+    let handoffTimer: number | undefined;
     // A fresh read through the same bounded discovery endpoint, issued after
     // the summary resolved. It never reuses a poll that may have started
     // before this exact handoff.
@@ -978,7 +980,20 @@ export function ManualOrganizeDialog({
           result.model.previewId === previewId &&
           result.model.organizeFlow?.continuable === true
         ) {
-          setPreparationPlanObserved(true);
+          const started = planReadingStarted.current;
+          const remaining =
+            window.matchMedia?.("(prefers-reduced-motion: no-preference)")
+              .matches && started?.id === previewId
+              ? ORGANIZE_PLAN_READING_MS - (performance.now() - started.time)
+              : 0;
+          if (remaining > 0) {
+            handoffTimer = window.setTimeout(
+              () => setPreparationPlanObserved(true),
+              remaining,
+            );
+          } else {
+            setPreparationPlanObserved(true);
+          }
         }
       })
       .catch(() => {
@@ -986,6 +1001,7 @@ export function ManualOrganizeDialog({
       });
     return () => {
       active = false;
+      window.clearTimeout(handoffTimer);
     };
   }, [
     discoveryId,
@@ -1510,6 +1526,7 @@ export function ManualOrganizeDialog({
     // review guards and then returns to the overview with focus on this row.
     setFilesSettledDecision(matched);
     void previewQuery.refetch({ cancelRefetch: false });
+    void preparationQuery.refetch();
     // The status key changes exactly when a durable result appears or ends;
     // the objects it was derived from are the same render's exact reads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1623,6 +1640,22 @@ export function ManualOrganizeDialog({
     ...planOverviewRows,
     ...recordOnlyOverviewRows,
   ];
+  // Keep the overview that owns the final decision. Storage capability
+  // refusals are also readable as file records on first entry.
+  const hasCapabilityRefusal = filesOverviewRows.some(
+    (row) => row.item?.capabilities?.verdict === "capability_gap",
+  );
+  const filesSettledOverview =
+    filesHost &&
+    organizeFlowEnded &&
+    preparation?.organizeFlow?.status === "completed" &&
+    filesOverviewRows.length > 0 &&
+    filesOverviewRows.every(
+      (row) =>
+        row.settled !== null ||
+        row.item?.capabilities?.verdict === "capability_gap",
+    ) &&
+    (preparationEnteredReview || hasCapabilityRefusal);
   const filesOverviewCount = (status: OrganizeOverviewStatus) =>
     filesOverviewRows.filter((row) => row.status === status).length;
   /**
@@ -2117,12 +2150,20 @@ export function ManualOrganizeDialog({
         .catch(() => {
           // The detail owns authorization, failures and rereading.
         });
+      const animate = window.matchMedia?.(
+        "(prefers-reduced-motion: no-preference)",
+      ).matches;
       let timer: number | undefined;
-      await Promise.race([
-        reads,
-        new Promise<void>((resolve) => {
-          timer = window.setTimeout(resolve, 500);
-        }),
+      await Promise.all([
+        Promise.race([
+          reads,
+          new Promise<void>((resolve) => {
+            timer = window.setTimeout(resolve, 500);
+          }),
+        ]),
+        animate
+          ? new Promise<void>((resolve) => window.setTimeout(resolve, 400))
+          : undefined,
       ]);
       window.clearTimeout(timer);
       if (layer.layerRef.current === null) return;
@@ -2769,6 +2810,9 @@ export function ManualOrganizeDialog({
       action.taskItemId === taskItemId
     ) {
       void previewQuery.refetch({ cancelRefetch: false });
+      // A final decision can complete the linked Task in the same write.
+      // The linked plan id stays the same, so a plan read alone cannot show it.
+      void preparationQuery.refetch();
     }
   };
 
@@ -3094,12 +3138,8 @@ export function ManualOrganizeDialog({
     if (executable) {
       arriveAtOverview({
         kind: "success",
-        title: "已重新分析",
         planUpdated: true,
-        text:
-          item.operation === "SKIP"
-            ? `「${filesDecisionReturn.filename}」已重新分析，并按当前决定明确跳过文件操作；整理尚未提交。`
-            : `「${filesDecisionReturn.filename}」已可确认。整理方案已更新，整理尚未提交。`,
+        text: "",
       });
       return;
     }
@@ -3441,8 +3481,11 @@ export function ManualOrganizeDialog({
   const preparationStoppedTitle = (() => {
     if (preparation === undefined) return null;
     if (primaryLimitStopped) return "超出主文件上限";
-    if (preparation.status === "failed") return "准备失败";
     if (preparation.status === "cancelled") return "整理准备已取消";
+    if (preparation.progress.materialRefusal !== null) {
+      return "未能完整检查所选目录";
+    }
+    if (preparation.status === "failed") return "准备失败";
     if (preparationSummaryReadFailed) return "计划摘要暂时无法读取";
     if (preparationNoPrimarySources) {
       return preparation.progress.incomplete
@@ -3450,19 +3493,20 @@ export function ManualOrganizeDialog({
         : "未找到可整理的主文件";
     }
     if (preparationManualAnalysisAvailable) return "等待重新运行分析";
-    if (
-      preparation.progress.incomplete &&
-      preparation.progress.materialRefusal !== null
-    ) {
-      return "准备未完成";
-    }
     return null;
   })();
   const preparationTerminalFirstScreen =
     organizeFlowEnded &&
     preparationStoppedTitle !== null &&
     !preparationEnteredReview &&
-    (preparationStartedFull || preparationObservedLive);
+    (preparationStartedFull ||
+      preparationObservedLive ||
+      (filesHost &&
+        summaryPreviewId === "" &&
+        (preparation?.status === "cancelled" ||
+          preparationNoPrimarySources ||
+          (!primaryLimitStopped &&
+            preparation?.progress.materialRefusal != null))));
   const firstPlanPreparationView =
     session.phase === "submitting" ||
     preparationUnavailable ||
@@ -3527,14 +3571,6 @@ export function ManualOrganizeDialog({
         icon: "!",
       };
     }
-    if (preparationHandoffChecking) {
-      return {
-        title: "正在核对准备状态",
-        copy: "已读取原计划摘要；正在核对同一准备与关联任务是否可以继续，确认后进入复核。",
-        tone: "blue" as const,
-        busy: true,
-      };
-    }
     if (preparationWorkerBlocking) {
       return {
         title: "后台暂不可用",
@@ -3554,19 +3590,20 @@ export function ManualOrganizeDialog({
           : preparationManualAnalysisAvailable
             ? "后台当前没有继续生成方案；无需重新提交，可重新运行同一零变更分析。"
             : preparationNoPrimarySources
-              ? "本次没有生成整理方案，也没有整理任何文件；请调整所选范围后重新发起。"
+              ? "检查完成，所选范围内没有可整理的主文件。本次未生成方案，文件仍在原处。"
               : preparation?.status === "cancelled"
                 ? summaryPreviewId === ""
                   ? "后台已停止检查。本次未生成可确认方案，原文件仍在。"
                   : "后台已停止检查。本次不再提供确认；已生成的原计划摘要保留为只读历史，原文件仍在。"
                 : preparation?.progress.incomplete
-                  ? "遍历未完整，本次未产生可确认方案；请缩小选择范围后重新发起。"
+                  ? "遍历达到范围限制，本次未产生可确认方案，也未变更媒体。回到文件页缩小范围。"
                   : "后台检查未完成，没有产生可确认方案，也未修改文件；请重新读取或从文件页重新发起。";
       return {
         title: preparationStoppedTitle,
         copy,
         tone:
           preparation?.status === "cancelled" ||
+          preparationNoPrimarySources ||
           preparationManualAnalysisAvailable ||
           preparationSummaryReadFailed
             ? ("amber" as const)
@@ -3598,7 +3635,10 @@ export function ManualOrganizeDialog({
       preparation.status !== "analyzing"
     ) {
       return {
-        title: "部分来源暂时无法读取",
+        title:
+          preparation.progress.errorEntries === 1
+            ? "有一个来源暂时无法读取"
+            : "部分来源暂时无法读取",
         copy: "该文件不可纳入本批。已完成检查的其他文件仍可继续生成方案。",
         tone: "amber" as const,
         busy: false,
@@ -3672,8 +3712,10 @@ export function ManualOrganizeDialog({
           : preparationSummaryReadFailed
             ? "计划已生成 · 摘要读取失败"
             : preparationNoPrimarySources
-              ? "检查完成 · 未产生可整理的主文件"
-              : "准备已停止";
+              ? "找到 0 个主文件"
+              : preparation?.progress.materialRefusal !== null
+                ? "发现范围不完整"
+                : "准备已停止";
     }
     const found =
       preparationPrimarySourceCount > 0
@@ -3688,12 +3730,17 @@ export function ManualOrganizeDialog({
         ? ` · ${preparation.progress.errorEntries} 个读取失败`
         : "";
     const counts = `${found}${unstable}${readFailures}`;
+    if (
+      preparationSourceReadIncomplete &&
+      preparation.previewId === null &&
+      !preparation.frozen
+    ) {
+      return `${preparationPrimarySourceCount} 个主文件检查完成${readFailures}`;
+    }
     if (preparation.previewId !== null)
-      return preview === undefined
-        ? `${counts} · 方案已生成，正在读取`
-        : `${counts} · 方案已读取，${
-            preparationHandoffReadFailed ? "准备状态待重新核对" : "正在核对准备"
-          }`;
+      return preparationHandoffReadFailed
+        ? "计划已生成 · 准备状态待重新核对"
+        : "计划已生成 · 正在读取";
     if (preparation.frozen) return `${counts} · 来源已冻结，正在分析`;
     switch (preparation.status) {
       case "queued":
@@ -4271,19 +4318,41 @@ export function ManualOrganizeDialog({
       </div>
     ) : null;
 
+  const renderSourceReadFindings = (labelText: string) =>
+    preparationSourceReadIncomplete && preparation !== undefined ? (
+      <details className="mf-organize-overview-refused">
+        <summary>
+          {labelText} · {preparation.progress.errorEntries} 项
+        </summary>
+        {preparation.progress.findings
+          .filter((finding) => finding.kind === "error")
+          .map((finding) => (
+            <p key={finding.path} className="mf-exact-identity">
+              {finding.path} · {label(REASON_LABELS, finding.reason)}
+            </p>
+          ))}
+        <p>未能读取来源，该范围未进入计划。其余已核对的文件仍可确认。</p>
+      </details>
+    ) : null;
+
   const renderFilesOverview = () => {
     if (preview === undefined) return null;
     const pendingCount = filesOverviewCount("pending");
     const includedCount = filesOverviewCount("included");
     const recordedCount = filesOverviewCount("recorded");
-    const blocker = confirmationBlocker;
+    const decisionSettled = filesOverviewRows.some(
+      (row) => row.settled !== null,
+    );
+    const blocker = filesSettledOverview ? null : confirmationBlocker;
     const tag = preparationStatusRunning
       ? "分析中"
       : blocker !== null
         ? "暂不能确认"
         : filesConfirmableCount > 0
           ? "可确认"
-          : "复核中";
+          : pendingCount > 0
+            ? "复核中"
+            : "复核结果";
     const copy = preparationStatusRunning
       ? "后台正在重新分析同一准备；新的当前方案就绪前，以下内容只供核对，不能确认。"
       : blocker !== null
@@ -4292,9 +4361,7 @@ export function ManualOrganizeDialog({
           }`
         : filesConfirmableCount > 0
           ? "核对逐项去向，统一确认本次要整理的文件；确认前不会修改任何文件。"
-          : includedCount === 0
-            ? "当前没有纳入任何文件；打开任一就绪文件并选择纳入。"
-            : "本次没有可确认的文件，仍可查看每项的当前状态。";
+          : "本次没有可确认的文件，仍可查看每项的当前状态。";
     const renderRow = ({
       item,
       record,
@@ -4371,13 +4438,20 @@ export function ManualOrganizeDialog({
               filesTaskItemFacts.get(item.itemId),
               organizeFlowEnded,
             )
-          : status === "recorded"
-            ? settled === null
-              ? "该文件已受理执行；独立结果以任务中心的原任务详情为准，不会重放。"
-              : settledDecisionReason(settled.status)
-            : status === "included"
-              ? "已纳入本次整理；打开后可继续核对或暂不纳入。"
-              : "可确认；打开后可将该文件纳入本次整理。";
+          : item.capabilities?.verdict === "capability_gap"
+            ? overviewPendingReason(
+                item,
+                filesOrganizeTaskId,
+                undefined,
+                organizeFlowEnded,
+              )
+            : status === "recorded"
+              ? settled === null
+                ? "该文件已受理执行；独立结果以任务中心的原任务详情为准，不会重放。"
+                : settledDecisionReason(settled.status)
+              : status === "included"
+                ? "已纳入本次整理；打开后可继续核对或暂不纳入。"
+                : "可确认；打开后可将该文件纳入本次整理。";
       const compact = status === "ready" || status === "included";
       const summaryLine =
         item.operation === null
@@ -4549,7 +4623,8 @@ export function ManualOrganizeDialog({
           headingId="mf-organize-overview-title"
           headingRef={overviewHeadingRef}
         />
-        {filesOverviewNotice !== null ? (
+        {filesOverviewNotice !== null &&
+        filesOverviewNotice.planUpdated !== true ? (
           <StatusBanner
             variant={
               filesOverviewNotice.kind === "success" ? "success" : "warning"
@@ -4617,7 +4692,7 @@ export function ManualOrganizeDialog({
             该方案摘要曾被截断，不能作为执行依据；请缩小范围后重新准备。
           </p>
         ) : null}
-        {!preview.current ? (
+        {!preview.current && !decisionSettled && !filesSettledOverview ? (
           <p className="mf-organize-overview-note" role="status">
             当前摘要不是最新可执行方案；打开文件核对后重新分析，生成当前方案再确认。
           </p>
@@ -4627,6 +4702,7 @@ export function ManualOrganizeDialog({
           {renderGroup("就绪文件", ["ready", "included"])}
           {renderGroup("其余文件", ["recorded"])}
         </div>
+        {renderSourceReadFindings("查看读取失败条目")}
         {preparation !== undefined &&
         preparation.selection.refused.length > 0 ? (
           <details className="mf-organize-overview-refused">
@@ -4770,6 +4846,7 @@ export function ManualOrganizeDialog({
     const hasGeneratedTarget =
       targetRelativePath !== null && targetRelativePath !== "";
     const hasGeneratedScheme = hasGeneratedTarget || item.operation !== null;
+    const compactHostedPlan = !filesHost && isExecutable && !hasNativeProblem;
     const attachmentWarnings = item.attachments.filter(
       (attachment) => attachment.nextAction !== null,
     );
@@ -4973,6 +5050,157 @@ export function ManualOrganizeDialog({
         </>
       );
     }
+    const correctionControl =
+      !organizeFlowEnded &&
+      !hasNativeProblem &&
+      !metadataTechnicalFailure &&
+      currentIntentItem !== undefined &&
+      intent !== undefined ? (
+        <details
+          className="mf-organize-correction mf-organize-decision"
+          open={
+            draftDirty ||
+            notice?.retryAnalysis === true ||
+            itemAnalysisReadback !== null
+          }
+        >
+          <summary className="mf-organize-correction-summary">
+            修正识别或作品
+            {draftDirty ? "（有未保存输入）" : ""}
+          </summary>
+          <div className="mf-organize-decision-fields">
+            <label className="mf-organize-decision-field">
+              <span className="mf-organize-decision-label">识别类型</span>
+              <select
+                aria-label={`识别类型 ${filename}`}
+                value={draftRecognitionId}
+                disabled={
+                  saveMutation.isPending || itemAnalysisReadback !== null
+                }
+                onChange={(event) =>
+                  patchDraft({ recognitionTypeId: event.target.value })
+                }
+              >
+                <option value="">选择识别类型</option>
+                {recognitionOptions.map((value) => (
+                  <option key={value.id} value={value.id}>
+                    {value.name ?? value.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {currentIntentItem.allowedMetadataIdentities.length > 0 ? (
+              <label className="mf-organize-decision-field">
+                <span className="mf-organize-decision-label">作品身份</span>
+                <select
+                  aria-label={`元数据身份 ${filename}`}
+                  value={draftMetadataKey}
+                  disabled={
+                    saveMutation.isPending || itemAnalysisReadback !== null
+                  }
+                  onChange={(event) =>
+                    patchDraft({ metadataKey: event.target.value })
+                  }
+                >
+                  <option value="">选择已固定身份</option>
+                  {currentIntentItem.allowedMetadataIdentities.map((value) => (
+                    <option key={metadataKey(value)} value={metadataKey(value)}>
+                      {value.title ?? value.providerId}
+                      {value.year !== null ? ` (${value.year})` : ""} ·{" "}
+                      {mediaTypeLabel(value.mediaType)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
+          {currentIntentItem.allowedMetadataIdentities.length === 0 ? (
+            <p className="mf-organize-section-note">
+              本文件当前没有可供选择的识别类型修正。
+            </p>
+          ) : null}
+          {draftRecognitionId !== "" && !mappingComplete ? (
+            <p className="mf-organize-section-note" role="status">
+              当前固定配置中该识别类型缺少完整策略映射,不能保存;不能单独修改下游策略。
+            </p>
+          ) : null}
+          <p className="mf-organize-decision-hint">
+            翻页不会自动保存。保存只记录当前文件的选择并重新运行零变更分析，不会执行整理。
+          </p>
+          {!filesHost ? (
+            <div className="mf-actions">
+              <Button
+                type="button"
+                disabled={currentCorrectionSaveDisabled}
+                onClick={() => submitCurrentCorrection(item.itemId)}
+              >
+                {itemAnalysisReadback?.phase === "reading"
+                  ? "正在核对分析结果…"
+                  : saveMutation.isPending
+                    ? "正在保存并重新分析…"
+                    : itemAnalysisReadback?.phase === "awaiting"
+                      ? "等待新的零变更方案…"
+                      : itemAnalysisReadback?.phase === "unreadable"
+                        ? "分析结果待核对"
+                        : "保存并重新分析"}
+              </Button>
+              {itemAnalysisReadback?.phase === "unreadable" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={saveMutation.isPending}
+                  onClick={() => void retryAnalysisReadback()}
+                >
+                  重新读取分析状态
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </details>
+      ) : null;
+    const selectionControl =
+      hasGeneratedScheme || !filesHost ? (
+        <div className="mf-organize-selection">
+          <label>
+            <input
+              type="checkbox"
+              aria-label={`纳入 ${filename}`}
+              checked={isIncluded}
+              disabled={
+                !isExecutable ||
+                saveMutation.isPending ||
+                itemAnalysisReadback !== null
+              }
+              onChange={(event) => {
+                setExcluded((previous) => {
+                  const next = new Set(previous);
+                  if (event.target.checked) next.delete(item.itemId);
+                  else next.add(item.itemId);
+                  return next;
+                });
+                setConfirmationSelectionKey(null);
+              }}
+            />{" "}
+            纳入本次整理
+          </label>
+          {!isExecutable && !organizeFlowEnded ? (
+            <p className="mf-organize-section-note" role="status">
+              {admittedItemIds.has(item.itemId)
+                ? "该文件已受理执行,不能再纳入本次确认;已在任务中心保持独立进度与结果。"
+                : metadataTechnicalFailure
+                  ? "该文件因元数据阶段技术失败没有生成可确认方案，不能纳入本次确认；请按当前状态核对 Metadata Provider 与原任务结果。"
+                  : decisionStatus === "analysis_waiting"
+                    ? "该文件当前未就绪；分析完成并生成新方案后可在此选择。"
+                    : decisionStatus === "analysis_refused"
+                      ? "该文件当前未就绪；先补做分析并生成新方案，再决定是否纳入。"
+                      : decisionStatus === "analysis_unknown"
+                        ? "该文件当前未就绪；分析结果未确认前不会纳入本次确认。"
+                        : "该文件当前未就绪，不能纳入本次确认；完成上方当前状态后可再生方案。"}
+            </p>
+          ) : null}
+        </div>
+      ) : null;
+
     return (
       <>
         {reviewHeader()}
@@ -5075,7 +5303,6 @@ export function ManualOrganizeDialog({
                   // Files host returns to its overview from this native form;
                   // the in-place host keeps the panel's own status handling.
                   if (!filesHost) return;
-                  // eslint-disable-next-line react-hooks/refs
                   beginFilesDecisionReturn(item.itemId, savedChoice);
                 }}
                 onAnalysisRequested={decisionAnalysisRequested}
@@ -5083,13 +5310,11 @@ export function ManualOrganizeDialog({
                   // The Files host records the exact file and edit position
                   // before this command, so a late terminal result can
                   // update its row without moving an operator who left.
-                  // eslint-disable-next-line react-hooks/refs
                   beginFilesDecisionSettle(item.itemId, problemTaskItemId);
                 }}
                 onDecisionSettled={(settled) => {
                   // The retained dialog read owns the same-row fallback even
                   // when this panel is replaced before its own effect runs.
-                  // eslint-disable-next-line react-hooks/refs
                   recordFilesDecisionSettled(
                     item.itemId,
                     problemTaskItemId,
@@ -5158,11 +5383,7 @@ export function ManualOrganizeDialog({
               </StatusBanner>
             ) : null}
           </section>
-        ) : filesHost ? null : (
-          <p className="mf-organize-section-note" role="status">
-            该文件当前没有记录的问题。
-          </p>
-        )}
+        ) : null}
 
         {filesDecisionLayout ? (
           visibleNotice !== undefined ? (
@@ -5209,7 +5430,13 @@ export function ManualOrganizeDialog({
               ) : null}
             </div>
             {hasGeneratedScheme ? (
-              <dl className="mf-organize-facts">
+              <dl
+                className={
+                  compactHostedPlan
+                    ? "mf-dashboard-facts mf-organize-hosted-facts"
+                    : "mf-organize-facts"
+                }
+              >
                 <div>
                   <dt>作品</dt>
                   <dd>
@@ -5222,14 +5449,16 @@ export function ManualOrganizeDialog({
                       : ""}
                   </dd>
                 </div>
-                <div>
-                  <dt>识别类型</dt>
-                  <dd>
-                    {recognitionTypeName ??
-                      item.recognitionType ??
-                      "识别类型尚未生成"}
-                  </dd>
-                </div>
+                {!compactHostedPlan && (
+                  <div>
+                    <dt>识别类型</dt>
+                    <dd>
+                      {recognitionTypeName ??
+                        item.recognitionType ??
+                        "识别类型尚未生成"}
+                    </dd>
+                  </div>
+                )}
                 {hasGeneratedScheme ? (
                   <>
                     <div className="mf-organize-source-fact">
@@ -5246,7 +5475,8 @@ export function ManualOrganizeDialog({
                         </dd>
                       </div>
                     ) : null}
-                    {item.analysis?.classification?.mediaLibraryId != null ? (
+                    {!compactHostedPlan &&
+                    item.analysis?.classification?.mediaLibraryId != null ? (
                       <div>
                         <dt>目标媒体库</dt>
                         <dd>
@@ -5330,165 +5560,19 @@ export function ManualOrganizeDialog({
                 <p role="status">{visibleNotice.text}</p>
               </StatusBanner>
             ) : null}
-            {!organizeFlowEnded &&
-            !hasNativeProblem &&
-            !metadataTechnicalFailure &&
-            currentIntentItem !== undefined &&
-            intent !== undefined ? (
-              <details
-                className="mf-organize-correction mf-organize-decision"
-                open={
-                  draftDirty ||
-                  notice?.retryAnalysis === true ||
-                  itemAnalysisReadback !== null
-                }
-              >
-                <summary className="mf-organize-correction-summary">
-                  修正识别或作品
-                  {draftDirty ? "（有未保存输入）" : ""}
-                </summary>
-                <div className="mf-organize-decision-fields">
-                  <label className="mf-organize-decision-field">
-                    <span className="mf-organize-decision-label">识别类型</span>
-                    <select
-                      aria-label={`识别类型 ${filename}`}
-                      value={draftRecognitionId}
-                      disabled={
-                        saveMutation.isPending || itemAnalysisReadback !== null
-                      }
-                      onChange={(event) =>
-                        patchDraft({ recognitionTypeId: event.target.value })
-                      }
-                    >
-                      <option value="">选择识别类型</option>
-                      {recognitionOptions.map((value) => (
-                        <option key={value.id} value={value.id}>
-                          {value.name ?? value.id}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {currentIntentItem.allowedMetadataIdentities.length > 0 ? (
-                    <label className="mf-organize-decision-field">
-                      <span className="mf-organize-decision-label">
-                        作品身份
-                      </span>
-                      <select
-                        aria-label={`元数据身份 ${filename}`}
-                        value={draftMetadataKey}
-                        disabled={
-                          saveMutation.isPending ||
-                          itemAnalysisReadback !== null
-                        }
-                        onChange={(event) =>
-                          patchDraft({ metadataKey: event.target.value })
-                        }
-                      >
-                        <option value="">选择已固定身份</option>
-                        {currentIntentItem.allowedMetadataIdentities.map(
-                          (value) => (
-                            <option
-                              key={metadataKey(value)}
-                              value={metadataKey(value)}
-                            >
-                              {value.title ?? value.providerId}
-                              {value.year !== null
-                                ? ` (${value.year})`
-                                : ""} · {mediaTypeLabel(value.mediaType)}
-                            </option>
-                          ),
-                        )}
-                      </select>
-                    </label>
-                  ) : null}
-                </div>
-                {currentIntentItem.allowedMetadataIdentities.length === 0 ? (
-                  <p className="mf-organize-section-note">
-                    本文件当前没有可供选择的识别类型修正。
-                  </p>
-                ) : null}
-                {draftRecognitionId !== "" && !mappingComplete ? (
-                  <p className="mf-organize-section-note" role="status">
-                    当前固定配置中该识别类型缺少完整策略映射,不能保存;不能单独修改下游策略。
-                  </p>
-                ) : null}
-                <p className="mf-organize-decision-hint">
-                  翻页不会自动保存。保存只记录当前文件的选择并重新运行零变更分析，不会执行整理。
-                </p>
-                {!filesHost ? (
-                  <div className="mf-actions">
-                    <Button
-                      type="button"
-                      disabled={currentCorrectionSaveDisabled}
-                      onClick={() => submitCurrentCorrection(item.itemId)}
-                    >
-                      {itemAnalysisReadback?.phase === "reading"
-                        ? "正在核对分析结果…"
-                        : saveMutation.isPending
-                          ? "正在保存并重新分析…"
-                          : itemAnalysisReadback?.phase === "awaiting"
-                            ? "等待新的零变更方案…"
-                            : itemAnalysisReadback?.phase === "unreadable"
-                              ? "分析结果待核对"
-                              : "保存并重新分析"}
-                    </Button>
-                    {itemAnalysisReadback?.phase === "unreadable" ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={saveMutation.isPending}
-                        onClick={() => void retryAnalysisReadback()}
-                      >
-                        重新读取分析状态
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : null}
-              </details>
-            ) : null}
-            {hasGeneratedScheme || !filesHost ? (
-              <div className="mf-organize-selection">
-                <label>
-                  <input
-                    type="checkbox"
-                    aria-label={`纳入 ${filename}`}
-                    checked={isIncluded}
-                    disabled={
-                      !isExecutable ||
-                      saveMutation.isPending ||
-                      itemAnalysisReadback !== null
-                    }
-                    onChange={(event) => {
-                      setExcluded((previous) => {
-                        const next = new Set(previous);
-                        if (event.target.checked) next.delete(item.itemId);
-                        else next.add(item.itemId);
-                        return next;
-                      });
-                      setConfirmationSelectionKey(null);
-                    }}
-                  />{" "}
-                  纳入本次整理
-                </label>
-                {!isExecutable && !organizeFlowEnded ? (
-                  <p className="mf-organize-section-note" role="status">
-                    {admittedItemIds.has(item.itemId)
-                      ? "该文件已受理执行,不能再纳入本次确认;已在任务中心保持独立进度与结果。"
-                      : metadataTechnicalFailure
-                        ? "该文件因元数据阶段技术失败没有生成可确认方案，不能纳入本次确认；请按当前状态核对 Metadata Provider 与原任务结果。"
-                        : decisionStatus === "analysis_waiting"
-                          ? "该文件当前未就绪；分析完成并生成新方案后可在此选择。"
-                          : decisionStatus === "analysis_refused"
-                            ? "该文件当前未就绪；先补做分析并生成新方案，再决定是否纳入。"
-                            : decisionStatus === "analysis_unknown"
-                              ? "该文件当前未就绪；分析结果未确认前不会纳入本次确认。"
-                              : "该文件当前未就绪，不能纳入本次确认；完成上方当前状态后可再生方案。"}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
+            {compactHostedPlan ? null : correctionControl}
+            {compactHostedPlan ? null : selectionControl}
           </section>
         )}
+
+        {compactHostedPlan ? (
+          <>
+            <div className="mf-organize-hosted-selection">
+              {selectionControl}
+            </div>
+            {correctionControl}
+          </>
+        ) : null}
 
         {!filesDecisionLayout && item.attachments.length > 0 ? (
           <section
@@ -6025,6 +6109,7 @@ export function ManualOrganizeDialog({
           </details>
         ) : null}
 
+        {renderSourceReadFindings("计划之外 · 来源读取失败")}
         {preparation !== undefined &&
         preparation.selection.refused.length > 0 ? (
           <details>
@@ -6180,7 +6265,7 @@ export function ManualOrganizeDialog({
   const reviewFile = analysisReadbackFile?.itemId ?? currentItemId ?? "";
   const stageTransitionKey = firstPlanPreparationView
     ? `preparation:${preparationStep ?? preparationStatusView?.title ?? "loading"}`
-    : organizeFlowEnded
+    : organizeFlowEnded && !filesSettledOverview
       ? "history"
       : filesRecordDetail !== null
         ? `record:${filesRecordDetail.taskItemId}`
@@ -6204,15 +6289,9 @@ export function ManualOrganizeDialog({
     if (document.activeElement === document.body)
       stage.focus({ preventScroll: true });
     stage.removeAttribute("data-organize-arrival");
-    // Keep the file identity and the first overview fully readable on their
-    // first frame. Only preparation-to-preparation and deliberate review
-    // navigation animate the body.
-    if (
-      stageTransitionKey.endsWith(":analysis") ||
-      (stageTransitionKey === "overview" &&
-        (previous.startsWith("preparation:") || previous.endsWith(":analysis")))
-    )
-      return;
+    // The waiting screen replaces the form immediately. All later arrivals
+    // move only the current stage, without fading it over another screen.
+    if (stageTransitionKey.endsWith(":analysis")) return;
     stage.getBoundingClientRect();
     stage.setAttribute("data-organize-arrival", "");
   }, [stageTransitionKey]);
@@ -6222,6 +6301,14 @@ export function ManualOrganizeDialog({
       renderPreparationContent()
     ) : preparation === undefined ? (
       renderPreparationContent()
+    ) : filesSettledOverview ? (
+      filesRecordDetail !== null ? (
+        renderFilesRecordDetail()
+      ) : filesOverviewVisible ? (
+        renderFilesOverview()
+      ) : (
+        renderReview()
+      )
     ) : organizeFlowEnded ? (
       renderPreparationContent()
     ) : analysisReadbackFile !== null ? (
@@ -6244,11 +6331,7 @@ export function ManualOrganizeDialog({
             </p>
           </div>
         </header>
-        {filesAnalysisArrivalView !== null ? (
-          <StatusBanner variant="info" title="新方案已读回">
-            <p role="status">正在返回整理概览。</p>
-          </StatusBanner>
-        ) : preparationSummaryReadFailed ? (
+        {preparationSummaryReadFailed ? (
           <StatusBanner variant="warning" title="新方案暂时无法读取">
             <p>当前文件的新方案尚未读回，整理尚未提交。</p>
             <Button
@@ -6271,7 +6354,7 @@ export function ManualOrganizeDialog({
           />
         )}
       </>
-    ) : preview === undefined || !preparationPlanObserved ? (
+    ) : firstPlanPreparationView || preview === undefined ? (
       renderPreparationContent()
     ) : (
       <>
@@ -6362,126 +6445,93 @@ export function ManualOrganizeDialog({
     intent !== undefined;
   const preparationTerminalFirstScreenFooter =
     organizeFlowEnded && preparationTerminalFirstScreen;
-  const defaultFooter =
-    organizeFlowEnded || preparationOnlyFooter ? (
-      <>
-        {organizeFlowEnded ? null : (
-          <span className="mf-dashboard-meta">此阶段无媒体变更</span>
-        )}
-        <span className="mf-modal-footer-spacer" />
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={closeLocked}
-          onClick={attemptClose}
-        >
-          关闭
-        </Button>
-      </>
-    ) : filesOverviewFooter ? (
-      <>
-        <span className="mf-modal-footer-spacer" />
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={closeLocked}
-          onClick={attemptClose}
-        >
-          关闭
-        </Button>
-        <Button type="button" onClick={openBatchReview}>
-          整批复核(已选 {activeSelection.length} 项)
-        </Button>
-      </>
-    ) : filesHost && filesRecordDetail !== null ? (
-      <>
+  const defaultFooter = filesSettledOverview ? (
+    <>
+      {!filesOverviewVisible && (
         <Button
           type="button"
           variant="secondary"
           onClick={returnToFilesOverview}
         >
-          返回概览
+          返回整理概览
         </Button>
-        <span className="mf-modal-footer-spacer" />
+      )}
+      <span className="mf-modal-footer-spacer" />
+      <Button type="button" variant="secondary" onClick={attemptClose}>
+        关闭
+      </Button>
+      {filesOverviewVisible && filesOrganizeTaskId !== null && (
+        <Button
+          type="button"
+          disabled={openingTaskDetail}
+          onClick={() => void handleHandoff(filesOrganizeTaskId, () => {})}
+        >
+          查看任务结果
+        </Button>
+      )}
+    </>
+  ) : organizeFlowEnded || preparationOnlyFooter ? (
+    <>
+      {organizeFlowEnded ? null : (
+        <span className="mf-dashboard-meta">此阶段无媒体变更</span>
+      )}
+      <span className="mf-modal-footer-spacer" />
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={closeLocked}
+        onClick={attemptClose}
+      >
+        关闭
+      </Button>
+    </>
+  ) : filesOverviewFooter ? (
+    <>
+      <span className="mf-modal-footer-spacer" />
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={closeLocked}
+        onClick={attemptClose}
+      >
+        关闭
+      </Button>
+      <Button type="button" onClick={openBatchReview}>
+        整批复核(已选 {activeSelection.length} 项)
+      </Button>
+    </>
+  ) : filesHost && filesRecordDetail !== null ? (
+    <>
+      <Button type="button" variant="secondary" onClick={returnToFilesOverview}>
+        返回概览
+      </Button>
+      <span className="mf-modal-footer-spacer" />
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={closeLocked}
+        onClick={attemptClose}
+      >
+        关闭
+      </Button>
+    </>
+  ) : step === "review" && filesHost ? (
+    // Approved Files decision footer: the overview return alone on the left,
+    // then paging and this file's own ignore/save/recovery action. Closing
+    // stays on the existing top entry and the batch review is entered from
+    // the overview, so neither shares the row with the file's action.
+    <>
+      <span className="mf-organize-footer-return">
         <Button
           type="button"
           variant="secondary"
-          disabled={closeLocked}
-          onClick={attemptClose}
+          onClick={returnToFilesOverview}
         >
-          关闭
+          返回整理概览
         </Button>
-      </>
-    ) : step === "review" && filesHost ? (
-      // Approved Files decision footer: the overview return alone on the left,
-      // then paging and this file's own ignore/save/recovery action. Closing
-      // stays on the existing top entry and the batch review is entered from
-      // the overview, so neither shares the row with the file's action.
-      <>
-        <span className="mf-organize-footer-return">
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={returnToFilesOverview}
-          >
-            返回整理概览
-          </Button>
-        </span>
-        <span className="mf-modal-footer-spacer" />
-        <span className="mf-organize-footer-paging">
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={pageInfo <= 0 || items.length === 0}
-            onClick={() => goTo(pageInfo - 1)}
-          >
-            上一项
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={pageInfo >= items.length - 1}
-            onClick={() => goTo(pageInfo + 1)}
-          >
-            下一项
-          </Button>
-        </span>
-        <div id={FILES_REVIEW_ACTION_ID} className="mf-organize-footer-action">
-          {filesReviewCorrectionAction && currentItemId !== null ? (
-            <div className="mf-actions">
-              <Button
-                type="button"
-                disabled={currentCorrectionSaveDisabled}
-                onClick={() => submitCurrentCorrection(currentItemId)}
-              >
-                {currentAnalysisReadback?.phase === "reading"
-                  ? "正在核对分析结果…"
-                  : saveMutation.isPending
-                    ? "正在保存并重新分析…"
-                    : currentAnalysisReadback?.phase === "awaiting"
-                      ? "等待新的零变更方案…"
-                      : currentAnalysisReadback?.phase === "unreadable"
-                        ? "分析结果待核对"
-                        : "保存并重新分析"}
-              </Button>
-              {currentAnalysisReadback?.phase === "unreadable" ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={saveMutation.isPending}
-                  onClick={() => void retryAnalysisReadback()}
-                >
-                  重新读取分析状态
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </>
-    ) : step === "review" ? (
-      // The Task Center continuation keeps its own Slice53 inline paging and
-      // batch entry; only the Files host owns the approved decision footer.
-      <>
+      </span>
+      <span className="mf-modal-footer-spacer" />
+      <span className="mf-organize-footer-paging">
         <Button
           type="button"
           variant="secondary"
@@ -6498,13 +6548,65 @@ export function ManualOrganizeDialog({
         >
           下一项
         </Button>
-        <span className="mf-dashboard-meta">
-          第 {items.length === 0 ? 0 : pageInfo + 1} / {items.length} 个
-          {currentItemId !== null && (draftDirty || currentDecisionDraftDirty)
-            ? " · 有未保存的修正"
-            : ""}
-        </span>
-        <span className="mf-modal-footer-spacer" />
+      </span>
+      <div id={FILES_REVIEW_ACTION_ID} className="mf-organize-footer-action">
+        {filesReviewCorrectionAction && currentItemId !== null ? (
+          <div className="mf-actions">
+            <Button
+              type="button"
+              disabled={currentCorrectionSaveDisabled}
+              onClick={() => submitCurrentCorrection(currentItemId)}
+            >
+              {currentAnalysisReadback?.phase === "reading"
+                ? "正在核对分析结果…"
+                : saveMutation.isPending
+                  ? "正在保存并重新分析…"
+                  : currentAnalysisReadback?.phase === "awaiting"
+                    ? "等待新的零变更方案…"
+                    : currentAnalysisReadback?.phase === "unreadable"
+                      ? "分析结果待核对"
+                      : "保存并重新分析"}
+            </Button>
+            {currentAnalysisReadback?.phase === "unreadable" ? (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={saveMutation.isPending}
+                onClick={() => void retryAnalysisReadback()}
+              >
+                重新读取分析状态
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </>
+  ) : step === "review" ? (
+    // Keep paging, close, and batch review together when the page count wraps.
+    <>
+      <span className="mf-dashboard-meta mf-organize-hosted-position">
+        第 {items.length === 0 ? 0 : pageInfo + 1} / {items.length} 个
+        {currentItemId !== null && (draftDirty || currentDecisionDraftDirty)
+          ? " · 有未保存的修正"
+          : ""}
+      </span>
+      <div className="mf-organize-hosted-actions">
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={pageInfo <= 0 || items.length === 0}
+          onClick={() => goTo(pageInfo - 1)}
+        >
+          上一项
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={pageInfo >= items.length - 1}
+          onClick={() => goTo(pageInfo + 1)}
+        >
+          下一项
+        </Button>
         <Button
           type="button"
           variant="secondary"
@@ -6520,98 +6622,99 @@ export function ManualOrganizeDialog({
         >
           整批复核(已选 {activeSelection.length} 项)
         </Button>
-      </>
-    ) : (
-      <>
+      </div>
+    </>
+  ) : (
+    <>
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={openingTaskDetail}
+        onClick={() => {
+          if (filesHost) returnToFilesOverview();
+          else setStep("review");
+        }}
+      >
+        {filesHost ? "返回整理概览" : "返回逐项复核"}
+      </Button>
+      <span className="mf-modal-footer-spacer" />
+      {filesHost ? null : (
         <Button
           type="button"
           variant="secondary"
-          disabled={openingTaskDetail}
+          disabled={closeLocked}
+          onClick={attemptClose}
+        >
+          关闭
+        </Button>
+      )}
+      <div
+        className={`mf-organize-confirm-submit${
+          filesHost && confirmationBlocker === null
+            ? " mf-organize-confirm-submit-inline"
+            : ""
+        }`}
+      >
+        {confirmationBlocker !== null ? (
+          <span className="mf-organize-confirm-blocker" role="status">
+            暂不能确认：{confirmationBlocker.reason}
+            {confirmationBlocker.nextAction === ""
+              ? ""
+              : ` ${confirmationBlocker.nextAction}`}
+          </span>
+        ) : null}
+        <Button
+          type="button"
+          disabled={executeDisabled || confirmationBlocker !== null}
+          aria-busy={executeMutation.isPending}
           onClick={() => {
-            if (filesHost) returnToFilesOverview();
-            else setStep("review");
+            if (preview === undefined) return;
+            if (preview.intentVersion === null) {
+              setResult(
+                "当前方案缺少可核对的版本，本次确认没有提交；没有修改任何文件。请重新读取摘要后再确认。",
+              );
+              return;
+            }
+            if (principalId === null) {
+              setResult(
+                "当前账号身份尚未读取完成，本次确认没有提交；也没有修改任何文件。身份读取完成后再确认，响应丢失时才能核对原请求。",
+              );
+              return;
+            }
+            // One identity captured here serves both the request and any later
+            // reconciliation of this exact confirmation.
+            const submission: OrganizeSubmissionIdentity = {
+              previewId: preview.previewId,
+              itemIds: [...activeSelection],
+              expectedIntentVersion: preview.intentVersion,
+              allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
+              allowSourceCleanup:
+                requiresCleanup && effectiveAllowSourceCleanup,
+            };
+            const retention = beginOrganizeConfirmationRetention(
+              principalId,
+              confirmationWork,
+              submission,
+            );
+            if (!retention.ok) {
+              setResult(
+                "本次确认无法保存可核对的请求身份，已取消提交；没有发出整理请求，也没有修改任何文件。请重新打开本次整理后再试。",
+              );
+              return;
+            }
+            refreshRetained();
+            executeMutation.mutate(submission);
           }}
         >
-          {filesHost ? "返回整理概览" : "返回逐项复核"}
+          {openingTaskDetail
+            ? "正在打开任务详情…"
+            : executeMutation.isPending
+              ? "正在提交..."
+              : `确认整理 ${activeSelection.length} 项`}
         </Button>
-        <span className="mf-modal-footer-spacer" />
-        {filesHost ? null : (
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={closeLocked}
-            onClick={attemptClose}
-          >
-            关闭
-          </Button>
-        )}
-        <div
-          className={`mf-organize-confirm-submit${
-            filesHost && confirmationBlocker === null
-              ? " mf-organize-confirm-submit-inline"
-              : ""
-          }`}
-        >
-          {confirmationBlocker !== null ? (
-            <span className="mf-organize-confirm-blocker" role="status">
-              暂不能确认：{confirmationBlocker.reason}
-              {confirmationBlocker.nextAction === ""
-                ? ""
-                : ` ${confirmationBlocker.nextAction}`}
-            </span>
-          ) : null}
-          <Button
-            type="button"
-            disabled={executeDisabled || confirmationBlocker !== null}
-            aria-busy={executeMutation.isPending}
-            onClick={() => {
-              if (preview === undefined) return;
-              if (preview.intentVersion === null) {
-                setResult(
-                  "当前方案缺少可核对的版本，本次确认没有提交；没有修改任何文件。请重新读取摘要后再确认。",
-                );
-                return;
-              }
-              if (principalId === null) {
-                setResult(
-                  "当前账号身份尚未读取完成，本次确认没有提交；也没有修改任何文件。身份读取完成后再确认，响应丢失时才能核对原请求。",
-                );
-                return;
-              }
-              // One identity captured here serves both the request and any later
-              // reconciliation of this exact confirmation.
-              const submission: OrganizeSubmissionIdentity = {
-                previewId: preview.previewId,
-                itemIds: [...activeSelection],
-                expectedIntentVersion: preview.intentVersion,
-                allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
-                allowSourceCleanup:
-                  requiresCleanup && effectiveAllowSourceCleanup,
-              };
-              const retention = beginOrganizeConfirmationRetention(
-                principalId,
-                confirmationWork,
-                submission,
-              );
-              if (!retention.ok) {
-                setResult(
-                  "本次确认无法保存可核对的请求身份，已取消提交；没有发出整理请求，也没有修改任何文件。请重新打开本次整理后再试。",
-                );
-                return;
-              }
-              refreshRetained();
-              executeMutation.mutate(submission);
-            }}
-          >
-            {openingTaskDetail
-              ? "正在打开任务详情…"
-              : executeMutation.isPending
-                ? "正在提交..."
-                : `确认整理 ${activeSelection.length} 项`}
-          </Button>
-        </div>
-      </>
-    );
+      </div>
+    </>
+  );
   const footer = preparationTerminalFirstScreenFooter ? (
     <>
       <span className="mf-dashboard-meta">此阶段无媒体变更</span>

@@ -346,6 +346,22 @@ def discovery_primary_limit_stopped(progress: DiscoveryProgress) -> bool:
     )
 
 
+def discovery_completed_without_primary_sources(discovery: MediaDiscovery) -> bool:
+    """Whether a standalone, complete Files walk proved there is nothing to plan."""
+
+    return (
+        discovery.status is DiscoveryStatus.COMPLETED
+        and discovery.definition_origin is None
+        and not discovery.sources
+        and discovery.progress.incomplete_reason is DiscoveryIncompleteReason.NONE
+        and not discovery.progress.refusal_reasons
+        and discovery.progress.phase in {"empty", "empty_excluded"}
+        and not discovery.frozen
+        and discovery.intent_id is None
+        and discovery.preview_id is None
+    )
+
+
 def discovery_material_refusal(progress: DiscoveryProgress) -> DiscoveryIncompleteReason | None:
     """The durable, monotonic material refusal of one discovery, if any.
 

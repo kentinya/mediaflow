@@ -132,7 +132,7 @@ describe("RunLifecycleControls", () => {
   it("shows the accepted durable outcome", () => {
     render(
       <RunLifecycleControls
-        projection={projection()}
+        projection={projection({ state: "cancelled" })}
         onInvoke={vi.fn()}
         pendingAction={null}
         result={accepted}
@@ -142,6 +142,7 @@ describe("RunLifecycleControls", () => {
     );
     expect(screen.getByText(/取消请求已受理/)).toBeVisible();
     expect(screen.getByText(/当前状态：已取消/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
     expect(screen.queryByText(/durable cancellation request/)).toBeNull();
   });
 

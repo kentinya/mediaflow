@@ -5224,6 +5224,22 @@ tr[aria-selected="true"] {
   background: #fffbf2;
 }
 
+.mf-run-status-card-confirmation {
+  gap: 10px;
+}
+
+.mf-run-status-card-confirmation .mf-run-fact-flow {
+  gap: 4px;
+}
+
+.mf-run-status-card-confirmation .mf-run-status-title {
+  margin: 0;
+}
+
+.mf-run-status-card-confirmation .mf-run-status-copy {
+  color: var(--muted);
+}
+
 .mf-run-status-card-success {
   border-color: #dcefe5;
   background: #f2faf6;
@@ -11268,6 +11284,34 @@ tr[aria-selected="true"] {
   font-size: 13.5px;
 }
 
+.mf-organize-hosted-selection .mf-organize-selection {
+  border-top: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.mf-organize-hosted-facts .mf-exact-identity {
+  color: #405577;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.mf-organize-hosted-position {
+  margin-right: auto;
+}
+
+.mf-organize-hosted-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .mf-organize-hosted-position {
+    flex: 1 0 100%;
+  }
+}
+
 .mf-organize-selection > label {
   display: inline-flex;
   align-items: center;
@@ -12169,7 +12213,7 @@ tr[aria-selected="true"] {
    is keyed to the displayed stage, independently of progress polls. */
 @media (prefers-reduced-motion: no-preference) {
   .mf-organize-stage[data-organize-arrival] {
-    animation: mf-organize-arrival 300ms var(--mf-organize-arrival-ease);
+    animation: mf-organize-arrival 420ms var(--mf-organize-arrival-ease);
   }
 }
 
@@ -12179,11 +12223,9 @@ tr[aria-selected="true"] {
 
 @keyframes mf-organize-arrival {
   from {
-    opacity: 0.8;
-    translate: 0 6px;
+    translate: 0 8px;
   }
   to {
-    opacity: 1;
     translate: 0 0;
   }
 }

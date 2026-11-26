@@ -111,6 +111,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryUnavailable,
     MediaDiscovery,
     discovery_admission_identity,
+    discovery_completed_without_primary_sources,
     discovery_primary_limit_stopped,
     discovery_scope_signature,
     reserved_refusals,
@@ -1914,7 +1915,7 @@ class SQLiteTaskRepository:
                     self._admit_retry_locked(request, row)
                 elif request.action_id == "ignore":
                     self._admit_ignore_locked(request, row)
-                    self._settle_last_ignored_task_locked(request.task_id, request.requested_at)
+                    self._settle_last_decided_item_locked(request.task_id, request.requested_at)
                 else:
                     raise RecoveryAdmissionError(
                         RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
@@ -2100,10 +2101,10 @@ class SQLiteTaskRepository:
             ),
         )
 
-    def _settle_last_ignored_task_locked(self, task_id: str, now: datetime) -> None:
-        """Settle one kernel Task whose last outstanding item was just ignored.
+    def _settle_last_decided_item_locked(self, task_id: str, now: datetime) -> bool:
+        """Settle one kernel Task whose last outstanding item was skipped or ignored.
 
-        The ignore already recorded the item's honest non-success outcome.  If
+        The decision already recorded the item's honest non-success outcome. If
         that leaves the *whole* durable population settled at a no-machine-work
         boundary, the Task's aggregate is exactly that factual sum and its slot
         can be released in this same transaction, so the operator is never left
@@ -2115,23 +2116,23 @@ class SQLiteTaskRepository:
 
         state = self._scheduled_state_locked(task_id)
         if state is None or state.queue_state is not TaskQueueState.WAITING_HUMAN:
-            return
+            return False
         if state.claim_token is not None or state.control_request is not None:
-            return
+            return False
         if state.mutation_in_flight:
-            return
+            return False
         rows = self._connection.execute(
             "SELECT * FROM task_items WHERE task_id=?", (task_id,)
         ).fetchall()
         items = tuple(self._item(row) for row in rows)
         if not items or any(item.status not in SETTLED_ITEM_STATUSES for item in items):
-            return
+            return False
         self._refresh_task_item_counts_locked(task_id)
         task_row = self._connection.execute(
             "SELECT * FROM tasks WHERE task_id=?", (task_id,)
         ).fetchone()
         if task_row is None:
-            return
+            return False
         updated = replace(
             self._task(task_row),
             status=task_work_status(items),
@@ -2150,27 +2151,15 @@ class SQLiteTaskRepository:
             WHERE task_id=?""",
             (TaskQueueState.SETTLED.value, now.isoformat(), task_id),
         )
+        return True
 
-    def settle_stuck_primary_limit_preparations(
-        self, now: datetime, *, limit: int = 20
-    ) -> tuple[str, ...]:
-        """Settle bounded legacy Files preparations stopped at the primary bound.
+    def settle_stuck_organize_tasks(self, now: datetime, *, limit: int = 20) -> tuple[str, ...]:
+        """Settle bounded, provably finished legacy organize tasks without replay.
 
-        A pre-change Worker left a 101st-source preparation in ``waiting_human``
-        even though its manifest was a truncated prefix, no plan existed and no
-        file was ever accepted.  This bounded, idempotent reconciliation reads
-        only current-store rows and publishes the same terminal Task/scheduling
-        pair the new Worker writes for the same durable fact.
-
-        Every candidate is re-read inside one ``BEGIN IMMEDIATE`` transaction:
-        the exact discovery→Task association, the Task version (``updated_at``),
-        the discovery version, the primary-limit evidence, the absence of a
-        frozen/intent/Preview plan, and the absence of any claim, control
-        request, mutation marker, TaskItem, Result, manual execution, transfer
-        or initial-execution history.  A record that does not prove all of them
-        is left to the ordinary lifecycle and keeps its source protection.  A
-        repeat or a concurrent Worker therefore converges on the same terminal
-        row and writes nothing new.
+        No-plan preparations must keep the exact discovery/Task association and
+        have no execution or file evidence. A conflict skip must be both audited
+        and reflected in the item, and all siblings must be settled. Both
+        paths honor active claims, controls and uncertain mutations.
         """
 
         if now.tzinfo is None:
@@ -2195,12 +2184,14 @@ class SQLiteTaskRepository:
                       AND s.claim_token IS NULL
                       AND s.control_request IS NULL
                       AND s.mutation_state IS NULL
-                      AND d.status = ?
+                      AND ((d.status = 'partial_success' AND d.progress_json LIKE '%primary_limit%')
+                        OR (d.status = 'completed' AND json_array_length(
+                          CASE WHEN json_valid(d.sources_json) THEN d.sources_json END
+                        ) = 0))
                       AND d.organize_task_id IS NOT NULL
                       AND d.frozen_at IS NULL
                       AND d.intent_id IS NULL
                       AND d.preview_id IS NULL
-                      AND d.progress_json LIKE '%primary_limit%'
                       AND NOT EXISTS (
                           SELECT 1 FROM task_items i WHERE i.task_id = t.task_id
                       )
@@ -2227,13 +2218,12 @@ class SQLiteTaskRepository:
                         MANUAL_ORGANIZE_TASK_COMMAND,
                         PersistentTaskStatus.RUNNING.value,
                         TaskQueueState.WAITING_HUMAN.value,
-                        DiscoveryStatus.PARTIAL_SUCCESS.value,
                         limit,
                     ),
                 ).fetchall()
                 for row in rows:
                     task_id = row["organize_task_id"]
-                    if self._settle_stuck_primary_limit_locked(
+                    if self._settle_stuck_preparation_locked(
                         row["discovery_id"],
                         task_id,
                         expected_discovery_version=int(row["discovery_version"]),
@@ -2241,6 +2231,45 @@ class SQLiteTaskRepository:
                         now=now,
                     ):
                         settled.append(task_id)
+                # A resolved, audited skip is a durable no-execution decision.
+                # Read only candidates whose entire current population is settled.
+                skip_budget = limit - len(settled)
+                if skip_budget:
+                    settled_statuses = tuple(sorted(_SETTLED_ITEM_STATUS_VALUES))
+                    placeholders = ", ".join("?" for _ in settled_statuses)
+                    skipped = self._connection.execute(
+                        f"""
+                        SELECT t.task_id FROM tasks t
+                        JOIN task_scheduling s ON s.task_id = t.task_id
+                        WHERE t.command = ? AND t.status = ? AND s.queue_state = ?
+                          AND s.claim_token IS NULL AND s.control_request IS NULL
+                          AND s.mutation_state IS NULL
+                          AND EXISTS (
+                            SELECT 1 FROM task_items i
+                            JOIN conflict_confirmations c ON c.item_id = i.item_id
+                            JOIN conflict_decision_audit a ON a.confirmation_id = c.confirmation_id
+                            WHERE i.task_id = t.task_id AND c.task_id = t.task_id
+                              AND i.status = 'skipped' AND c.status = 'resolved'
+                              AND c.selected_strategy = 'skip' AND a.strategy = 'skip'
+                          )
+                          AND NOT EXISTS (
+                            SELECT 1 FROM task_items i WHERE i.task_id = t.task_id
+                              AND i.status NOT IN ({placeholders})
+                          )
+                        ORDER BY t.updated_at, t.task_id
+                        LIMIT ?
+                        """,
+                        (
+                            MANUAL_ORGANIZE_TASK_COMMAND,
+                            PersistentTaskStatus.RUNNING.value,
+                            TaskQueueState.WAITING_HUMAN.value,
+                            *settled_statuses,
+                            skip_budget,
+                        ),
+                    ).fetchall()
+                    for row in skipped:
+                        if self._settle_last_decided_item_locked(row["task_id"], now):
+                            settled.append(row["task_id"])
             except BaseException:
                 self._connection.rollback()
                 raise
@@ -2249,7 +2278,7 @@ class SQLiteTaskRepository:
             self._publish_settled_task(task_id)
         return tuple(settled)
 
-    def _settle_stuck_primary_limit_locked(
+    def _settle_stuck_preparation_locked(
         self,
         discovery_id: str,
         task_id: str,
@@ -2270,13 +2299,17 @@ class SQLiteTaskRepository:
             discovery is None
             or discovery.organize_task_id != task_id
             or discovery.version != expected_discovery_version
-            or discovery.status is not DiscoveryStatus.PARTIAL_SUCCESS
             or discovery.frozen
             or discovery.intent_id is not None
             or discovery.preview_id is not None
             or discovery.definition_origin is not None
-            or not discovery_primary_limit_stopped(discovery.progress)
         ):
+            return False
+        primary_limit = (
+            discovery.status is DiscoveryStatus.PARTIAL_SUCCESS
+            and discovery_primary_limit_stopped(discovery.progress)
+        )
+        if not primary_limit and not discovery_completed_without_primary_sources(discovery):
             return False
         state = self._scheduled_state_locked(task_id)
         if (
@@ -2318,10 +2351,10 @@ class SQLiteTaskRepository:
                 return False
         updated = replace(
             task,
-            status=PersistentTaskStatus.FAILED,
+            status=PersistentTaskStatus.FAILED if primary_limit else PersistentTaskStatus.COMPLETED,
             updated_at=now,
             completed_at=now,
-            error=PRIMARY_LIMIT_TASK_ERROR,
+            error=PRIMARY_LIMIT_TASK_ERROR if primary_limit else task.error,
         )
         self._require_scheduled_authority_locked(updated)
         self._connection.execute(
@@ -4597,6 +4630,7 @@ class SQLiteTaskRepository:
     ) -> None:
         if confirmation.status is not ConfirmationStatus.RESOLVED:
             raise ValueError("resolved confirmation status is required")
+        task_settled = False
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """UPDATE conflict_confirmations SET status=?, updated_at=?,
@@ -4630,6 +4664,10 @@ class SQLiteTaskRepository:
                 )
                 if cursor.rowcount != 1:
                     raise ValueError("confirmation TaskItem is not waiting for confirmation")
+                if item.status is TaskItemStatus.SKIPPED:
+                    task_settled = self._settle_last_decided_item_locked(
+                        item.task_id, item.updated_at
+                    )
             self._connection.execute(
                 "INSERT INTO conflict_decision_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -4642,6 +4680,8 @@ class SQLiteTaskRepository:
                     audit.note,
                 ),
             )
+        if task_settled:
+            self._publish_settled_task(confirmation.task_id)
 
     def list_confirmation_audit(self, confirmation_id: str) -> tuple[ConflictDecisionAudit, ...]:
         with self._lock:

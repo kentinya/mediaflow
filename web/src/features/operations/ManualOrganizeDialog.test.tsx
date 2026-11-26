@@ -2849,7 +2849,7 @@ describe("ManualOrganizeDialog", () => {
     expect(await screen.findByText("正在读取整理方案")).toBeVisible();
     expect(screen.queryByText(/第 [12] 步，共 2 步/)).toBeNull();
     expect(screen.getByText("准备进度")).toBeVisible();
-    expect(screen.getByText(/方案已生成，正在读取/)).toBeVisible();
+    expect(screen.getByText(/计划已生成 · 正在读取/)).toBeVisible();
     expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
     expect(backend.calls.discoveryPosts).toHaveLength(0);
 
@@ -2911,9 +2911,11 @@ describe("ManualOrganizeDialog", () => {
       value.state.sourceReadIncomplete = true;
     });
 
-    expect(await screen.findByText("部分来源暂时无法读取")).toBeVisible();
+    expect(await screen.findByText("有一个来源暂时无法读取")).toBeVisible();
     expect(screen.queryByText(/第 [12] 步，共 2 步/)).toBeNull();
-    expect(screen.getByText(/已找到 10 个主文件 · 1 个读取失败/)).toBeVisible();
+    expect(
+      screen.getByText(/10 个主文件检查完成 · 1 个读取失败/),
+    ).toBeVisible();
     expect(
       screen.getByText(
         /部分来源读取失败；已完成检查的已知来源保留为明确复核的子集/,
@@ -3762,7 +3764,7 @@ describe("ManualOrganizeDialog", () => {
     // The summary is readable, but the same preparation still says the flow
     // is live. The card stays on the shared preparation instead of entering
     // the overview with the pre-cancellation state.
-    expect(await screen.findByText("正在核对准备状态")).toBeVisible();
+    expect(await screen.findByText("正在读取整理方案")).toBeVisible();
     expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
     expect(screen.queryByRole("button", { name: /整批复核/ })).toBeNull();
     expect(screen.getByText("来源资源库")).toBeVisible();
@@ -4414,9 +4416,15 @@ describe("ManualOrganizeDialog", () => {
     const overview = await screen.findByRole("region", {
       name: "本次整理概览",
     });
-    expect(overview).toHaveTextContent(
-      `「${filename(0)}」已可确认。整理方案已更新，整理尚未提交。`,
-    );
+    expect(
+      within(overview).getByRole("heading", { name: "整理方案已更新" }),
+    ).toBeVisible();
+    expect(overview).not.toHaveTextContent("已可确认。整理方案已更新");
+    expect(
+      within(overview)
+        .getByRole("button", { name: `查看 ${filename(0)}` })
+        .closest("li"),
+    ).toHaveTextContent("已纳入");
     expect(overview).toHaveTextContent("Resolved Movie");
     expect(backend.calls.choicePosts).toHaveLength(1);
     expect(backend.calls.executePosts).toHaveLength(0);
@@ -4489,9 +4497,15 @@ describe("ManualOrganizeDialog", () => {
     const overview = await screen.findByRole("region", {
       name: "本次整理概览",
     });
-    expect(overview).toHaveTextContent(
-      `「${filename(0)}」已可确认。整理方案已更新，整理尚未提交。`,
-    );
+    expect(
+      within(overview).getByRole("heading", { name: "整理方案已更新" }),
+    ).toBeVisible();
+    expect(overview).not.toHaveTextContent("已可确认。整理方案已更新");
+    expect(
+      within(overview)
+        .getByRole("button", { name: `查看 ${filename(0)}` })
+        .closest("li"),
+    ).toHaveTextContent("已纳入");
     expect(backend.calls.choicePosts).toHaveLength(1);
     expect(backend.calls.analyzePosts).toHaveLength(1);
     expect(backend.calls.executePosts).toHaveLength(0);
@@ -4562,9 +4576,15 @@ describe("ManualOrganizeDialog", () => {
     const overview = await screen.findByRole("region", {
       name: "本次整理概览",
     });
-    expect(overview).toHaveTextContent(
-      `「${filename(0)}」已可确认。整理方案已更新，整理尚未提交。`,
-    );
+    expect(
+      within(overview).getByRole("heading", { name: "整理方案已更新" }),
+    ).toBeVisible();
+    expect(overview).not.toHaveTextContent("已可确认。整理方案已更新");
+    expect(
+      within(overview)
+        .getByRole("button", { name: `查看 ${filename(0)}` })
+        .closest("li"),
+    ).toHaveTextContent("已纳入");
     expect(backend.calls.recoveryContinuePosts).toHaveLength(1);
     expect(backend.calls.choicePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
@@ -4625,7 +4645,6 @@ describe("ManualOrganizeDialog", () => {
     const overview = await screen.findByRole("region", {
       name: "本次整理概览",
     });
-    expect(overview).toHaveTextContent("明确跳过文件操作");
     expect(overview).toHaveTextContent("跳过 · One");
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
@@ -5020,9 +5039,14 @@ describe("ManualOrganizeDialog", () => {
     // The settled item is not asked to be handled a second time. The plan
     // still needs one exact refresh, and its original preparation advertises
     // that zero-mutation analysis.
-    await expect(
-      within(returned).getByText(/本次方案因 1 个已结束文件需要更新/),
-    ).toBeVisible();
+    expect(
+      within(returned).queryByText(/当前摘要不是最新可执行方案/),
+    ).toBeNull();
+    expect(
+      within(returned)
+        .getByRole("button", { name: `查看 ${filename(0)}` })
+        .closest("li"),
+    ).toHaveTextContent("已跳过");
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const batch = await screen.findByRole("region", { name: "整批复核" });
     await expect(

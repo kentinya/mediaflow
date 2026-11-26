@@ -2561,7 +2561,7 @@ describe("selected-run detail tabs", () => {
       expect(
         within(detail).queryByRole("link", { name: "继续整理" }),
       ).toBeNull();
-      expect(within(detail).queryByText(/点击「继续整理」/)).toBeNull();
+      expect(within(detail).queryByText(/点击右上角「继续整理」/)).toBeNull();
     },
   );
 

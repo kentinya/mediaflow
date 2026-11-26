@@ -2897,25 +2897,6 @@ test("ends the first-plan preparation when the selected folder has no primary fi
   expect(discoveryId).toBeTruthy();
   await expect(card.locator(".mf-organize-preparation-state")).toBeVisible();
 
-  const settledRead = page.waitForResponse(async (response) => {
-    if (
-      new URL(response.url()).pathname !==
-      "/api/operations/organize/discoveries/" + discoveryId
-    ) {
-      return false;
-    }
-    if (!response.ok()) return false;
-    const body = (await response.json()) as {
-      readonly status: string;
-      readonly previewId: string | null;
-      readonly progress: { readonly primarySources: number };
-    };
-    return (
-      body.status === "completed" &&
-      body.previewId === null &&
-      body.progress.primarySources === 0
-    );
-  });
   const advanced = await request.post(
     `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(
       discoveryId as string,
@@ -2930,22 +2911,21 @@ test("ends the first-plan preparation when the selected folder has no primary fi
   expect(workerResult.status).toBe("completed");
   expect(workerResult.previewId).toBeNull();
   expect(workerResult.sourceCount).toBe(0);
-  await settledRead;
-
-  // The terminal zero-primary walk is the real end of this preparation: no
-  // plan will link, so the spinner stops and the exclusion explains the next
-  // step instead of promising progress forever.
+  const durable = await request.get(
+    `${BASE}/api/operations/organize/discoveries/${discoveryId}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(durable.ok()).toBe(true);
+  expect(await durable.json()).toMatchObject({
+    previewId: null,
+    progress: { primarySources: 0 },
+    organizeFlow: { status: "completed", continuable: false },
+  });
   await expect(card.getByText("未找到可整理的主文件")).toBeVisible();
   await expect(card.locator(".mf-organize-preparation-spinner")).toHaveCount(0);
-  await expect(
-    card.getByText(/已排除 1 个条目：非媒体扩展名 × 1/),
-  ).toBeVisible();
-  await expect(
-    card.getByText("本次没有生成整理方案，也没有整理任何文件。"),
-  ).toBeVisible();
-  await expect(
-    card.getByText("请关闭本弹窗返回原文件页，调整所选范围后重新发起整理。"),
-  ).toBeVisible();
+  await expect(card.getByText("找到 0 个主文件")).toBeVisible();
+  await expect(card.getByText(/本次未生成方案，文件仍在原处/)).toBeVisible();
+  await expect(card.getByRole("button", { name: "返回文件页" })).toBeVisible();
   await expect(card.getByText(/未受影响的已受理条目会继续准备/)).toHaveCount(0);
   await expect(
     card.getByRole("button", { name: "运行分析并生成计划摘要" }),
@@ -3044,7 +3024,7 @@ test("ends the first-plan preparation when the selected folder has no primary fi
     ),
   ).toHaveLength(0);
 
-  await card.getByRole("button", { name: "关闭", exact: true }).click();
+  await card.getByRole("button", { name: "返回文件页", exact: true }).click();
   await expect(card).toHaveCount(0);
   await expect(page).not.toHaveURL(/organizeDiscovery=/);
   await expect(page.getByRole("table")).toBeVisible();
@@ -5355,7 +5335,7 @@ test("Task59.4 keeps the first-plan preparation while the linked summary is deli
       .poll(() => gatedPreparationReads.length, { timeout: 15_000 })
       .toBeGreaterThanOrEqual(1);
     await expect(
-      card.getByRole("heading", { name: "正在核对准备状态" }),
+      card.getByRole("heading", { name: "正在读取整理方案" }),
     ).toBeVisible();
     await expect(
       card.getByRole("region", { name: "本次整理概览" }),

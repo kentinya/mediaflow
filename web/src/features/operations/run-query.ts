@@ -29,12 +29,13 @@ export const runInventoryQueryKey = "operations.run-inventory" as const;
 
 /** The bounded active-work polling interval shared by every run read. */
 export const RUN_REFETCH_INTERVAL = 5_000;
+const RUN_UNAVAILABLE_REFETCH_INTERVAL = 10_000;
 
 /**
  * The shared refetch policy for one inventory page or selected overview.
  *
- * An undefined (not yet loaded) or failed read never schedules a poll; a read
- * every successful inventory read repeats every 5 seconds while visible so
+ * A temporary read failure backs off before polling again. Every successful
+ * inventory read repeats every 5 seconds while visible so
  * new terminal rows and changed recovery links appear without a write action.
  * A selected overview follows its own lifecycle and settles when terminal.
  */
@@ -42,8 +43,11 @@ export function runRefetchInterval(
   read: RunInventoryRead | RunOverviewRead | undefined,
   readFailed = false,
 ): number | false {
-  if (readFailed || read === undefined || !read.ok) {
-    return false;
+  if (readFailed || read === undefined) return false;
+  if (!read.ok) {
+    return read.failure.kind === "unavailable"
+      ? RUN_UNAVAILABLE_REFETCH_INTERVAL
+      : false;
   }
   const model = read.model;
   if ("items" in model) {
@@ -100,9 +104,11 @@ export function runProblemFilesQueryOptions(
     // a Task/item resolves or re-types the file. The same bounded read repeats
     // only while visible, so a resolved row leaves without replaying work.
     refetchInterval: (query) =>
-      query.state.data?.ok === true && query.state.status !== "error"
+      query.state.data?.ok === true
         ? RUN_REFETCH_INTERVAL
-        : false,
+        : query.state.data?.failure.kind === "unavailable"
+          ? RUN_UNAVAILABLE_REFETCH_INTERVAL
+          : false,
     refetchIntervalInBackground: false,
   });
 }

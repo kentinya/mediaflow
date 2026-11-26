@@ -10,7 +10,7 @@ import {
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { useAuthToken } from "../../shared/api/auth-context";
+import { useAuthAccount, useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { Icon } from "../../shared/ui/Icons";
@@ -1042,6 +1042,8 @@ function FileBrowseView({
   columnWidths,
   onColumnWidthsChange,
   previewing,
+  canPrepareOrganize,
+  canChangeFiles,
   refreshing,
   previewError,
   page,
@@ -1078,6 +1080,8 @@ function FileBrowseView({
   readonly columnWidths: FilesColumnWidths | null;
   readonly onColumnWidthsChange: (widths: FilesColumnWidths | null) => void;
   readonly previewing: boolean;
+  readonly canPrepareOrganize: boolean;
+  readonly canChangeFiles: boolean;
   /** A same-context re-read keeps the rendered rows and states it explicitly. */
   readonly refreshing: boolean;
   readonly previewError: string | null;
@@ -1135,6 +1139,9 @@ function FileBrowseView({
   ).length;
   const allChecked =
     rows.length > 0 && rows.every((row) => selected.has(row.path));
+  const fileWriteRestriction = canChangeFiles
+    ? undefined
+    : "当前账号没有修改文件的权限";
   const library = model.resourceLibrary;
   const hasNext = model.hasNext && model.nextCursor !== null;
   const selectedPaths = model.entries
@@ -1142,6 +1149,7 @@ function FileBrowseView({
     .map((entry) => entry.path);
   const openEntryMenu = useCallback(
     (row: FilesRowVm, event: ReactMouseEvent | ReactKeyboardEvent) => {
+      if (!canPrepareOrganize && !canChangeFiles) return;
       event.preventDefault();
       event.stopPropagation();
       const point =
@@ -1150,10 +1158,10 @@ function FileBrowseView({
           : undefined;
       setRowMenu({ path: row.path, point });
     },
-    [],
+    [canPrepareOrganize, canChangeFiles],
   );
   const renderEntryMenu = (row: FilesRowVm) =>
-    rowMenu?.path === row.path ? (
+    (canPrepareOrganize || canChangeFiles) && rowMenu?.path === row.path ? (
       <RowActionMenu
         path={row.path}
         label={`条目操作 ${identityAccessibleName(row.name)}`}
@@ -1173,7 +1181,7 @@ function FileBrowseView({
             打开
           </button>
         )}
-        {!row.isDirectory && isTextFileName(row.name) && (
+        {canChangeFiles && !row.isDirectory && isTextFileName(row.name) && (
           <button
             type="button"
             role="menuitem"
@@ -1186,7 +1194,7 @@ function FileBrowseView({
             编辑
           </button>
         )}
-        {row.organizeEligible && (
+        {canPrepareOrganize && row.organizeEligible && (
           <button
             type="button"
             role="menuitem"
@@ -1200,53 +1208,57 @@ function FileBrowseView({
             整理
           </button>
         )}
-        <button
-          type="button"
-          role="menuitem"
-          className="mf-card-menu-item"
-          onClick={() => {
-            setRowMenu(null);
-            onRename(row.path, row.name, {
-              size: row.size,
-              modifiedAt: row.modifiedAt,
-            });
-          }}
-        >
-          重命名
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="mf-card-menu-item"
-          onClick={() => {
-            setRowMenu(null);
-            onTransfer("copy", [row.path]);
-          }}
-        >
-          复制
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="mf-card-menu-item"
-          onClick={() => {
-            setRowMenu(null);
-            onTransfer("move", [row.path]);
-          }}
-        >
-          移动
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="mf-card-menu-item mf-card-menu-danger"
-          onClick={() => {
-            setRowMenu(null);
-            onDelete([row.path]);
-          }}
-        >
-          删除
-        </button>
+        {canChangeFiles && (
+          <>
+            <button
+              type="button"
+              role="menuitem"
+              className="mf-card-menu-item"
+              onClick={() => {
+                setRowMenu(null);
+                onRename(row.path, row.name, {
+                  size: row.size,
+                  modifiedAt: row.modifiedAt,
+                });
+              }}
+            >
+              重命名
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="mf-card-menu-item"
+              onClick={() => {
+                setRowMenu(null);
+                onTransfer("copy", [row.path]);
+              }}
+            >
+              复制
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="mf-card-menu-item"
+              onClick={() => {
+                setRowMenu(null);
+                onTransfer("move", [row.path]);
+              }}
+            >
+              移动
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="mf-card-menu-item mf-card-menu-danger"
+              onClick={() => {
+                setRowMenu(null);
+                onDelete([row.path]);
+              }}
+            >
+              删除
+            </button>
+          </>
+        )}
       </RowActionMenu>
     ) : null;
   return (
@@ -1276,6 +1288,8 @@ function FileBrowseView({
                 className="mf-button mf-button-secondary"
                 type="button"
                 onClick={onCreateFolder}
+                disabled={!canChangeFiles}
+                title={fileWriteRestriction}
               >
                 新建文件夹
               </button>
@@ -1283,6 +1297,8 @@ function FileBrowseView({
                 className="mf-button mf-button-secondary"
                 type="button"
                 onClick={onCreateText}
+                disabled={!canChangeFiles}
+                title={fileWriteRestriction}
               >
                 新建文本文件
               </button>
@@ -1537,7 +1553,8 @@ function FileBrowseView({
           className="mf-button mf-button-primary"
           type="button"
           onClick={onPreviewSelected}
-          disabled={organizeCount === 0 || previewing}
+          disabled={!canPrepareOrganize || organizeCount === 0 || previewing}
+          title={canPrepareOrganize ? undefined : "当前账号没有整理权限"}
         >
           批量整理
         </button>
@@ -1545,9 +1562,12 @@ function FileBrowseView({
           className="mf-button mf-button-secondary"
           type="button"
           onClick={() => onTransfer("copy", selectedPaths)}
-          disabled={selectedCount === 0 || selectedPaths.length > 50}
+          disabled={
+            !canChangeFiles || selectedCount === 0 || selectedPaths.length > 50
+          }
           title={
-            selectedPaths.length > 50 ? "单次复制最多选择 50 项" : undefined
+            fileWriteRestriction ??
+            (selectedPaths.length > 50 ? "单次复制最多选择 50 项" : undefined)
           }
         >
           复制
@@ -1556,9 +1576,12 @@ function FileBrowseView({
           className="mf-button mf-button-secondary"
           type="button"
           onClick={() => onTransfer("move", selectedPaths)}
-          disabled={selectedCount === 0 || selectedPaths.length > 50}
+          disabled={
+            !canChangeFiles || selectedCount === 0 || selectedPaths.length > 50
+          }
           title={
-            selectedPaths.length > 50 ? "单次移动最多选择 50 项" : undefined
+            fileWriteRestriction ??
+            (selectedPaths.length > 50 ? "单次移动最多选择 50 项" : undefined)
           }
         >
           移动
@@ -1567,9 +1590,12 @@ function FileBrowseView({
           className="mf-button mf-button-danger"
           type="button"
           onClick={() => onDelete(selectedPaths)}
-          disabled={selectedCount === 0 || selectedPaths.length > 50}
+          disabled={
+            !canChangeFiles || selectedCount === 0 || selectedPaths.length > 50
+          }
           title={
-            selectedPaths.length > 50 ? "单次删除最多选择 50 项" : undefined
+            fileWriteRestriction ??
+            (selectedPaths.length > 50 ? "单次删除最多选择 50 项" : undefined)
           }
         >
           删除
@@ -2360,6 +2386,11 @@ function ResourceLibraryConfigCard({
 
 export function StorageFilesPage() {
   const token = useAuthToken();
+  const account = useAuthAccount();
+  const canPrepareOrganize =
+    account === null || account.permissions.includes("submit_dry_run");
+  const canChangeFiles =
+    account === null || account.permissions.includes("execute_manual_organize");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
@@ -3975,6 +4006,8 @@ export function StorageFilesPage() {
                           isFetching ||
                           statusFetching
                         }
+                        canPrepareOrganize={canPrepareOrganize}
+                        canChangeFiles={canChangeFiles}
                         refreshing={isFetching}
                         previewError={previewError}
                         page={cursorHistory.length + 1}

@@ -147,9 +147,9 @@ function inventoryRead(statuses: readonly RunStatus[]): RunInventoryRead {
 }
 
 describe("run refetch interval", () => {
-  it("never schedules a poll for a missing or failed read", () => {
+  it("backs off a temporary read failure and stops for a missing record", () => {
     expect(runRefetchInterval(undefined)).toBe(false);
-    expect(runRefetchInterval(FAILED_READ)).toBe(false);
+    expect(runRefetchInterval(FAILED_READ)).toBe(10_000);
     expect(runRefetchInterval(FAILED_OVERVIEW_READ)).toBe(false);
     expect(runRefetchInterval(overviewRead("running"), true)).toBe(false);
   });

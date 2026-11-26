@@ -242,28 +242,12 @@ export function RunLifecycleControls({
         )}
         {!locked && result !== null && result.ok && (
           <div role="status">
-            <p>取消请求已受理；当前状态：{stateLabel(result.state)}。</p>
-            <button
-              type="button"
-              className="mf-button mf-button-secondary"
-              disabled={reconciling}
-              onClick={onReconcile}
-            >
-              {reconciling ? "正在刷新…" : "刷新状态"}
-            </button>
+            <p>取消请求已受理；当前状态：{stateLabel(projection.state)}。</p>
           </div>
         )}
         {!locked && result !== null && !result.ok && !unknownOutcome && (
           <div role="alert">
             <p>{runLifecycleRejectionCopy(result)}</p>
-            <button
-              type="button"
-              className="mf-button mf-button-secondary"
-              disabled={reconciling}
-              onClick={onReconcile}
-            >
-              {reconciling ? "正在刷新…" : "刷新状态"}
-            </button>
           </div>
         )}
       </div>

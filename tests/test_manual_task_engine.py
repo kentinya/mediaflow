@@ -2408,6 +2408,95 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
                     reopened.get_media_discovery(discovery.discovery_id).cancel_requested
                 )
 
+    def test_empty_directory_completes_without_a_plan_or_file_results(self) -> None:
+        (self.source_root / "Empty").mkdir()
+        with self.journey(task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Empty"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            self.assertIs(discovery.status, DiscoveryStatus.COMPLETED)
+            self.assertIsNone(discovery.preview_id)
+            self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state, TaskQueueState.SETTLED
+            )
+            self.assertEqual((), value.repository.list_items(task_id))
+            self.assertEqual((), value.repository.list_results(task_id))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_worker_settles_a_legacy_empty_preparation_without_rewalk(self) -> None:
+        (self.source_root / "Empty").mkdir()
+        with self.journey(task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Empty"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            with mock.patch(
+                "mediaflow.application.manual_task_engine.discovery_completed_without_primary_sources",
+                return_value=False,
+            ):
+                discovery = self._drive(value, task_id)
+            self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.RUNNING)
+            self.assertEqual(
+                (task_id,), value.repository.settle_stuck_organize_tasks(value.clock())
+            )
+            self.assertEqual((), value.repository.settle_stuck_organize_tasks(value.clock()))
+            self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
+            self.assertEqual(
+                discovery, value.repository.get_media_discovery(discovery.discovery_id)
+            )
+            self.assertEqual((), value.repository.list_items(task_id))
+            self.assertEqual((), value.repository.list_results(task_id))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_last_conflict_skip_completes_without_running_another_pass(self) -> None:
+        self._assert_last_conflict_skip_completes(legacy=False)
+
+    def test_worker_settles_a_legacy_audited_conflict_skip(self) -> None:
+        self._assert_last_conflict_skip_completes(legacy=True)
+
+    def _assert_last_conflict_skip_completes(self, *, legacy: bool) -> None:
+        provider = self._two_file_recognition_journey()
+        with self.journey(provider=provider, task_scheduling=True) as value:
+            status, admitted = self._admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            discovery = self._drive(value, task_id)
+            item = value.repository.list_items(task_id)[0]
+            self._decide_recognition(value, task_id, item)
+            preview = self._analyze(value, task_id, discovery)
+            destination = (
+                self.target_root / preview["items"][0]["plan"]["destination"]["storageRelativePath"]
+            )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"existing target")
+            self._analyze(value, task_id, discovery)
+            if legacy:
+                with mock.patch.object(
+                    value.repository, "_settle_last_decided_item_locked", return_value=False
+                ):
+                    self._resolve_conflict(value, task_id, item, strategy="skip")
+                self.assertIs(
+                    value.repository.get_task(task_id).status, PersistentTaskStatus.RUNNING
+                )
+                self.assertEqual(
+                    (task_id,), value.repository.settle_stuck_organize_tasks(value.clock())
+                )
+                self.assertEqual((), value.repository.settle_stuck_organize_tasks(value.clock()))
+            else:
+                self._resolve_conflict(value, task_id, item, strategy="skip")
+            self.assertIs(value.repository.get_item(item.item_id).status, TaskItemStatus.SKIPPED)
+            self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.COMPLETED)
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state, TaskQueueState.SETTLED
+            )
+            self.assertEqual((), value.repository.list_results(task_id))
+            self.assertEqual(b"existing target", destination.read_bytes())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
     def test_new_task_reopens_its_own_conflict_not_a_cancelled_tasks_decision(self) -> None:
         """A new request never borrows another Task's resolved conflict decision.
 
@@ -4047,7 +4136,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
 
             with mock.patch.object(
                 restarted.repository,
-                "settle_stuck_primary_limit_preparations",
+                "settle_stuck_organize_tasks",
                 side_effect=RuntimeError("synthetic settlement publication failure"),
             ):
                 poll()

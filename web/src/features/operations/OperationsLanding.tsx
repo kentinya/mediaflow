@@ -1045,31 +1045,6 @@ export function OperationsLanding() {
           ...runDetailStateSearch(detailState),
           [OPERATIONS_DIALOG_KEY]: OPERATIONS_ORGANIZE_DIALOG,
         };
-  // The explicit header refresh re-reads the bounded landing reads (the
-  // inventory and the selected run overview); it never submits or replays any
-  // command and never issues the retired global Worker/resident-status reads.
-  const refreshAll = async () => {
-    await Promise.all([
-      query.refetch({ cancelRefetch: false }),
-      ...(problemSurface
-        ? [problemQuery.refetch({ cancelRefetch: false })]
-        : []),
-      ...(selectedId === ""
-        ? []
-        : [
-            overviewQuery.refetch({ cancelRefetch: false }),
-            queryClient.invalidateQueries(
-              { queryKey: [runItemsQueryKey], refetchType: "active" },
-              { cancelRefetch: false },
-            ),
-            queryClient.invalidateQueries(
-              { queryKey: [runRecordsQueryKey], refetchType: "active" },
-              { cancelRefetch: false },
-            ),
-          ]),
-    ]);
-  };
-
   return (
     <TaskItemRecoverySessionProvider key={token ?? "disconnected"}>
       <div className="mf-dashboard mf-operations-inventory">
@@ -1080,7 +1055,6 @@ export function OperationsLanding() {
               跟踪整理进度，集中处理问题，查看每个文件的结果。
             </p>
           </div>
-          <RefreshControl onRefresh={refreshAll} />
         </header>
         {automationReturn !== null && (
           <div className="mf-dashboard-meta" role="note">
@@ -2122,6 +2096,9 @@ function RunDetailPanel({
       result,
       locked: isUnknownLifecycleOutcome(result) ? true : controlSession.locked,
     });
+    if (!isUnknownLifecycleOutcome(result)) {
+      void query.refetch({ cancelRefetch: false });
+    }
   };
 
   /** One explicit reconciliation read; the lock clears only on success. */
@@ -2241,10 +2218,20 @@ function RunDetailPanel({
                 status={run.status}
                 confirmableWaiting={confirmableWaiting}
                 progressPhase={progressPhase}
+                compactConfirmation={
+                  preparationStage !== "reading" &&
+                  preparationStage !== "unreadable" &&
+                  progressPhase === "confirming" &&
+                  headline.simpleConfirmation === true
+                }
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
-                statusTone={runStatusTone(run)}
+                statusTone={
+                  headline.title === "等待确认"
+                    ? "attention"
+                    : runStatusTone(run)
+                }
                 flow={
                   <>
                     <RunFlowSummary run={run} headline={headline} />
@@ -2464,6 +2451,7 @@ function preparationHeadline(stage: RunPreparationStage): {
 }
 
 interface RunHeadline {
+  readonly simpleConfirmation?: boolean;
   readonly title: string;
   readonly copy: string;
   readonly showContinue?: boolean;
@@ -2507,10 +2495,12 @@ function waitingHeadline(
       run.lifecycle?.cancellationRequested !== true &&
       !filesRecoveryConfirmationPending;
     const nextStep = showContinue
-      ? `点击「继续整理」，核对 ${confirmableRange} 个文件的方案。`
-      : `${confirmableRange} 个文件等待确认。可展开对应文件的证据核对方案。`;
+      ? `点击右上角「继续整理」，核对 ${confirmableRange} 个文件的方案。`
+      : "在下方展开对应文件的证据，核对方案。";
     return {
       title: "等待确认",
+      simpleConfirmation:
+        confirmed === 0 && remaining === 0 && run.problemTypes.length === 0,
       copy: `${prefix}${remaining > 0 ? `${confirmableRange} 个文件可确认，另有 ${remaining} 个等待处理。` : ""}${nextStep}`,
       showContinue,
     };

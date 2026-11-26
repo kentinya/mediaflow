@@ -782,6 +782,7 @@ export interface RunDetailTabsProps {
   readonly active: boolean;
   /** The status card tone derived from this exact run's durable facts. */
   readonly statusTone?: RunDetailStatusTone;
+  readonly compactConfirmation?: boolean;
   /** The run's flow status/stage/problems, read before progress and results. */
   readonly flow?: ReactNode;
   /** The independent per-file outcome counts shown after the status card. */
@@ -806,6 +807,7 @@ export function RunDetailTabs({
   onStateChange,
   active,
   statusTone = "neutral",
+  compactConfirmation = false,
   flow,
   results,
   facts,
@@ -985,7 +987,7 @@ export function RunDetailTabs({
       {state.tab === "detail" ? (
         <div className="mf-run-tab-panel">
           <section
-            className={`mf-run-status-card mf-run-status-card-${statusTone}`}
+            className={`mf-run-status-card mf-run-status-card-${statusTone}${compactConfirmation ? " mf-run-status-card-confirmation" : ""}`}
             aria-label="状态与流程"
           >
             {flow}
@@ -994,6 +996,7 @@ export function RunDetailTabs({
               status={status}
               confirmableWaiting={confirmableWaiting}
               phase={progressPhase}
+              compactConfirmation={compactConfirmation}
             />
           </section>
           <RunFileResultsCard
@@ -1048,10 +1051,12 @@ function ProgressCard({
   status,
   confirmableWaiting,
   phase,
+  compactConfirmation,
 }: {
   readonly progress: RunProgress | null;
   readonly status?: RunStatus;
   readonly confirmableWaiting: number | null;
+  readonly compactConfirmation: boolean;
   readonly phase: RunProgressPhase | null;
 }) {
   if (progress === null || !progress.available) {
@@ -1065,6 +1070,27 @@ function ProgressCard({
           {progress !== null && !progress.available
             ? progress.reason
             : "该运行没有可发布的持久进度证据。"}
+        </p>
+      </section>
+    );
+  }
+  if (
+    compactConfirmation &&
+    !progress.indeterminate &&
+    progress.knownTotal !== null &&
+    progress.processed !== null
+  ) {
+    const settled = Math.max(
+      0,
+      progress.processed - progress.dispositions.waiting,
+    );
+    return (
+      <section className="mf-run-progress" aria-label="处理进度">
+        <p className="mf-run-progress-line">
+          <strong>处理进度</strong>
+          <span>
+            {settled} / {progress.knownTotal} 个主文件
+          </span>
         </p>
       </section>
     );

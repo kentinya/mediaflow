@@ -898,27 +898,15 @@ describe("Operations run inventory landing", () => {
     // admission claim.
     expect(await within(detail).findByText("等待确认")).toBeVisible();
     expect(
-      within(detail).getByText("点击「继续整理」，核对 1 个文件的方案。"),
+      within(detail).getByText("点击右上角「继续整理」，核对 1 个文件的方案。"),
     ).toBeVisible();
-    // The processed range names its preparation/analysis basis and the
-    // still-waiting file instead of borrowing an execution or success claim.
     const progress = within(detail).getByRole("region", { name: "处理进度" });
+    // This fixture withholds the plan read, so the view states the published
+    // analysis count instead of presenting a fully read current plan.
     expect(
-      within(progress).getByText(
-        "已进入准备与分析 1 / 1 个主条目（准备与分析计数，含 1 个等待确认）",
-      ),
+      within(progress).getByText(/准备与分析计数，含 1 个等待确认/),
     ).toBeVisible();
-    expect(
-      within(progress).getByText("处理进度", { exact: true }),
-    ).toBeVisible();
-    // The processed range is text: no bar implies the waiting files ran.
     expect(within(progress).queryByRole("progressbar")).toBeNull();
-    // The zero executed files stay a separate fact from the waiting range.
-    expect(
-      within(progress).getByText(
-        "尚未执行文件操作，暂无文件结果；1 个文件等待确认，确认前不执行文件操作。",
-      ),
-    ).toBeVisible();
     expect(
       within(detail).queryByText("执行已受理，文件结果由后端独立记录。"),
     ).toBeNull();
@@ -1088,11 +1076,7 @@ describe("Operations run inventory landing", () => {
       timeout: 8_000,
     });
     expect(within(progress).queryByRole("progressbar")).toBeNull();
-    expect(
-      within(progress).getByText(
-        "尚未执行文件操作，暂无文件结果；1 个文件等待确认，确认前不执行文件操作。",
-      ),
-    ).toBeVisible();
+    expect(within(progress).getByText("0 / 1 个主文件")).toBeVisible();
   }, 20_000);
 
   it("states one normal completion heading before the real progress and results (Task 59.3 AC-06)", async () => {
@@ -1206,7 +1190,7 @@ describe("Operations run inventory landing", () => {
     ).toBeVisible();
     expect(
       await within(detail).findByText(
-        "1 个文件可确认，另有 1 个等待处理。点击「继续整理」，核对 1 个文件的方案。",
+        "1 个文件可确认，另有 1 个等待处理。点击右上角「继续整理」，核对 1 个文件的方案。",
       ),
     ).toBeVisible();
     expect(within(detail).getByText("当前业务问题")).toBeVisible();
@@ -1369,7 +1353,7 @@ describe("Operations run inventory landing", () => {
     expect(await within(detail).findByText("等待确认")).toBeVisible();
     expect(
       within(detail).getByText(
-        "已有 1 次确认记录被受理；点击「继续整理」，核对 1 个文件的方案。",
+        "已有 1 次确认记录被受理；点击右上角「继续整理」，核对 1 个文件的方案。",
       ),
     ).toBeVisible();
     expect(
@@ -4160,7 +4144,7 @@ describe("Operations run inventory landing", () => {
     ).toBeVisible();
   });
 
-  it("re-reads the selected overview from the header refresh control", async () => {
+  it("automatically re-reads the visible inventory and active overview", async () => {
     const user = userEvent.setup();
     const requested: string[] = [];
     stubFetch(async (input) => {
@@ -4170,7 +4154,7 @@ describe("Operations run inventory landing", () => {
         return jsonResponse(pageDocument());
       }
       if (url === "/api/operations/runs/task-001") {
-        return jsonResponse(runDocument());
+        return jsonResponse(runDocument({ status: "running" }));
       }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
@@ -4191,15 +4175,14 @@ describe("Operations run inventory landing", () => {
     if (header === null) {
       throw new Error("landing header was not rendered");
     }
-    // The landing header refresh owns every bounded landing read, including
-    // the selected overview (the Resident-service control stays untouched).
-    const headerRefresh = await within(header as HTMLElement).findByRole(
-      "button",
-      { name: "刷新" },
-    );
-    await user.click(headerRefresh);
-    await waitFor(() => expect(overviewReads()).toBeGreaterThan(before));
-  });
+    expect(within(header).queryByRole("button", { name: "刷新" })).toBeNull();
+    await waitFor(() => expect(overviewReads()).toBeGreaterThan(before), {
+      timeout: 7_000,
+    });
+    expect(
+      requested.filter((url) => url.startsWith("/api/operations/runs?")).length,
+    ).toBeGreaterThan(1);
+  }, 10_000);
 
   it("pushes a history entry for the selection and Back restores the list", async () => {
     const user = userEvent.setup();

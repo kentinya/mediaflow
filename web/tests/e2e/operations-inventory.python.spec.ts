@@ -914,15 +914,14 @@ test("reads are side-effect free: only GET requests leave the landing", async ({
   const api = recordApiCalls(page);
   await openInventory(page);
 
-  // Select one run (a read), open its overview (a read) and refresh (a read).
+  // Select one run and wait for the system's next inventory read.
   await page.getByRole("table").getByRole("button").first().click();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
-  await page
-    .getByRole("dialog", { name: "运行详情" })
-    .getByRole("button", { name: "刷新", exact: true })
-    .first()
-    .click();
-  await page.waitForTimeout(750);
+  await page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/operations/runs" &&
+      response.request().method() === "GET",
+  );
 
   expect(api.length).toBeGreaterThan(0);
   const mutations = api.filter((entry) => entry.method !== "GET");
@@ -979,10 +978,14 @@ test("historical identity survives a real restart of the runtime database", asyn
   const restart = await request.post(`${BASE}/__harness__/restart`);
   expect(restart.ok()).toBeTruthy();
 
-  // A bounded refresh rereads the same durable population: every run identity,
+  // The next inventory poll rereads the same durable population: every run identity,
   // label, trigger and scope is byte-for-byte the same, because the inventory
   // never backfills display evidence from a current Active configuration.
-  await page.getByRole("button", { name: "刷新" }).first().click();
+  await page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/operations/runs" &&
+      response.request().method() === "GET",
+  );
   await expectRunTotal(page, seededRunTotal);
   const after = await page
     .getByRole("table")
@@ -991,7 +994,7 @@ test("historical identity survives a real restart of the runtime database", asyn
   expect(after).toEqual(before);
 });
 
-test("the selected run follows polling, header refresh and history navigation", async ({
+test("the selected run follows automatic reads and history navigation", async ({
   page,
 }) => {
   const admitted = await page.request.post(
@@ -1026,12 +1029,15 @@ test("the selected run follows polling, header refresh and history navigation", 
     .poll(overviewReads, { timeout: 6500, intervals: [250] })
     .toBeGreaterThanOrEqual(2);
 
-  // Close the modal to use the page header, then reopen the exact run. The
-  // card covers the header; a real operator cannot click through its backdrop.
+  // Closing and reopening the exact run leaves the automatic read active.
   const beforeRefresh = overviewReads();
   await detail.getByRole("button", { name: "关闭详情" }).click();
   await expect(detail).toHaveCount(0);
-  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(
+    page
+      .locator(".mf-operations-inventory > header")
+      .getByRole("button", { name: "刷新", exact: true }),
+  ).toHaveCount(0);
   await activeRow.getByRole("button").first().click();
   await expect(detail).toBeVisible();
   await expect
@@ -1501,7 +1507,11 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
 
   // Select the exact new Task through the visible run inventory and inspect
   // the single durable item/result written by the actual Worker execution.
-  await page.getByRole("button", { name: "刷新" }).first().click();
+  await page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/operations/runs" &&
+      response.request().method() === "GET",
+  );
   // Slice46 RO-4: this journey starts from the analysis-only
   // `/files/organize` preparation.  That preparation is *not* organizing work
   // of its own, so the center shows only the admitted execution Task: exactly
@@ -1881,12 +1891,10 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     status: "completed",
     itemCount: 1,
   });
-  await page
-    .getByRole("dialog", { name: "运行详情" })
-    .getByRole("button", { name: "刷新", exact: true })
-    .first()
-    .click();
   const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(
+    detail.getByRole("region", { name: "状态与流程" }),
+  ).toContainText(/流程已完成/);
   await expect(detail).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });
   await expect(items.getByText("Three.2003.mkv")).toBeVisible();
@@ -2061,7 +2069,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   await expect(
     detail.getByRole("link", { name: "继续整理", exact: true }),
   ).toHaveCount(0);
-  await expect(detail.getByText(/点击「继续整理」/)).toHaveCount(0);
+  await expect(detail.getByText(/点击右上角「继续整理」/)).toHaveCount(0);
   await openEvidence("Fifteenth.2015.mkv");
   const summary = detail.getByRole("region", { name: "新计划摘要" });
   await expect(summary).toBeVisible({ timeout: 30_000 });
@@ -2604,7 +2612,11 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   };
   expect(run.status).toBe("completed");
 
-  await page.getByRole("button", { name: "刷新" }).first().click();
+  await page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/operations/runs" &&
+      response.request().method() === "GET",
+  );
   // This standalone `organize --execute` shape publishes one Task and no
   // separate analysis run, so exactly one more run appears.
   await expectRunTotal(page, totalBeforePipeline + 1);
@@ -2901,12 +2913,10 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
     status: "completed",
     itemCount: 1,
   });
-  await page
-    .getByRole("dialog", { name: "运行详情" })
-    .getByRole("button", { name: "刷新", exact: true })
-    .first()
-    .click();
   const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(
+    detail.getByRole("region", { name: "状态与流程" }),
+  ).toContainText(/流程已完成/);
   const items = detail.getByRole("region", { name: "主条目" });
   await expect(items.getByText("Four.2004.mkv")).toBeVisible();
   const evidenceResponse = page.waitForResponse(
@@ -4660,7 +4670,7 @@ test("time filter: running, ended and business views preserve their own dated po
   expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
 });
 
-test("refresh feedback: quiet polling joins manual refresh without clearing the current list", async ({
+test("inventory polling keeps the current list and selection readable while a read is pending", async ({
   page,
   request,
 }) => {
@@ -4695,9 +4705,7 @@ test("refresh feedback: quiet polling joins manual refresh without clearing the 
   await reading;
   await expect(
     header.getByRole("button", { name: "刷新", exact: true }),
-  ).toBeEnabled();
-  await header.getByRole("button", { name: "刷新", exact: true }).click();
-  await expect(header.getByRole("button", { name: "刷新中…" })).toBeDisabled();
+  ).toHaveCount(0);
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
   await expect(detail).toHaveCount(0);
   await expect(page).toHaveURL(context);
@@ -4705,7 +4713,7 @@ test("refresh feedback: quiet polling joins manual refresh without clearing the 
   release();
   await expect(
     header.getByRole("button", { name: "刷新", exact: true }),
-  ).toBeEnabled();
+  ).toHaveCount(0);
   await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
   await page.getByRole("table").getByRole("button").first().click();
   await expect(detail).toBeVisible();
@@ -4713,7 +4721,7 @@ test("refresh feedback: quiet polling joins manual refresh without clearing the 
 });
 
 for (const status of [503, 403, 401]) {
-  test(`refresh feedback: a manual read failure ${status} replaces stale content safely`, async ({
+  test(`inventory polling: a read failure ${status} replaces stale content safely`, async ({
     page,
   }) => {
     await connect(page);
@@ -4736,10 +4744,11 @@ for (const status of [503, 403, 401]) {
         }),
       }),
     );
-    await page
-      .locator(".mf-operations-inventory > header")
-      .getByRole("button", { name: "刷新", exact: true })
-      .click();
+    await expect(
+      page
+        .locator(".mf-operations-inventory > header")
+        .getByRole("button", { name: "刷新", exact: true }),
+    ).toHaveCount(0);
     await expect(page.getByRole("table")).toHaveCount(0);
     if (status === 401)
       await expect(
@@ -4785,10 +4794,14 @@ test("a real Worker claim advances a queued Task without changing the total", as
   expect(linked.status).not.toBe("pending");
   expect(linked).not.toHaveProperty("jobId");
 
-  // A bounded refresh rereads the same population: the claimed Task is the
+  // The next inventory poll rereads the same population: the claimed Task is the
   // same run (counted once), so the total is unchanged while exactly one run
   // leaves the queue and takes its machine stage.
-  await page.getByRole("button", { name: "刷新" }).first().click();
+  await page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/operations/runs" &&
+      response.request().method() === "GET",
+  );
   await expect(totalText).toHaveText(beforeTotal);
   await expect(page.getByRole("row").filter({ hasText: "待处理" })).toHaveCount(
     pendingBefore - 1,
@@ -5832,14 +5845,10 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   // Files preparation lead the first card; `running` is not an execution claim.
   await expect(detail.getByRole("heading", { name: "等待确认" })).toBeVisible();
   await expect(
-    detail.getByText("点击「继续整理」，核对 1 个文件的方案。"),
+    detail.getByText("点击右上角「继续整理」，核对 1 个文件的方案。"),
   ).toBeVisible();
   const waitingProgress = detail.getByRole("region", { name: "处理进度" });
-  await expect(
-    waitingProgress.getByText(
-      "已进入准备与分析 1 / 1 个主条目（准备与分析计数，含 1 个等待确认）",
-    ),
-  ).toBeVisible();
+  await expect(waitingProgress.getByText("0 / 1 个主文件")).toBeVisible();
   await expect(waitingProgress.getByRole("progressbar")).toHaveCount(0);
   await expect(
     detail.getByText("执行已受理，文件结果由后端独立记录。"),
@@ -6611,7 +6620,7 @@ test("Task 59.6 hides Continue during Task Center preparation and recognition re
     }),
   ).toBeVisible();
   await expect(continueLink).toHaveCount(0);
-  await expect(detail.getByText(/点击「继续整理」/)).toHaveCount(0);
+  await expect(detail.getByText(/点击右上角「继续整理」/)).toHaveCount(0);
 
   // An existing exact hosted address still reads the admitted preparation.
   await page.goto(`${BASE}/operations?run=${taskId}&dialog=organize`);
@@ -6703,7 +6712,7 @@ test("Task 59.6 hides Continue during Task Center preparation and recognition re
     detail.getByRole("heading", { name: "等待处理", exact: true }),
   ).toBeVisible();
   await expect(continueLink).toHaveCount(0);
-  await expect(detail.getByText(/点击「继续整理」/)).toHaveCount(0);
+  await expect(detail.getByText(/点击右上角「继续整理」/)).toHaveCount(0);
   await detail
     .getByRole("button", { name: /Task59Reopen\.2049\.mkv.*查看证据/ })
     .click();

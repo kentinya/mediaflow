@@ -31,6 +31,8 @@ from mediaflow.domain.media_discovery import (
     PRIMARY_LIMIT_TASK_ERROR,
     DiscoveryStatus,
     MediaDiscovery,
+    discovery_completed_without_primary_sources,
+    discovery_material_refusal,
     discovery_primary_limit_stopped,
 )
 from mediaflow.domain.task_persistence import (
@@ -140,11 +142,8 @@ class ManualTaskEngineWorker:
     def run_next(self) -> PersistentTask | None:
         """Claim and advance at most one kernel-admitted manual Task."""
 
-        # A pre-change Worker left a Files preparation stopped at the primary
-        # bound in ``waiting_human`` even though no plan exists and no file was
-        # ever accepted.  Settle that bounded, idempotent legacy shape before
-        # claiming new work, so a restart needs no operator cancellation.
-        self._sweep_primary_limit_preparations()
+        # Finish bounded legacy human waits with a proven terminal outcome.
+        self._sweep_stuck_organize_tasks()
         claim = self._scheduling.claim_next(
             worker_id=self._worker_id,
             now=self._clock(),
@@ -321,6 +320,16 @@ class ManualTaskEngineWorker:
                 close_recorded_unknown_boundary=True,
             )
             return self._task(claim.task_id)
+        if (
+            discovery.status is DiscoveryStatus.PARTIAL_SUCCESS
+            and discovery.definition_origin is None
+            and discovery.intent_id is None
+            and discovery.preview_id is None
+            and discovery_material_refusal(discovery.progress) is not None
+        ):
+            return self._fail_discovery(
+                claim, discovery, RuntimeError("preparation_scope_incomplete")
+            )
         # A completed/partial walk may still have a linked exact plan summary
         # waiting for the operator's confirmation.  That is human waiting, not
         # a released scope: the Task identity, items and source ownership stay.
@@ -343,7 +352,8 @@ class ManualTaskEngineWorker:
             return self._yield_until(
                 claim, self._with_counts(updated_task), now, TaskMachineStage.ANALYSIS
             )
-        if items and all(value.status in SETTLED_ITEM_STATUSES for value in items):
+        empty_walk = not items and discovery_completed_without_primary_sources(discovery)
+        if empty_walk or (items and all(value.status in SETTLED_ITEM_STATUSES for value in items)):
             # Discovery/analysis finished but every durable source already
             # recorded its own settled outcome: an operator ignored the only
             # source, or the only analysis result was a technical failure.  No
@@ -352,7 +362,9 @@ class ManualTaskEngineWorker:
             # a queued/processing sibling or a live claim never reaches this
             # branch; a recorded unknown effect releases its slot here because
             # the pass already returned and its Result stays factual.
-            settled_status = task_work_status(items)
+            settled_status = (
+                PersistentTaskStatus.COMPLETED if empty_walk else task_work_status(items)
+            )
             ended = self._with_counts(
                 self._with_status(updated_task, settled_status, now, updated_task.error)
             )
@@ -1140,8 +1152,8 @@ class ManualTaskEngineWorker:
             pass
         return self._task(claim.task_id)
 
-    def _sweep_primary_limit_preparations(self) -> None:
-        """Boundedly settle legacy stuck primary-limit preparations.
+    def _sweep_stuck_organize_tasks(self) -> None:
+        """Boundedly settle legacy terminal preparations and conflict skips.
 
         The repository transaction re-reads the exact Task/discovery
         association, Task version, execution history and control conditions
@@ -1151,7 +1163,7 @@ class ManualTaskEngineWorker:
         therefore writes nothing.
         """
 
-        sweeper = getattr(self._repository, "settle_stuck_primary_limit_preparations", None)
+        sweeper = getattr(self._repository, "settle_stuck_organize_tasks", None)
         if not callable(sweeper):
             return
         try:
@@ -1163,9 +1175,7 @@ class ManualTaskEngineWorker:
             bounded = "".join(
                 character for character in code if character.isalnum() or character in "_-"
             )
-            self._notice(
-                f"stuck primary-limit preparation sweep failed ({bounded[:48]}); state preserved\n"
-            )
+            self._notice(f"stuck organize task sweep failed ({bounded[:48]}); state preserved\n")
 
     def _record_failure(
         self, claim, error: BaseException, initial_execution_stage: str | None = None
