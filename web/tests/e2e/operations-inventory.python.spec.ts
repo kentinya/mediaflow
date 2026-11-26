@@ -275,22 +275,73 @@ async function confirmNativeRecovery(
 ): Promise<void> {
   const executePath = /\/api\/operations\/organize\/previews\/[^/]+\/execute$/;
   if (scenario === "normal") {
+    const summary = recovery.getByRole("region", { name: "新计划摘要" });
+    const evidencePath = `${BASE}/api/operations/runs/${seeded.runId}/items/${seeded.itemId}`;
+    let releaseExecute = () => {};
+    let releaseEvidence = () => {};
+    const executeGate = new Promise<void>((resolve) => {
+      releaseExecute = resolve;
+    });
+    const evidenceGate = new Promise<void>((resolve) => {
+      releaseEvidence = resolve;
+    });
+    await page.route(executePath, async (route) => {
+      await executeGate;
+      await route.continue();
+    });
+    await page.route(evidencePath, async (route) => {
+      await evidenceGate;
+      await route.continue();
+    });
     const confirmResponse = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
         executePath.test(new URL(response.url()).pathname),
     );
-    await confirm.click();
-    const confirmed = await confirmResponse;
-    expect(confirmed.status()).toBe(202);
-    const confirmation = (await confirmed.json()) as {
-      readonly taskId: string;
-      readonly executionId: string;
-    };
-    expect(confirmation.taskId).toBe(seeded.taskId);
-    await expect(
-      recovery.getByText(/已受理 1 项；常驻 Worker 将执行已确认的精确子集/),
-    ).toBeVisible();
+    try {
+      const geometry = () =>
+        summary.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const scroller = element.closest(".mf-modal-body-scroll");
+          return {
+            y: rect.top + (scroller?.scrollTop ?? 0),
+            height: rect.height,
+          };
+        });
+      const before = await geometry();
+      await confirm.click();
+      await expect(
+        summary.getByRole("button", { name: "正在提交…" }),
+      ).toBeDisabled();
+      await expect(recovery.getByText("操作请求仍在进行")).toHaveCount(0);
+      const submitting = await geometry();
+      expect(Math.abs(submitting.y - before.y)).toBeLessThan(2);
+      expect(Math.abs(submitting.height - before.height)).toBeLessThan(2);
+      releaseExecute();
+
+      const confirmed = await confirmResponse;
+      expect(confirmed.status()).toBe(202);
+      const confirmation = (await confirmed.json()) as {
+        readonly taskId: string;
+        readonly executionId: string;
+      };
+      expect(confirmation.taskId).toBe(seeded.taskId);
+      await expect(
+        summary.getByRole("button", { name: "正在读取结果…" }),
+      ).toBeDisabled();
+      await expect(summary.getByText("已受理", { exact: true })).toBeVisible();
+      await expect(confirm).toHaveCount(0);
+      releaseEvidence();
+      await expect(summary).toHaveCount(0);
+      await expect(
+        recovery.getByText(/已受理 1 项；常驻 Worker 将执行已确认的精确子集/),
+      ).toBeVisible();
+    } finally {
+      releaseExecute();
+      releaseEvidence();
+      await page.unroute(evidencePath);
+      await page.unroute(executePath);
+    }
     return;
   }
 

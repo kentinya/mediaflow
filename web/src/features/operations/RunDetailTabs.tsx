@@ -2186,16 +2186,13 @@ function RunEvidenceSection({
                 active={active}
                 hostedDiagnostics
                 recoveryExpected={recoveryActionable}
-                evidenceFile={
-                  recoveryActionable
-                    ? {
-                        name: fileNameOf(item.sourcePath),
-                        source: `${item.storageId}:${item.sourcePath}`,
-                        position: filePosition,
-                        blockerKind: checkpoint.blockerKind,
-                      }
-                    : undefined
-                }
+                evidenceFile={{
+                  name: fileNameOf(item.sourcePath),
+                  sourceStorageId: item.storageId,
+                  sourcePath: item.sourcePath,
+                  position: filePosition,
+                  blockerKind: checkpoint.blockerKind,
+                }}
                 decisionDraft={decisionDraft}
                 onDecisionDraftChange={onDecisionDraftChange}
               />

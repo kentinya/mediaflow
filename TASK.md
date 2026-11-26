@@ -155,3 +155,16 @@ B 独立验收待完成。
 Prettier、生产构建及治理通过。对照截图和日志位于
 `.git/validation-evidence/71787a05/slice59-local-site/` 的 `recovery-verified-*`、
 `recovery-components-final.log` 和 `recovery-native-final.log`。B 独立验收待完成。
+
+## 用户补充修正 — 文件证据确认继续整理的画面交接
+
+沿用 Task 59.6、原 Base 与 T3。起点为干净的 `main`（`a8abd019`），治理通过。
+把提交与受理反馈放在新计划摘要内。按原文件和已提交范围锁定摘要，
+同一文件的证据读回后切换到实际处理状态。对未纳入的兄弟项独立呈现其可用动作。
+
+144 项受影响组件测试和 9 条真实 Python 浏览器流程通过。覆盖分开延迟确认和证据读取、
+响应丢失后的原批核对、竞态、兄弟项及覆盖授权。1366 和 390 px 在普通响应和延迟
+750 ms 的响应下逐帧确认，提交时摘要和滚动位置稳定，原确认按钮未再出现。
+类型、变动文件 ESLint 与 Prettier、生产构建和治理通过。录帧与测试记录位于本机
+`.git/validation-evidence/71787a05/slice59-local-site/` 的 `recovery-confirm-*`。
+B 独立验收待完成。

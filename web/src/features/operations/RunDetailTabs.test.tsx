@@ -3832,12 +3832,16 @@ describe("selected-run detail tabs", () => {
   it("keeps a late confirmation success from navigating a closed card", async () => {
     const user = userEvent.setup();
     let current = manualReadyRecoveryDocument(null);
+    let currentEvidence = evidenceDocument();
     let confirmPosts = 0;
     let releaseConfirm: ((response: Response) => void) | undefined;
     const confirmGate = new Promise<Response>((resolve) => {
       releaseConfirm = resolve;
     });
     stubDetailJourney([], {
+      get evidenceItem2() {
+        return currentEvidence;
+      },
       recovery: async (_input, init) => {
         if ((init?.method ?? "GET") === "GET") {
           return jsonResponse(current);
@@ -3911,6 +3915,8 @@ describe("selected-run detail tabs", () => {
     expect(
       within(summary).getByRole("button", { name: "正在提交…" }),
     ).toBeDisabled();
+    expect(within(summary).getByText("提交中")).toBeVisible();
+    expect(within(recovery).queryByText("操作请求仍在进行")).toBeNull();
     expect(confirmPosts).toBe(1);
 
     // Switching to another item leaves the exact confirmation session with
@@ -3944,6 +3950,19 @@ describe("selected-run detail tabs", () => {
       current = manualReadyRecoveryDocument(
         preparedSummaryDocument("confirmed"),
       );
+      currentEvidence = evidenceDocument({
+        item: itemRow({
+          item_id: "item-2",
+          source_path: "movies/b.mkv",
+          status: "pending",
+        }),
+        checkpoint: {
+          ...(currentEvidence["checkpoint"] as Record<string, unknown>),
+          status: "pending",
+          blocker: null,
+        },
+        recoveryKind: "technical_history",
+      });
       releaseConfirm?.(jsonResponse(confirmedExecutionDocument(), 202));
     });
     expect(confirmPosts).toBe(1);
@@ -3976,6 +3995,9 @@ describe("selected-run detail tabs", () => {
       within(reopenedRecovery).queryByRole("button", {
         name: "查看关联执行结果",
       }),
+    ).toBeNull();
+    expect(
+      within(reopened).queryByRole("region", { name: "新计划摘要" }),
     ).toBeNull();
     expect(confirmPosts).toBe(1);
   });

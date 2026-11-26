@@ -453,7 +453,8 @@ export interface TaskItemRecoveryPanelProps {
   readonly recoveryExpected?: boolean;
   readonly evidenceFile?: {
     readonly name: string;
-    readonly source: string;
+    readonly sourceStorageId: string;
+    readonly sourcePath: string;
     readonly position?: { readonly index: number; readonly total: number };
     readonly blockerKind: string | null;
   };
@@ -486,7 +487,9 @@ function RecoveryFileHeader({
             : "文件证据"}
         </p>
         <h5>{file.name}</h5>
-        <p className="mf-exact-identity">{file.source}</p>
+        <p className="mf-exact-identity">
+          {file.sourceStorageId}:{file.sourcePath}
+        </p>
       </div>
     </header>
   );
@@ -548,6 +551,7 @@ export function TaskItemRecoveryPanel({
     message,
     repeatLocked,
     submittedConfirmation,
+    admittedConfirmation,
     analysis: analysisObservation,
     decisionReceipt,
   } = recoverySession.state;
@@ -639,7 +643,10 @@ export function TaskItemRecoveryPanel({
   const confirmationPreviewQuery = useQuery(
     organizePreviewQueryOptions(
       token,
-      activePreparation?.previewId ?? "",
+      activePreparation?.previewId ??
+        submittedConfirmation?.previewId ??
+        admittedConfirmation?.previewId ??
+        "",
       activePreparation !== null,
     ),
   );
@@ -647,6 +654,18 @@ export function TaskItemRecoveryPanel({
     confirmationPreviewQuery.data?.ok === true
       ? confirmationPreviewQuery.data.model
       : null;
+  const selectionIncludesEvidenceFile = (
+    submission: RetainedTaskItemRecoveryConfirmation,
+  ) =>
+    confirmationPreview?.previewId === submission.previewId &&
+    confirmationPreview.items.some(
+      (item) =>
+        submission.itemIds.includes(item.itemId) &&
+        (item.problemTaskItemId === itemId ||
+          (evidenceFile !== undefined &&
+            item.sourceStorageId === evidenceFile.sourceStorageId &&
+            item.sourcePath === evidenceFile.sourcePath)),
+    );
   const confirmedPreparation =
     durablePreparation?.status === "confirmed" &&
     durablePreparation.executionId !== null
@@ -878,6 +897,7 @@ export function TaskItemRecoveryPanel({
       updateRecoverySession({
         repeatLocked: false,
         submittedConfirmation: null,
+        admittedConfirmation: confirmed,
         message: admissionOutcomeMessage(model),
       });
       refreshLinkedReads();
@@ -1326,7 +1346,10 @@ export function TaskItemRecoveryPanel({
       return;
     }
     beginAction("confirm");
-    updateRecoverySession({ submittedConfirmation: submission });
+    updateRecoverySession({
+      submittedConfirmation: submission,
+      admittedConfirmation: null,
+    });
     try {
       const result = await executeOrganizePreview(token, submission);
       if (result.ok) {
@@ -1339,6 +1362,7 @@ export function TaskItemRecoveryPanel({
           message: `已受理 ${result.model.selectedItemIds.length} 项；常驻 Worker 将执行已确认的精确子集。`,
           repeatLocked: false,
           submittedConfirmation: null,
+          admittedConfirmation: submission,
         });
         setPreparation(null);
         setConfirmSelection(null);
@@ -1380,7 +1404,10 @@ export function TaskItemRecoveryPanel({
       confirmSelection === null ||
       confirmSelection.length === 0 ||
       busy ||
-      repeatLocked
+      repeatLocked ||
+      (hostedDiagnostics &&
+        admittedConfirmation?.previewId === activePreparation.previewId &&
+        selectionIncludesEvidenceFile(admittedConfirmation))
     ) {
       return;
     }
@@ -1694,7 +1721,7 @@ export function TaskItemRecoveryPanel({
   if (query.data === undefined) {
     return (
       <section className="mf-count-section" aria-label="条目审核与恢复">
-        {evidenceFile ? (
+        {recoveryExpected && evidenceFile ? (
           <RecoveryFileHeader
             file={evidenceFile}
             kind={evidenceFile.blockerKind}
@@ -1713,7 +1740,7 @@ export function TaskItemRecoveryPanel({
   if (!query.data.ok) {
     return (
       <section className="mf-count-section" aria-label="条目审核与恢复">
-        {evidenceFile ? (
+        {recoveryExpected && evidenceFile ? (
           <RecoveryFileHeader
             file={evidenceFile}
             kind={evidenceFile.blockerKind}
@@ -1999,6 +2026,37 @@ export function TaskItemRecoveryPanel({
     return null;
   }
 
+  const submittingConfirmation = busy && pendingAction === "confirm";
+  const matchingConfirmation = submittingConfirmation
+    ? submittedConfirmation
+    : admittedConfirmation;
+  // The plan and the file evidence are separate reads. Keep the exact
+  // submitted plan locked while the evidence still shows the previous stage.
+  // A sibling-only admission must not cover this file's own recovery.
+  const handingOffSelectedFile =
+    hostedDiagnostics &&
+    decision === null &&
+    matchingConfirmation !== null &&
+    selectionIncludesEvidenceFile(matchingConfirmation) &&
+    (activePreparation?.previewId ?? durablePreparation?.previewId) ===
+      matchingConfirmation.previewId;
+  const planPreviewId = handingOffSelectedFile
+    ? recoveryExpected
+      ? matchingConfirmation.previewId
+      : null
+    : owesRecoveryAction && activePreparation?.status === "prepared"
+      ? activePreparation.previewId
+      : null;
+  const confirmationPhase =
+    hostedDiagnostics && planPreviewId !== null
+      ? submittingConfirmation
+        ? "submitting"
+        : handingOffSelectedFile
+          ? "admitted"
+          : undefined
+      : undefined;
+  const displayedConfirmation = confirmationPhase ? matchingConfirmation : null;
+
   return (
     <section
       className={hostedDiagnostics ? "mf-recovery-host" : "mf-count-section"}
@@ -2096,7 +2154,7 @@ export function TaskItemRecoveryPanel({
           </details>
         </>
       )}
-      {evidenceFile && activePreparation === null && (
+      {recoveryExpected && evidenceFile && planPreviewId === null && (
         <RecoveryFileHeader
           file={evidenceFile}
           kind={
@@ -2106,6 +2164,7 @@ export function TaskItemRecoveryPanel({
       )}
       {busy &&
         pendingAction !== null &&
+        confirmationPhase !== "submitting" &&
         !(pendingAction === "continue" && savedDecisionAnalysisVisible) &&
         !(
           hostedDiagnostics &&
@@ -2119,11 +2178,12 @@ export function TaskItemRecoveryPanel({
             </p>
           </StatusBanner>
         )}
-      {confirmationStatusText !== null && (
-        <p className="mf-dashboard-meta" role="status">
-          {confirmationStatusText}
-        </p>
-      )}
+      {confirmationStatusText !== null &&
+        confirmationPhase !== "submitting" && (
+          <p className="mf-dashboard-meta" role="status">
+            {confirmationStatusText}
+          </p>
+        )}
       {canResubmitRetained && submittedConfirmation !== null && (
         <div className="mf-actions">
           <button
@@ -2135,25 +2195,29 @@ export function TaskItemRecoveryPanel({
           </button>
         </div>
       )}
-      {owesRecoveryAction &&
-        activePreparation !== null &&
-        activePreparation.status === "prepared" && (
-          <SamePagePlanSummary
-            token={token}
-            previewId={activePreparation.previewId}
-            selected={confirmSelection}
-            onSelected={setConfirmSelection}
-            allowOverwrite={allowOverwriteConfirm}
-            onAllowOverwrite={setAllowOverwriteConfirm}
-            allowCleanup={allowCleanupConfirm}
-            onAllowCleanup={setAllowCleanupConfirm}
-            busy={busy || repeatLocked}
-            onConfirm={() => void confirmPreparation()}
-            heading="新计划摘要（零变更）"
-            compact={hostedDiagnostics}
-          />
-        )}
+      {planPreviewId !== null && (
+        <SamePagePlanSummary
+          token={token}
+          previewId={planPreviewId}
+          selected={displayedConfirmation?.itemIds ?? confirmSelection}
+          onSelected={setConfirmSelection}
+          allowOverwrite={
+            displayedConfirmation?.allowOverwrite ?? allowOverwriteConfirm
+          }
+          onAllowOverwrite={setAllowOverwriteConfirm}
+          allowCleanup={
+            displayedConfirmation?.allowSourceCleanup ?? allowCleanupConfirm
+          }
+          onAllowCleanup={setAllowCleanupConfirm}
+          busy={busy || repeatLocked || confirmationPhase === "admitted"}
+          confirmationPhase={confirmationPhase}
+          onConfirm={() => void confirmPreparation()}
+          heading="新计划摘要（零变更）"
+          compact={hostedDiagnostics}
+        />
+      )}
       {message &&
+        confirmationPhase !== "admitted" &&
         submittedConfirmation === null &&
         !savedDecisionAnalysisVisible &&
         !(activePreparation !== null && message.startsWith("选择已保存")) && (
@@ -2258,8 +2322,10 @@ export function TaskItemRecoveryPanel({
           presentation={hostedDiagnostics ? "recovery" : undefined}
         />
       )}
-      {activePreparation === null && savedDecisionPanel}
-      {canPreparePreview && checkpoint !== null && (
+      {planPreviewId === null &&
+        activePreparation === null &&
+        savedDecisionPanel}
+      {canPreparePreview && planPreviewId === null && checkpoint !== null && (
         <div className="mf-count-section">
           <h6>原手动整理恢复</h6>
           <p>

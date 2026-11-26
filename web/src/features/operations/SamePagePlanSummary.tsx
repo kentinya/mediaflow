@@ -44,6 +44,7 @@ export interface SamePagePlanSummaryProps {
    * reviewed full findings.
    */
   readonly compact?: boolean;
+  readonly confirmationPhase?: "submitting" | "admitted";
   /** Operator-facing confirm verb, defaulting to the recovery copy. */
   readonly confirmLabel?: (count: number) => string;
   /**
@@ -95,6 +96,7 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
   const confirmLabel =
     props.confirmLabel ?? ((count: number) => `确认继续整理 ${count} 项`);
   const compact = props.compact === true;
+  const confirmationPhase = props.confirmationPhase;
   const fileNameOf = (item: ManualPreviewItemModel): string =>
     item.sourceFilename ?? item.itemId;
   const sourceEffect = (item: ManualPreviewItemModel): string => {
@@ -132,7 +134,15 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
         <h6>{props.heading}</h6>
         {compact ? (
           preview?.current &&
-          executableIds.length > 0 && <span>等待明确确认</span>
+          executableIds.length > 0 && (
+            <span>
+              {confirmationPhase === "admitted"
+                ? "已受理"
+                : confirmationPhase === "submitting"
+                  ? "提交中"
+                  : "等待明确确认"}
+            </span>
+          )
         ) : (
           <RefreshControl
             onRefresh={() => previewQuery.refetch({ cancelRefetch: false })}
@@ -168,7 +178,12 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
                   .filter((item) => executableIds.includes(item.itemId))
                   .map(fileNameOf)
                   .join("、")}{" "}
-                已生成可确认的新方案。整理尚未提交。
+                已生成可确认的新方案。
+                {confirmationPhase === "admitted"
+                  ? "整理已受理。"
+                  : confirmationPhase === "submitting"
+                    ? "正在提交。"
+                    : "整理尚未提交。"}
               </p>
             </StatusBanner>
           ) : !preview.current ? (
@@ -352,7 +367,9 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
           >
             {props.busy
               ? compact
-                ? "正在提交…"
+                ? confirmationPhase === "admitted"
+                  ? "正在读取结果…"
+                  : "正在提交…"
                 : "正在受理…"
               : confirmLabel(activeSelection.length)}
           </button>

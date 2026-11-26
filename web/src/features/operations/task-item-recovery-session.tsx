@@ -64,6 +64,8 @@ export interface TaskItemRecoverySessionState {
   readonly repeatLocked: boolean;
   /** The exact confirmation whose outcome is unresolved. */
   readonly submittedConfirmation: TaskItemRecoverySubmittedConfirmation | null;
+  /** Holds the reviewed plan in place until this file's evidence catches up. */
+  readonly admittedConfirmation: TaskItemRecoverySubmittedConfirmation | null;
   /** The latest analysis admission observed for this exact item. */
   readonly analysis: TaskItemRecoveryAnalysisState | null;
   readonly decisionReceipt: {
@@ -79,6 +81,7 @@ const EMPTY_SESSION: TaskItemRecoverySessionState = {
   message: null,
   repeatLocked: false,
   submittedConfirmation: null,
+  admittedConfirmation: null,
   analysis: null,
   decisionReceipt: null,
 };
