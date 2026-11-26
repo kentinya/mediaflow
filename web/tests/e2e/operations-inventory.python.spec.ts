@@ -6070,6 +6070,143 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   expect(executePosts()).toHaveLength(1);
 });
 
+test("Task59.4 reopens an in-progress preparation from Task Center at its real stage", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const api = recordApiCalls(page);
+  const restored = await request.post(
+    `${BASE}/__harness__/restore-source-media`,
+  );
+  expect(restored.ok()).toBeTruthy();
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page, ADMIN_TOKEN);
+  await openOrganizingSource(page);
+
+  await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+
+  // Leave the exact admitted preparation before any Worker pass. Its durable
+  // state, not browser memory, is what Task Center must reopen.
+  await expect(card.getByText(/已受理，等待后台处理|检查所选范围/)).toBeVisible(
+    { timeout: 15_000 },
+  );
+  await card.getByRole("button", { name: "关闭整理弹窗" }).click();
+  await expect(card).toHaveCount(0);
+
+  const discoveryResponse = await request.get(
+    `${BASE}/api/operations/organize/discoveries/${encodeURIComponent(
+      discoveryId as string,
+    )}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(discoveryResponse.ok()).toBeTruthy();
+  const discovery = (await discoveryResponse.json()) as {
+    readonly status: string;
+    readonly organizeTaskId?: string | null;
+  };
+  expect(["queued", "running", "waiting_stability"]).toContain(
+    discovery.status,
+  );
+  const taskId = discovery.organizeTaskId;
+  expect(taskId).toBeTruthy();
+  const organizePosts = () =>
+    api.filter(
+      (call) =>
+        call.method !== "GET" &&
+        (call.path.includes("/operations/organize/") ||
+          call.path.endsWith("/files/discoveries")),
+    );
+  const postsBeforeReopen = organizePosts();
+  expect(postsBeforeReopen).toHaveLength(1);
+
+  await page.goto(`${BASE}/operations?run=${taskId}`);
+  await submitSignIn(page, accountForToken(ADMIN_TOKEN));
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible({ timeout: 30_000 });
+  const continueLink = detail.getByRole("link", { name: "继续整理" });
+  await expect(continueLink).toBeVisible();
+  await continueLink.click();
+
+  const reopened = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(reopened).toBeVisible({ timeout: 30_000 });
+  // The hosted first screen is the same shared preparation region and reads
+  // this Task's current durable stage. No second admission is submitted.
+  const stageTitles: Record<string, string> = {
+    queued: "已受理，等待后台处理",
+    running: "检查所选范围",
+    waiting_stability: "正在等待来源文件稳定",
+  };
+  const title = stageTitles[discovery.status];
+  expect(title).toBeTruthy();
+  await expect(
+    reopened.getByText(title as string, { exact: true }),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(reopened.getByText("第 1 步，共 2 步")).toBeVisible();
+  await expect(reopened.getByText("来源资源库")).toBeVisible();
+  await expect(reopened.getByText("受理范围")).toBeVisible();
+  await expect(reopened.getByText("准备进度")).toBeVisible();
+  await expect(
+    reopened.getByText(/已找到 \d+ 个主文件|尚未产生主文件数量/),
+  ).toBeVisible();
+  await expect(reopened.getByText("此阶段无媒体变更")).toBeVisible();
+  expect(organizePosts()).toEqual(postsBeforeReopen);
+
+  // The shared first screen keeps the original title, background, close and
+  // real facts at desktop, 390 px and a short viewport. Reduced motion keeps
+  // the real stage without spinning the preparation indicator.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const spinner = reopened.locator(".mf-organize-preparation-spinner");
+  await expect(spinner).toHaveCount(1);
+  expect(
+    await spinner.evaluate(
+      (element) => getComputedStyle(element).animationName,
+    ),
+  ).toBe("none");
+  for (const viewport of [
+    { width: 1440, height: 900, name: "desktop" },
+    { width: 390, height: 844, name: "390x844" },
+    { width: 390, height: 520, name: "390x520" },
+  ]) {
+    await page.setViewportSize({
+      width: viewport.width,
+      height: viewport.height,
+    });
+    await expect(reopened).toBeVisible();
+    await expect(
+      reopened.getByRole("heading", { name: "整理所选文件" }),
+    ).toBeVisible();
+    await expect(
+      reopened.getByRole("button", { name: "关闭整理弹窗" }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: `test-results/task59.4-preparation-${viewport.name}.png`,
+      fullPage: false,
+    });
+  }
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  await reopened.getByRole("button", { name: /^关闭$/ }).click();
+  await expect(reopened).toHaveCount(0);
+  // The exact Task detail stays behind the card; focus returns to the same
+  // continue entry, preserving the original Task Center context.
+  await expect(detail).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
+  await expect(continueLink).toBeFocused();
+  expect(organizePosts()).toEqual(postsBeforeReopen);
+});
+
 test("the dead-letter delivery the browser requeues keeps its original identity and receiver", async ({
   page,
   request,

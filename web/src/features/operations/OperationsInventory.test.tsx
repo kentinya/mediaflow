@@ -1371,6 +1371,68 @@ describe("Operations run inventory landing", () => {
     expect(backend.calls.posts).toEqual([]);
   });
 
+  it("Task59.4 reopens an in-progress hosted preparation and follows its real stages", async () => {
+    const user = userEvent.setup();
+    const backend = stubOrganizeHost();
+    backend.state.preparationPhase = "waiting";
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/operations");
+
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const link = await within(detail).findByRole("link", { name: "继续整理" });
+    await user.click(link);
+
+    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
+    // The hosted entry now reads the same real first preparation step and
+    // facts as the Files host, instead of a second waiting body.
+    expect(
+      await within(dialog).findByText("正在等待来源文件稳定"),
+    ).toBeVisible();
+    expect(within(dialog).getByText("第 1 步，共 2 步")).toBeVisible();
+    expect(within(dialog).getByText("来源资源库")).toBeVisible();
+    expect(within(dialog).getByText("受理范围")).toBeVisible();
+    expect(within(dialog).getByText("准备进度")).toBeVisible();
+    expect(within(dialog).getByText(/已找到 10 个主文件/)).toBeVisible();
+    expect(
+      within(dialog).queryByRole("heading", { name: /第 1 \/ 1 个/ }),
+    ).toBeNull();
+
+    // The same Task's durable stage moves to analysis; the mounted hosted
+    // preparation reads that exact second step without a new admission.
+    backend.state.preparationPhase = "analyzing";
+    expect(
+      await within(dialog).findByText("生成整理方案", {}, { timeout: 5_000 }),
+    ).toBeVisible();
+    expect(within(dialog).getByText("第 2 步，共 2 步")).toBeVisible();
+    expect(
+      within(dialog).getByText(/已找到 10 个主文件 · 来源已冻结，正在分析/),
+    ).toBeVisible();
+    expect(backend.calls.posts).toEqual([]);
+
+    // The linked plan then hands over to the existing managed review.
+    backend.state.preparationPhase = "ready";
+    await within(dialog).findByRole(
+      "heading",
+      { name: /第 1 \/ 1 个/ },
+      { timeout: 5_000 },
+    );
+    expect(backend.calls.posts).toEqual([]);
+
+    await user.click(within(dialog).getByRole("button", { name: /^关闭$/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    // Closing keeps the exact Task detail behind it and returns focus to the
+    // continue entry that opened this in-progress preparation.
+    expect(screen.getByRole("dialog", { name: "运行详情" })).toBe(detail);
+    const closed = new URLSearchParams(router.history.location.search);
+    expect(closed.get("run")).toBe("task-001");
+    expect(closed.get("dialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(link));
+  }, 20_000);
+
   it("Task59.2 continues from 操作记录 and returns to the same tab and control", async () => {
     const user = userEvent.setup();
     const backend = stubOrganizeHost();
@@ -3529,6 +3591,28 @@ function hostDiscoveryDocument(
   };
 }
 
+/** A real in-progress hosted preparation: its walk has not produced a plan. */
+function hostInProgressDiscovery(
+  phase: "waiting" | "analyzing",
+): Record<string, unknown> {
+  const value = hostDiscoveryDocument();
+  value["status"] = phase === "waiting" ? "waiting_stability" : "analyzing";
+  value["previewId"] = null;
+  value["intentId"] = null;
+  value["prepared"] = false;
+  value["frozen"] = phase === "analyzing";
+  value["primarySourceCount"] = 10;
+  const progress = value["progress"] as Record<string, unknown>;
+  progress["phase"] = phase === "waiting" ? "partial" : "analyzing";
+  progress["primarySources"] = 10;
+  progress["unstableEntries"] = phase === "waiting" ? 2 : 0;
+  progress["message"] =
+    phase === "waiting"
+      ? "the whole scope was visited, but some sources are not yet proven stable"
+      : "the reviewed source list is frozen; the analysis is building the plan summary";
+  return value;
+}
+
 function hostPreviewDocument(): Record<string, unknown> {
   const value = JSON.parse(
     JSON.stringify(
@@ -3689,6 +3773,8 @@ interface OrganizeHostBackend {
      * sibling's newer summary where this item's readable facts are equal.
      */
     secondPlanKind: "copy" | "sibling";
+    /** The hosted preparation's current real stage before its plan is ready. */
+    preparationPhase: "waiting" | "analyzing" | "ready";
   };
 }
 
@@ -3721,6 +3807,7 @@ function stubOrganizeHost(
       analyzeResponseLost: false,
       secondPlanPublished: false,
       secondPlanKind: "copy",
+      preparationPhase: "ready",
     },
   };
   stubFetch(async (input, init) => {
@@ -3757,9 +3844,13 @@ function stubOrganizeHost(
       method === "GET"
     ) {
       backend.calls.discoveryReads += 1;
+      const phase = backend.state.preparationPhase;
+      const inProgress =
+        phase === "ready" ? {} : hostInProgressDiscovery(phase);
       return jsonResponse(
         hostDiscoveryDocument({
           ...options.discovery,
+          ...inProgress,
           ...(backend.state.secondPlanPublished
             ? { previewId: HOST_SECOND_PREVIEW_ID, version: 6 }
             : {}),

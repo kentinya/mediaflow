@@ -822,6 +822,24 @@ export function ManualOrganizeDialog({
     preparationQuery.data?.ok === true
       ? preparationQuery.data.model
       : undefined;
+  /**
+   * A preparation that was observed during its bounded walk is one full
+   * two-step journey. A preparation reopened only for generation or a summary
+   * read keeps the actual single step instead of inventing a completed one.
+   * The entry status is captured once; later polls keep the same flow.
+   */
+  const [preparationStartedFull] = useState(session.phase === "submitting");
+  const [preparationEntryStatus, setPreparationEntryStatus] = useState<
+    string | null
+  >(null);
+  if (preparation !== undefined && preparationEntryStatus === null) {
+    setPreparationEntryStatus(preparation.status);
+  }
+  const preparationTwoStep =
+    preparationStartedFull ||
+    preparationEntryStatus === "queued" ||
+    preparationEntryStatus === "running" ||
+    preparationEntryStatus === "waiting_stability";
   const intentQuery = useQuery(
     organizeIntentQueryOptions(
       token,
@@ -3205,6 +3223,11 @@ export function ManualOrganizeDialog({
     preparation?.progress.primarySources ?? 0;
   const preparationWorkerUnavailable =
     preparation !== undefined && preparation.worker.ready !== true;
+  const preparationSourceReadIncomplete =
+    preparation !== undefined &&
+    preparation.progress.incomplete &&
+    preparation.progress.incompleteReason === "read_failure" &&
+    preparation.progress.materialRefusal === null;
   const preparationExcludedCount =
     preparation?.progress.reasons.reduce(
       (total, item) => total + item.count,
@@ -3269,56 +3292,53 @@ export function ManualOrganizeDialog({
     preparationStoppedTitle === null &&
     (preparation?.previewId ?? null) === null;
   /**
-   * Files names the actual durable stage instead of one anonymous "preparing"
-   * word. Read failures, refusals and cancellations keep their own title and
-   * next action above.
+   * The one preparation status region shared by the Files and Task Center
+   * hosts. Both read the same admission, walk, plan association and summary
+   * readback; only the later handoff differs (overview vs. managed review).
+   * An unknown primary count stays an actual stage instead of a fabricated
+   * zero or percentage.
    */
-  const preparationStageText = (() => {
-    if (!filesHost || preparationWorkerBlocking) return null;
-    if (session.phase === "submitting") return "正在提交整理申请";
-    if (preparationUnavailable) return null;
-    if (preparation === undefined) return "正在读取准备状态";
-    if (preparationStoppedTitle !== null) return null;
+  const preparationStep = (() => {
+    if (!preparationTwoStep) return null;
+    if (
+      preparationWorkerBlocking ||
+      preparationStoppedTitle !== null ||
+      preparationSummaryReadFailed ||
+      (preparationSourceReadIncomplete &&
+        preparation?.previewId === null &&
+        !preparation.frozen &&
+        preparation.status !== "analyzing")
+    ) {
+      return null;
+    }
+    if (session.phase === "submitting") return 1 as const;
+    if (preparation === undefined) return 1 as const;
     switch (preparation.status) {
       case "queued":
-        return "申请已受理，正在排队等待处理";
       case "running":
-        return "正在有界检查所选文件与文件夹";
       case "waiting_stability":
-        return "正在等待来源文件稳定";
+        return 1 as const;
       case "analyzing":
-        return "正在完整分析并生成精确方案";
       case "completed":
       case "partial_success":
-        return preparation.previewId === null
-          ? preparation.frozen
-            ? "来源已冻结，等待后台生成精确方案"
-            : "准备已完成，正在读取方案摘要"
-          : "方案已生成，正在读取摘要";
+        return 2 as const;
       default:
         return null;
     }
   })();
-
-  /**
-   * The Files preparation uses its real durable stage as the status title,
-   * with the exact next step beside it. An unknown primary count stays an
-   * actual stage instead of a fabricated zero or percentage.
-   */
-  const preparationStageCard = (() => {
-    if (!filesHost || preparationUnavailable) return null;
+  const preparationStatusView = (() => {
     if (preparationWorkerBlocking) {
       return {
-        tag: "准备中断",
         title: "后台暂不可用",
-        copy: "原请求已保存，当前没有可用后台；联系管理员恢复后即可继续读取这次准备。",
+        copy: "原请求已保存，当前没有可用的后台。联系管理员恢复后，可以继续读取这次准备。",
         tone: "amber" as const,
         busy: false,
+        icon: "!",
       };
     }
     if (preparationStoppedTitle !== null) {
       const copy = primaryLimitStopped
-        ? "检查在第 101 个主文件处停止，整批未进入执行；请缩小选择范围后重新发起。"
+        ? "找到第 101 个主文件后已停止检查，整批未进入执行；请缩小选择范围后重新发起。"
         : preparationSummaryReadFailed
           ? "计划已经生成，已保存的范围与选择仍在；重新读取原计划即可继续核对。"
           : preparationManualAnalysisAvailable
@@ -3331,24 +3351,20 @@ export function ManualOrganizeDialog({
                   ? "遍历未完整，本次未产生可确认方案；请缩小选择范围后重新发起。"
                   : "后台检查未完成，没有产生可确认方案，也未修改文件；请重新读取或从文件页重新发起。";
       return {
-        tag:
-          preparation?.status === "cancelled" ||
-          preparationManualAnalysisAvailable
-            ? "已停止"
-            : "准备失败",
         title: preparationStoppedTitle,
         copy,
         tone:
           preparation?.status === "cancelled" ||
-          preparationManualAnalysisAvailable
+          preparationManualAnalysisAvailable ||
+          preparationSummaryReadFailed
             ? ("amber" as const)
             : ("red" as const),
         busy: false,
+        icon: preparation?.status === "cancelled" ? "■" : "!",
       };
     }
     if (session.phase === "submitting") {
       return {
-        tag: "提交申请",
         title: "正在提交整理申请",
         copy: "提交后读取持久准备状态；此阶段不会修改任何文件。",
         tone: "blue" as const,
@@ -3357,43 +3373,52 @@ export function ManualOrganizeDialog({
     }
     if (preparation === undefined) {
       return {
-        tag: "读取状态",
         title: "正在读取准备状态",
         copy: "读取同一整理准备的持久状态，不会重新提交申请。",
         tone: "blue" as const,
         busy: true,
       };
     }
+    if (
+      preparationSourceReadIncomplete &&
+      preparation.previewId === null &&
+      !preparation.frozen &&
+      preparation.status !== "analyzing"
+    ) {
+      return {
+        title: "部分来源暂时无法读取",
+        copy: "该文件不可纳入本批。已完成检查的其他文件仍可继续生成方案。",
+        tone: "amber" as const,
+        busy: false,
+        icon: "!",
+      };
+    }
     switch (preparation.status) {
       case "queued":
         return {
-          tag: "排队中",
-          title: "申请已受理，正在排队等待处理",
-          copy: "无需重复提交；轮到时继续检查所选范围。",
+          title: "已受理，等待后台处理",
+          copy: "请求已保存，后台开始处理后会更新这里的进度。",
           tone: "blue" as const,
           busy: true,
         };
       case "running":
         return {
-          tag: "检查范围",
-          title: "正在有界检查所选文件与文件夹",
-          copy: "正在核对主文件与关联附件，数量以实际读取为准。",
+          title: "检查所选范围",
+          copy: "正在核对主文件与关联附件。方案生成后，可以逐项确认整理方式。",
           tone: "blue" as const,
           busy: true,
         };
       case "waiting_stability":
         return {
-          tag: "等待稳定",
           title: "正在等待来源文件稳定",
-          copy: "文件稳定后继续检查，无需重复提交。",
+          copy: "来源仍在写入或等待稳定条件。后台会在文件稳定后继续核对。",
           tone: "blue" as const,
           busy: true,
         };
       case "analyzing":
         return {
-          tag: "分析文件",
-          title: "正在完整分析并生成精确方案",
-          copy: "正在按固定配置确定来源、目标和操作；方案就绪后自动显示。",
+          title: "生成整理方案",
+          copy: "范围已核对。正在根据此任务的规则确定来源、目标和操作。",
           tone: "blue" as const,
           busy: true,
         };
@@ -3402,21 +3427,18 @@ export function ManualOrganizeDialog({
         return preparation.previewId === null
           ? preparation.frozen
             ? {
-                tag: "分析文件",
-                title: "正在生成整理方案",
-                copy: "来源已冻结；后台分析完成并链接方案后自动显示，无需重复提交。",
+                title: "生成整理方案",
+                copy: "范围已核对。正在根据此任务的规则确定来源、目标和操作。",
                 tone: "blue" as const,
                 busy: true,
               }
             : {
-                tag: "准备完成",
-                title: "准备已完成，等待后台生成方案",
+                title: "准备已完成，等待生成方案",
                 copy: "所选范围已检查；后台开始分析后会继续读取同一准备，无需重复提交。",
                 tone: "blue" as const,
                 busy: true,
               }
           : {
-              tag: "读取摘要",
               title: "正在读取整理方案",
               copy: "后台已生成方案。读取完成后可以核对逐项结果。",
               tone: "blue" as const,
@@ -3443,23 +3465,32 @@ export function ManualOrganizeDialog({
       preparationPrimarySourceCount > 0
         ? `已找到 ${preparationPrimarySourceCount} 个主文件`
         : "尚未产生主文件数量";
+    const unstable =
+      preparation.progress.unstableEntries > 0
+        ? ` · ${preparation.progress.unstableEntries} 个仍在等待稳定`
+        : "";
+    const readFailures =
+      preparation.progress.errorEntries > 0
+        ? ` · ${preparation.progress.errorEntries} 个读取失败`
+        : "";
+    const counts = `${found}${unstable}${readFailures}`;
     if (preparation.previewId !== null)
-      return `${found} · 方案已生成，正在读取`;
-    if (preparation.frozen) return `${found} · 来源已冻结，等待分析`;
+      return `${counts} · 方案已生成，正在读取`;
+    if (preparation.frozen) return `${counts} · 来源已冻结，正在分析`;
     switch (preparation.status) {
       case "queued":
-        return `${found} · 等待开始检查`;
+        return `${counts} · 等待开始检查`;
       case "running":
-        return `${found} · 正在检查所选范围`;
+        return `${counts} · 正在检查所选范围`;
       case "waiting_stability":
-        return `${found} · 等待来源文件稳定`;
+        return `${counts} · 等待来源文件稳定`;
       case "analyzing":
-        return `${found} · 正在分析并生成方案`;
+        return `${counts} · 正在分析并生成方案`;
       case "completed":
       case "partial_success":
-        return `${found} · 准备已完成`;
+        return `${counts} · 准备已完成`;
       default:
-        return found;
+        return counts;
     }
   })();
 
@@ -3470,48 +3501,47 @@ export function ManualOrganizeDialog({
     const canProgress =
       preparationStoppedTitle === null &&
       (!preparationWorkerUnavailable || preparation?.previewId != null);
+    const statusView = preparationStatusView;
     return (
-      <div
-        className={
-          filesHost
-            ? "mf-organize-preparation mf-organize-files-preparation"
-            : "mf-organize-preparation"
-        }
-      >
-        {preparationStageCard !== null ? (
-          <FilesStatusCard {...preparationStageCard} />
-        ) : (
+      <div className="mf-organize-preparation mf-organize-files-preparation">
+        {statusView !== null ? (
           <div
-            className={
-              preparationWorkerBlocking
-                ? "mf-organize-preparation-state mf-organize-preparation-state-warning"
-                : "mf-organize-preparation-state"
-            }
+            className={[
+              "mf-organize-preparation-state",
+              statusView.tone === "amber"
+                ? "mf-organize-preparation-state-warning"
+                : statusView.tone === "red"
+                  ? "mf-organize-preparation-state-error"
+                  : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             role="status"
-            aria-busy={canProgress || undefined}
+            aria-busy={statusView.busy || undefined}
           >
-            {canProgress ? (
+            {statusView.busy && canProgress ? (
               <span
                 className="mf-organize-preparation-spinner"
                 aria-hidden="true"
               />
-            ) : null}
-            <p className="mf-organize-preparation-title">
-              {preparationWorkerBlocking
-                ? "后台暂不可用"
-                : (preparationStoppedTitle ?? "正在准备")}
-            </p>
-            {preparationWorkerBlocking ? (
-              <p className="mf-organize-preparation-copy">
-                请求已保存，请联系管理员。
-              </p>
-            ) : preparationStageText !== null ? (
-              <p className="mf-organize-preparation-stage">
-                {preparationStageText}
-              </p>
-            ) : null}
+            ) : (
+              <span className="mf-organize-preparation-icon" aria-hidden="true">
+                {statusView.icon ?? "!"}
+              </span>
+            )}
+            <div className="mf-organize-preparation-caption">
+              {preparationStep !== null ? (
+                <p className="mf-organize-preparation-step">
+                  第 {preparationStep} 步，共 2 步
+                </p>
+              ) : null}
+              <h3 className="mf-organize-preparation-title">
+                {statusView.title}
+              </h3>
+              <p className="mf-organize-preparation-copy">{statusView.copy}</p>
+            </div>
           </div>
-        )}
+        ) : null}
         <dl className="mf-organize-preparation-facts">
           <div>
             <dt>来源资源库</dt>
@@ -3580,12 +3610,10 @@ export function ManualOrganizeDialog({
               ) : null}
             </dd>
           </div>
-          {filesHost || preparationPrimarySourceCount >= 2 ? (
-            <div>
-              <dt>准备进度</dt>
-              <dd>{preparationProgressText}</dd>
-            </div>
-          ) : null}
+          <div>
+            <dt>准备进度</dt>
+            <dd>{preparationProgressText}</dd>
+          </div>
         </dl>
         {primaryLimitStopped ? (
           <div className="mf-organize-preparation-note" role="status">
@@ -3595,13 +3623,23 @@ export function ManualOrganizeDialog({
                 : "检查已在主文件数量上限处停止，本次未执行整理；请关闭本弹窗返回原文件页，缩小选择范围后重新发起。"}
             </p>
           </div>
+        ) : preparationSourceReadIncomplete ? (
+          <div className="mf-organize-preparation-note" role="status">
+            <p>
+              部分来源读取失败；已完成检查的已知来源保留为明确复核的子集，
+              不会被推断为未读范围的完整结果。
+            </p>
+            <p>没有修改任何文件；方案可读的项仍可照常复核。</p>
+          </div>
         ) : preparation !== undefined && preparation.progress.incomplete ? (
           <div className="mf-organize-preparation-note" role="status">
             <p>
               未完整遍历：
               {label(
                 REASON_LABELS,
-                preparation.progress.incompleteReason ?? "",
+                preparation.progress.materialRefusal ??
+                  preparation.progress.incompleteReason ??
+                  "",
               )}
               。
             </p>
@@ -3676,10 +3714,13 @@ export function ManualOrganizeDialog({
         ) : null}
         {preparation !== undefined &&
         preparation.selection.refused.length > 0 ? (
-          <p className="mf-organize-preparation-note" role="status">
-            未受理 {preparation.selection.refused.length}{" "}
-            项；展开「受理范围」可核对每项原因和下一步。
-          </p>
+          <div className="mf-organize-preparation-note" role="status">
+            <p>
+              未受理 {preparation.selection.refused.length}{" "}
+              项；其余已受理的文件会继续准备，其方案可照常复核。
+            </p>
+            <p>展开「受理范围」可核对每项原因和下一步。</p>
+          </div>
         ) : null}
         {preparationManualAnalysisAvailable ? (
           <div className="mf-organize-preparation-note" role="status">
@@ -5884,6 +5925,9 @@ export function ManualOrganizeDialog({
   const footer =
     organizeFlowEnded || preparationOnlyFooter ? (
       <>
+        {organizeFlowEnded ? null : (
+          <span className="mf-dashboard-meta">此阶段无媒体变更</span>
+        )}
         <span className="mf-modal-footer-spacer" />
         <Button
           type="button"

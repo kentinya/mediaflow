@@ -10065,7 +10065,23 @@ tr[aria-selected="true"] {
   margin: 0;
 }
 
+.mf-organize-preparation-caption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.mf-organize-preparation-step {
+  margin: 0;
+  color: #5f6b7d;
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 18px;
+}
+
 .mf-organize-preparation-title {
+  margin: 0;
   color: #14223c;
   font-size: 16px;
   font-weight: 650;
@@ -10073,13 +10089,35 @@ tr[aria-selected="true"] {
 }
 
 .mf-organize-preparation-copy {
+  margin: 0;
   color: #5f6b7d;
   font-size: 13px;
   line-height: 20px;
 }
 
+.mf-organize-preparation-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fdf3e1;
+  color: #8a5400;
+  font-size: 15px;
+  font-weight: 700;
+}
+
 .mf-organize-preparation-state-warning .mf-organize-preparation-title {
   color: #7a4b00;
+}
+
+.mf-organize-preparation-state-error .mf-organize-preparation-title {
+  color: #9b1c1c;
+}
+
+.mf-organize-preparation-state-error .mf-organize-preparation-icon {
+  background: #fde8e8;
+  color: #9b1c1c;
 }
 
 .mf-organize-preparation-spinner {

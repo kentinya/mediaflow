@@ -2573,9 +2573,12 @@ test("Task59.1 follows the completed walk into the same preparation's linked pla
 
   // The completed walk is not the end of the preparation: the card keeps
   // reading the same durable record instead of settling on a stale state.
-  await expect(card.getByText("正在生成整理方案", { exact: true })).toBeVisible(
-    { timeout: 10_000 },
-  );
+  await expect(card.getByText("生成整理方案", { exact: true })).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(
+    card.getByText("第 2 步，共 2 步", { exact: true }),
+  ).toBeVisible();
   // The backend advertises the preparation's own analysis action only at the
   // Task's human-waiting boundary.  While the Worker still owns the freeze the
   // same work is pending, so the card offers no second analysis to click.
@@ -2644,7 +2647,7 @@ test("keeps the compact first-plan preparation while the linked summary response
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(card.locator(".mf-organize-status-card")).toBeVisible();
+  await expect(card.locator(".mf-organize-preparation-state")).toBeVisible();
   await expect(card.getByText("1 个文件", { exact: true })).toBeVisible();
   await expect(card.getByText(/每次复核一个主文件/)).toHaveCount(0);
 
@@ -2814,7 +2817,7 @@ test("ends the first-plan preparation when the selected folder has no primary fi
   await expect(page).toHaveURL(/organizeDiscovery=/);
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
-  await expect(card.locator(".mf-organize-status-card")).toBeVisible();
+  await expect(card.locator(".mf-organize-preparation-state")).toBeVisible();
 
   const settledRead = page.waitForResponse(async (response) => {
     if (

@@ -192,6 +192,13 @@ function makeBackend() {
     // The first linked-summary read fails once; the same preparation context
     // keeps the retry entry for that exact summary.
     failFirstPreviewRead: false as boolean,
+    // Hold the first linked-summary read so a reopened entry can prove the
+    // actual single read step before the plan is readable.
+    holdFirstPreviewRead: false as boolean,
+    // A completed bounded walk that hit an isolated source read failure. Its
+    // known sources remain a legal subset instead of becoming a truncated
+    // executable prefix.
+    sourceReadIncomplete: false as boolean,
     // Previews whose Execute the backend durably admitted. A lost response
     // changes nothing about this record.
     admittedPreviewIds: [] as string[],
@@ -227,6 +234,7 @@ function makeBackend() {
   let holdExecute = false;
   const heldExecuteResponses: Response[] = [];
   const settledReadReleases: (() => void)[] = [];
+  let releasedPreviewRead: (() => void) | null = null;
 
   /**
    * The exact item indices this admission plans: the file rows the real
@@ -341,6 +349,28 @@ function makeBackend() {
       zeroMutation: true,
       execution: "not_available_from_discovery",
     };
+    if (state.sourceReadIncomplete) {
+      value["status"] = "partial_success";
+      value["previewId"] = null;
+      value["prepared"] = false;
+      value["intentId"] = null;
+      value["frozen"] = false;
+      value["autoPrepare"] = false;
+      value["primarySourceCount"] = 10;
+      const progress = value["progress"] as Json;
+      progress["phase"] = "partial";
+      progress["message"] =
+        "the bounded walk kept its known sources after one source read failure";
+      progress["primarySources"] = 10;
+      progress["incomplete"] = true;
+      progress["incompleteReason"] = "read_failure";
+      progress["refusalReasons"] = [];
+      progress["materialRefusal"] = null;
+      progress["errorEntries"] = 1;
+      progress["reasons"] = [];
+      value["nextAction"] =
+        "review the known sources as an explicitly acknowledged subset";
+    }
     if (state.zeroPrimary) {
       value["status"] = "completed";
       value["previewId"] = null;
@@ -1472,6 +1502,12 @@ function makeBackend() {
       if (previewMatch !== null && method === "GET") {
         const previewId = previewMatch[1] ?? "";
         if (previewId === PREVIEW_ID) {
+          if (state.holdFirstPreviewRead) {
+            state.holdFirstPreviewRead = false;
+            await new Promise<void>((resolve) => {
+              releasedPreviewRead = resolve;
+            });
+          }
           if (state.failFirstPreviewRead) {
             state.failFirstPreviewRead = false;
             return jsonResponse(
@@ -1720,6 +1756,10 @@ function makeBackend() {
       state.holdSettledReads = false;
       for (const resolve of settledReadReleases.splice(0)) resolve();
     },
+    releasePreviewRead: () => {
+      releasedPreviewRead?.();
+      releasedPreviewRead = null;
+    },
     releaseExecute: () => {
       holdExecute = false;
       const resolve = releasedExecute;
@@ -1884,6 +1924,30 @@ async function openPreparationDialog(
   Backend & { readonly router: ReturnType<typeof renderApp>["router"] }
 > {
   return openDialog(user, configure, selection, "preparation");
+}
+
+/**
+ * Reopen the exact admitted Files preparation from its bounded address, as a
+ * refresh or a direct return does. This is an admitted entry, not a new
+ * admission: no selection/discovery POST may happen.
+ */
+async function openAdmittedPreparation(
+  configure?: (backend: Backend) => void,
+): Promise<
+  Backend & { readonly router: ReturnType<typeof renderApp>["router"] }
+> {
+  const backend = makeBackend();
+  configure?.(backend);
+  vi.stubGlobal("fetch", backend.fetchMock);
+  authStore.setToken(TOKEN);
+  window.history.replaceState(
+    null,
+    "",
+    `/resourcelib/files?organizeDiscovery=${DISCOVERY_ID}`,
+  );
+  const { router } = renderApp("/resourcelib/files");
+  await screen.findByRole("dialog", { name: "整理所选文件" });
+  return Object.assign(backend, { router });
 }
 
 describe("ManualOrganizeDialog", () => {
@@ -2686,10 +2750,11 @@ describe("ManualOrganizeDialog", () => {
       [filename(0)],
     );
 
+    expect(await screen.findByText("已受理，等待后台处理")).toBeVisible();
+    expect(screen.getByText("第 1 步，共 2 步")).toBeVisible();
     expect(
-      await screen.findByText("申请已受理，正在排队等待处理"),
-    ).toBeVisible();
-    expect(card().querySelector(".mf-organize-status-spinner")).not.toBeNull();
+      card().querySelector(".mf-organize-preparation-spinner"),
+    ).not.toBeNull();
     // The shared title is the only header copy during first-plan preparation.
     expect(
       within(card()).queryByText(/每次复核一个主文件及其关联附件/),
@@ -2718,6 +2783,110 @@ describe("ManualOrganizeDialog", () => {
       within(scopeDetails as HTMLElement).getByText("Movies/Movie.01.mkv"),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "关闭" })).toBeVisible();
+    expect(card()).toHaveTextContent("此阶段无媒体变更");
+  }, 20_000);
+
+  it("reopens an admitted preparation with only its actual generation step", async () => {
+    const backend = await openAdmittedPreparation((value) => {
+      value.state.analyzingReads = 5;
+    });
+
+    expect(await screen.findByText("生成整理方案")).toBeVisible();
+    expect(screen.queryByText(/第 [12] 步，共 2 步/)).toBeNull();
+    expect(screen.getByText("准备进度")).toBeVisible();
+    expect(
+      screen.getByText(/已找到 10 个主文件 · 来源已冻结，正在分析/),
+    ).toBeVisible();
+    expect(
+      card().querySelector(".mf-organize-preparation-spinner"),
+    ).not.toBeNull();
+    // A bounded-address reopen reads the same preparation and starts no new
+    // admission.
+    expect(backend.calls.discoveryPosts).toHaveLength(0);
+  }, 20_000);
+
+  it("reopens a linked plan with only the actual summary-read step", async () => {
+    const backend = await openAdmittedPreparation((value) => {
+      value.state.holdFirstPreviewRead = true;
+    });
+
+    expect(await screen.findByText("正在读取整理方案")).toBeVisible();
+    expect(screen.queryByText(/第 [12] 步，共 2 步/)).toBeNull();
+    expect(screen.getByText("准备进度")).toBeVisible();
+    expect(screen.getByText(/方案已生成，正在读取/)).toBeVisible();
+    expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
+    expect(backend.calls.discoveryPosts).toHaveLength(0);
+
+    backend.releasePreviewRead();
+    await screen.findByRole("region", { name: "本次整理概览" });
+    expect(backend.calls.discoveryPosts).toHaveLength(0);
+  }, 20_000);
+
+  it("shows both real preparation steps and keeps an unchanged step expanded and focused", async () => {
+    const user = userEvent.setup();
+    const backend = await openPreparationDialog(user, (value) => {
+      value.state.queuedReads = 1;
+      value.state.waitingReads = 3;
+      value.state.analyzingReads = 4;
+    });
+
+    // The full preparation enters with its real first step, not a percentage.
+    expect(await screen.findByText("已受理，等待后台处理")).toBeVisible();
+    expect(screen.getByText("第 1 步，共 2 步")).toBeVisible();
+    expect(
+      await screen.findByText("正在等待来源文件稳定", {}, { timeout: 5_000 }),
+    ).toBeVisible();
+    expect(screen.getByText("第 1 步，共 2 步")).toBeVisible();
+    expect(screen.getByText(/已找到 10 个主文件/)).toBeVisible();
+
+    const scopeSummary = within(card()).getByText("查看确切路径（1 项）");
+    const scopeDetails = scopeSummary.closest("details") as HTMLDetailsElement;
+    await user.click(scopeSummary);
+    expect(scopeDetails.open).toBe(true);
+    scopeSummary.focus();
+    expect(document.activeElement).toBe(scopeSummary);
+
+    const waitingReads = backend.state.discoveryReads;
+    await waitFor(
+      () => expect(backend.state.discoveryReads).toBeGreaterThan(waitingReads),
+      { timeout: 4_000 },
+    );
+    // The same waiting stage keeps the expansion and keyboard position.
+    expect(screen.getByText("正在等待来源文件稳定")).toBeVisible();
+    expect(scopeDetails.open).toBe(true);
+    expect(document.activeElement).toBe(scopeSummary);
+
+    // The checked walk hands over to the exact second step when analysis
+    // starts; no fabricated third step and no second submission.
+    expect(
+      await screen.findByText("生成整理方案", {}, { timeout: 8_000 }),
+    ).toBeVisible();
+    expect(screen.getByText("第 2 步，共 2 步")).toBeVisible();
+    expect(
+      screen.getByText(/已找到 10 个主文件 · 来源已冻结，正在分析/),
+    ).toBeVisible();
+    expect(scopeDetails.open).toBe(true);
+    expect(backend.calls.discoveryPosts).toHaveLength(1);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+  }, 25_000);
+
+  it("keeps an isolated source read failure as a legal known-source subset", async () => {
+    await openPreparationDialog(userEvent.setup(), (value) => {
+      value.state.sourceReadIncomplete = true;
+    });
+
+    expect(await screen.findByText("部分来源暂时无法读取")).toBeVisible();
+    expect(screen.queryByText(/第 [12] 步，共 2 步/)).toBeNull();
+    expect(screen.getByText(/已找到 10 个主文件 · 1 个读取失败/)).toBeVisible();
+    expect(
+      screen.getByText(
+        /部分来源读取失败；已完成检查的已知来源保留为明确复核的子集/,
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/本次不会执行整理/)).toBeNull();
+    expect(card()).toHaveTextContent("准备进度");
+    expect(card()).toHaveTextContent("此阶段无媒体变更");
+    expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
   }, 20_000);
 
   it("presents a mixed scope, split source/target and a scan-friendly batch summary", async () => {
@@ -2832,13 +3001,15 @@ describe("ManualOrganizeDialog", () => {
       [refusedName, admittedName],
     );
 
-    expect(
-      await screen.findByText("申请已受理，正在排队等待处理"),
-    ).toBeVisible();
+    expect(await screen.findByText("已受理，等待后台处理")).toBeVisible();
+    expect(screen.getByText("第 1 步，共 2 步")).toBeVisible();
     expect(card()).toHaveTextContent("1 个文件");
     expect(card()).toHaveTextContent("未受理 1 项");
     expect(card()).toHaveTextContent(
-      "未受理 1 项；展开「受理范围」可核对每项原因和下一步。",
+      "未受理 1 项；其余已受理的文件会继续准备，其方案可照常复核。",
+    );
+    expect(card()).toHaveTextContent(
+      "展开「受理范围」可核对每项原因和下一步。",
     );
 
     const scopeSummary = within(card()).getByText("查看确切路径（2 项）");
@@ -2974,7 +3145,8 @@ describe("ManualOrganizeDialog", () => {
       value.state.frozenOnlyReads = 3;
     });
 
-    await screen.findByText("准备已完成，等待后台生成方案");
+    await screen.findByText("准备已完成，等待生成方案");
+    expect(screen.getByText("第 2 步，共 2 步")).toBeVisible();
     // The completed walk has not frozen an intent yet: the analysis action is
     // not advertised, and the card must keep reading instead of settling here.
     expect(
@@ -3105,7 +3277,7 @@ describe("ManualOrganizeDialog", () => {
     expect(await screen.findByText("后台暂不可用")).toBeVisible();
     expect(
       screen.getByText(
-        "原请求已保存，当前没有可用后台；联系管理员恢复后即可继续读取这次准备。",
+        "原请求已保存，当前没有可用的后台。联系管理员恢复后，可以继续读取这次准备。",
       ),
     ).toBeVisible();
     expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
