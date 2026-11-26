@@ -1018,6 +1018,7 @@ describe("Operations run inventory landing", () => {
         "已进入准备与分析 0 / 1 个主条目（准备与分析计数；其余尚未结束）",
       ),
     ).toBeVisible();
+    expect(within(progress).queryByText(/^待处理\s+1$/)).toBeNull();
     expect(within(progress).queryByRole("progressbar")).toBeNull();
 
     // The same detail follows the durable preparation read; no reopen and no

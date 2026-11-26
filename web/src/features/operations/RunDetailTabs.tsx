@@ -1099,17 +1099,6 @@ function ProgressCard({
     phase === "confirming" && confirmable !== null && confirmable > 0
       ? confirmable
       : null;
-  const unfinished: Array<{ readonly label: string; readonly count: number }> =
-    (["pending", "active", "waiting"] as const)
-      .map((disposition) => ({
-        disposition,
-        label: RUN_DISPOSITION_LABELS[disposition],
-        count: progress.dispositions[disposition],
-      }))
-      .filter(
-        (entry) =>
-          entry.count > 0 && !(entry.disposition === "waiting" && waiting > 0),
-      );
   return (
     <section className="mf-run-progress" aria-label="处理进度">
       <p className="mf-run-progress-line">
@@ -1141,11 +1130,9 @@ function ProgressCard({
               {pendingConfirmation} 个文件等待确认，确认前不执行文件操作。
             </p>
           )}
-          {unfinished.length > 0 && (
+          {progress.dispositions.active > 0 && (
             <p className="mf-dashboard-meta">
-              {unfinished
-                .map((entry) => `${entry.label} ${entry.count}`)
-                .join("　")}
+              {RUN_DISPOSITION_LABELS.active} {progress.dispositions.active}
             </p>
           )}
         </>

@@ -738,8 +738,38 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
       card.getByRole("button", { name: "保存并重新分析" }),
     ).toHaveCount(1);
     await card.getByRole("radio", { name: /候选 2/ }).check();
+    if (index === 1) {
+      await card.locator(".mf-organize-stage").evaluate((stage) => {
+        function sample() {
+          if (!stage.isConnected) return;
+          const waiting = stage.querySelector(".mf-organize-reanalysis");
+          if (waiting !== null) {
+            stage.setAttribute("data-reanalysis-frame", "seen");
+            const footer = stage
+              .closest(".mf-organize-dialog")
+              ?.querySelector(".mf-modal-footer");
+            if (
+              stage.querySelector('input[type="radio"]') !== null ||
+              Array.from(footer?.querySelectorAll("button") ?? []).some(
+                (button) =>
+                  /保存并重新分析|忽略此文件/.test(button.textContent),
+              )
+            ) {
+              stage.setAttribute("data-reanalysis-residue", "seen");
+            }
+          }
+          if (stage.querySelector(".mf-organize-overview") === null)
+            requestAnimationFrame(sample);
+        }
+        requestAnimationFrame(sample);
+      });
+    }
     await saveNativeDecision(page, card);
     if (index === 1) {
+      const stage = card.locator(".mf-organize-stage");
+      await expect(stage).toHaveAttribute("data-reanalysis-frame", "seen");
+      await expect(stage).not.toHaveAttribute("data-reanalysis-residue");
+      await expect(stage).toHaveCSS("animation-duration", "0.3s");
       // The replaced save control must not drop keyboard focus onto the inert
       // Files background: the same stage boundary takes it back.
       await expect
@@ -832,6 +862,7 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
   await expect(detail).toBeVisible({ timeout: 30_000 });
   await expect(detail).toHaveAttribute("data-first-frame-opacity", "1");
   await expect(detail).toHaveAttribute("data-first-frame-backdrop", "1");
+  await expect(detail).toHaveCSS("animation-duration", "0.34s");
   expect(executePosts()).toHaveLength(1);
   expect(executePosts()[0]?.body?.["itemIds"]).toHaveLength(10);
 

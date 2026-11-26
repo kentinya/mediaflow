@@ -2644,109 +2644,6 @@ export function ManualOrganizeDialog({
   const filesReanalysisView = filesNativeAnalysis || filesCorrectionWaiting;
   const filesReanalysisWaiting =
     filesNativeAnalysisWaiting || filesCorrectionWaiting;
-  const savedDecisionStage =
-    currentDecisionStatus === null ||
-    currentDecisionStatus === "decision_required"
-      ? ""
-      : currentDecisionStatus;
-  // After the first plan, navigation determines the visual stage. Publishing
-  // a new summary or changing the analysis status within a file doesn't
-  // replay the entry animation.
-  const filesReviewStage =
-    filesHost && preparationPlanObserved && !organizeFlowEnded
-      ? filesRecordDetail !== null
-        ? `record:${filesRecordDetail.taskItemId}`
-        : filesOverviewVisible
-          ? "overview"
-          : step === "confirm"
-            ? "confirm"
-            : `review:${filesSummaryReadback?.itemId ?? currentItemId ?? ""}`
-      : null;
-  const stageTransitionKey =
-    filesReviewStage ??
-    [
-      session.phase,
-      preparationUnavailable ? "unavailable" : "",
-      organizeFlowEnded ? "ended" : "",
-      preparation?.status ?? "unread",
-      preparation?.previewId ?? "",
-      preview === undefined
-        ? "plan-pending"
-        : preview.current
-          ? "plan-current"
-          : "plan-superseded",
-      preview?.previewId ?? "",
-      filesHost && filesOverviewVisible ? "overview" : "detail",
-      step,
-      currentItemId ?? "",
-      savedDecisionStage,
-      filesCorrectionWaiting ? "correction_waiting" : "",
-    ].join("|");
-  const lastScrollAnchor = useRef<string | null>(null);
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const renderedStageKey = useRef<string | null>(null);
-  // A real current-file or display-stage change starts at the top of the body
-  // before its local fade, so the operator never lands mid-way through a
-  // previous file's unrelated content.
-  useLayoutEffect(() => {
-    const anchor =
-      filesReviewStage !== null
-        ? filesReviewStage
-        : preview === undefined
-          ? "preparation"
-          : filesHost && filesOverviewVisible
-            ? "overview"
-            : `${step}:${currentItemId ?? ""}`;
-    if (lastScrollAnchor.current === anchor) return;
-    lastScrollAnchor.current = anchor;
-    const body = layer.layerRef.current?.querySelector<HTMLElement>(
-      ".mf-organize-dialog-body",
-    );
-    if (body !== null && body !== undefined) body.scrollTop = 0;
-  }, [
-    currentItemId,
-    filesHost,
-    filesOverviewVisible,
-    filesReviewStage,
-    layer.layerRef,
-    preview,
-    step,
-  ]);
-  // The stage stays mounted, so the current decision form, drafts, selection
-  // and original submission identity survive; only the local fade restarts.
-  // If a replaced control had focus, the content boundary takes it back
-  // instead of dropping the keyboard position onto the inert background.
-  useLayoutEffect(() => {
-    const previous = renderedStageKey.current;
-    renderedStageKey.current = stageTransitionKey;
-    if (previous === null) return;
-    const stage = stageRef.current;
-    if (stage === null) return;
-    const stageChanged = previous !== stageTransitionKey;
-    if (
-      (stageChanged ||
-        filesReanalysisWaiting ||
-        filesSummaryReadback !== null) &&
-      document.activeElement === document.body
-    ) {
-      stage.focus({ preventScroll: true });
-    }
-    if (
-      !stageChanged ||
-      (filesOverviewVisible && filesOverviewNotice?.planUpdated)
-    )
-      return;
-    stage.style.animation = "none";
-    stage.getBoundingClientRect();
-    stage.style.animation = "";
-  }, [
-    filesOverviewNotice?.planUpdated,
-    filesOverviewVisible,
-    filesReanalysisWaiting,
-    filesSummaryReadback,
-    stageTransitionKey,
-  ]);
-
   const recognitionOptions = (intent?.options.recognitionTypes ?? []).filter(
     (value) => value.enabled,
   );
@@ -4938,7 +4835,7 @@ export function ManualOrganizeDialog({
               {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
             </p>
             {/* The draft note belongs to this file, not the shared footer. */}
-            {filesCurrentDraft && !filesCorrectionWaiting ? (
+            {filesCurrentDraft && !filesReanalysisView ? (
               <p className="mf-organize-file-draft" role="status">
                 有未保存的修正
               </p>
@@ -5207,12 +5104,12 @@ export function ManualOrganizeDialog({
                 </p>
               </StatusBanner>
             ) : null}
-            {item.warnings.length > 0 ? (
+            {!filesReanalysisView && item.warnings.length > 0 ? (
               <p className="mf-organize-section-note">
                 提示：{item.warnings.join("；")}
               </p>
             ) : null}
-            {item.history !== null ? (
+            {!filesReanalysisView && item.history !== null ? (
               <StatusBanner
                 variant="warning"
                 title="上次整理记录（同一文件版本）"
@@ -5612,7 +5509,7 @@ export function ManualOrganizeDialog({
 
         <details
           className="mf-organize-diagnostics"
-          hidden={filesReanalysisWaiting}
+          hidden={filesReanalysisView}
         >
           <summary>查看匹配与方案依据</summary>
           {item.analysis?.metadata?.match != null &&
@@ -6247,6 +6144,39 @@ export function ManualOrganizeDialog({
       </>
     );
   };
+
+  const reviewFile = filesSummaryReadback?.itemId ?? currentItemId ?? "";
+  const stageTransitionKey = showOpeningTaskDetail
+    ? "handoff"
+    : firstPlanPreparationView
+      ? `preparation:${preparationStep ?? preparationStatusView?.title ?? "loading"}`
+      : organizeFlowEnded
+        ? "history"
+        : filesRecordDetail !== null
+          ? `record:${filesRecordDetail.taskItemId}`
+          : filesHost && filesOverviewVisible
+            ? "overview"
+            : step === "confirm"
+              ? "confirm"
+              : `review:${reviewFile}${filesReanalysisView || filesSummaryReadback !== null ? ":analysis" : ""}`;
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const renderedStageKey = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const previous = renderedStageKey.current;
+    renderedStageKey.current = stageTransitionKey;
+    const stage = stageRef.current;
+    if (previous === null || previous === stageTransitionKey || stage === null)
+      return;
+    // Commit the new content and its actions together. Animate just this live
+    // stage in the stable card, without retaining a second copy of the form.
+    const scroller = stage.closest<HTMLElement>(".mf-organize-dialog-body");
+    if (scroller !== null) scroller.scrollTop = 0;
+    if (document.activeElement === document.body)
+      stage.focus({ preventScroll: true });
+    stage.removeAttribute("data-organize-arrival");
+    stage.getBoundingClientRect();
+    stage.setAttribute("data-organize-arrival", "");
+  }, [stageTransitionKey]);
 
   const body =
     session.phase === "submitting" || preparationUnavailable ? (

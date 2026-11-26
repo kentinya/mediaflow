@@ -10055,12 +10055,21 @@ tr[aria-selected="true"] {
 .mf-modal-layer {
   --mf-organize-card-width: 900px;
   --mf-organize-card-height: min(90dvh, 900px);
+  --mf-organize-arrival-ease: cubic-bezier(0.25, 0.6, 0.3, 1);
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  .mf-modal-layer:not(.mf-modal-layer-exiting) > .mf-organize-dialog {
+    animation-duration: 300ms;
+  }
+
   .mf-modal-layer-handoff > .mf-run-detail-card {
     max-height: none;
-    animation: mf-organize-to-task 200ms ease-out;
+    animation: mf-organize-to-task 340ms var(--mf-organize-arrival-ease);
+  }
+
+  .mf-modal-layer-handoff > .mf-run-detail-card > .mf-modal-body {
+    animation: mf-organize-arrival 300ms var(--mf-organize-arrival-ease);
   }
 }
 
@@ -11964,25 +11973,26 @@ tr[aria-selected="true"] {
   }
 }
 
-/* Stage changes are immediate local fades, never a re-mounted card or a
-   delayed command. The stage wrapper stays mounted; its identity change
-   restarts this one animation, while an unchanged poll leaves it still. */
-.mf-organize-stage {
-  animation: mf-organize-stage-in 140ms ease-out;
+/* The current stage eases into place within the stable card. Its appearance
+   is keyed to the displayed stage, independently of progress polls. */
+@media (prefers-reduced-motion: no-preference) {
+  .mf-organize-stage[data-organize-arrival] {
+    animation: mf-organize-arrival 300ms var(--mf-organize-arrival-ease);
+  }
 }
 
 .mf-organize-stage:focus {
   outline: none;
 }
 
-@keyframes mf-organize-stage-in {
+@keyframes mf-organize-arrival {
   from {
-    opacity: 0.65;
-    transform: translateY(2px);
+    opacity: 0.8;
+    translate: 0 6px;
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    translate: 0 0;
   }
 }
 
@@ -12100,8 +12110,7 @@ tr[aria-selected="true"] {
 /* Current-page ordering, selection and column resizing are immediate feedback:
    reduced motion keeps the state change but removes the transition. */
 @media (prefers-reduced-motion: reduce) {
-  .mf-organize-busy-dot,
-  .mf-organize-stage {
+  .mf-organize-busy-dot {
     animation: none;
   }
 
