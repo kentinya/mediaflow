@@ -5432,6 +5432,10 @@ def restore_source_media(state: AppState) -> dict[str, object]:
         "Two.2002.mkv": b"second synthetic browser media",
         "Three.2003.mkv": b"new-task synthetic browser media",
         "Four.2004.mkv": b"default-origin synthetic browser media",
+        # Slice59 Task59.4: one unique source for the hosted in-progress
+        # preparation reopen. No other journey selects or executes it, so the
+        # deliberately unfinished preparation cannot take a sibling fixture.
+        "Task59Reopen.2049.mkv": b"slice59 in-progress preparation synthetic media",
         **scoped_fixtures,
     }
     for relative_path, content in files.items():

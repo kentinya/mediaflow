@@ -6084,7 +6084,9 @@ test("Task59.4 reopens an in-progress preparation from Task Center at its real s
   await connect(page, ADMIN_TOKEN);
   await openOrganizingSource(page);
 
-  await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
+  await page
+    .getByRole("checkbox", { name: "选择 Task59Reopen.2049.mkv" })
+    .check();
   await page.getByRole("button", { name: "批量整理" }).click();
   const card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible({ timeout: 30_000 });
