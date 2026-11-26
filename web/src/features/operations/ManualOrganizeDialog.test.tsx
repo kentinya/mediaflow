@@ -3670,6 +3670,139 @@ describe("ManualOrganizeDialog", () => {
     );
   }, 30_000);
 
+  it("keeps the first preparation with an in-place re-read when its handoff read fails", async () => {
+    const user = userEvent.setup();
+    const backend = await openPreparationDialog(user, (value) => {
+      value.state.holdFirstPreviewRead = true;
+    });
+
+    expect(await screen.findByText("正在读取整理方案")).toBeVisible();
+    await waitFor(() => expect(backend.state.holdFirstPreviewRead).toBe(false));
+
+    const original = backend.fetchMock.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    let failDiscoveryReads = true;
+    backend.fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (
+        failDiscoveryReads &&
+        url.endsWith(`/api/operations/organize/discoveries/${DISCOVERY_ID}`) &&
+        (init?.method ?? "GET") === "GET"
+      ) {
+        return jsonResponse({ error: { code: "unavailable" } }, 503);
+      }
+      return original(input, init);
+    });
+
+    backend.releasePreviewRead();
+    expect(
+      await screen.findByText("暂时无法核对准备状态", {}, { timeout: 10_000 }),
+    ).toBeVisible();
+    expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /整批复核/ })).toBeNull();
+    expect(screen.getByText("来源资源库")).toBeVisible();
+    expect(screen.getByText("受理范围")).toBeVisible();
+    expect(screen.getByText("准备进度")).toBeVisible();
+    expect(screen.getAllByText(/暂不进入复核/).length).toBeGreaterThan(0);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    // The explicit in-place re-read repeats only the same preparation read.
+    failDiscoveryReads = false;
+    await user.click(screen.getByRole("button", { name: "重新核对准备状态" }));
+    const overview = await screen.findByRole("region", {
+      name: "本次整理概览",
+    });
+    expect(overview).toBeVisible();
+    expect(backend.calls.discoveryPosts).toHaveLength(1);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+  }, 30_000);
+
+  it("keeps the preparation screen until the first summary's handoff read settles a cancellation", async () => {
+    const user = userEvent.setup();
+    const backend = await openPreparationDialog(user, (value) => {
+      value.state.holdFirstPreviewRead = true;
+    });
+
+    expect(await screen.findByText("正在读取整理方案")).toBeVisible();
+    await waitFor(() => expect(backend.state.holdFirstPreviewRead).toBe(false));
+
+    // Hold every same-preparation read until the browser has delivered the
+    // already-linkable summary. The other tab's cancellation is durable before
+    // that delivery; only the handoff read can discover it.
+    const original = backend.fetchMock.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    let releasePreparationRead = () => {};
+    const preparationReadGate = new Promise<void>((resolve) => {
+      releasePreparationRead = resolve;
+    });
+    let preparationReadStarted = false;
+    backend.fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (
+        url.endsWith(`/api/operations/organize/discoveries/${DISCOVERY_ID}`) &&
+        (init?.method ?? "GET") === "GET"
+      ) {
+        preparationReadStarted = true;
+        await preparationReadGate;
+      }
+      return original(input, init);
+    });
+
+    backend.state.cancelled = true;
+    backend.state.cancelKeepsPreview = true;
+    backend.releasePreviewRead();
+    await waitFor(() => expect(preparationReadStarted).toBe(true));
+
+    // The summary is readable, but the same preparation still says the flow
+    // is live. The card stays on the shared preparation instead of entering
+    // the overview with the pre-cancellation state.
+    expect(await screen.findByText("正在核对准备状态")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /整批复核/ })).toBeNull();
+    expect(screen.getByText("来源资源库")).toBeVisible();
+    expect(screen.getByText("受理范围")).toBeVisible();
+    expect(screen.getByText("准备进度")).toBeVisible();
+
+    releasePreparationRead();
+    expect(
+      await screen.findByText("整理准备已取消", {}, { timeout: 10_000 }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "后台已停止检查。本次不再提供确认；已生成的原计划摘要保留为只读历史，原文件仍在。",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    const history = await screen.findByRole("region", {
+      name: "只读原计划摘要",
+    });
+    expect(within(history).getByText(/方案 preview-1/)).toBeVisible();
+    expect(screen.getByText("来源资源库")).toBeVisible();
+    expect(screen.getByText("受理范围")).toBeVisible();
+    expect(screen.getByText("准备进度")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /整批复核/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "返回文件页" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.textContent).toBe(
+        "批量整理",
+      ),
+    );
+  }, 30_000);
+
   it("renders the linked plan as read-only history when an ended flow kept it", async () => {
     const user = userEvent.setup();
     await openPreparationDialog(user, (value) => {

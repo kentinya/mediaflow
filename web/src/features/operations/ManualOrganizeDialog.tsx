@@ -44,6 +44,7 @@ import { useBlocker } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   executeOrganizePreview,
+  fetchOrganizeDiscovery,
   requestOrganizeDiscoveryAnalysis,
   updateOrganizeChoice,
   type OrganizeAdmissionOutcomeRead,
@@ -68,7 +69,10 @@ import {
 } from "../../shared/ui/modal-card";
 import { mediaLibraryListQueryOptions } from "../library/media-library-query";
 import { systemStatusQueryOptions } from "../library/system-status-query";
-import { organizeDiscoveryQueryOptions } from "./discovery-query";
+import {
+  organizeDiscoveryQueryKey,
+  organizeDiscoveryQueryOptions,
+} from "./discovery-query";
 import {
   useOrganizeAdmissionWatchGroup,
   type OrganizeAdmissionWatchEntry,
@@ -861,9 +865,6 @@ export function ManualOrganizeDialog({
   // end instead of stopping on a truncated intermediate state.
   const primaryLimitAwaitingSettlement =
     primaryLimitStopped && preparation?.organizeFlow?.continuable === true;
-  const preparationUnavailable =
-    session.phase === "admitted" &&
-    (preparationQuery.isError || preparationQuery.data?.ok === false);
   // An ended preparation whose linked Preview was cleared (for example a
   // failed re-analysis) reads its original saved plan through the intent's
   // durable association.  The read itself may still be pending or may have
@@ -919,12 +920,82 @@ export function ManualOrganizeDialog({
     setPreparationObservedLive(true);
   }
   const [preparationPlanObserved, setPreparationPlanObserved] = useState(false);
-  // A plan read that resolves only after the linked flow stopped is history,
-  // not an entry into review: the shared preparation screen keeps its own
-  // terminal state and the late summary joins it as read-only content.
-  if (preview !== undefined && !organizeFlowEnded && !preparationPlanObserved) {
-    setPreparationPlanObserved(true);
-  }
+  /**
+   * The exact summary whose own handoff read failed.  A readable summary is
+   * not yet an entry into review: one fresh read of the same preparation must
+   * confirm that its linked flow is still continuable and still links this
+   * exact summary.  When that read fails the shared preparation screen keeps
+   * the operator in place with an explicit re-read instead of handing a stale
+   * plan to the overview.
+   */
+  const [preparationHandoffFailure, setPreparationHandoffFailure] = useState<
+    string | null
+  >(null);
+  const [preparationHandoffAttempt, setPreparationHandoffAttempt] = useState(0);
+  const previewSummaryId = preview?.previewId;
+  const preparationHandoffReadFailed =
+    previewSummaryId !== undefined &&
+    preparationHandoffFailure === previewSummaryId;
+  const preparationHandoffChecking =
+    previewSummaryId !== undefined &&
+    !organizeFlowEnded &&
+    !preparationPlanObserved &&
+    !preparationHandoffReadFailed;
+  useEffect(() => {
+    if (
+      previewSummaryId === undefined ||
+      organizeFlowEnded ||
+      preparationPlanObserved ||
+      preparationHandoffReadFailed
+    ) {
+      return;
+    }
+    const previewId = previewSummaryId;
+    let active = true;
+    // A fresh read through the same bounded discovery endpoint, issued after
+    // the summary resolved. It never reuses a poll that may have started
+    // before this exact handoff.
+    void fetchOrganizeDiscovery(token, discoveryId)
+      .then((result) => {
+        if (!active) return;
+        if (!result.ok) {
+          setPreparationHandoffFailure(previewId);
+          return;
+        }
+        queryClient.setQueryData(
+          [organizeDiscoveryQueryKey, discoveryId],
+          result,
+        );
+        if (
+          result.model.previewId === previewId &&
+          result.model.organizeFlow?.continuable === true
+        ) {
+          setPreparationPlanObserved(true);
+        }
+      })
+      .catch(() => {
+        if (active) setPreparationHandoffFailure(previewId);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    discoveryId,
+    organizeFlowEnded,
+    preparation?.previewId,
+    preparation?.status,
+    preparationHandoffAttempt,
+    preparationHandoffReadFailed,
+    preparationPlanObserved,
+    previewSummaryId,
+    queryClient,
+    token,
+  ]);
+  const preparationUnavailable =
+    session.phase === "admitted" &&
+    (preparationQuery.isError || preparationQuery.data?.ok === false) &&
+    !preparationHandoffReadFailed &&
+    !preparationPlanObserved;
   const preparationEnteredReview =
     preparationObservedLive && preparationPlanObserved;
   // Files rows present the reviewed library identity only when those reads
@@ -2381,7 +2452,8 @@ export function ManualOrganizeDialog({
     preparation !== undefined &&
     preparation.previewId !== null &&
     !organizeFlowEnded &&
-    !preparationEnteredReview;
+    !preparationEnteredReview &&
+    !preparationHandoffReadFailed;
   const preparationPolling =
     preparationStatus !== undefined &&
     !organizeFlowEnded &&
@@ -3323,7 +3395,7 @@ export function ManualOrganizeDialog({
     preparationUnavailable ||
     preparation === undefined ||
     preparationTerminalFirstScreen ||
-    (!organizeFlowEnded && preview === undefined);
+    (!organizeFlowEnded && (preview === undefined || !preparationPlanObserved));
   /**
    * Only a step that actually needs the resident Worker reports it missing.
    * A preparation that already reached its own durable result (zero primary
@@ -3371,6 +3443,23 @@ export function ManualOrganizeDialog({
     }
   })();
   const preparationStatusView = (() => {
+    if (preparationHandoffReadFailed) {
+      return {
+        title: "暂时无法核对准备状态",
+        copy: "原计划摘要已读取；未能通过同一读口确认同一准备和关联任务当前是否仍可继续，暂不进入复核。",
+        tone: "amber" as const,
+        busy: false,
+        icon: "!",
+      };
+    }
+    if (preparationHandoffChecking) {
+      return {
+        title: "正在核对准备状态",
+        copy: "已读取原计划摘要；正在核对同一准备与关联任务是否可以继续，确认后进入复核。",
+        tone: "blue" as const,
+        busy: true,
+      };
+    }
     if (preparationWorkerBlocking) {
       return {
         title: "后台暂不可用",
@@ -3525,7 +3614,11 @@ export function ManualOrganizeDialog({
         : "";
     const counts = `${found}${unstable}${readFailures}`;
     if (preparation.previewId !== null)
-      return `${counts} · 方案已生成，正在读取`;
+      return preview === undefined
+        ? `${counts} · 方案已生成，正在读取`
+        : `${counts} · 方案已读取，${
+            preparationHandoffReadFailed ? "准备状态待重新核对" : "正在核对准备"
+          }`;
     if (preparation.frozen) return `${counts} · 来源已冻结，正在分析`;
     switch (preparation.status) {
       case "queued":
@@ -3745,6 +3838,27 @@ export function ManualOrganizeDialog({
             <dd>{preparationProgressText}</dd>
           </div>
         </dl>
+        {preparationHandoffReadFailed ? (
+          <div className="mf-organize-preparation-note" role="status">
+            <p>
+              原计划摘要已读取，但无法确认同一准备和关联任务当前是否仍可继续；
+              暂不进入复核，没有重新提交整理申请，也没有修改文件。
+            </p>
+            <p>重新读取同一准备，读取成功后即可继续核对原方案。</p>
+            <div className="mf-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setPreparationHandoffFailure(null);
+                  setPreparationHandoffAttempt((value) => value + 1);
+                }}
+              >
+                重新核对准备状态
+              </Button>
+            </div>
+          </div>
+        ) : null}
         {preparationTerminalFirstScreen
           ? renderTerminalPreparationSummary()
           : null}
@@ -5958,7 +6072,7 @@ export function ManualOrganizeDialog({
       renderPreparationContent()
     ) : organizeFlowEnded ? (
       renderPreparationContent()
-    ) : preview === undefined ? (
+    ) : preview === undefined || !preparationPlanObserved ? (
       renderPreparationContent()
     ) : (
       <>
@@ -6000,7 +6114,8 @@ export function ManualOrganizeDialog({
   // never offers paging over a live plan, a batch confirmation or a second
   // re-analysis entry.
   const preparationOnlyFooter =
-    !organizeFlowEnded && (preview === undefined || items.length === 0);
+    !organizeFlowEnded &&
+    (preview === undefined || items.length === 0 || !preparationPlanObserved);
   const filesOverviewFooter =
     filesHost &&
     filesOverviewVisible &&

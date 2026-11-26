@@ -722,6 +722,11 @@ def build_managed_fixture(
     (dialog_root / "DialogPrepCancel.2048.mkv").write_bytes(
         b"slice59 preparation cancellation synthetic media"
     )
+    # Task59.4 summary-response-first regression: its own source so the summary
+    # can reach the browser before the already-durable cancellation read.
+    (dialog_root / "DialogPrepCancelFirst.2050.mkv").write_bytes(
+        b"slice59 summary-first cancellation synthetic media"
+    )
     # Slice53 browser state regression: its own source with two tied provider
     # candidates, so an unsaved per-file choice is a real draft while the
     # browser proves the admitted preparation address across a cancelled Back
@@ -812,6 +817,7 @@ def build_managed_fixture(
     os.utime(dialog_root / "DialogFreeze.2020.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogPrepAction.2026.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogPrepCancel.2048.mkv", (conflict_time, conflict_time))
+    os.utime(dialog_root / "DialogPrepCancelFirst.2050.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogBack.2025.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogReconcile.2027.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogUnselected.2028.mkv", (conflict_time, conflict_time))
@@ -1822,6 +1828,15 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogPrepCancel",
                         year=2048,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "735",
+                        MediaType.MOVIE,
+                        "DialogPrepCancelFirst",
+                        year=2050,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
