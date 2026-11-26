@@ -1,18 +1,48 @@
 # Task 59.4 — 整理弹窗共用真实阶段的准备页
 
-Next Action: DEVELOPER IMPLEMENTS TASK 59.4
+Next Action: DEVELOPER CORRECTS PREPARATION SETTLEMENT IN TASK 59.4
 
 ```text
 Task ID: 59.4
 Task Type: SLICE
 Parent Slice: 59
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: bccfb2c4c014eb181d33ebc5b99140c1c722b446
 Planning Contract: 36f60fe0ef75c9cbb9e0b30e258c2d6f4075f24d
+Reviewed Implementation Head: 523628eab5b0f3c3ea7287e16f88c0642f5f4110
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
 ```
+
+## Task 59.4 B 复核
+
+本轮复核了 `bccfb2c4c014eb181d33ebc5b99140c1c722b446..523628eab5b0f3c3ea7287e16f88c0642f5f4110`
+和完整 Slice 区间。治理、区间空白检查、Web 类型、Lint、格式、构建及夹具 Ruff 检查通过。
+两组组件共 146 项通过。真实 Python/API/SQLite/Worker 原生浏览器 9 项通过，含 Files 方案交接、
+摘要读取失败及重读、100/101 项边界、任务中心准备中重开及已就绪原位续作。
+
+**FIX REQUIRED · RO-1 / AC-01、AC-06。** Files 中打开 101 个主文件的目录，真实 Worker 首先
+发布超限，弹窗显示「超出主文件上限」、原受理范围和准备进度。关联任务结算为失败后，同一弹窗
+切成「本次整理工作已结束」，受理范围、进度和范围核对入口消失。从另一个标签页经任务中心取消
+排队中的 Files 准备，也复现通用终态，正文同时声称原摘要保留和从未生成。API 读回准备及任务
+均为 `cancelled`，`previewId` 为空，浏览器的执行请求为零。批准离线稿在两种终态都保留共用
+准备状态区、来源、受理范围和准备进度，并给出适用的返回动作。
+
+1. 在首次准备的正文选择中，按真实准备和关联任务事实识别停止原因。在仍是准备首屏时，让取消、
+   超限和完整范围不足的结算沿用共用准备正文，显示对应状态、已知影响、来源、受理范围、进度
+   和按需核对的范围。超限的两次耐久读回仍区分正在收尾和最终失败。
+2. 在 Files 的准备终态提供「返回文件页」并沿用现有关闭和焦点恢复。终态停止动效，正文与底栏
+   说明实际效果。按真实摘要关联决定展示只读原方案或未生成提示。已经进入复核后的终态和准确
+   历史地址继续遵守原有只读入口与摘要读取条件。
+3. 扩展真实 101 项旅程，在 Worker 发布超限和关联任务结算后分别断言状态区、范围明细、进度、
+   返回位置和无执行请求。补一条取消准备旅程，从另一标签页取消同一 Task，核对准确的终态、
+   未生成摘要、Files 返回及 1440、390 px 表现。同时复验实质范围不完整时的合法动作。
+
+日志与同视口对照位于
+`.git/validation-evidence/523628eab5b0f3c3ea7287e16f88c0642f5f4110/b-task59.4-review/`。
+`probe-retry.log`、`cancel-retry.log` 记录实际页面证据，`preparation-probe/screens/`
+与 `approved-states/` 存放截图。原 Task Base 沿用，修正完成后进入同一 Task 的 B 复核。
 
 ## B 复核与 Slice 59 交接
 
