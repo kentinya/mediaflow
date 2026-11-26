@@ -25,6 +25,7 @@ import {
 } from "./run-detail-query";
 import { runOverviewQueryKey, runOverviewQueryOptions } from "./run-query";
 import { organizePreviewQueryOptions } from "./organize-query";
+import { OrganizeReanalysis } from "./OrganizeReanalysis";
 import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import {
   organizeDiscoveryQueryKey,
@@ -526,6 +527,7 @@ export function TaskItemRecoveryPanel({
     repeatLocked,
     submittedConfirmation,
     analysis: analysisObservation,
+    decisionReceipt,
   } = recoverySession.state;
   const updateRecoverySession = recoverySession.update;
   // The retained confirmation request is scoped to the backend-authenticated
@@ -1013,6 +1015,36 @@ export function TaskItemRecoveryPanel({
     }
   };
 
+  // Build the receipt from the submitted choice, before the accepted save
+  // removes the available options from the recovery read.
+  const submittedDecisionLabel = (kind: TaskItemDecisionKind): string => {
+    const draft = effectiveDecisionDraft;
+    if (kind === "conflict") {
+      return recoveryConflictStrategyTitle(draft.conflictStrategy);
+    }
+    if (kind === "metadata_correction") {
+      const candidate = draft.metadataResult?.candidates.find(
+        (value) =>
+          value.providerId === draft.selectedProviderId &&
+          value.mediaType === draft.mediaType,
+      );
+      return candidate
+        ? [candidate.title, candidate.year].filter(Boolean).join(" · ")
+        : [draft.searchText, draft.correctedYear || "不限年份"].join(" · ");
+    }
+    const choice = decision?.choices.find((value) =>
+      kind === "recognition"
+        ? value.id === draft.selectedChoice
+        : String(value.rank) === draft.selectedChoice,
+    );
+    if (kind === "classification" && choice !== undefined) {
+      return [choice.mediaLibraryId, choice.relativePath || "根目录"]
+        .filter(Boolean)
+        .join(" / ");
+    }
+    return choice?.name ?? "";
+  };
+
   const saveDecision = async (
     kind: TaskItemDecisionKind,
     fields: Record<string, unknown>,
@@ -1020,7 +1052,8 @@ export function TaskItemRecoveryPanel({
     if (checkpoint === null || busy || repeatLocked) return;
     // This explicit save starts a new decision/analysis attempt for the exact
     // current checkpoint; an older analysis observation cannot describe it.
-    updateRecoverySession({ analysis: null });
+    const label = submittedDecisionLabel(kind);
+    updateRecoverySession({ analysis: null, decisionReceipt: null });
     onDecisionStarted?.();
     beginAction("decision");
     try {
@@ -1040,6 +1073,14 @@ export function TaskItemRecoveryPanel({
         return;
       }
       const updated = result.model;
+      if (label !== "") {
+        updateRecoverySession({
+          decisionReceipt: {
+            checkpointVersion: updated.checkpoint.checkpointVersion,
+            label,
+          },
+        });
+      }
       queryClient.setQueryData([taskItemRecoveryQueryKey, taskId, itemId], {
         ok: true as const,
         model: updated,
@@ -1619,65 +1660,71 @@ export function TaskItemRecoveryPanel({
   };
   const savedDecisionPanel = (() => {
     if (!savedDecisionAnalysisVisible) return null;
-    if (analysisWaiting && !analysisUnknown) {
-      return (
-        <div
-          className="mf-organize-decision mf-saved-analysis"
-          aria-label="已保存决定的分析状态"
-        >
-          <h6>零变更分析正在等待</h6>
-          <p role="status">
-            {message ??
-              "选择已保存；同一 Task 的分析仍在排队或运行。等待 Worker 生成新的精确方案后再继续，文件未被修改。"}
-          </p>
-          <p className="mf-organize-decision-hint">
-            分析完成前不会执行整理，也不会重复提交分析。
-          </p>
+    const savedChoice =
+      decisionReceipt?.checkpointVersion === checkpoint?.checkpointVersion
+        ? decisionReceipt?.label
+        : null;
+    const action =
+      analysisActionVisible || analysisUnknown ? (
+        <div className="mf-actions">
+          <button
+            type="button"
+            className="mf-button"
+            disabled={analysisUnknown ? query.isFetching : busy}
+            onClick={
+              analysisUnknown ? () => void reconcile() : requestAnalysisOnly
+            }
+          >
+            {analysisUnknown
+              ? query.isFetching
+                ? "正在重新读取…"
+                : "重新读取条目"
+              : busy
+                ? "正在保存并重新分析…"
+                : "保存并重新分析"}
+          </button>
         </div>
+      ) : null;
+    const actions =
+      action !== null && actionBarTarget !== null
+        ? createPortal(action, actionBarTarget)
+        : action;
+    if (analysisWaiting) {
+      return (
+        <OrganizeReanalysis
+          phase={
+            currentAnalysisObservation?.phase === "requesting" &&
+            !analysisDurableActive
+              ? "requesting"
+              : "waiting"
+          }
+          savedChoice={savedChoice}
+        />
       );
     }
     if (analysisUnknown) {
       return (
-        <div
-          className="mf-organize-decision mf-saved-analysis"
-          aria-label="已保存决定的分析状态"
-        >
-          <h6>分析请求结果未知</h6>
-          <p role="status">
-            {message ??
-              "选择已保存；分析请求的结果尚未确认。不会自动重发，请先核对同一 Task 的持久状态。"}
-          </p>
-          <p className="mf-organize-decision-hint">
-            核对读取不会保存决定、调用 Provider 或执行任何文件操作。
-          </p>
-        </div>
+        <OrganizeReanalysis
+          phase="unknown"
+          savedChoice={savedChoice}
+          detail={message}
+          actions={actions}
+        />
       );
     }
     if (analysisActionVisible) {
       return (
-        <div
-          className="mf-organize-decision mf-saved-analysis"
-          aria-label="已保存决定的分析状态"
-        >
-          <h6>选择已保存</h6>
-          <p role="status">
-            {message ??
-              "决定已保存；零变更分析尚未受理。文件未被修改，也还没有可确认的新方案。"}
-          </p>
-          <div className="mf-actions">
-            <button
-              type="button"
-              className="mf-button"
-              disabled={busy}
-              onClick={requestAnalysisOnly}
-            >
-              {busy ? "正在保存并重新分析…" : "保存并重新分析"}
-            </button>
-          </div>
-          <p className="mf-organize-decision-hint">
-            再次点击只补做零变更分析，不会重复保存决定，也不会执行整理或修改文件。
-          </p>
-        </div>
+        <OrganizeReanalysis
+          phase="refused"
+          savedChoice={savedChoice}
+          detail={
+            currentAnalysisObservation?.code === "queue_full" ||
+            currentAnalysisObservation?.code === "capacity_full"
+              ? "共享队列已满。再次使用同一按钮只补做分析，原决定继续保留。"
+              : message
+          }
+          actions={actions}
+        />
       );
     }
     if (analysisReadPending) {
@@ -1738,14 +1785,16 @@ export function TaskItemRecoveryPanel({
             </button>
           </StatusBanner>
         )}
-        {busy && pendingAction !== null && (
-          <StatusBanner variant="info" title="操作请求仍在进行">
-            <p>
-              “{PENDING_ACTION_LABELS[pendingAction] ?? pendingAction}
-              ”请求尚未返回；结果返回前不会重复提交，保存也不会执行整理。
-            </p>
-          </StatusBanner>
-        )}
+        {busy &&
+          pendingAction !== null &&
+          !(pendingAction === "continue" && savedDecisionAnalysisVisible) && (
+            <StatusBanner variant="info" title="操作请求仍在进行">
+              <p>
+                “{PENDING_ACTION_LABELS[pendingAction] ?? pendingAction}
+                ”请求尚未返回；结果返回前不会重复提交，保存也不会执行整理。
+              </p>
+            </StatusBanner>
+          )}
         {message &&
           submittedConfirmation === null &&
           !savedDecisionAnalysisVisible && (
@@ -1848,7 +1897,7 @@ export function TaskItemRecoveryPanel({
               这里不会重新提交整理，也不会执行任何文件操作。
             </p>
           ))}
-        {repeatLocked && submittedConfirmation === null && (
+        {repeatLocked && submittedConfirmation === null && !analysisUnknown && (
           <div className="mf-actions">
             <button
               type="button"
@@ -1980,14 +2029,16 @@ export function TaskItemRecoveryPanel({
           </details>
         </>
       )}
-      {busy && pendingAction !== null && (
-        <StatusBanner variant="info" title="操作请求仍在进行">
-          <p>
-            “{PENDING_ACTION_LABELS[pendingAction] ?? pendingAction}
-            ”请求尚未返回；该条目的恢复操作保持等待，关闭或重新打开弹卡不会重发请求。结果返回后会显示在这里。
-          </p>
-        </StatusBanner>
-      )}
+      {busy &&
+        pendingAction !== null &&
+        !(pendingAction === "continue" && savedDecisionAnalysisVisible) && (
+          <StatusBanner variant="info" title="操作请求仍在进行">
+            <p>
+              “{PENDING_ACTION_LABELS[pendingAction] ?? pendingAction}
+              ”请求尚未返回；该条目的恢复操作保持等待，关闭或重新打开弹卡不会重发请求。结果返回后会显示在这里。
+            </p>
+          </StatusBanner>
+        )}
       {confirmationStatusText !== null && (
         <p className="mf-dashboard-meta" role="status">
           {confirmationStatusText}
@@ -2033,7 +2084,7 @@ export function TaskItemRecoveryPanel({
             <p>{message}</p>
           </StatusBanner>
         )}
-      {repeatLocked && submittedConfirmation === null && (
+      {repeatLocked && submittedConfirmation === null && !analysisUnknown && (
         <div className="mf-actions">
           <button
             type="button"

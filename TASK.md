@@ -4,7 +4,7 @@
 Task ID: 59.6
 Task Type: SLICE
 Parent Slice: 59
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: 71787a05f18a089753966fbc9b1469c7fb3b4877
 Difficulty: Medium
 Test Level: T3
@@ -32,3 +32,13 @@ src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/R
 
 B 独立检查 Task Base 到候选差异、浏览器关键旅程与相应 T3 安全门禁，提交 Slice 终验包。
 原交接保存在 `71787a05:TASK.md`。
+
+## Developer 交接
+
+两入口显示统一的重新分析区，复用原保存、分析与回落。保存前的入口与底栏已恢复原样。
+受影响组件回归 143 项通过。原生浏览器验证混合四类、十项逐个处理后的单次确认、
+任务中心识别恢复共 3 项通过。生产构建、类型检查、变动文件 ESLint 和 Prettier 通过。
+本机测试站验证桌面、390 px、Files 概览回落、任务中心原行新计划、保存失败、
+队列拒绝后仅补分析、回包未知的有／无受理。截图及日志见
+`.git/validation-evidence/71787a05/slice59-local-site/reanalysis-*.log` 和同目录 `after-*.png`。
+B 独立验收待完成。

@@ -983,7 +983,7 @@ describe("TaskItemRecoveryPanel", () => {
     );
 
     expect(
-      await within(panel).findByText(/原 Task 已重新排入零变更分析/),
+      await within(panel).findByText(/决定已保存，原任务正在生成新方案/),
     ).toBeVisible();
     await waitFor(() => {
       expect(
@@ -1214,7 +1214,7 @@ describe("TaskItemRecoveryPanel", () => {
     );
 
     expect(
-      await within(panel).findByText(/原 Task 已重新排入零变更分析/),
+      await within(panel).findByText(/决定已保存，原任务正在生成新方案/),
     ).toBeVisible();
     expect(within(panel).queryByText(/未完成/)).toBeNull();
   });
@@ -2570,7 +2570,7 @@ describe("TaskItemRecoveryPanel", () => {
     await user.click(retry);
 
     expect(
-      await within(panel).findByText(/原 Task 已重新排入零变更分析/),
+      await within(panel).findByText(/决定已保存，原任务正在生成新方案/),
     ).toBeVisible();
     expect(
       calls.filter((call) => call.method === "POST").map((call) => call.path),
@@ -2648,10 +2648,14 @@ describe("TaskItemRecoveryPanel", () => {
     // The decision response removed its form and the accepted same-Task
     // analysis owns the same place, so no second analysis action is exposed.
     expect(
-      await within(panel).findByText(
-        /选择已保存；同一 Task 的分析仍在排队或运行/,
-      ),
+      await within(panel).findByText(/决定已保存，正在请求原任务重新分析/),
     ).toBeVisible();
+    const analysis = within(panel).getByRole("region", {
+      name: "已保存决定的分析状态",
+    });
+    expect(within(analysis).getByText("已保存的决定")).toBeVisible();
+    expect(within(analysis).getByText("Special")).toBeVisible();
+    expect(within(panel).queryByText("操作请求仍在进行")).toBeNull();
     expect(
       within(panel).queryByRole("button", { name: "保存并重新分析" }),
     ).toBeNull();
@@ -2681,7 +2685,7 @@ describe("TaskItemRecoveryPanel", () => {
     });
 
     expect(
-      await within(panel).findByText(/原 Task 已重新排入零变更分析/),
+      await within(panel).findByText(/决定已保存，原任务正在生成新方案/),
     ).toBeVisible();
     // The follow-up recovery read still reports the old retry permission and
     // no legacy continuation; the durable accepted state keeps the action out.
@@ -2761,7 +2765,11 @@ describe("TaskItemRecoveryPanel", () => {
     );
 
     const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
-    expect(await within(panel).findByText("选择已保存")).toBeVisible();
+    expect(
+      await within(panel).findByRole("heading", {
+        name: "决定已保存，分析暂未受理",
+      }),
+    ).toBeVisible();
     const retry = within(panel).getByRole("button", {
       name: "保存并重新分析",
     });
@@ -2769,7 +2777,7 @@ describe("TaskItemRecoveryPanel", () => {
     await user.click(retry);
 
     expect(
-      await within(panel).findByText(/原 Task 已重新排入零变更分析/),
+      await within(panel).findByText(/决定已保存，原任务正在生成新方案/),
     ).toBeVisible();
     expect(posts).toEqual(["/api/tasks/task-1/items/item-1/recovery/continue"]);
   });
@@ -2844,7 +2852,7 @@ describe("TaskItemRecoveryPanel", () => {
 
     await user.click(
       within(panel).getByRole("button", {
-        name: "重新读取条目后再继续",
+        name: "重新读取条目",
       }),
     );
     expect(
@@ -2925,7 +2933,11 @@ describe("TaskItemRecoveryPanel", () => {
     const panel = await screen.findByRole("region", {
       name: "条目审核与恢复",
     });
-    expect(await within(panel).findByText("选择已保存")).toBeVisible();
+    expect(
+      await within(panel).findByRole("heading", {
+        name: "决定已保存，分析暂未受理",
+      }),
+    ).toBeVisible();
     const retry = within(panel).getByRole("button", {
       name: "保存并重新分析",
     });
@@ -2943,9 +2955,7 @@ describe("TaskItemRecoveryPanel", () => {
     });
     await user.click(reopenedRetry);
 
-    expect(
-      await within(reopened).findByText(/零变更分析正在等待/),
-    ).toBeVisible();
+    expect(await within(reopened).findByText(/正在重新分析/)).toBeVisible();
     expect(
       within(reopened).queryByRole("button", { name: "保存并重新分析" }),
     ).toBeNull();
@@ -3030,12 +3040,12 @@ describe("TaskItemRecoveryPanel", () => {
     ).toBeNull();
     await user.click(
       within(panel).getByRole("button", {
-        name: "重新读取条目后再继续",
+        name: "重新读取条目",
       }),
     );
 
     expect(
-      await within(panel).findByText(/本次零变更分析已经受理/),
+      await within(panel).findByText(/决定已保存，原任务正在生成新方案/),
     ).toBeVisible();
     expect(
       within(panel).queryByRole("button", { name: "保存并重新分析" }),

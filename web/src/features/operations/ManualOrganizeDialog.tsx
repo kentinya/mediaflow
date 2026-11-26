@@ -109,6 +109,7 @@ import {
   destructiveStatement,
   displayEnum,
 } from "./organize-summary";
+import { OrganizeReanalysis } from "./OrganizeReanalysis";
 import { usePrincipalIdentity } from "./principal-identity-query";
 import {
   TaskItemRecoveryPanel,
@@ -164,6 +165,10 @@ interface SaveNotice {
   readonly text: string;
   /** A saved choice whose analysis may simply be retried, without saving again. */
   readonly retryAnalysis: boolean;
+  readonly acceptedAnalysis?: {
+    readonly previewId: string | null;
+    readonly savedChoice: string | null;
+  };
 }
 
 /**
@@ -1669,6 +1674,7 @@ export function ManualOrganizeDialog({
     }): Promise<{
       readonly saved: boolean;
       readonly analyzed: boolean;
+      readonly savedChoice?: string | null;
       readonly analysisFailure?: {
         readonly code: string;
         readonly nextAction: string | null;
@@ -1696,6 +1702,7 @@ export function ManualOrganizeDialog({
               preparationVersion: preparation.version,
               preparationStatus: preparation.status,
             };
+      let savedChoice: string | null = null;
       if (!options.onlyAnalysis) {
         if (item === undefined || intent === undefined) {
           throw { stage: "save", code: "item_unavailable" };
@@ -1732,6 +1739,11 @@ export function ManualOrganizeDialog({
         // place; an empty selection is not an invented identity to reject.
         const metadata =
           draftMetadata === undefined ? item.choice.metadata : draftMetadata;
+        savedChoice = draftMetadata?.title
+          ? [draftMetadata.title, draftMetadata.year]
+              .filter(Boolean)
+              .join(" · ")
+          : recognitionOption.name;
         const saved = await updateOrganizeChoice(token, {
           intentId: intent.intentId,
           itemId: options.itemId,
@@ -1761,7 +1773,7 @@ export function ManualOrganizeDialog({
           analysisBaseline,
         };
       }
-      return { saved: true, analyzed: true, analysisBaseline };
+      return { saved: true, analyzed: true, analysisBaseline, savedChoice };
     },
     retry: false,
     onMutate: (variables) => {
@@ -1860,6 +1872,13 @@ export function ManualOrganizeDialog({
               kind: "success",
               text: "已请求重新分析;新的精确方案就绪后会自动显示。",
               retryAnalysis: false,
+              acceptedAnalysis: {
+                previewId: baseline?.previewId ?? null,
+                savedChoice:
+                  value.savedChoice ??
+                  previous[variables.itemId]?.acceptedAnalysis?.savedChoice ??
+                  null,
+              },
             },
           }));
           void preparationQuery.refetch();
@@ -1897,6 +1916,13 @@ export function ManualOrganizeDialog({
             kind: "success",
             text: "选择已保存,正在按固定配置重新分析;保存不会执行任何整理。",
             retryAnalysis: false,
+            acceptedAnalysis: {
+              previewId: baseline?.previewId ?? null,
+              savedChoice:
+                value.savedChoice ??
+                previous[variables.itemId]?.acceptedAnalysis?.savedChoice ??
+                null,
+            },
           },
         }));
         void preparationQuery.refetch();
@@ -2539,6 +2565,28 @@ export function ManualOrganizeDialog({
    * initial decision read is part of the new file's own reveal, not a second
    * saved-analysis transition.
    */
+  const filesReviewingDecision =
+    filesHost &&
+    filesRecordDetail === null &&
+    !filesOverviewVisible &&
+    step === "review" &&
+    !organizeFlowEnded;
+  const filesNativeAnalysis =
+    filesReviewingDecision &&
+    !isExecutable &&
+    currentDecisionStatus !== null &&
+    currentDecisionStatus !== "decision_required";
+  const filesNativeAnalysisWaiting =
+    filesNativeAnalysis && currentDecisionStatus === "analysis_waiting";
+  const filesCorrectionWaiting =
+    filesReviewingDecision &&
+    currentProblemItemId === null &&
+    (currentAnalysisReadback?.phase === "awaiting" ||
+      (currentNotice?.acceptedAnalysis !== undefined &&
+        currentNotice.acceptedAnalysis.previewId === preview?.previewId));
+  const filesReanalysisView = filesNativeAnalysis || filesCorrectionWaiting;
+  const filesReanalysisWaiting =
+    filesNativeAnalysisWaiting || filesCorrectionWaiting;
   const savedDecisionStage =
     currentDecisionStatus === null ||
     currentDecisionStatus === "decision_required"
@@ -2560,6 +2608,7 @@ export function ManualOrganizeDialog({
     step,
     currentItemId ?? "",
     savedDecisionStage,
+    filesCorrectionWaiting ? "correction_waiting" : "",
   ].join("|");
   const lastScrollAnchor = useRef<string | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -4755,7 +4804,25 @@ export function ManualOrganizeDialog({
       filesHost && (draftDirty || currentDecisionDraftDirty);
     const reviewHeader = () =>
       filesHost ? (
-        <header className="mf-organize-file-head mf-organize-files-file-head">
+        <header
+          className={`mf-organize-file-head mf-organize-files-file-head${filesReanalysisView ? " mf-organize-reanalysis-file" : ""}`}
+        >
+          {filesReanalysisView ? (
+            <span
+              className="mf-organize-reanalysis-file-icon"
+              aria-hidden="true"
+            >
+              {(
+                {
+                  recognition: "◎",
+                  metadata: "≡",
+                  metadata_correction: "≡",
+                  classification: "↳",
+                  conflict: "◇",
+                } as Record<string, string>
+              )[previewItemProblemKind(item) ?? ""] ?? "▷"}
+            </span>
+          ) : null}
           <div className="mf-organize-file-title">
             <h3>
               <span className="mf-organize-file-eyebrow">
@@ -4764,13 +4831,15 @@ export function ManualOrganizeDialog({
               <span className="mf-organize-file-name mf-exact-identity">
                 {filename}
               </span>
-              {filesDecisionLayout ? null : reviewStatusBadge}
+              {filesDecisionLayout || filesCorrectionWaiting
+                ? null
+                : reviewStatusBadge}
             </h3>
             <p className="mf-organize-file-path mf-dashboard-meta">
               {item.sourceStorageId ?? "—"}:{item.sourcePath ?? "—"}
             </p>
             {/* The draft note belongs to this file, not the shared footer. */}
-            {filesCurrentDraft ? (
+            {filesCurrentDraft && !filesCorrectionWaiting ? (
               <p className="mf-organize-file-draft" role="status">
                 有未保存的修正
               </p>
@@ -4801,6 +4870,18 @@ export function ManualOrganizeDialog({
           </div>
         </header>
       );
+
+    if (filesCorrectionWaiting) {
+      return (
+        <>
+          {reviewHeader()}
+          <OrganizeReanalysis
+            phase="waiting"
+            savedChoice={notice?.acceptedAnalysis?.savedChoice}
+          />
+        </>
+      );
+    }
 
     if (settledDecision !== null && filesHost) {
       // A skip/ignore ended this exact item without another plan. Its body
@@ -5430,7 +5511,10 @@ export function ManualOrganizeDialog({
           </section>
         ) : null}
 
-        <details className="mf-organize-diagnostics">
+        <details
+          className="mf-organize-diagnostics"
+          hidden={filesReanalysisWaiting}
+        >
           <summary>查看匹配与方案依据</summary>
           {item.analysis?.metadata?.match != null &&
           item.analysis.metadata.match.candidates.length > 0 ? (
@@ -6077,7 +6161,7 @@ export function ManualOrganizeDialog({
     ) : (
       <>
         {renderPreparationNotice()}
-        {preparationStatusRunning ? (
+        {preparationStatusRunning && !filesReanalysisView ? (
           <StatusBanner variant="info" title="正在重新分析,当前方案不可确认">
             <p role="status">
               {label(PREPARATION_STATUS_LABELS, preparation?.status ?? "")};
@@ -6152,6 +6236,7 @@ export function ManualOrganizeDialog({
     currentItem !== undefined &&
     !organizeFlowEnded &&
     !currentNativeProblem &&
+    !filesCorrectionWaiting &&
     previewItemTechnicalStage(currentItem) !== "metadata" &&
     filesSettledDecisionFor(currentItem) === null &&
     (draftDirty ||
@@ -6451,7 +6536,9 @@ export function ManualOrganizeDialog({
       cardClassName="mf-organize-dialog"
       footer={footer}
       footerClassName={
-        filesDecisionFooter ? "mf-organize-files-decision-footer" : undefined
+        filesDecisionFooter
+          ? `mf-organize-files-decision-footer${filesReanalysisWaiting ? " mf-organize-reanalysis-footer" : ""}`
+          : undefined
       }
     >
       {taskReadNotice}

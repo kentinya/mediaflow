@@ -2028,7 +2028,7 @@ describe("ManualOrganizeDialog", () => {
       // reports both stages and never executes anything meanwhile.
       await waitFor(() =>
         expect(
-          screen.getByText(/选择已保存,正在按固定配置重新分析/),
+          screen.getByRole("heading", { name: "正在重新分析" }),
         ).toBeVisible(),
       );
       expect(backend.calls.executePosts).toHaveLength(0);
@@ -2600,7 +2600,7 @@ describe("ManualOrganizeDialog", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText(/已请求重新分析;新的精确方案就绪后会自动显示/),
+        screen.getByRole("heading", { name: "正在重新分析" }),
       ).toBeVisible(),
     );
     expect(backend.calls.executePosts).toHaveLength(0);

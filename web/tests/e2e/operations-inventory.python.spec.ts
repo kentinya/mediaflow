@@ -652,7 +652,7 @@ async function runNativeRecoveryJourney(
     expect((await admitted).status()).toBe(202);
     // The accepted same-Task analysis now owns the saved action position; the
     // old retry-shaped checkpoint must not expose a second analysis button.
-    await expect(recovery.getByText("零变更分析正在等待")).toBeVisible();
+    await expect(recovery.getByText("正在重新分析")).toBeVisible();
     await expect(
       recovery.getByRole("button", { name: "保存并重新分析" }),
     ).toHaveCount(0);
@@ -1684,7 +1684,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   await recognition.first().selectOption("C");
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+    card.getByRole("heading", { name: "正在重新分析", exact: true }),
   ).toBeVisible();
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
@@ -2287,7 +2287,7 @@ test("a selected execution never blocks the unselected sibling's correction and 
   await recognition.selectOption("C");
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+    card.getByRole("heading", { name: "正在重新分析", exact: true }),
   ).toBeVisible();
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
@@ -2711,7 +2711,7 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   await recognition.first().selectOption("C");
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+    card.getByRole("heading", { name: "正在重新分析", exact: true }),
   ).toBeVisible();
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(

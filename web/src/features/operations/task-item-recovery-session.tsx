@@ -4,8 +4,8 @@
  * The exact Task/item decision, analysis continuation and preparation
  * confirmation requests are owned by the card, but their in-flight and
  * unresolved outcomes must outlive one allowed close/reopen of that card.
- * This store keeps only the request lifecycle (never a token, draft or server
- * model) keyed by the current principal and the exact run/Task/item, so the
+ * This store keeps the request lifecycle and receipt for the saved choice,
+ * keyed by the current principal and the exact run/Task/item, so the
  * reopened panel can wait for the original request and offer the original
  * reconciliation instead of submitting a second command.
  *
@@ -64,6 +64,10 @@ export interface TaskItemRecoverySessionState {
   readonly submittedConfirmation: TaskItemRecoverySubmittedConfirmation | null;
   /** The latest analysis admission observed for this exact item. */
   readonly analysis: TaskItemRecoveryAnalysisState | null;
+  readonly decisionReceipt: {
+    readonly checkpointVersion: string;
+    readonly label: string;
+  } | null;
 }
 
 const EMPTY_SESSION: TaskItemRecoverySessionState = {
@@ -73,6 +77,7 @@ const EMPTY_SESSION: TaskItemRecoverySessionState = {
   repeatLocked: false,
   submittedConfirmation: null,
   analysis: null,
+  decisionReceipt: null,
 };
 
 interface TaskItemRecoverySessionContextValue {

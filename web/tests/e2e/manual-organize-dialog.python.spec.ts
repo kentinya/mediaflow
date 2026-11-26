@@ -205,7 +205,7 @@ async function saveNativeDecision(page: Page, card: Locator): Promise<void> {
   // The saved decision must hand directly to the one accepted-analysis wait
   // state.  The old retry-shaped checkpoint may still advertise `retry`, but
   // the same save/analyse button must not reappear as a second command.
-  await expect(card.getByText("零变更分析正在等待")).toBeVisible();
+  await expect(card.getByText("正在重新分析")).toBeVisible();
   await expect(
     card.getByRole("button", { name: "保存并重新分析" }),
   ).toHaveCount(0);
@@ -1428,7 +1428,7 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
     .selectOption({ label: "Copy fixture" });
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+    card.getByRole("heading", { name: "正在重新分析", exact: true }),
   ).toBeVisible({ timeout: 30_000 });
   await driveDiscovery(request, true);
   const firstOverview = card.getByRole("region", { name: "本次整理概览" });
@@ -1600,9 +1600,9 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   expect((await decision).ok()).toBe(true);
   await lostAnalysis;
   await durableAnalysis;
-  await expect(
-    card.getByRole("heading", { name: "零变更分析正在等待" }),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByRole("heading", { name: "正在重新分析" })).toBeVisible(
+    { timeout: 30_000 },
+  );
   await expect(card).toBeVisible();
   // Saving the decision and re-analyzing has changed no media effect yet.
   expect(await fileState()).toEqual(copied);
@@ -1726,7 +1726,7 @@ test("Task59.1 A59-01 a real conflict skip returns to the overview with the dura
     .selectOption({ label: "Copy fixture" });
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+    card.getByRole("heading", { name: "正在重新分析", exact: true }),
   ).toBeVisible({ timeout: 30_000 });
   await driveDiscovery(request, true);
   const copiedOverview = card.getByRole("region", { name: "本次整理概览" });
@@ -1935,7 +1935,7 @@ test("Task59.1 A59-01 a lost decision response returns from the durable same-ite
     .selectOption({ label: "Copy fixture" });
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+    card.getByRole("heading", { name: "正在重新分析", exact: true }),
   ).toBeVisible({ timeout: 30_000 });
   await driveDiscovery(request, true);
   const copiedOverview = card.getByRole("region", { name: "本次整理概览" });
@@ -2099,7 +2099,7 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
     .selectOption({ label: "Copy fixture" });
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+    card.getByRole("heading", { name: "正在重新分析", exact: true }),
   ).toBeVisible({ timeout: 30_000 });
   await driveDiscovery(request, true);
   const copiedOverview = card.getByRole("region", { name: "本次整理概览" });
@@ -3653,7 +3653,7 @@ test("Task59.1 an unknown original submission is reconciled under a newer siblin
   });
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
+    card.getByRole("heading", { name: "正在重新分析", exact: true }),
   ).toBeVisible({ timeout: 30_000 });
 
   // Drive the real Worker until the newer exact summary is linked and read.
