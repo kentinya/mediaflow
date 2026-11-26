@@ -4,14 +4,14 @@
 Slice ID: 59
 Name: Files Manual Organize Journey and Task Center
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: 212acdef5d97c14a01353b22c103d44b911d6147
 Implementation Head: 80ad8d637743d4c77a6306afc9babc63c47a40b8
 Working Branch: main
-Development Authorization: TASKS 59.1–59.5 ACCEPTED BY B
+Development Authorization: FOCUSED A59-08 CORRECTION
 Risk: Medium
 Target Test Level: T3
-Next Action: A REVIEWS ENTIRE SLICE BASE..IMPLEMENTATION HEAD
+Next Action: B PLANS THE A59-08 CORRECTION
 ```
 
 ## 授权、基线与设计依据
@@ -417,3 +417,13 @@ A 审查 `212acdef5d97c14a01353b22c103d44b911d6147..6c54559b054d75682fc9ead61519
 `.git/validation-evidence/6c54559b054d75682fc9ead615191d6c0b351285/a-slice59-files-recovery-visual/`。
 五种 Files 表单、逐次回概览和跳过检查点的补验见同一候选的 `a-slice59-files-decision-parity/`。
 B 在原 Task 59.1 和 59.3 中安排修正并独立复验，再提交完整 Slice 验收包。
+
+## A 独立复验 — 80ad8d63 — FIX REQUIRED
+
+- **A59-08（P1，RO-2 / RO-4，AC-02 / AC-06）。** 用户在最新版测试站指出「保存并重新分析」后的画面
+  与批准稿不一致。从 Files 混合批次及任务中心原文件证据提交识别决定，暂停测试 Worker 后在桌面和
+  390 px 复现。Files 在文件标题之外另有一条全局分析横幅，两入口继续显示旧版等待卡，均缺少批准稿的
+  「已保存的决定」行。按批准稿统一处理中状态、文案、可取得的已保存值及底栏或行内操作。同一文件
+  真实读回后，Files 回概览，任务中心在原文件证据内显示新计划。错误和未明确受理沿用安全读回。
+  对照证据见 `.git/validation-evidence/71787a05/slice59-local-site/` 的 `before-*` 与
+  `offline-reanalyzing-*`。沿用原 Slice Base 与 Tasks 59.1–59.5 的既有 B 结果。
