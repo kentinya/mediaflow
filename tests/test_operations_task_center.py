@@ -987,6 +987,187 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.assertTrue(page["summary"]["available"])
 
 
+class AggregateProblemFileTests(_TaskCenterTestCase):
+    """The aggregate Attention file list (Task 59.5 / AC-07).
+
+    The list is built from the same run population and the same durable
+    four-type predicates as the inventory and the per-type views.  One file is
+    one aggregate row even when it carries several current problems, while the
+    type counts keep the real overlapping membership and the date range uses
+    the owning Task's durable creation time.
+    """
+
+    def _problem_files(self, query: str = "", token: str = "viewer-token") -> dict:
+        code, page = request(
+            self.api,
+            "GET",
+            "/api/operations/problem-items",
+            token=token,
+            query=query,
+        )
+        self.assertEqual(200, code)
+        return page
+
+    def test_aggregate_counts_each_task_file_once_and_each_type_membership(self) -> None:
+        mixed = self._task("organize", scope="Movies/Aggregate mixed")
+        # One file carries two live problems: recognition and classification.
+        self._recognition_problem(mixed.task_id, "shared-file")
+        self._classification_problem(mixed.task_id, "shared-file")
+        # Both live reviews still wait on the same pending item; the next
+        # explicit analysis has not chosen one type yet, so it really belongs
+        # to both current type memberships.
+        self.repository._connection.execute(
+            "UPDATE task_items SET status='pending' WHERE item_id='shared-file'"
+        )
+        self.repository._connection.commit()
+        # A sibling on the same Task carries one more recognition problem.
+        self._recognition_problem(mixed.task_id, "recognition-only")
+        second = self._task("organize", scope="Movies/Aggregate second")
+        self._conflict_problem(second.task_id, "conflict-only")
+
+        page = self._problem_files("limit=100")
+        self.assertEqual(3, page["total"])
+        self.assertEqual(3, page["problem_file_total"])
+        self.assertEqual(2, page["task_total"])
+        self.assertEqual(
+            {
+                "recognition": 2,
+                "metadata": 0,
+                "classification": 1,
+                "conflict": 1,
+            },
+            page["problem_file_counts"],
+        )
+        by_item = {entry["item"]["item_id"]: entry for entry in page["items"]}
+        self.assertEqual(3, len(by_item))
+        self.assertEqual(
+            {"recognition", "classification"},
+            set(by_item["shared-file"]["problem_types"]),
+        )
+        self.assertEqual(["recognition"], by_item["recognition-only"]["problem_types"])
+        self.assertEqual(["conflict"], by_item["conflict-only"]["problem_types"])
+        # Every row carries the exact owning Task/run identity and source
+        # family, never a filename guess.
+        self.assertEqual(mixed.task_id, by_item["shared-file"]["run"]["task_id"])
+        self.assertEqual(second.task_id, by_item["conflict-only"]["run"]["task_id"])
+        self.assertEqual("Movies/Aggregate mixed", by_item["shared-file"]["run"]["source_scope"])
+        # Type filters narrow the page but keep the complete type counts.
+        metadata = self._problem_files("problem=metadata&limit=100")
+        self.assertEqual(0, metadata["total"])
+        self.assertEqual(3, metadata["problem_file_total"])
+        self.assertEqual(2, metadata["problem_file_counts"]["recognition"])
+        recognition = self._problem_files("problem=recognition&limit=100")
+        self.assertEqual(2, recognition["total"])
+        self.assertEqual(
+            {"shared-file", "recognition-only"},
+            set(entry["item"]["item_id"] for entry in recognition["items"]),
+        )
+
+    def test_date_range_and_empty_scope_use_the_owning_task_creation_day(self) -> None:
+        old = self._task("organize", scope="Movies/Old problem")
+        self._recognition_problem(old.task_id, "old-file")
+        new = self._task("organize", scope="Movies/New problem")
+        self._metadata_review_problem(new.task_id, "new-file")
+        # Pin the durable admission times so the read is deterministic rather
+        # than depending on the test's wall clock.
+        for task_id, day in (
+            (old.task_id, "2026-01-01T00:00:00+00:00"),
+            (new.task_id, "2026-02-01T00:00:00+00:00"),
+        ):
+            self.repository._connection.execute(
+                "UPDATE tasks SET created_at=?, updated_at=? WHERE task_id=?",
+                (day, day, task_id),
+            )
+        self.repository._connection.commit()
+
+        old_range = self._problem_files(
+            "from=2026-01-01T00:00:00%2B00:00&to=2026-01-31T23:59:59.999999%2B00:00"
+        )
+        self.assertEqual(1, old_range["total"])
+        self.assertEqual(["old-file"], [entry["item"]["item_id"] for entry in old_range["items"]])
+        self.assertEqual(1, old_range["problem_file_counts"]["recognition"])
+        self.assertEqual(0, old_range["problem_file_counts"]["metadata"])
+        empty = self._problem_files(
+            "from=2025-01-01T00:00:00%2B00:00&to=2025-01-31T23:59:59%2B00:00"
+        )
+        self.assertEqual(0, empty["total"])
+        self.assertEqual(0, empty["task_total"])
+        self.assertEqual(
+            {"recognition": 0, "metadata": 0, "classification": 0, "conflict": 0},
+            empty["problem_file_counts"],
+        )
+
+    def test_page_and_cursor_are_bidirectional_and_bound_to_scope_and_principal(self) -> None:
+        task = self._task("organize", scope="Movies/Paging")
+        self._recognition_problem(task.task_id, "page-file-a")
+        self._recognition_problem(task.task_id, "page-file-b")
+        before = self.repository._connection.execute(
+            "SELECT COUNT(*) AS value_count FROM task_items"
+        ).fetchone()["value_count"]
+
+        first = self._problem_files("problem=recognition&limit=1")
+        self.assertEqual(2, first["total"])
+        self.assertEqual(1, len(first["items"]))
+        self.assertTrue(first["truncated"])
+        self.assertIsNotNone(first["next_cursor"])
+        second = self._problem_files(f"problem=recognition&limit=1&cursor={first['next_cursor']}")
+        self.assertEqual(2, second["total"])
+        self.assertEqual(1, len(second["items"]))
+        self.assertNotEqual(
+            first["items"][0]["item"]["item_id"],
+            second["items"][0]["item"]["item_id"],
+        )
+        # Both directions keep one stable scope and no duplicate row.
+        backward = self._problem_files(
+            f"problem=recognition&limit=1&cursor={second['previous_cursor']}"
+        )
+        self.assertEqual(
+            first["items"][0]["item"]["item_id"],
+            backward["items"][0]["item"]["item_id"],
+        )
+
+        cursor = first["next_cursor"]
+        for query in (
+            f"problem=conflict&limit=1&cursor={cursor}",
+            f"problem=recognition&limit=1&cursor={cursor}&from=2026-01-01T00:00:00%2B00:00",
+        ):
+            code, _body = request(self.api, "GET", "/api/operations/problem-items", query=query)
+            self.assertEqual(400, code)
+        code, _body = request(
+            self.api,
+            "GET",
+            "/api/operations/problem-items",
+            token="other-token",
+            query=f"problem=recognition&limit=1&cursor={cursor}",
+        )
+        self.assertEqual(400, code)
+        # The invalid values are rejected, never silently widened.
+        for query in (
+            "problem=failure",
+            "problem=unknown",
+            "problem=recognition&problem=metadata",
+            "from=not-a-date",
+            "limit=0",
+        ):
+            code, _body = request(self.api, "GET", "/api/operations/problem-items", query=query)
+            self.assertEqual(400, code)
+        # Reading the aggregate list is side-effect free.
+        after = self.repository._connection.execute(
+            "SELECT COUNT(*) AS value_count FROM task_items"
+        ).fetchone()["value_count"]
+        self.assertEqual(before, after)
+
+    def test_read_requires_an_authorized_principal(self) -> None:
+        code, body = request(
+            self.api,
+            "GET",
+            "/api/operations/problem-items",
+            token="denied",
+        )
+        self.assertEqual(401, code)
+        self.assertEqual("unauthorized", body["error"]["code"])
+
+
 class TaskCenterPopulationTests(_TaskCenterTestCase):
     """The center's membership rule, exercised over real durable rows (RO-4).
 

@@ -641,6 +641,10 @@ import {
   type RunView,
 } from "../../entities/operations/run";
 import {
+  normalizeRunProblemFilesPage,
+  type RunProblemFilesPage,
+} from "../../entities/operations/problem-files";
+import {
   normalizeRunItemsPage,
   normalizeRunRecordsPage,
   normalizeRunItemEvidence,
@@ -1129,6 +1133,71 @@ export async function fetchRunInventory(
   }
   try {
     return { ok: true, model: normalizeRunInventoryPage(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+// --- Aggregate Attention problem files (Slice 59 / V2-OPS-022) ---
+
+export interface RunProblemFilesQueryOptions {
+  /** One of the four current problem types, or null for all problems. */
+  readonly problem?: RunProblemType | null;
+  readonly from?: string | null;
+  readonly to?: string | null;
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+export function runProblemFilesUrl(
+  options: RunProblemFilesQueryOptions = {},
+): string {
+  const params = new URLSearchParams();
+  if (options.problem) params.set("problem", options.problem);
+  if (options.from) params.set("from", options.from);
+  if (options.to) params.set("to", options.to);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  const qs = params.toString();
+  return `/api/operations/problem-items${qs ? `?${qs}` : ""}`;
+}
+
+export type RunProblemFilesRead = OperationsRead<RunProblemFilesPage>;
+
+export async function fetchRunProblemFiles(
+  token: string | null,
+  options: RunProblemFilesQueryOptions = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<RunProblemFilesRead> {
+  let response: Response;
+  try {
+    response = await fetchImpl(runProblemFilesUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeRunProblemFilesPage(payload) };
   } catch {
     throw new OperationsApiError("malformed");
   }

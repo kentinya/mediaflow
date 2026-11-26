@@ -165,23 +165,25 @@ async function openNativeRecovery(
   await page.setViewportSize({ width: 1280, height: 720 });
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
-  const view = seeded.sourcePath.startsWith("Classification")
-    ? "分类恢复"
+  const filter = seeded.sourcePath.startsWith("Classification")
+    ? "分类"
     : seeded.sourcePath.startsWith("Conflict")
-      ? "冲突处理"
+      ? "冲突"
       : seeded.sourcePath.startsWith("Recovery")
-        ? "识别恢复"
-        : "元数据恢复";
-  await page.getByRole("button", { name: view, exact: true }).click();
-  const sourceRun = page
-    .getByRole("row")
-    .filter({ hasText: seeded.sourcePath });
-  await expect(sourceRun).toHaveCount(1);
-  await sourceRun.getByRole("button", { name: "查看问题文件" }).click();
-  const problemFiles = page.getByRole("region", { name: /问题文件/ });
+        ? "识别"
+        : "元数据";
+  await page.getByRole("button", { name: "需要处理", exact: true }).click();
+  const problemFiles = page.getByRole("region", { name: "问题文件" });
+  await expect(problemFiles).toBeVisible();
+  await problemFiles
+    .getByRole("group", { name: "问题类型" })
+    .getByRole("button", { name: new RegExp(`^${filter}`) })
+    .click();
+  const sourceFileName =
+    seeded.sourcePath.split("/").at(-1) ?? seeded.sourcePath;
   const sourceItem = problemFiles
     .getByRole("listitem")
-    .filter({ hasText: seeded.sourcePath });
+    .filter({ hasText: sourceFileName });
   await expect(sourceItem).toHaveCount(1);
   await sourceItem.getByRole("button").click();
   const recovery = page
@@ -785,18 +787,17 @@ test("the inventory renders real producer runs with truthful labels", async ({
   await expect(page.getByText("计划任务").first()).toBeVisible();
   await expect(page.getByText("自动化").first()).toBeVisible();
   await expect(page.getByText("手动").first()).toBeVisible();
-  // The eight organizing views share one horizontal navigation row, and the
+  // The four first-level views share one horizontal navigation row, and the
   // summary is over the whole authorized population.
   const views = page.getByRole("navigation", { name: "任务中心视图" });
-  await expect(
-    views.getByRole("button", { name: "全部任务", exact: true }),
-  ).toBeVisible();
-  await expect(
-    views.getByRole("button", { name: "需要处理", exact: true }),
-  ).toBeVisible();
+  for (const label of ["全部任务", "进行中", "需要处理", "已结束"]) {
+    await expect(
+      views.getByRole("button", { name: label, exact: true }),
+    ).toBeVisible();
+  }
   await expect(
     views.getByRole("button", { name: "冲突处理", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     views.getByRole("button", { name: "失败恢复", exact: true }),
   ).toHaveCount(0);
@@ -3158,7 +3159,7 @@ test("the exact undecided batch item is reachable read-only without a generic re
  * complete-population summary, the overlapping cross-Task recovery lists and
  * the exact per-type file list are all server queries the page issues.
  */
-test("the eight views and the exact Task/type problem file list work natively", async ({
+test("the four views and the exact Attention problem files work natively", async ({
   page,
   request,
 }) => {
@@ -3172,62 +3173,63 @@ test("the eight views and the exact Task/type problem file list work natively", 
     readonly metadataTaskId: string;
   };
   expect(seeded.mixedTaskId).toBeTruthy();
+  const recognitionRead = await request.get(
+    `${BASE}/api/operations/problem-items?problem=recognition&limit=100`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(recognitionRead.ok()).toBeTruthy();
+  const recognitionPage = (await recognitionRead.json()) as {
+    readonly items: readonly {
+      readonly run: { readonly task_id: string };
+      readonly item: { readonly source_path: string };
+    }[];
+  };
+  const mixedRecognitionFiles = recognitionPage.items
+    .filter((entry) => entry.run.task_id === seeded.mixedTaskId)
+    .map(
+      (entry) =>
+        entry.item.source_path.split("/").at(-1) ?? entry.item.source_path,
+    );
+  expect(mixedRecognitionFiles).toHaveLength(2);
 
   await connect(page);
   const api = recordApiCalls(page);
   await openInventory(page);
 
-  // The eight organizing views share one horizontal navigation row.
   const views = page.getByRole("navigation", { name: "任务中心视图" });
-  for (const label of [
-    "全部任务",
-    "进行中",
-    "需要处理",
-    "已结束",
-    "识别恢复",
-    "元数据恢复",
-    "分类恢复",
-    "冲突处理",
-  ]) {
+  for (const label of ["全部任务", "进行中", "需要处理", "已结束"]) {
     await expect(
       views.getByRole("button", { name: label, exact: true }),
     ).toBeVisible();
   }
-  // The retired fifth Failure Recovery view cannot be entered.
-  await expect(
-    views.getByRole("button", { name: "失败恢复", exact: true }),
-  ).toHaveCount(0);
-
-  // The recognition recovery view groups one Task per current problem type.
-  await views.getByRole("button", { name: "识别恢复", exact: true }).click();
-  await expect(page).toHaveURL(/view=recognition/);
-  const recognitionRow = page
-    .getByRole("row")
-    .filter({ hasText: "TaskCenter/Mixed" });
-  await expect(recognitionRow).toHaveCount(1);
-  await expect(recognitionRow).toContainText("识别仍有待核对项");
-  // The summary counts the complete authorized population, and the two
-  // recognition files of the one mixed Task are reported separately.
-  await expect(page.getByText("待处理任务").first()).toBeVisible();
-  await expect(page.getByText("涉及文件").first()).toBeVisible();
-
-  // The row's own action opens the exact Task/type file list, server-filtered.
-  await recognitionRow.getByRole("button", { name: "查看问题文件" }).click();
-  await expect(page).toHaveURL(/problemRun=/);
-  const panel = page.getByRole("region", { name: "问题文件处理" });
-  await expect(panel).toBeVisible();
-  await expect(
-    panel.getByRole("heading", { name: /识别问题 — 文件清单/ }),
-  ).toBeVisible();
-  await expect(panel.getByText(/匹配 2 个文件/)).toBeVisible();
-  for (const itemId of seeded.mixedRecognitionItemIds) {
-    await expect(panel.getByText(new RegExp(itemId))).toBeVisible();
+  for (const label of [
+    "识别恢复",
+    "元数据恢复",
+    "分类恢复",
+    "冲突处理",
+    "失败恢复",
+  ]) {
+    await expect(
+      views.getByRole("button", { name: label, exact: true }),
+    ).toHaveCount(0);
   }
-  // The failure file of the same Task must NOT appear in the recognition list.
-  await expect(panel.getByText(/mixed-failure/)).toHaveCount(0);
-  // The panel is a locate surface: it offers no execution authority.
-  await expect(panel.getByText(/保存决定或修复条件不会直接执行/)).toBeVisible();
-  // A server-side problem read happened and every call was a GET.
+
+  await views.getByRole("button", { name: "需要处理", exact: true }).click();
+  await expect(page).toHaveURL(/view=attention/);
+  const inbox = page.getByRole("region", { name: "问题文件" });
+  const typeFilters = inbox.getByRole("group", { name: "问题类型" });
+  await expect(
+    typeFilters.getByRole("button", { name: /^全部/ }),
+  ).toBeVisible();
+  await typeFilters.getByRole("button", { name: /^识别/ }).click();
+  await expect(page).toHaveURL(/problemType=recognition/);
+  await expect(
+    inbox.getByRole("region").filter({ hasText: "TaskCenter/Mixed" }),
+  ).toBeVisible();
+  for (const fileName of mixedRecognitionFiles) {
+    await expect(inbox.getByText(fileName).first()).toBeVisible();
+  }
+  await expect(inbox.getByText(/mixed-failure/)).toHaveCount(0);
   expect(
     api.some(
       (entry) =>
@@ -3235,28 +3237,20 @@ test("the eight views and the exact Task/type problem file list work natively", 
         entry.search.includes("problem=recognition"),
     ),
   ).toBe(true);
-  expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
 
-  // Returning preserves the exact view context.
-  await panel.getByRole("button", { name: "返回任务列表" }).click();
-  await expect(page).not.toHaveURL(/problemRun=/);
-  await expect(page).toHaveURL(/view=recognition/);
-
-  // The classification and metadata views each group their own Task.
-  await views.getByRole("button", { name: "分类恢复", exact: true }).click();
-  await expect(page).toHaveURL(/view=classification/);
+  await typeFilters.getByRole("button", { name: /^分类/ }).click();
+  await expect(page).toHaveURL(/problemType=classification/);
   await expect(
-    page.getByRole("row").filter({ hasText: "TaskCenter/Classified" }),
-  ).toHaveCount(1);
-  await views.getByRole("button", { name: "元数据恢复", exact: true }).click();
-  await expect(page).toHaveURL(/view=metadata/);
+    inbox.getByRole("region").filter({ hasText: "TaskCenter/Classified" }),
+  ).toBeVisible();
+  await typeFilters.getByRole("button", { name: /^元数据/ }).click();
+  await expect(page).toHaveURL(/problemType=metadata/);
   await expect(
-    page.getByRole("row").filter({ hasText: "TaskCenter/Metadata" }),
-  ).toHaveCount(1);
+    inbox.getByRole("region").filter({ hasText: "TaskCenter/Metadata" }),
+  ).toBeVisible();
 
-  // The mixed Task's technical failures (its failed/uncertain files) are real
-  // read-only history: they are visible in its own selected detail and in
-  // 全部任务, but they never create a fifth recovery view or problem list.
+  // The mixed Task's technical failures stay read-only history in All and
+  // its own detail, never a fifth recovery type or an Attention file.
   await views.getByRole("button", { name: "全部任务", exact: true }).click();
   const mixedHistoryRow = page
     .getByRole("row")
@@ -3270,52 +3264,96 @@ test("the eight views and the exact Task/type problem file list work natively", 
   ).toBeVisible();
   await mixedDetail.getByRole("button", { name: "关闭详情" }).click();
 
-  // The primary file and its subtitle each have a pending durable conflict,
-  // but the Task/type list counts the affected primary file once.
-  await views.getByRole("button", { name: "冲突处理", exact: true }).click();
-  const conflictRow = page
-    .getByRole("row")
-    .filter({ hasText: "TaskCenter/Mixed" });
-  await expect(conflictRow).toHaveCount(1);
-  await expect(conflictRow).toContainText("1 个文件");
-  await expect(page.getByText("待处理任务").first()).toBeVisible();
-
-  // A plain queued admission is not a manual to-do: the attention view never
-  // includes the pre-Task pending Jobs seeded earlier in this suite.
+  // The conflict filter counts the primary file once even when its attached
+  // subtitle has its own durable conflict.
   await views.getByRole("button", { name: "需要处理", exact: true }).click();
-  await expect(page).toHaveURL(/view=attention/);
-  const attentionRows = page.getByRole("row").filter({ hasText: "待处理" });
-  await expect(attentionRows).toHaveCount(0);
-
-  // A Task with several current problems offers each exact Task/type list on
-  // the attention row; the locate action is never a dead URL-only change.
-  const mixedAttentionRow = page
-    .getByRole("row")
-    .filter({ hasText: "TaskCenter/Mixed" });
-  await expect(mixedAttentionRow).toHaveCount(1);
-  await mixedAttentionRow
-    .getByRole("button", { name: "识别问题", exact: true })
-    .click();
-  await expect(page).toHaveURL(/problemRun=/);
-  await expect(page).toHaveURL(/problemType=recognition/);
-  const attentionPanel = page.getByRole("region", { name: "问题文件处理" });
+  const conflictFilter = page
+    .getByRole("region", { name: "问题文件" })
+    .getByRole("group", { name: "问题类型" })
+    .getByRole("button", { name: /^冲突/ });
+  await expect(conflictFilter).toBeVisible();
+  await conflictFilter.click();
+  await expect(page).toHaveURL(/problemType=conflict/);
   await expect(
-    attentionPanel.getByRole("heading", { name: /识别问题 — 文件清单/ }),
+    page
+      .getByRole("region", { name: "问题文件" })
+      .getByText(/1 个文件/)
+      .first(),
   ).toBeVisible();
-  await expect(attentionPanel.getByText(/匹配 2 个文件/)).toBeVisible();
-  expect(
-    api.some(
-      (entry) =>
-        entry.path.endsWith("/problem-items") &&
-        entry.search.includes("problem=recognition"),
-    ),
-  ).toBe(true);
-  await attentionPanel.getByRole("button", { name: "返回任务列表" }).click();
-  await expect(page).not.toHaveURL(/problemRun=/);
-  await expect(page).toHaveURL(/view=attention/);
-
-  // Every product read stayed a GET.
   expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
+});
+
+test("Task59.5 / Attention filters and opens the exact problem file", async ({
+  page,
+  request,
+}) => {
+  const seeded = await request.post(
+    `${BASE}/__harness__/seed-task-center-problems`,
+  );
+  expect(seeded.ok()).toBeTruthy();
+  const problemRead = await request.get(
+    `${BASE}/api/operations/problem-items?limit=100`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(problemRead.ok()).toBeTruthy();
+  const problemPage = (await problemRead.json()) as {
+    readonly items: readonly {
+      readonly run: { readonly run_id: string };
+      readonly item: { readonly item_id: string; readonly source_path: string };
+    }[];
+    readonly problem_file_counts: Record<string, number>;
+  };
+  expect(problemPage.items.length).toBeGreaterThan(0);
+  const first = problemPage.items[0]!;
+  const fileName =
+    first.item.source_path.split("/").at(-1) ?? first.item.source_path;
+
+  await connect(page);
+  await openInventory(page);
+  await page.getByRole("button", { name: "需要处理", exact: true }).click();
+  const inbox = page.getByRole("region", { name: "问题文件" });
+  await expect(inbox).toBeVisible();
+  const typeFilters = inbox.getByRole("group", { name: "问题类型" });
+  for (const [label, key] of [
+    ["全部", null],
+    ["识别", "recognition"],
+    ["元数据", "metadata"],
+    ["分类", "classification"],
+    ["冲突", "conflict"],
+  ] as const) {
+    const button = typeFilters.getByRole("button", {
+      name: new RegExp(`^${label}`),
+    });
+    await expect(button).toBeVisible();
+    if (key !== null) {
+      await expect(button).toContainText(
+        String(problemPage.problem_file_counts[key]),
+      );
+    }
+  }
+  await expect(inbox.getByText(fileName).first()).toBeVisible();
+  const row = inbox
+    .getByRole("listitem")
+    .filter({ hasText: fileName })
+    .first()
+    .getByRole("button");
+  await row.click();
+  await expect(page).toHaveURL(new RegExp("run=" + first.run.run_id));
+  await expect(page).toHaveURL(new RegExp("item=" + first.item.item_id));
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  await expect(
+    page
+      .getByRole("dialog", { name: "运行详情" })
+      .getByRole("region", { name: "条目审核与恢复" }),
+  ).toBeVisible();
+  await page
+    .getByRole("dialog", { name: "运行详情" })
+    .getByRole("button", { name: "关闭详情" })
+    .click();
+  await expect(page).toHaveURL(/view=attention/);
+  await expect(
+    page.getByRole("region", { name: "问题文件" }).getByText(fileName).first(),
+  ).toBeVisible();
 });
 
 test("dated views and 21-file recovery pages preserve exact evidence context", async ({
@@ -3326,41 +3364,63 @@ test("dated views and 21-file recovery pages preserve exact evidence context", a
     await request.post(`${BASE}/__harness__/seed-task-center-problem-page`)
   ).json()) as { readonly taskId: string; readonly itemCount: number };
   expect(seeded.itemCount).toBe(21);
+  // The aggregate read covers the complete authorized date scope, including
+  // the other durable metadata problem this browser suite already seeded.
+  const metadataRead = await request.get(
+    `${BASE}/api/operations/problem-items?problem=metadata&limit=100`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(metadataRead.ok()).toBeTruthy();
+  const metadataTotal = (await metadataRead.json()).total as number;
+  expect(metadataTotal).toBeGreaterThanOrEqual(seeded.itemCount);
 
   await connect(page);
   await openInventory(page);
-  await page
-    .getByRole("navigation", { name: "任务中心视图" })
-    .getByRole("button", { name: "元数据恢复", exact: true })
+  await page.getByRole("button", { name: "需要处理", exact: true }).click();
+  const inbox = page.getByRole("region", { name: "问题文件" });
+  await inbox
+    .getByRole("group", { name: "问题类型" })
+    .getByRole("button", { name: /^元数据/ })
     .click();
-  const row = page
-    .getByRole("row")
+  await expect(page).toHaveURL(/problemType=metadata/);
+  const group = inbox
+    .getByRole("region")
     .filter({ hasText: "TaskCenter/PagedMetadata" });
-  await expect(row).toContainText("21 个文件");
-  await row.getByRole("button", { name: "查看问题文件" }).click();
-
-  const panel = page.getByRole("region", { name: "问题文件处理" });
-  await expect(panel.getByText(/匹配 21 个文件/)).toBeVisible();
-  await expect(panel.getByText(/Metadata19\.mkv/).first()).toBeVisible();
-  await expect(panel.getByRole("button", { name: "下一页" })).toBeEnabled();
-  await panel.getByRole("button", { name: "下一页" }).click();
-  await expect(panel.getByText(/Metadata20\.mkv/).first()).toBeVisible();
+  await expect(group).toBeVisible();
+  await expect(
+    inbox.getByText(new RegExp(`${metadataTotal} 个文件`)).first(),
+  ).toBeVisible();
+  await expect(inbox.getByRole("button", { name: "下一页" })).toBeEnabled();
+  await inbox.getByRole("button", { name: "下一页" }).click();
   await expect(page).toHaveURL(/problemCursor=/);
+  const secondPageItem = inbox
+    .getByRole("listitem")
+    .filter({ hasText: "Metadata" })
+    .first()
+    .getByRole("button");
+  await expect(secondPageItem).toBeVisible();
+  const secondPageLabel = await secondPageItem.getAttribute("aria-label");
+  const secondPageFileName = (secondPageLabel ?? "").split("，")[0];
+  expect(secondPageFileName).not.toBe("");
 
-  // A memory-only-token reload must restore the exact source, Task/type,
-  // cursor and file page rather than returning to page one or the full list.
+  // A memory-only-token reload must restore the exact filters and cursor.
   await page.reload();
   await reconnectAtCurrentRoute(page, TOKEN);
-  await expect(page).toHaveURL(/view=metadata/);
-  await expect(page).toHaveURL(/view=metadata/);
+  await expect(page).toHaveURL(/view=attention/);
+  await expect(page).toHaveURL(/problemType=metadata/);
   await expect(page).toHaveURL(/problemCursor=/);
-  const restoredPanel = page.getByRole("region", { name: "问题文件处理" });
+  const restoredInbox = page.getByRole("region", { name: "问题文件" });
   await expect(
-    restoredPanel.getByText(/Metadata20\.mkv/).first(),
+    restoredInbox.getByText(secondPageFileName).first(),
   ).toBeVisible();
 
-  await restoredPanel
-    .getByRole("button", { name: "查看该文件证据与恢复记录" })
+  // The whole file row opens the exact Task detail with that file's evidence;
+  // closing returns to the same filter and page.
+  await restoredInbox
+    .getByRole("listitem")
+    .filter({ hasText: secondPageFileName })
+    .first()
+    .getByRole("button")
     .click();
   await expect(page).toHaveURL(new RegExp("run=" + seeded.taskId));
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
@@ -3368,17 +3428,18 @@ test("dated views and 21-file recovery pages preserve exact evidence context", a
     .getByRole("dialog", { name: "运行详情" })
     .getByRole("button", { name: "关闭详情" })
     .click();
-  await expect(page).toHaveURL(/view=metadata/);
+  await expect(page).toHaveURL(/view=attention/);
+  await expect(page).toHaveURL(/problemType=metadata/);
   await expect(page).toHaveURL(/problemCursor=/);
   await expect(
     page
-      .getByRole("region", { name: "问题文件处理" })
-      .getByText(/Metadata20\.mkv/)
+      .getByRole("region", { name: "问题文件" })
+      .getByText(secondPageFileName)
       .first(),
   ).toBeVisible();
 });
 
-test("the eight views survive authentication continuation and a real restart", async ({
+test("the four views survive authentication continuation and a real restart", async ({
   page,
   request,
 }) => {
@@ -3386,41 +3447,69 @@ test("the eight views survive authentication continuation and a real restart", a
     `${BASE}/__harness__/seed-task-center-problems`,
   );
   expect(seeded.ok()).toBeTruthy();
+  const conflictRead = await request.get(
+    `${BASE}/api/operations/problem-items?problem=conflict&limit=100`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(conflictRead.ok()).toBeTruthy();
+  const conflictPage = (await conflictRead.json()) as {
+    readonly items: readonly {
+      readonly run: { readonly run_id: string };
+      readonly item: { readonly item_id: string; readonly source_path: string };
+    }[];
+  };
+  expect(conflictPage.items.length).toBeGreaterThan(0);
+  const conflictFile = conflictPage.items[0]!;
+  const conflictName = conflictFile.item.source_path.split("/").at(-1) ?? "";
 
   await connect(page);
   await openInventory(page);
-  await page.getByRole("button", { name: "冲突处理", exact: true }).click();
-  await expect(page).toHaveURL(/view=conflict/);
-  await page
-    .getByRole("row")
-    .filter({ hasText: "TaskCenter/Mixed" })
-    .getByRole("button", { name: "查看问题文件" })
+  await page.getByRole("button", { name: "需要处理", exact: true }).click();
+  const inbox = page.getByRole("region", { name: "问题文件" });
+  await inbox
+    .getByRole("group", { name: "问题类型" })
+    .getByRole("button", { name: /^冲突/ })
     .click();
-  await expect(page).toHaveURL(/problemRun=/);
+  await expect(page).toHaveURL(/problemType=conflict/);
+  await inbox
+    .getByRole("listitem")
+    .filter({ hasText: conflictName })
+    .first()
+    .getByRole("button")
+    .click();
+  await expect(page).toHaveURL(new RegExp("run=" + conflictFile.run.run_id));
+  await expect(page).toHaveURL(new RegExp("item=" + conflictFile.item.item_id));
 
   // The API token is memory-only: a reload returns to the entry boundary
-  // while the exact view and problem-run context travels as the allowlisted
-  // continuation destination.
+  // while the exact view, problem type and selected file travel as the
+  // allowlisted continuation destination.
   await page.reload();
   await reconnectAtCurrentRoute(page, TOKEN);
-  await expect(page).toHaveURL(/view=conflict/);
-  await expect(page).toHaveURL(/problemRun=/);
-  await expect(
-    page.getByRole("region", { name: "问题文件处理" }),
-  ).toBeVisible();
+  await expect(page).toHaveURL(/view=attention/);
+  await expect(page).toHaveURL(/problemType=conflict/);
+  await expect(page).toHaveURL(new RegExp("run=" + conflictFile.run.run_id));
+  await expect(page).toHaveURL(new RegExp("item=" + conflictFile.item.item_id));
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 
   // A real runtime restart over the same SQLite file keeps the same durable
-  // problems: the exact current conflict file remains in the type list (the
-  // attached subtitle is grouped under its primary file, never counted as a
-  // second problem file).
+  // problem and exact file context.
   const restart = await request.post(`${BASE}/__harness__/restart`);
   expect(restart.ok()).toBeTruthy();
   await page.reload();
   await reconnectAtCurrentRoute(page, TOKEN);
-  await expect(page).toHaveURL(/problemRun=/);
-  const panel = page.getByRole("region", { name: "问题文件处理" });
-  await expect(panel).toBeVisible();
-  await expect(panel.getByText(/匹配 1 个文件/)).toBeVisible();
+  await expect(page).toHaveURL(/problemType=conflict/);
+  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  await page
+    .getByRole("dialog", { name: "运行详情" })
+    .getByRole("button", { name: "关闭详情" })
+    .click();
+  await expect(page.getByRole("region", { name: "问题文件" })).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "问题文件" })
+      .getByText(/1 个文件/)
+      .first(),
+  ).toBeVisible();
 });
 
 test("a visible terminal inventory discovers new work and shows live progress", async ({
@@ -4086,15 +4175,7 @@ test("time filter: an old All link never keeps its removed hidden filters", asyn
     .click();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
   const views = page.getByRole("navigation", { name: "任务中心视图" });
-  for (const label of [
-    "进行中",
-    "需要处理",
-    "已结束",
-    "识别恢复",
-    "元数据恢复",
-    "分类恢复",
-    "冲突处理",
-  ]) {
+  for (const label of ["进行中", "需要处理", "已结束"]) {
     await views.getByRole("button", { name: label, exact: true }).click();
     await expect(
       page.locator(".mf-run-filter-bar").getByRole("searchbox"),
@@ -4128,9 +4209,7 @@ test("time filter: running, ended and business views preserve their own dated po
   for (const [view, label] of [
     ["running", "进行中"],
     ["ended", "已结束"],
-    ["attention", "需要处理"],
-    ["metadata", "元数据恢复"],
-  ]) {
+  ] as const) {
     await views.getByRole("button", { name: label, exact: true }).click();
     const baseline = await request.get(
       `${BASE}/api/operations/runs?view=${view}`,
@@ -4151,7 +4230,7 @@ test("time filter: running, ended and business views preserve their own dated po
       return { start, end };
     });
     const actual = await request.get(
-      `${BASE}/api/operations/runs?${new URLSearchParams({ view: view!, from: params.start, to: params.end })}`,
+      `${BASE}/api/operations/runs?${new URLSearchParams({ view, from: params.start, to: params.end })}`,
       { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
     );
     await expectRunTotal(page, (await actual.json()).total);
@@ -4162,27 +4241,55 @@ test("time filter: running, ended and business views preserve their own dated po
     await expect(page).toHaveURL(new RegExp(`view=${view}`));
     await expectRunTotal(page, total);
   }
+  // Attention keeps the same visible date range and restores its problem-file
+  // list after clearing it; the aggregate list has its own exact total.
+  await views.getByRole("button", { name: "需要处理", exact: true }).click();
+  await expect(page).toHaveURL(/view=attention/);
+  await page.getByLabel("开始日期").fill(seeded.targetDate);
+  await expect(page).toHaveURL(new RegExp(`from=${seeded.targetDate}`));
+  await page
+    .getByRole("region", { name: "运行筛选" })
+    .getByRole("button", { name: "清除", exact: true })
+    .click();
+  await expect(page).toHaveURL(/view=attention/);
+  await expect(page.getByRole("region", { name: "问题文件" })).toBeVisible();
+
   // A bookmark produced by the former metadata view keeps its exact problem
-  // context while removed list limits disappear before the first list read.
+  // context while removed list limits disappear before the first read.
+  const metadataRead = await request.get(
+    `${BASE}/api/operations/problem-items?problem=metadata&limit=100`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(metadataRead.ok()).toBeTruthy();
+  const metadataPage = (await metadataRead.json()) as {
+    readonly items: readonly {
+      readonly run: { readonly run_id: string };
+      readonly item: { readonly item_id: string; readonly source_path: string };
+    }[];
+  };
+  const metadataFile = metadataPage.items[0];
+  expect(metadataFile).toBeDefined();
+  if (metadataFile === undefined) {
+    throw new Error("the metadata fixture was not returned");
+  }
+  const metadataName = metadataFile.item.source_path.split("/").at(-1) ?? "";
+  expect(metadataName).not.toBe("");
   await page.goto(
-    `/operations?${new URLSearchParams({ view: "metadata", source, q: source, status: "failed", problemRun: business.taskId, problemType: "metadata" })}`,
+    `/operations?${new URLSearchParams({ view: "metadata", source, q: source, status: "failed", problemType: "metadata" })}`,
   );
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(page).not.toHaveURL(/source=|q=|status=/);
-  await expect(page).toHaveURL(/problemRun=/);
-  const panel = page.getByRole("region", { name: "问题文件处理" });
-  const file = panel
-    .getByRole("listitem")
-    .filter({ hasText: "Metadata00.mkv" });
+  await expect(page).toHaveURL(/view=metadata/);
+  const inbox = page.getByRole("region", { name: "问题文件" });
+  const file = inbox.getByRole("listitem").filter({ hasText: metadataName });
   await expect(file).toHaveCount(1);
-  await file.getByRole("button", { name: "查看该文件证据与恢复记录" }).click();
-  await expect(page).toHaveURL(new RegExp(`run=${business.taskId}`));
+  await file.getByRole("button").click();
+  await expect(page).toHaveURL(new RegExp(`run=${metadataFile.run.run_id}`));
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
   await detail.getByRole("button", { name: "关闭详情" }).click();
-  await expect(page).toHaveURL(/problemRun=/);
   await expect(page).toHaveURL(/view=metadata/);
-  await expect(panel).toBeVisible();
+  await expect(inbox).toBeVisible();
   expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
 });
 

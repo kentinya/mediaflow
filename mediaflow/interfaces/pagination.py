@@ -19,6 +19,7 @@ _KINDS = frozenset(
         "operations_runs",
         "run_items",
         "run_problem_items",
+        "operations_problem_files",
         "run_records",
         "task_items",
         "task_results",
@@ -57,6 +58,7 @@ _SCOPED_KINDS = frozenset(
         # state or one principal is refused as soon as any of them differs.
         "run_items",
         "run_problem_items",
+        "operations_problem_files",
         "run_records",
         # The originating library's ordinary file-operation history and its
         # per-operation item page (Task 46.2): every page is bound to the exact

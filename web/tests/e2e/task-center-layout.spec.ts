@@ -345,10 +345,10 @@ test("task center stays usable and keyboard reachable at 1280 and 390", async ({
   await openOperations(page);
 
   const views = page.getByRole("navigation", { name: "任务中心视图" });
-  await expect(views.getByRole("button")).toHaveCount(8);
+  await expect(views.getByRole("button")).toHaveCount(4);
   await expect.poll(() => pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
 
-  // The narrow page keeps its filters and all eight sibling views reachable.
+  // The narrow page keeps its filters and all four first-level views reachable.
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
@@ -376,16 +376,7 @@ test("task center stays usable and keyboard reachable at 1280 and 390", async ({
   await clearTime.click();
   await expect(page).not.toHaveURL(/from=/);
 
-  for (const viewName of [
-    "全部任务",
-    "进行中",
-    "需要处理",
-    "已结束",
-    "识别恢复",
-    "元数据恢复",
-    "分类恢复",
-    "冲突处理",
-  ]) {
+  for (const viewName of ["全部任务", "进行中", "需要处理", "已结束"]) {
     const tab = views.getByRole("button", { name: viewName, exact: true });
     await tab.focus();
     await expect(tab).toBeInViewport();
@@ -395,7 +386,7 @@ test("task center stays usable and keyboard reachable at 1280 and 390", async ({
       page.getByRole("main").getByText("任务中心", { exact: true }),
     ).toHaveCount(1);
   }
-  await expect(page).toHaveURL(/view=conflict/);
+  await expect(page).toHaveURL(/view=ended/);
 
   const all = views.getByRole("button", { name: "全部任务", exact: true });
   await all.focus();
@@ -425,23 +416,14 @@ for (const viewport of [
   { width: 1536, height: 1024 },
   { width: 390, height: 844 },
 ]) {
-  test(`eight date-only views and stable manual refresh at ${viewport.width}px`, async ({
+  test(`four date-only views and stable manual refresh at ${viewport.width}px`, async ({
     page,
   }, testInfo) => {
     await page.setViewportSize(viewport);
     await connect(page);
     await openOperations(page);
     const views = page.getByRole("navigation", { name: "任务中心视图" });
-    for (const name of [
-      "全部任务",
-      "进行中",
-      "需要处理",
-      "已结束",
-      "识别恢复",
-      "元数据恢复",
-      "分类恢复",
-      "冲突处理",
-    ]) {
+    for (const name of ["全部任务", "进行中", "需要处理", "已结束"]) {
       await views.getByRole("button", { name, exact: true }).click();
       const filters = page.getByRole("region", { name: "运行筛选" });
       await expect(

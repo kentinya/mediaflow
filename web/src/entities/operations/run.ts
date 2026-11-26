@@ -126,6 +126,16 @@ export const RUN_VIEWS = [
 ] as const;
 export type RunView = (typeof RUN_VIEWS)[number];
 
+/** The four first-level Task Center views. The four recovery views remain
+ * valid query/deep-link tokens but are presented as filters inside Attention. */
+export const PRIMARY_RUN_VIEWS = [
+  "all",
+  "running",
+  "attention",
+  "ended",
+] as const;
+export type PrimaryRunView = (typeof PRIMARY_RUN_VIEWS)[number];
+
 /** The four cross-Task recovery problem types, in display order. */
 export const RUN_PROBLEM_TYPES = [
   "recognition",
@@ -153,6 +163,16 @@ export const RUN_PROBLEM_LABELS: Readonly<Record<RunProblemType, string>> = {
   metadata: "元数据问题",
   classification: "分类问题",
   conflict: "冲突问题",
+};
+
+/** Short labels for the inline Attention filters. */
+export const RUN_PROBLEM_FILTER_LABELS: Readonly<
+  Record<RunProblemType, string>
+> = {
+  recognition: "识别",
+  metadata: "元数据",
+  classification: "分类",
+  conflict: "冲突",
 };
 
 /** True for one of the four cross-Task recovery views. */

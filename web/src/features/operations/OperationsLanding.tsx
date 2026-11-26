@@ -25,6 +25,7 @@ import {
   mutateLifecycle,
   type LifecycleMutationResult,
   type RunOverviewRead,
+  type RunProblemFilesRead,
 } from "../../shared/api/api-client";
 import { ApiReadError } from "../../shared/api/api-errors";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -38,12 +39,13 @@ import {
   useModalLayer,
 } from "../../shared/ui/modal-card";
 import {
+  PRIMARY_RUN_VIEWS,
+  RUN_PROBLEM_FILTER_LABELS,
   RUN_PROBLEM_LABELS,
   RUN_PROBLEM_TYPES,
   RUN_CURRENT_STAGE_LABELS,
   RUN_STATUS_LABELS,
   RUN_TRIGGER_LABELS,
-  RUN_VIEWS,
   RUN_VIEW_LABELS,
   TERMINAL_RUN_STATUSES,
   isRecoveryView,
@@ -57,13 +59,15 @@ import {
   runInventoryQueryOptions,
   runOverviewQueryKey,
   runOverviewQueryOptions,
+  runProblemFilesQueryOptions,
 } from "./run-query";
 import { RunDetailTabs, type RunProgressPhase } from "./RunDetailTabs";
+import { RUN_ITEM_STATUS_LABELS } from "../../entities/operations/run-detail";
 import { organizeDiscoveryQueryOptions } from "./discovery-query";
 import type { OrganizeDiscoveryModel } from "../../entities/operations/discovery";
 import { organizePreviewQueryOptions } from "./organize-query";
 import { RunRetainedSubmissionNotice } from "./RunRetainedSubmissionNotice";
-import { ProblemFilePanel } from "./ProblemFilePanel";
+import { taskFailureReason } from "./ProblemFilePanel";
 import { TaskItemRecoverySessionProvider } from "./task-item-recovery-session";
 import {
   readRunDetailState,
@@ -137,13 +141,6 @@ const EMPTY_RUN_CONTROL_SESSION: RunControlSession = {
   pendingAction: null,
   result: null,
   locked: false,
-};
-
-const RECOVERY_VIEW_EXPLANATIONS: Readonly<Record<RunProblemType, string>> = {
-  recognition: "识别仍有待核对项；打开文件记录查看候选与识别依据。",
-  metadata: "元数据身份仍待确认或补正；打开文件记录核对当前候选。",
-  classification: "目标媒体库或路径仍未确定；打开文件记录查看分类状态。",
-  conflict: "目标位置有冲突待处理；打开文件记录核对冲突和策略。",
 };
 
 const DATE_TOKEN = /^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|\+00:00)?)?$/;
@@ -226,11 +223,30 @@ function defaultFilters(): RunListFilters {
  * literal as a string; anything outside the eight modelled views falls back to
  * the unfiltered `全部任务` view instead of being replayed against the server.
  */
+const ALL_RUN_VIEWS = Object.keys(RUN_VIEW_LABELS) as RunView[];
+
 function readView(search: Record<string, unknown>): RunView {
   const value = readSafeSearchValue(search, "view");
-  return (RUN_VIEWS as readonly string[]).includes(value)
+  return (ALL_RUN_VIEWS as readonly string[]).includes(value)
     ? (value as RunView)
     : "all";
+}
+
+/** Attention and the four legacy recovery views share one problem-file list. */
+function isProblemFileView(view: RunView): boolean {
+  return view === "attention" || isRecoveryView(view);
+}
+
+const PROBLEM_REASON_LABELS: Readonly<Record<RunProblemType, string>> = {
+  recognition: "识别类型需要确认",
+  metadata: "元数据候选或搜索需要修正",
+  classification: "分类目标需要确认",
+  conflict: "目标位置存在冲突",
+};
+
+function fileNameOf(path: string): string {
+  const parts = path.split("/");
+  return parts[parts.length - 1] || path;
 }
 
 /**
@@ -469,7 +485,6 @@ export function OperationsLanding() {
   // discovery is read from the selected Task's own backend association below.
   const organizeDialogRequested =
     readOperationsDialog(searchParams) === OPERATIONS_ORGANIZE_DIALOG;
-  const problemRunId = readSafeSearchValue(searchParams, "problemRun");
   const chosenProblemType = readProblemType(searchParams);
   const problemPage = readProblemPageState(searchParams);
   // Per-run control sessions outlive the card: closing or switching away and
@@ -499,10 +514,10 @@ export function OperationsLanding() {
     },
     [],
   );
-  // A recovery view owns its problem type. The overlapping attention view has
-  // no single type: it uses the operator's explicit choice, so a Task that
-  // carries several current problems never guesses one and never leaves the
-  // locate action dead.
+  // A legacy recovery view still selects its own type. Attention starts from
+  // the whole overlapping set and uses the operator's explicit filter, so a
+  // file carrying several current problems is never guessed into one type.
+  const problemSurface = isProblemFileView(view);
   const problemFileType: RunProblemType | null = isRecoveryView(view)
     ? view
     : chosenProblemType;
@@ -542,11 +557,24 @@ export function OperationsLanding() {
     runInventoryQueryOptions(token, {
       from: fromBoundary,
       to: toBoundary,
-      view: view === "all" ? null : view,
+      // Attention is one shared problem-file population. A legacy recovery
+      // deep link still opens the same surface with its own filter selected,
+      // so the summary cards never narrow to one type.
+      view: view === "all" ? null : problemSurface ? "attention" : view,
       limit: RUN_PAGE_LIMIT,
-      cursor,
+      cursor: problemSurface ? null : cursor,
     }),
   );
+  const problemQuery = useQuery({
+    ...runProblemFilesQueryOptions(token, {
+      problem: problemFileType,
+      from: fromBoundary,
+      to: toBoundary,
+      limit: RUN_PAGE_LIMIT,
+      cursor: problemPage.cursor,
+    }),
+    enabled: token !== null && problemSurface,
+  });
   // Slice52 RO-3: the run-list banner inside the already-visible chrome (view
   // navigation and filters) appears only when the inventory read is
   // genuinely slow; a fast or cached return mounts the table directly. An
@@ -554,11 +582,22 @@ export function OperationsLanding() {
   const showRunListWait = useReadReveal(
     query.data === undefined && !query.isError,
   );
+  const showProblemWait = useReadReveal(
+    problemSurface && problemQuery.data === undefined && !problemQuery.isError,
+  );
 
   /** The full current list state (filters, page and selection) as URL search. */
   const listSearch = (runId?: string): Record<string, RunSearchValue> => {
     const search = listStateSearch(filters, view);
-    if (cursor !== null) {
+    if (problemSurface) {
+      if (problemFileType !== null && !isRecoveryView(view)) {
+        search["problemType"] = problemFileType;
+      }
+      if (problemPage.cursor !== null) {
+        search["problemCursor"] = problemPage.cursor;
+        search["problemDir"] = problemPage.direction;
+      }
+    } else if (cursor !== null) {
       search["cursor"] = cursor;
       search["dir"] = direction;
     }
@@ -606,13 +645,20 @@ export function OperationsLanding() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsListNormalization]);
 
-  /** Switch to one of the eight sibling views, always from the first page. */
+  /** Switch to one of the four first-level views, always from page one. */
   const selectView = (next: RunView) => {
     void navigate({
       to: "/operations",
       search: listStateSearch(filters, next),
       replace: true,
     });
+  };
+
+  /** Narrow Attention to one current problem type without leaving the list. */
+  const selectProblemFilter = (next: RunProblemType | null) => {
+    const search = listStateSearch(filters, "attention");
+    if (next !== null) search["problemType"] = next;
+    void navigate({ to: "/operations", search, replace: true });
   };
 
   const resetFilters = () => {
@@ -639,17 +685,9 @@ export function OperationsLanding() {
   };
 
   const closeRun = () => {
-    const search = listSearch();
-    if (problemRunId !== "") search["problemRun"] = problemRunId;
-    if (chosenProblemType !== null && !isRecoveryView(view))
-      search["problemType"] = chosenProblemType;
-    if (problemPage.cursor !== null) {
-      search["problemCursor"] = problemPage.cursor;
-      search["problemDir"] = problemPage.direction;
-    }
     void navigate({
       to: "/operations",
-      search,
+      search: listSearch(),
       replace: true,
       // Closing restores the list the operator was reading, not the top of
       // the page; the shared layer already returns focus with preventScroll.
@@ -660,43 +698,12 @@ export function OperationsLanding() {
     void queryClient.removeQueries({ queryKey: [runOverviewQueryKey] });
   };
 
-  /**
-   * Open the exact Task/type problem file list of one recovery or attention
-   * row. A recovery view already names its own type; an attention row passes
-   * the operator's explicit choice so a multi-type Task never guesses one.
-   */
-  const openProblemRun = (runId: string, type: RunProblemType | null) => {
-    const search = listSearch();
-    search["problemRun"] = runId;
-    if (type !== null) {
-      search["problemType"] = type;
-    }
-    void navigate({
-      to: "/operations",
-      search,
-      replace: false,
-      resetScroll: false,
-    });
-  };
-
-  const closeProblemRun = () => {
-    void navigate({
-      to: "/operations",
-      search: listSearch(),
-      replace: true,
-      resetScroll: false,
-    });
-  };
-
+  /** Move one aggregate problem-file page by replacing the list state. */
   const turnProblemPage = (
     nextCursor: string,
     nextDirection: "forward" | "backward",
   ) => {
     const search = listSearch();
-    search["problemRun"] = problemRunId;
-    if (chosenProblemType !== null && !isRecoveryView(view)) {
-      search["problemType"] = chosenProblemType;
-    }
     search["problemCursor"] = nextCursor;
     search["problemDir"] = nextDirection;
     void navigate({
@@ -707,20 +714,17 @@ export function OperationsLanding() {
     });
   };
 
+  /**
+   * Open the exact Task detail with this file's evidence expanded. The row is
+   * the complete control; no per-run intermediate list is introduced, so the
+   * same Task and TaskItem identity is carried to the existing native
+   * recovery surface.
+   */
   const openProblemItemEvidence = (taskId: string, itemId: string) => {
-    const returnSearch = listSearch();
-    returnSearch["problemRun"] = problemRunId;
-    if (chosenProblemType !== null && !isRecoveryView(view)) {
-      returnSearch["problemType"] = chosenProblemType;
-    }
-    if (problemPage.cursor !== null) {
-      returnSearch["problemCursor"] = problemPage.cursor;
-      returnSearch["problemDir"] = problemPage.direction;
-    }
     void navigate({
       to: "/operations",
       search: {
-        ...returnSearch,
+        ...listSearch(),
         run: taskId,
         ...runDetailStateSearch(
           readRunDetailState({ tab: "detail", item: itemId }),
@@ -751,12 +755,7 @@ export function OperationsLanding() {
     if (selectedId === "") {
       return;
     }
-    const search = listStateSearch(filters, view);
-    if (cursor !== null) {
-      search["cursor"] = cursor;
-      search["dir"] = direction;
-    }
-    search["run"] = selectedId;
+    const search = listSearch(selectedId);
     Object.assign(search, runDetailStateSearch({ ...detailState, ...next }));
     void navigate({
       to: "/operations",
@@ -792,14 +791,6 @@ export function OperationsLanding() {
    */
   const handoffOrganizeContinuation = (taskId: string) => {
     const search = listSearch();
-    if (problemRunId !== "") search["problemRun"] = problemRunId;
-    if (chosenProblemType !== null && !isRecoveryView(view)) {
-      search["problemType"] = chosenProblemType;
-    }
-    if (problemPage.cursor !== null) {
-      search["problemCursor"] = problemPage.cursor;
-      search["problemDir"] = problemPage.direction;
-    }
     const target = taskId === "" ? selectedId : taskId;
     if (target !== "") {
       search["run"] = target;
@@ -834,11 +825,6 @@ export function OperationsLanding() {
 
   const page: RunInventoryPage | null =
     query.data?.ok === true ? query.data.model : null;
-
-  // The problem-file panel keeps its established beside-list surface; the
-  // selected run's detail is the centered card and never narrows the list.
-  const problemPanelOpen =
-    selectedId === "" && problemRunId !== "" && problemFileType !== null;
 
   // An Automation record's "打开任务中心运行" carries the exact record list it
   // came from, so the task center offers one explicit return that restores the
@@ -933,16 +919,6 @@ export function OperationsLanding() {
       ? {}
       : {
           ...listSearch(selectedId),
-          ...(problemRunId !== "" ? { problemRun: problemRunId } : {}),
-          ...(chosenProblemType !== null && !isRecoveryView(view)
-            ? { problemType: chosenProblemType }
-            : {}),
-          ...(problemPage.cursor !== null
-            ? {
-                problemCursor: problemPage.cursor,
-                problemDir: problemPage.direction,
-              }
-            : {}),
           ...runDetailStateSearch(detailState),
           [OPERATIONS_DIALOG_KEY]: OPERATIONS_ORGANIZE_DIALOG,
         };
@@ -952,6 +928,9 @@ export function OperationsLanding() {
   const refreshAll = async () => {
     await Promise.all([
       query.refetch({ cancelRefetch: false }),
+      ...(problemSurface
+        ? [problemQuery.refetch({ cancelRefetch: false })]
+        : []),
       ...(selectedId === ""
         ? []
         : [
@@ -1014,13 +993,7 @@ export function OperationsLanding() {
               )}
               <div className="mf-task-center-panel">
                 <ViewNavigation view={view} onSelectView={selectView} />
-                <div
-                  className={
-                    problemPanelOpen
-                      ? "mf-run-layout mf-run-has-detail"
-                      : "mf-run-layout"
-                  }
-                >
+                <div className="mf-run-layout">
                   <div className="mf-run-main">
                     <section
                       className="mf-count-section mf-run-filters"
@@ -1034,7 +1007,20 @@ export function OperationsLanding() {
                         />
                       </div>
                     </section>
-                    {query.data === undefined ? (
+                    {problemSurface ? (
+                      <ProblemInbox
+                        query={problemQuery}
+                        problem={problemFileType}
+                        showWait={showProblemWait}
+                        onFilter={selectProblemFilter}
+                        onOpenTask={selectRun}
+                        onOpenItem={openProblemItemEvidence}
+                        onPage={turnProblemPage}
+                        filtered={filtered}
+                        onClearFilters={resetFilters}
+                        direction={problemPage.direction}
+                      />
+                    ) : query.data === undefined ? (
                       showRunListWait ? (
                         <StatusBanner variant="info" title="正在加载运行清单">
                           <p>正在从 MediaFlow API 读取运行清单。</p>
@@ -1092,7 +1078,6 @@ export function OperationsLanding() {
                         direction={direction}
                         view={view}
                         onSelect={selectRun}
-                        onOpenProblem={openProblemRun}
                         onForward={() => {
                           if (page.nextCursor) {
                             turnPage(page.nextCursor, "forward");
@@ -1106,17 +1091,6 @@ export function OperationsLanding() {
                       />
                     )}
                   </div>
-                  {problemPanelOpen && (
-                    <ProblemFilePanel
-                      key={`${problemRunId}:${problemFileType}`}
-                      runId={problemRunId}
-                      problem={problemFileType}
-                      cursor={problemPage.cursor}
-                      onPage={turnProblemPage}
-                      onOpenEvidence={openProblemItemEvidence}
-                      onClose={closeProblemRun}
-                    />
-                  )}
                 </div>
               </div>
               {/* The selected run's centered detail card overlays the full-width
@@ -1142,6 +1116,11 @@ export function OperationsLanding() {
                     updateControlSession(selectedId, patch)
                   }
                   preparationLinkSearch={preparationLinkSearch}
+                  fallbackFocusId={
+                    problemSurface
+                      ? "mf-problem-filter-all"
+                      : "mf-operations-heading"
+                  }
                   // The hosted organizer is the topmost card: the run detail
                   // keeps its content and state but must not keep its own focus
                   // trap/inert ownership beside it.
@@ -1188,62 +1167,36 @@ function ViewSummary({
       </section>
     );
   }
-  // The recovery views advertise their own problem-file counts; the lifecycle
-  // views advertise the population partitions. Totals are over the full
-  // filtered population, never just the current page.
-  const cards = isRecoveryView(view)
-    ? [
-        {
-          key: "problem-tasks",
-          value: summary.problemTasks[view],
-          label: "待处理任务",
-          target: view,
-        },
-        {
-          key: "problem-files",
-          value: summary.problemFiles[view],
-          label: "涉及文件",
-          target: view,
-        },
-        {
-          key: "all",
-          value: summary.total,
-          label: "任务总数",
-          target: "all" as RunView,
-        },
-        {
-          key: "attention",
-          value: summary.attention,
-          label: "需要处理",
-          target: "attention" as RunView,
-        },
-      ]
-    : [
-        {
-          key: "all",
-          value: summary.total,
-          label: "任务总数",
-          target: "all" as RunView,
-        },
-        {
-          key: "running",
-          value: summary.running,
-          label: "进行中",
-          target: "running" as RunView,
-        },
-        {
-          key: "attention",
-          value: summary.attention,
-          label: "需要处理",
-          target: "attention" as RunView,
-        },
-        {
-          key: "ended",
-          value: summary.ended,
-          label: "已结束",
-          target: "ended" as RunView,
-        },
-      ];
+  // The first level always advertises the four population partitions; the
+  // overlapping problem-file counts live in the Attention filter strip, where
+  // they describe the exact same authorized date scope.
+  const activeView: RunView = isProblemFileView(view) ? "attention" : view;
+  const cards = [
+    {
+      key: "all",
+      value: summary.total,
+      label: "任务总数",
+      target: "all" as RunView,
+    },
+    {
+      key: "running",
+      value: summary.running,
+      label: "进行中",
+      target: "running" as RunView,
+    },
+    {
+      key: "attention",
+      value: summary.attention,
+      label: "需要处理",
+      target: "attention" as RunView,
+    },
+    {
+      key: "ended",
+      value: summary.ended,
+      label: "已结束",
+      target: "ended" as RunView,
+    },
+  ];
   return (
     <section
       className="mf-count-section mf-task-center-summary"
@@ -1256,7 +1209,7 @@ function ViewSummary({
               type="button"
               className="mf-card-button"
               onClick={() => onSelectView(card.target)}
-              aria-pressed={view === card.target}
+              aria-pressed={activeView === card.target}
             >
               <span className="mf-count-value">{card.value ?? "不可用"}</span>
               <span className="mf-count-label">{card.label}</span>
@@ -1278,10 +1231,11 @@ function ViewSummary({
 }
 
 /**
- * The eight sibling task-center views on one horizontal navigation row.
+ * The four first-level task-center views on one horizontal navigation row.
  *
- * Each tab is an independent deep-linkable server query; narrow screens
- * scroll the row horizontally instead of hiding a recovery view.
+ * The four legacy recovery views remain valid deep links: they open the shared
+ * Attention problem-file list with their type filter selected, so no old type
+ * query silently changes population or disappears.
  */
 function ViewNavigation({
   view,
@@ -1290,14 +1244,15 @@ function ViewNavigation({
   readonly view: RunView;
   readonly onSelectView: (next: RunView) => void;
 }) {
+  const activeView: RunView = isProblemFileView(view) ? "attention" : view;
   return (
     <div className="mf-run-view-context" aria-label="当前任务视图">
       <nav className="mf-run-tabs mf-view-tabs" aria-label="任务中心视图">
-        {RUN_VIEWS.map((candidate) => (
+        {PRIMARY_RUN_VIEWS.map((candidate) => (
           <button
             key={candidate}
             type="button"
-            aria-current={view === candidate ? "page" : undefined}
+            aria-current={activeView === candidate ? "page" : undefined}
             onFocus={(event) =>
               event.currentTarget.scrollIntoView?.({
                 block: "nearest",
@@ -1314,13 +1269,303 @@ function ViewNavigation({
   );
 }
 
+const INBOX_STATUS_LABELS: Readonly<Record<string, string>> = {
+  pending: "待处理",
+  processing: "进行中",
+  waiting_confirm: "待确认",
+  waiting_recognition: "待决定",
+  waiting_metadata: "待决定",
+  waiting_metadata_correction: "待修正",
+  waiting_classification: "待决定",
+  failed: "待核对",
+  partial: "部分完成",
+  success: "已完成",
+  skipped: "已跳过",
+  ignored: "已忽略",
+  cancelled: "已取消",
+  dry_run: "分析完成",
+};
+
+/** One file's durable, operator-readable short reason and problem type. */
+function problemReason(entry: {
+  readonly problemTypes: readonly RunProblemType[];
+  readonly item: { readonly failure: { readonly category: string } | null };
+}): string {
+  const category =
+    entry.item.failure === null ? null : entry.item.failure.category;
+  const fromFailure = category === null ? null : taskFailureReason(category);
+  if (fromFailure !== null) return fromFailure;
+  return (
+    PROBLEM_REASON_LABELS[entry.problemTypes[0] ?? "recognition"] ??
+    "当前文件需要处理"
+  );
+}
+
+function ProblemInbox({
+  query,
+  problem,
+  showWait,
+  onFilter,
+  onOpenTask,
+  onOpenItem,
+  onPage,
+  filtered,
+  onClearFilters,
+  direction,
+}: {
+  readonly query: UseQueryResult<RunProblemFilesRead, Error>;
+  readonly problem: RunProblemType | null;
+  readonly showWait: boolean;
+  readonly onFilter: (next: RunProblemType | null) => void;
+  readonly onOpenTask: (runId: string) => void;
+  readonly onOpenItem: (taskId: string, itemId: string) => void;
+  readonly onPage: (cursor: string, direction: "forward" | "backward") => void;
+  readonly filtered: boolean;
+  readonly onClearFilters: () => void;
+  readonly direction: "forward" | "backward";
+}) {
+  const page = query.data?.ok === true ? query.data.model : null;
+  const counts = page?.problemFileCounts ?? {
+    recognition: 0,
+    metadata: 0,
+    classification: 0,
+    conflict: 0,
+  };
+  const groups =
+    page === null
+      ? []
+      : page.items.reduce<
+          {
+            readonly runId: string;
+            readonly run: (typeof page.items)[number]["run"];
+            readonly items: (typeof page.items)[number][];
+          }[]
+        >((all, entry) => {
+          const group = all.find(
+            (candidate) => candidate.runId === entry.run.runId,
+          );
+          if (group === undefined) {
+            all.push({
+              runId: entry.run.runId,
+              run: entry.run,
+              items: [entry],
+            });
+          } else {
+            group.items.push(entry);
+          }
+          return all;
+        }, []);
+  return (
+    <section
+      className="mf-problem-inbox"
+      aria-labelledby="mf-problem-inbox-title"
+    >
+      <header className="mf-problem-inbox-head">
+        <h3 id="mf-problem-inbox-title">问题文件</h3>
+        <span aria-live="polite">
+          {page === null ? "读取中" : `${page.total} 个文件`}
+          {page !== null && page.total > 0 ? ` · ${page.taskTotal} 个任务` : ""}
+        </span>
+      </header>
+      <div
+        className="mf-problem-inbox-filters"
+        role="group"
+        aria-label="问题类型"
+      >
+        <button
+          id="mf-problem-filter-all"
+          type="button"
+          aria-pressed={problem === null}
+          onClick={() => onFilter(null)}
+        >
+          全部 <span>{page?.problemFileTotal ?? 0}</span>
+        </button>
+        {RUN_PROBLEM_TYPES.map((type) => (
+          <button
+            key={type}
+            type="button"
+            aria-pressed={problem === type}
+            onClick={() => onFilter(type)}
+          >
+            {RUN_PROBLEM_FILTER_LABELS[type]} <span>{counts[type]}</span>
+          </button>
+        ))}
+      </div>
+      {query.isError ? (
+        <StatusBanner variant="error" title="问题文件暂时不可用">
+          <p>
+            本次读取未完成，问题文件列表和计数保持未知。请重新读取；重读不会创建任务或修改媒体文件。
+          </p>
+          <div className="mf-actions">
+            <RefreshControl
+              onRefresh={() => query.refetch({ cancelRefetch: false })}
+            />
+          </div>
+        </StatusBanner>
+      ) : query.data === undefined ? (
+        showWait ? (
+          <StatusBanner variant="info" title="正在加载问题文件">
+            <p>正在从 MediaFlow API 读取当前问题文件。</p>
+          </StatusBanner>
+        ) : null
+      ) : !query.data.ok ? (
+        <StatusBanner variant="error" title="问题文件暂时不可用">
+          <p>{query.data.failure.nextAction}</p>
+          <div className="mf-actions">
+            <RefreshControl
+              onRefresh={() => query.refetch({ cancelRefetch: false })}
+            />
+            {filtered && (
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={onClearFilters}
+              >
+                清除时间
+              </button>
+            )}
+          </div>
+        </StatusBanner>
+      ) : page === null ? null : page.items.length === 0 ? (
+        <StatusBanner
+          variant="info"
+          title={filtered ? "当前日期范围没有问题文件" : "当前没有问题文件"}
+        >
+          <p>
+            {filtered
+              ? "当前创建日期范围与问题类型下没有待处理文件。清除时间可以查看全部获准任务的问题文件。"
+              : problem === null
+                ? "当前没有识别、元数据、分类或冲突问题需要处理。"
+                : `当前没有${RUN_PROBLEM_FILTER_LABELS[problem]}问题需要处理。`}
+          </p>
+          {filtered && (
+            <div className="mf-actions">
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={onClearFilters}
+              >
+                清除时间
+              </button>
+            </div>
+          )}
+        </StatusBanner>
+      ) : (
+        <>
+          <div className="mf-problem-groups">
+            {groups.map((group) => (
+              <section
+                className="mf-problem-group"
+                key={group.runId}
+                aria-labelledby={`mf-problem-group-${group.runId}`}
+              >
+                <header className="mf-problem-group-head">
+                  <div>
+                    <h4 id={`mf-problem-group-${group.runId}`}>
+                      {group.run.sourceScope ?? commandLabelOf(group.run)}
+                    </h4>
+                    <p>
+                      {commandLabelOf(group.run)} ·{" "}
+                      {RUN_TRIGGER_LABELS[group.run.trigger]} ·{" "}
+                      {runStatusLabel(group.run)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="mf-link-button"
+                    onClick={() => onOpenTask(group.run.runId)}
+                  >
+                    查看任务详情
+                  </button>
+                </header>
+                <ul className="mf-problem-file-list">
+                  {group.items.map((entry) => (
+                    <li key={`${entry.run.runId}:${entry.item.itemId}`}>
+                      <button
+                        type="button"
+                        className="mf-problem-file-row"
+                        onClick={() =>
+                          onOpenItem(entry.run.runId, entry.item.itemId)
+                        }
+                        aria-label={`${fileNameOf(entry.item.sourcePath)}，${entry.problemTypes
+                          .map((type) => RUN_PROBLEM_LABELS[type])
+                          .join("、")}；打开任务详情并展开文件证据`}
+                      >
+                        <span className="mf-problem-file-copy">
+                          <span className="mf-problem-file-name">
+                            {fileNameOf(entry.item.sourcePath)}
+                          </span>
+                          <span className="mf-problem-file-reason">
+                            {entry.problemTypes
+                              .map((type) => RUN_PROBLEM_LABELS[type])
+                              .join("、")}
+                            {" · "}
+                            {problemReason(entry)}
+                          </span>
+                        </span>
+                        <span
+                          className="mf-problem-file-status"
+                          data-status={entry.item.status}
+                        >
+                          {INBOX_STATUS_LABELS[entry.item.status] ??
+                            RUN_ITEM_STATUS_LABELS[entry.item.status] ??
+                            entry.item.status}
+                        </span>
+                        <span
+                          className="mf-problem-file-arrow"
+                          aria-hidden="true"
+                        >
+                          ›
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+          <div className="mf-actions" aria-label="问题文件分页">
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              disabled={page.previousCursor === null}
+              onClick={() =>
+                page.previousCursor && onPage(page.previousCursor, "backward")
+              }
+            >
+              上一页
+            </button>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              disabled={
+                direction === "forward"
+                  ? page.nextCursor === null
+                  : page.previousCursor === null
+              }
+              onClick={() =>
+                page.nextCursor && onPage(page.nextCursor, "forward")
+              }
+            >
+              下一页
+            </button>
+            <span className="mf-dashboard-meta">
+              当前筛选共 {page.total} 个文件；全部问题文件{" "}
+              {page.problemFileTotal} 个（同一文件的多个类型只计一次）
+            </span>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function RunTable({
   page,
   selectedId,
   direction,
   view,
   onSelect,
-  onOpenProblem,
   onForward,
   onBackward,
 }: {
@@ -1329,14 +1574,11 @@ function RunTable({
   readonly direction: "forward" | "backward";
   readonly view: RunView;
   readonly onSelect: (runId: string) => void;
-  readonly onOpenProblem: (runId: string, type: RunProblemType | null) => void;
   readonly onForward: () => void;
   readonly onBackward: () => void;
 }) {
-  const recovery = isRecoveryView(view);
   const running = view === "running";
   const showProgress = view === "all" || running;
-  const attention = view === "attention";
   const ended = view === "ended";
   return (
     <>
@@ -1352,17 +1594,11 @@ function RunTable({
               {showProgress && (
                 <th className="mf-run-col-progress">处理进度</th>
               )}
-              {attention && <th className="mf-run-col-problem">当前问题</th>}
               {ended && <th className="mf-run-col-result">结果摘要</th>}
-              {recovery && <th className="mf-run-col-description">问题说明</th>}
               <th className="mf-run-col-status">状态</th>
               <th className="mf-run-col-time">
-                {ended || recovery ? "更新时间" : "触发方式 / 创建时间"}
+                {ended ? "更新时间" : "触发方式 / 创建时间"}
               </th>
-              {recovery && <th className="mf-run-col-files">涉及文件</th>}
-              {(recovery || attention) && (
-                <th className="mf-run-col-actions">定位</th>
-              )}
             </tr>
           </thead>
           <tbody>
@@ -1422,13 +1658,6 @@ function RunTable({
                         : `${run.processedItems} / ${run.totalItems} 项`}
                     </td>
                   )}
-                  {attention && (
-                    <td>
-                      {run.problemTypes
-                        .map((type) => RUN_PROBLEM_LABELS[type])
-                        .join("、")}
-                    </td>
-                  )}
                   {ended && (
                     <td>
                       {run.status === "cancelled"
@@ -1460,7 +1689,6 @@ function RunTable({
                         "；有文件结果未记录"}
                     </td>
                   )}
-                  {recovery && <td>{RECOVERY_VIEW_EXPLANATIONS[view]}</td>}
                   <td className="mf-run-status-cell">
                     <span
                       className={run.attention ? "mf-run-attention" : undefined}
@@ -1470,69 +1698,20 @@ function RunTable({
                         : runStatusLabel(run)}
                     </span>
                     {run.status === "unknown" && "（证据不足）"}
-                    {!running &&
-                      !attention &&
-                      !ended &&
-                      !recovery &&
-                      run.problemTypes.length > 0 && (
-                        <span className="mf-run-kind">
-                          {" "}
-                          {run.problemTypes
-                            .map((problem) => RUN_PROBLEM_LABELS[problem])
-                            .join("、")}
-                        </span>
-                      )}
+                    {!running && !ended && run.problemTypes.length > 0 && (
+                      <span className="mf-run-kind">
+                        {" "}
+                        {run.problemTypes
+                          .map((problem) => RUN_PROBLEM_LABELS[problem])
+                          .join("、")}
+                      </span>
+                    )}
                   </td>
                   <td className="mf-run-time-cell">
-                    {ended || recovery
+                    {ended
                       ? formatDate(run.updatedAt)
                       : `${RUN_TRIGGER_LABELS[run.trigger]} · ${formatDate(run.createdAt)}`}
                   </td>
-                  {recovery && (
-                    <td>{run.problemFileCounts?.[view] ?? "不可用"} 个文件</td>
-                  )}
-                  {recovery && (
-                    <td>
-                      <button
-                        type="button"
-                        className="mf-button mf-button-secondary"
-                        onClick={() => onOpenProblem(run.runId, null)}
-                      >
-                        查看问题文件
-                      </button>
-                    </td>
-                  )}
-                  {attention && (
-                    <td>
-                      {run.problemTypes.length === 1 ? (
-                        <button
-                          type="button"
-                          className="mf-button mf-button-secondary"
-                          onClick={() =>
-                            onOpenProblem(run.runId, run.problemTypes[0])
-                          }
-                        >
-                          查看问题文件
-                        </button>
-                      ) : (
-                        // A Task with several current problems offers each
-                        // exact Task/type list: the operator chooses rather
-                        // than the UI guessing one type.
-                        <div className="mf-problem-type-choices">
-                          {run.problemTypes.map((type) => (
-                            <button
-                              key={type}
-                              type="button"
-                              className="mf-button mf-button-secondary"
-                              onClick={() => onOpenProblem(run.runId, type)}
-                            >
-                              {RUN_PROBLEM_LABELS[type]}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                  )}
                 </tr>
               );
             })}
@@ -1586,6 +1765,7 @@ function RunDetailPanel({
   controlSession,
   onControlSession,
   preparationLinkSearch,
+  fallbackFocusId,
   suspended,
 }: {
   readonly query: UseQueryResult<RunOverviewRead, Error>;
@@ -1599,6 +1779,8 @@ function RunDetailPanel({
   readonly onControlSession: (patch: Partial<RunControlSession>) => void;
   /** The same-route continue search: exact Task plus the hosted marker. */
   readonly preparationLinkSearch: Record<string, RunSearchValue>;
+  /** The nearest still-present list control when the invoking row resolved. */
+  readonly fallbackFocusId: string;
   /**
    * Whether a stacked card above owns interaction. The detail keeps its
    * content, scroll and state, but yields the focus trap and background
@@ -1674,7 +1856,7 @@ function RunDetailPanel({
   const exit = useModalCardExit();
   const modal = useModalLayer({
     onEscape: () => exit.beginClose(onClose),
-    fallbackFocusId: "mf-operations-heading",
+    fallbackFocusId,
     active: !suspended,
   });
 

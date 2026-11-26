@@ -213,13 +213,12 @@ test("the Task Center recovery search submits the current year to the Provider",
   const commands = recordCommands(page);
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/operations$/);
-  await page.getByRole("button", { name: "元数据恢复", exact: true }).click();
-  const sourceRun = page
-    .getByRole("row")
-    .filter({ hasText: "YearRecovery.2025.mkv" });
-  await expect(sourceRun).toHaveCount(1);
-  await sourceRun.getByRole("button", { name: "查看问题文件" }).click();
-  const problemFiles = page.getByRole("region", { name: /问题文件/ });
+  await page.getByRole("button", { name: "需要处理", exact: true }).click();
+  const problemFiles = page.getByRole("region", { name: "问题文件" });
+  await problemFiles
+    .getByRole("group", { name: "问题类型" })
+    .getByRole("button", { name: /^元数据/ })
+    .click();
   const sourceItem = problemFiles
     .getByRole("listitem")
     .filter({ hasText: "YearRecovery.2025.mkv" });
@@ -522,13 +521,12 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
   await card.getByRole("button", { name: "关闭整理弹窗" }).click();
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/operations$/);
-  await page.getByRole("button", { name: "元数据恢复", exact: true }).click();
-  const sourceRun = page
-    .getByRole("row")
-    .filter({ hasText: SEASON_PROBE_FILE });
-  await expect(sourceRun).toHaveCount(1);
-  await sourceRun.getByRole("button", { name: "查看问题文件" }).click();
-  const problemFiles = page.getByRole("region", { name: /问题文件/ });
+  await page.getByRole("button", { name: "需要处理", exact: true }).click();
+  const problemFiles = page.getByRole("region", { name: "问题文件" });
+  await problemFiles
+    .getByRole("group", { name: "问题类型" })
+    .getByRole("button", { name: /^元数据/ })
+    .click();
   const sourceItem = problemFiles
     .getByRole("listitem")
     .filter({ hasText: SEASON_PROBE_FILE });
@@ -553,7 +551,7 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
   ).toBeEnabled();
 
   // Resolve this exact TaskItem for the durable engine passes below.
-  const problemRunId = new URL(page.url()).searchParams.get("problemRun");
+  const problemRunId = String(seeded.taskId);
   expect(problemRunId).toBeTruthy();
   const problemItems = await adminGet(
     request,

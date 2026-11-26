@@ -13,9 +13,12 @@ import { queryOptions } from "@tanstack/react-query";
 import {
   fetchRunInventory,
   fetchRunOverview,
+  fetchRunProblemFiles,
   type RunInventoryQueryOptions,
   type RunOverviewRead,
   type RunInventoryRead,
+  type RunProblemFilesQueryOptions,
+  type RunProblemFilesRead,
 } from "../../shared/api/api-client";
 import {
   TERMINAL_RUN_STATUSES,
@@ -68,6 +71,38 @@ export function runInventoryQueryOptions(
     // terminal. Hidden tabs pause through refetchIntervalInBackground.
     refetchInterval: (query) =>
       runRefetchInterval(query.state.data, query.state.status === "error"),
+    refetchIntervalInBackground: false,
+  });
+}
+
+export const runProblemFilesQueryKey = "operations.problem-files" as const;
+
+export function runProblemFilesQueryOptions(
+  token: string | null,
+  options: RunProblemFilesQueryOptions,
+) {
+  return queryOptions({
+    queryKey: [
+      runProblemFilesQueryKey,
+      options.problem ?? "all",
+      options.from ?? "",
+      options.to ?? "",
+      options.cursor ?? null,
+    ],
+    queryFn: (): Promise<RunProblemFilesRead> =>
+      fetchRunProblemFiles(token, options),
+    enabled: token !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: 10_000,
+    // Attention is exactly the live current-problem population; a change in
+    // a Task/item resolves or re-types the file. The same bounded read repeats
+    // only while visible, so a resolved row leaves without replaying work.
+    refetchInterval: (query) =>
+      query.state.data?.ok === true && query.state.status !== "error"
+        ? RUN_REFETCH_INTERVAL
+        : false,
     refetchIntervalInBackground: false,
   });
 }

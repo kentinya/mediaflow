@@ -363,16 +363,16 @@ test("task-center views stay keyboard operable and discoverable when narrow", as
   await expect(running).toHaveAttribute("aria-current", "page");
 
   await page.setViewportSize({ width: 380, height: 720 });
-  // The retired fifth Failure Recovery view no longer exists; the last
-  // organizing tab is 冲突处理, and it stays keyboard reachable when narrow.
-  const conflict = views.getByRole("button", {
-    name: "冲突处理",
+  // The four first-level views stay keyboard reachable when narrow; the four
+  // recovery types are filters inside Attention, not sibling tabs.
+  const ended = views.getByRole("button", {
+    name: "已结束",
     exact: true,
   });
-  await conflict.focus();
-  await expect(conflict).toBeFocused();
+  await ended.focus();
+  await expect(ended).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/view=conflict/);
+  await expect(page).toHaveURL(/view=ended/);
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
@@ -420,13 +420,10 @@ test("inventory count card applies its server filter and the run overview opens 
   await expect(
     page.getByRole("button", { name: "失败恢复", exact: true }),
   ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "冲突处理", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("group", { name: "问题类型" })).toHaveCount(0);
 
-  // Switching to the attention view applies the real current-problem facet:
-  // the URL records the submitted view and a run without a current problem
-  // leaves the server-side population.
+  // Switching to the attention view opens the shared problem-file list; the
+  // completed row without a current problem never enters that population.
   await attentionTab.click();
   await expect(page).toHaveURL(/view=attention/);
   const pressed = views.getByRole("button", {
@@ -434,6 +431,9 @@ test("inventory count card applies its server filter and the run overview opens 
     exact: true,
   });
   await expect(pressed).toHaveAttribute("aria-current", "page");
+  const inbox = page.getByRole("region", { name: "问题文件" });
+  await expect(inbox).toBeVisible();
+  await expect(inbox.getByRole("group", { name: "问题类型" })).toBeVisible();
   await expect(page.getByRole("row", { name: COMPLETED_ROW })).toHaveCount(0);
 
   // Switching back to 全部任务 restores the full population.

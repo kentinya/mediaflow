@@ -145,6 +145,8 @@ from mediaflow.domain.operations_run import (
     ORGANIZING_TASK_SEED_TASK_FAMILIES,
     RECOVERY_PROBLEM_TYPES,
     RUN_RECORD_KINDS,
+    OperationsProblemFile,
+    OperationsProblemFileWindow,
     OperationsRunItemWindow,
     OperationsRunOverview,
     OperationsRunProgress,
@@ -7020,6 +7022,162 @@ class SQLiteTaskRepository:
             matching_total=matching_total,
             dispositions=dispositions,
             uncertain_success=uncertain_success,
+            has_next=has_next,
+            has_previous=has_previous,
+        )
+
+    def operations_problem_files_window(
+        self,
+        *,
+        limit: int = 20,
+        problem_type: str | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+    ) -> OperationsProblemFileWindow:
+        """One aggregate problem-file page from one complete read snapshot.
+
+        The page joins the same deduplicated Task Center population the
+        inventory lists with the same durable per-item problem predicates the
+        four type views use.  A file that carries several current problems is
+        one aggregate file (the page total and cursor count it once) while
+        each type count still includes it, so the aggregate and the type
+        filters describe the same real membership rather than two unrelated
+        sums.  The creation range applies to the owning Task's durable
+        admission time, exactly like the inventory date filter.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("problem file page limit must be between 1 and 100")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
+        if problem_type is not None and problem_type not in RECOVERY_PROBLEM_TYPES:
+            raise ValueError("problem file type is invalid")
+        predicates = {
+            problem: self._problem_item_predicate(problem)[0] for problem in RECOVERY_PROBLEM_TYPES
+        }
+        union = " OR ".join(f"({predicates[problem]})" for problem in RECOVERY_PROBLEM_TYPES)
+        flags = ", ".join(
+            f"CASE WHEN {predicates[problem]} THEN 1 ELSE 0 END AS item_problem_{problem}"
+            for problem in RECOVERY_PROBLEM_TYPES
+        )
+        base_clauses = [f"({union})"]
+        base_parameters: list[object] = []
+        if created_after is not None:
+            base_clauses.append("r.sort_at >= ?")
+            base_parameters.append(created_after.isoformat())
+        if created_before is not None:
+            base_clauses.append("r.sort_at <= ?")
+            base_parameters.append(created_before.isoformat())
+        base_where = " AND ".join(base_clauses)
+        document = f"""
+            WITH runs AS ({self._run_query_document()}),
+            problem_items AS (
+                SELECT r.*, i.item_id AS problem_item_id, {flags}
+                FROM runs r
+                JOIN task_items i ON i.task_id = COALESCE(
+                    r.linked_task_id, r.transfer_task_id, r.anchor_id
+                )
+                WHERE {base_where}
+            )
+            SELECT * FROM problem_items
+        """
+        filter_clauses: list[str] = []
+        filter_parameters: list[object] = []
+        if problem_type is not None:
+            filter_clauses.append(f"item_problem_{problem_type} = 1")
+        page_clauses = list(filter_clauses)
+        page_parameters = list(filter_parameters)
+        cursor_key = "anchor_id || ':' || problem_item_id"
+        if after is not None:
+            timestamp = after[0].isoformat()
+            page_clauses.append(f"(sort_at < ? OR (sort_at = ? AND {cursor_key} < ?))")
+            page_parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            page_clauses.append(f"(sort_at > ? OR (sort_at = ? AND {cursor_key} > ?))")
+            page_parameters.extend((timestamp, timestamp, before[1]))
+        page_where = f" WHERE {' AND '.join(page_clauses)}" if page_clauses else ""
+        filter_where = f" WHERE {' AND '.join(filter_clauses)}" if filter_clauses else ""
+        reverse = before is not None
+        order = f"sort_at ASC, {cursor_key} ASC" if reverse else f"sort_at DESC, {cursor_key} DESC"
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                rows = self._connection.execute(
+                    f"SELECT * FROM ({document}){page_where} ORDER BY {order} LIMIT ?",
+                    (*base_parameters, *page_parameters, limit + 1),
+                ).fetchall()
+                matching_total = int(
+                    self._connection.execute(
+                        f"SELECT COUNT(*) AS value_count FROM ({document}){filter_where}",
+                        (*base_parameters, *filter_parameters),
+                    ).fetchone()["value_count"]
+                )
+                counts_row = self._connection.execute(
+                    f"""SELECT
+                        COUNT(*) AS problem_files,
+                        COUNT(DISTINCT anchor_id) AS problem_tasks,
+                        {
+                        ", ".join(
+                            f"SUM(item_problem_{problem}) AS {problem}_files"
+                            for problem in RECOVERY_PROBLEM_TYPES
+                        )
+                    }
+                        FROM ({document})""",
+                    base_parameters,
+                ).fetchone()
+                item_ids = [str(row["problem_item_id"]) for row in rows[:limit]]
+                item_by_id = {}
+                if item_ids:
+                    placeholders = ", ".join("?" for _ in item_ids)
+                    item_by_id = {
+                        str(item_row["item_id"]): self._item(item_row)
+                        for item_row in self._connection.execute(
+                            f"SELECT * FROM task_items WHERE item_id IN ({placeholders})",
+                            item_ids,
+                        ).fetchall()
+                    }
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        if reverse:
+            has_previous = len(rows) > limit
+            rows = list(reversed(rows[:limit]))
+            has_next = bool(rows)
+        else:
+            has_next = len(rows) > limit
+            rows = rows[:limit]
+            has_previous = after is not None
+        records: list[OperationsProblemFile] = []
+        for row in rows:
+            item = item_by_id.get(str(row["problem_item_id"]))
+            if item is None:
+                continue
+            problem_types = tuple(
+                problem
+                for problem in RECOVERY_PROBLEM_TYPES
+                if bool(row[f"item_problem_{problem}"])
+            )
+            records.append(
+                OperationsProblemFile(
+                    overview=self._operations_run_overview(row),
+                    item=item,
+                    problem_types=problem_types,
+                )
+            )
+        return OperationsProblemFileWindow(
+            page=tuple(records),
+            total=matching_total,
+            problem_file_total=int(counts_row["problem_files"] or 0),
+            task_total=int(counts_row["problem_tasks"] or 0),
+            problem_file_counts={
+                problem: int(counts_row[f"{problem}_files"] or 0)
+                for problem in RECOVERY_PROBLEM_TYPES
+            },
             has_next=has_next,
             has_previous=has_previous,
         )

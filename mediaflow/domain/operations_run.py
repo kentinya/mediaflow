@@ -35,6 +35,7 @@ from mediaflow.domain.task_persistence import (
     FILES_TRANSFER_TASK_COMMAND,
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
     PersistentTask,
+    PersistentTaskItem,
     PersistentTaskStatus,
     TaskItemStatus,
 )
@@ -639,6 +640,44 @@ class OperationsRunItemWindow:
     matching_total: int
     dispositions: Mapping[str, int]
     uncertain_success: int
+    has_next: bool
+    has_previous: bool
+
+
+@dataclass(frozen=True)
+class OperationsProblemFile:
+    """One current problem file with the exact run/task that owns it.
+
+    The record is a read-only join of the same run population and the same
+    durable per-item problem predicates the type views use.  It carries no
+    recovery authority: opening it only resolves the exact Task and item for
+    the existing native detail/recovery surface.
+    """
+
+    overview: OperationsRunOverview
+    item: PersistentTaskItem
+    problem_types: tuple[str, ...]
+
+    @property
+    def created_at(self) -> datetime:
+        # The cursor follows the owning Task's creation day, exactly like the
+        # inventory the problem-file list is grouped under.
+        return self.overview.created_at
+
+    @property
+    def cursor_id(self) -> str:
+        return f"{self.overview.run_id}:{self.item.item_id}"
+
+
+@dataclass(frozen=True)
+class OperationsProblemFileWindow:
+    """One aggregate problem-file page plus complete-scope counts."""
+
+    page: tuple[OperationsProblemFile, ...]
+    total: int
+    problem_file_total: int
+    task_total: int
+    problem_file_counts: Mapping[str, int]
     has_next: bool
     has_previous: bool
 

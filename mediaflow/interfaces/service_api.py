@@ -1657,6 +1657,7 @@ class MediaFlowApi:
             "automation",
             "notifications",
             "organize",
+            "problem-items",
             "rules",
             "runs",
             "storage-management",
@@ -1686,7 +1687,7 @@ class MediaFlowApi:
         operations_runs_read_route = (
             len(parts) >= 3
             and parts[:2] == ["api", "operations"]
-            and parts[2] == "runs"
+            and parts[2] in {"runs", "problem-items"}
             and method == "GET"
         )
         worker_route = parts[:2] == ["api", "workers"]
@@ -2950,6 +2951,10 @@ class MediaFlowApi:
         }:
             return self._storage_operations_projection(
                 parts, method, environ, start_response, principal
+            )
+        if parts == ["api", "operations", "problem-items"]:
+            return self._operations_problem_files_projection(
+                method, environ, start_response, principal
             )
         if parts[:3] == ["api", "operations", "runs"]:
             return self._operations_runs_projection(
@@ -8398,6 +8403,8 @@ class MediaFlowApi:
                     return "/api/operations/workers/readiness"
                 return f"/api/operations/{kind}/{{id}}"
             return "/api/<unmatched>"
+        if len(parts) == 3 and parts[:2] == ["api", "operations"] and parts[2] == "problem-items":
+            return "/api/operations/problem-items"
         if len(parts) >= 3 and parts[:2] == ["api", "operations"] and parts[2] == "runs":
             # The unified run detail reads name their own bounded operator
             # surface without publishing run, Task, Job or item identifiers
@@ -11554,6 +11561,155 @@ class MediaFlowApi:
 
     _RUNS_STATUS_FILTER_VALUES = frozenset(value.value for value in OperationsRunStatus)
     _RUNS_TIME_FILTER = re.compile(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|\+00:00)?)?")
+
+    def _operations_problem_files_projection(
+        self,
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """One aggregate, grouped problem-file list for Attention (RO-5).
+
+        The read reuses the exact run population and durable four-type item
+        predicates; it never infers a problem from a status, a filename or a
+        Provider result.  One current file is one aggregate row even when it
+        carries several types, while the per-type counts keep their real
+        overlapping membership.  The page, all counts and the cursor scope are
+        read from one repository snapshot.
+        """
+
+        if method != "GET":
+            return self._error(start_response, 405, "method_not_allowed", "GET required")
+        self._require(principal, ApiPermission.READ)
+        query = self._problem_files_query(environ, principal.principal_id)
+        repository = self._repository
+        if repository is None or not callable(
+            getattr(repository, "operations_problem_files_window", None)
+        ):
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "problem files are unavailable for this runtime",
+            )
+        cursor: DecodedCursor | None = query["cursor"]
+        limit: int = query["limit"]
+        arguments: dict[str, object] = {
+            "limit": limit,
+            "problem_type": query["problem"],
+            "created_after": query["created_after"],
+            "created_before": query["created_before"],
+        }
+        if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
+            window = repository.operations_problem_files_window(before=cursor.position, **arguments)
+        else:
+            window = repository.operations_problem_files_window(
+                after=cursor.position if cursor else None, **arguments
+            )
+        items = []
+        for record in window.page:
+            item = record.item
+            items.append(
+                {
+                    "run": self._operations_run_document(record.overview),
+                    "item": self._task_item_document(
+                        item,
+                        bounded=True,
+                        checkpoint=self._checkpoint_service.summary(
+                            item.item_id, task_id=item.task_id
+                        ),
+                    ),
+                    "problem_types": list(record.problem_types),
+                }
+            )
+        scope: str = query["scope"]
+        return self._response(
+            start_response,
+            200,
+            {
+                "problem": query["problem"],
+                "limit": limit,
+                "items": items,
+                "total": window.total,
+                "problem_file_total": window.problem_file_total,
+                "task_total": window.task_total,
+                "problem_file_counts": dict(window.problem_file_counts),
+                "from": (query["created_after"].isoformat() if query["created_after"] else None),
+                "to": (query["created_before"].isoformat() if query["created_before"] else None),
+                "truncated": window.has_next,
+                "previous_cursor": self._problem_file_page_cursor(
+                    window.page, window.has_previous, CursorDirection.PREVIOUS, scope
+                ),
+                "next_cursor": self._problem_file_page_cursor(
+                    window.page, window.has_next, CursorDirection.NEXT, scope
+                ),
+                "sideEffects": "none",
+            },
+        )
+
+    @classmethod
+    def _problem_files_query(cls, environ: dict, principal_id: str) -> dict[str, object]:
+        """Bounded aggregate problem-file filters plus the cursor scope."""
+
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"limit", "cursor", "problem", "from", "to"}
+        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("problem file query accepts limit, cursor, problem, from, and to once")
+        limit = cls._parse_bounded_limit(values.get("limit", ["20"])[0], "problem file")
+        raw_problem = values.get("problem", [""])[0]
+        if raw_problem in {"", "all"}:
+            problem_type = None
+        elif raw_problem in set(RECOVERY_PROBLEM_TYPES):
+            problem_type = raw_problem
+        else:
+            raise ValueError("problem file type is invalid")
+        created_after = cls._run_time_filter(values.get("from", [""])[0], "from")
+        created_before = cls._run_time_filter(values.get("to", [""])[0], "to")
+        scope = ";".join(
+            (
+                f"principal={principal_id}",
+                f"problem={problem_type or 'all'}",
+                f"from={created_after.isoformat() if created_after else ''}",
+                f"to={created_before.isoformat() if created_before else ''}",
+            )
+        )
+        raw_cursor = values.get("cursor")
+        cursor = (
+            decode_directional_cursor(
+                raw_cursor[0],
+                "operations_problem_files",
+                expected_scope=scope,
+            )
+            if raw_cursor and raw_cursor[0]
+            else None
+        )
+        return {
+            "limit": limit,
+            "problem": problem_type,
+            "created_after": created_after,
+            "created_before": created_before,
+            "cursor": cursor,
+            "scope": scope,
+        }
+
+    @staticmethod
+    def _problem_file_page_cursor(
+        page: tuple,
+        available: bool,
+        direction: CursorDirection,
+        scope: str,
+    ) -> str | None:
+        if not available or not page:
+            return None
+        record = page[0] if direction is CursorDirection.PREVIOUS else page[-1]
+        return encode_cursor(
+            "operations_problem_files",
+            record.created_at,
+            record.cursor_id,
+            direction,
+            scope=scope,
+        )
 
     def _operations_runs_projection(
         self,

@@ -13351,3 +13351,177 @@ tr[aria-selected="true"] {
   margin: 0 0 0.25rem;
   font-weight: 600;
 }
+
+/* Task Center Attention problem-file inbox (Slice 59 / V2-OPS-022). */
+.mf-problem-inbox {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.mf-problem-inbox-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.mf-problem-inbox-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.mf-problem-inbox-head > span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.mf-problem-inbox-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mf-problem-inbox-filters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.mf-problem-inbox-filters button span {
+  min-width: 1.25rem;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--disabled-surface);
+  color: var(--disabled-ink);
+  font-size: 0.78rem;
+  text-align: center;
+}
+.mf-problem-inbox-filters button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.mf-problem-inbox-filters button[aria-pressed="true"] span {
+  background: var(--accent);
+  color: #ffffff;
+}
+.mf-problem-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mf-problem-group {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.mf-problem-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #f8fafd;
+}
+.mf-problem-group-head h4 {
+  margin: 0;
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+}
+.mf-problem-group-head p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.mf-problem-group-head .mf-link-button {
+  flex: none;
+  white-space: nowrap;
+}
+.mf-problem-file-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mf-problem-file-list li + li {
+  border-top: 1px solid var(--line);
+}
+.mf-problem-file-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.mf-problem-file-row:hover {
+  background: #f5f8fe;
+}
+.mf-problem-file-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.mf-problem-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.mf-problem-file-reason {
+  color: var(--muted);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.mf-problem-file-status {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+}
+.mf-problem-file-status[data-status="failed"],
+.mf-problem-file-status[data-status="partial"] {
+  background: #fdf0ee;
+  color: var(--bad);
+}
+.mf-problem-file-status[data-status="success"] {
+  background: #edf8f0;
+  color: #1f6b39;
+}
+.mf-problem-file-arrow {
+  flex: none;
+  color: var(--muted);
+  font-size: 1.3rem;
+  line-height: 1;
+}
+@media (max-width: 640px) {
+  .mf-problem-group-head {
+    flex-direction: column;
+  }
+  .mf-problem-file-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+  .mf-problem-file-copy {
+    flex-basis: 100%;
+  }
+  .mf-problem-file-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
