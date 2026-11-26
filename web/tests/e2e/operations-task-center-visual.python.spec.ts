@@ -245,16 +245,22 @@ test("capture the in-context creation summary and confirmation journey", async (
     };
     if (body.advanced && body.previewId != null) break;
   }
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  // The approved Files entry lands on its in-dialog overview with the exact
+  // source and its read-back status before any batch confirmation.
+  await expect(card.getByRole("region", { name: "本次整理概览" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(card.getByText("Three.2003.mkv").first()).toBeVisible();
   await page.waitForTimeout(250);
   await page.screenshot({
     path: `${OUTPUT}/organize-creation-summary.png`,
     fullPage: false,
   });
   await card.getByRole("button", { name: /整批复核/ }).click();
-  await expect(page.getByText(/零变更摘要/).first()).toBeVisible();
+  await expect(
+    card.getByRole("heading", { name: "整批复核", exact: true }),
+  ).toBeVisible();
+  await expect(card.getByText("提交前不修改任何文件").first()).toBeVisible();
   const confirmation = page.getByRole("button", { name: /确认整理 \d+ 项/ });
   await expect(confirmation).toBeVisible();
   await page.waitForTimeout(250);

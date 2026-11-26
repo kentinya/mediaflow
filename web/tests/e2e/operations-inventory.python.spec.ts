@@ -3414,6 +3414,33 @@ test("dated views and 21-file recovery pages preserve exact evidence context", a
     restoredInbox.getByText(secondPageFileName).first(),
   ).toBeVisible();
 
+  // Both paging buttons follow the server's own cursors: the second page
+  // offers the way back, and the first page returned backwards still offers
+  // the next page the server minted for the same collection.
+  const nextPage = restoredInbox.getByRole("button", { name: "下一页" });
+  const previousPage = restoredInbox.getByRole("button", { name: "上一页" });
+  await expect(nextPage).toBeDisabled();
+  await expect(previousPage).toBeEnabled();
+  await previousPage.click();
+  await expect(page).toHaveURL(/problemDir=backward/);
+  await expect(nextPage).toBeEnabled();
+  await expect(restoredInbox.getByText(secondPageFileName).first()).toHaveCount(
+    0,
+  );
+  await nextPage.click();
+  await expect(page).toHaveURL(/problemDir=forward/);
+  await expect(
+    restoredInbox.getByText(secondPageFileName).first(),
+  ).toBeVisible();
+  await expect(nextPage).toBeDisabled();
+  // The narrow layout states the current filter's file count, never a
+  // differently scoped task count beside it.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const inboxHead = await restoredInbox.locator("header").first().innerText();
+  expect(inboxHead).toContain(`${metadataTotal} 个文件`);
+  expect(inboxHead).not.toContain("个任务");
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   // The whole file row opens the exact Task detail with that file's evidence;
   // closing returns to the same filter and page.
   await restoredInbox
@@ -3437,6 +3464,156 @@ test("dated views and 21-file recovery pages preserve exact evidence context", a
       .getByText(secondPageFileName)
       .first(),
   ).toBeVisible();
+});
+
+test("a committed per-run problem link keeps its exact Task, type and page", async ({
+  page,
+  request,
+}) => {
+  const seeded = (await (
+    await request.post(`${BASE}/__harness__/seed-task-center-problem-page`)
+  ).json()) as { readonly taskId: string; readonly itemCount: number };
+  expect(seeded.itemCount).toBe(21);
+
+  // The committed link shape names the Task and its own problem-item page.
+  const firstRead = await request.get(
+    `${BASE}/api/operations/runs/${encodeURIComponent(seeded.taskId)}/problem-items?problem=metadata&limit=20`,
+    { headers: { Authorization: `Bearer ${TOKEN}` } },
+  );
+  expect(firstRead.ok()).toBeTruthy();
+  const firstPage = (await firstRead.json()) as {
+    readonly next_cursor: string | null;
+  };
+  expect(firstPage.next_cursor).toBeTruthy();
+  const secondRead = await request.get(
+    `${BASE}/api/operations/runs/${encodeURIComponent(seeded.taskId)}/problem-items?problem=metadata&limit=20&cursor=${encodeURIComponent(firstPage.next_cursor ?? "")}`,
+    { headers: { Authorization: `Bearer ${TOKEN}` } },
+  );
+  expect(secondRead.ok()).toBeTruthy();
+  const secondPage = (await secondRead.json()) as {
+    readonly items: readonly {
+      readonly item_id: string;
+      readonly source_path: string;
+    }[];
+  };
+  expect(secondPage.items).toHaveLength(1);
+  const secondFile = secondPage.items[0]!.source_path.split("/").at(-1) ?? "";
+  const secondItemId = secondPage.items[0]!.item_id;
+  expect(secondFile).not.toBe("");
+
+  await connect(page);
+  const api = recordApiCalls(page);
+  await page.goto(
+    `/operations?view=metadata&problemRun=${encodeURIComponent(seeded.taskId)}&problemCursor=${encodeURIComponent(firstPage.next_cursor ?? "")}&problemDir=forward`,
+  );
+  // The memory-only credential does not survive a direct address; the same
+  // link returns the exact Task, type and page after the explicit sign-in.
+  await reconnectAtCurrentRoute(page, TOKEN);
+  const panel = page.getByRole("region", { name: "问题文件处理" });
+  await expect(panel).toBeVisible({ timeout: 30_000 });
+  await expect(panel.getByText(secondFile).first()).toBeVisible();
+  await expect(page).toHaveURL(/problemRun=/);
+  await expect(page).toHaveURL(/problemCursor=/);
+  // The submitted cursor keeps its own Task/type collection; the aggregate
+  // collection is never handed a cursor it would refuse.
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "GET" &&
+        entry.path === `/api/operations/runs/${seeded.taskId}/problem-items` &&
+        new URLSearchParams(entry.search).get("problem") === "metadata" &&
+        new URLSearchParams(entry.search).get("cursor") ===
+          firstPage.next_cursor,
+    ).length,
+  ).toBeGreaterThan(0);
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "GET" &&
+        entry.path === "/api/operations/problem-items" &&
+        new URLSearchParams(entry.search).get("cursor") !== null,
+    ),
+  ).toHaveLength(0);
+
+  // A memory-only reload restores the same authentication, Task, type and
+  // page instead of restarting the list.
+  await page.reload();
+  await reconnectAtCurrentRoute(page, TOKEN);
+  const restoredPanel = page.getByRole("region", { name: "问题文件处理" });
+  await expect(restoredPanel).toBeVisible({ timeout: 30_000 });
+  await expect(restoredPanel.getByText(secondFile).first()).toBeVisible();
+
+  // The exact file opens the same Task's evidence and closing returns to this
+  // page, not to the list's first page.
+  await restoredPanel
+    .getByRole("button", { name: "查看该文件证据与恢复记录" })
+    .first()
+    .click();
+  await expect(page).toHaveURL(new RegExp("item=" + secondItemId));
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  await expect(
+    detail.getByRole("region", { name: "条目审核与恢复" }),
+  ).toBeVisible();
+  await detail.getByRole("button", { name: "关闭详情" }).click();
+  await expect(detail).toHaveCount(0);
+  await expect(page).toHaveURL(/problemRun=/);
+  await expect(page).toHaveURL(/problemCursor=/);
+  await expect(
+    page
+      .getByRole("region", { name: "问题文件处理" })
+      .getByText(secondFile)
+      .first(),
+  ).toBeVisible();
+  // No read in this whole journey handed the per-run cursor to the aggregate
+  // collection, including while the run detail was open over the panel.
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "GET" &&
+        entry.path === "/api/operations/problem-items" &&
+        new URLSearchParams(entry.search).get("cursor") !== null,
+    ),
+  ).toHaveLength(0);
+});
+
+test("a refused problem-file cursor offers the same filter's first page", async ({
+  page,
+  request,
+}) => {
+  await connect(page);
+  const seeded = (await (
+    await request.post(`${BASE}/__harness__/seed-task-center-problem-page`)
+  ).json()) as { readonly taskId: string };
+  // A cursor minted for the per-run collection is not valid for the aggregate
+  // collection; the read is refused and the page offers an explicit reset.
+  const legacyRead = await request.get(
+    `${BASE}/api/operations/runs/${encodeURIComponent(seeded.taskId)}/problem-items?problem=metadata&limit=20`,
+    { headers: { Authorization: `Bearer ${TOKEN}` } },
+  );
+  expect(legacyRead.ok()).toBeTruthy();
+  const legacy = (await legacyRead.json()) as {
+    readonly next_cursor: string | null;
+  };
+  expect(legacy.next_cursor).toBeTruthy();
+  await page.goto(
+    `/operations?view=attention&problemType=metadata&problemCursor=${encodeURIComponent(legacy.next_cursor ?? "")}&problemDir=forward`,
+  );
+  await reconnectAtCurrentRoute(page, TOKEN);
+  const failure = page.getByRole("heading", {
+    name: "问题文件暂时不可用",
+    exact: true,
+  });
+  await expect(failure).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "回到第一页" }).click();
+  await expect(page).not.toHaveURL(/problemCursor=/);
+  await expect(page).toHaveURL(/view=attention/);
+  await expect(page).toHaveURL(/problemType=metadata/);
+  const inbox = page.getByRole("region", { name: "问题文件" });
+  await expect(
+    inbox.getByText(new RegExp("TaskCenter\\/PagedMetadata")).first(),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(inbox.getByRole("button", { name: "上一页" })).toBeDisabled();
 });
 
 test("the four views survive authentication continuation and a real restart", async ({

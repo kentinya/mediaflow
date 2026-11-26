@@ -67,7 +67,7 @@ import { organizeDiscoveryQueryOptions } from "./discovery-query";
 import type { OrganizeDiscoveryModel } from "../../entities/operations/discovery";
 import { organizePreviewQueryOptions } from "./organize-query";
 import { RunRetainedSubmissionNotice } from "./RunRetainedSubmissionNotice";
-import { taskFailureReason } from "./ProblemFilePanel";
+import { ProblemFilePanel, taskFailureReason } from "./ProblemFilePanel";
 import { TaskItemRecoverySessionProvider } from "./task-item-recovery-session";
 import {
   readRunDetailState,
@@ -487,6 +487,10 @@ export function OperationsLanding() {
     readOperationsDialog(searchParams) === OPERATIONS_ORGANIZE_DIALOG;
   const chosenProblemType = readProblemType(searchParams);
   const problemPage = readProblemPageState(searchParams);
+  // The pre-59.5 per-run file panel link. Its cursor was minted by that Task's
+  // own problem-item collection, so it keeps that collection's reader instead
+  // of being replayed against the aggregate one.
+  const problemRunId = readSafeSearchValue(searchParams, "problemRun");
   // Per-run control sessions outlive the card: closing or switching away and
   // reopening the same run still reconciles the exact original control request
   // instead of offering an unknown-effect resubmission.
@@ -521,6 +525,12 @@ export function OperationsLanding() {
   const problemFileType: RunProblemType | null = isRecoveryView(view)
     ? view
     : chosenProblemType;
+  // A committed per-run problem link names exactly one Task, one type and one
+  // page of that Task's files. It keeps the established per-run panel and its
+  // own server cursor, so neither the page nor its file position is replayed
+  // against the aggregate collection.
+  const problemRunLink = problemRunId !== "" && problemFileType !== null;
+  const legacyProblemPanelOpen = selectedId === "" && problemRunLink;
   // The selected run's detail view (tab/filters/cursors/inspected item) lives
   // in the URL for the same reconnect reasons as the list state itself.
   const detailState = readRunDetailState(searchParams);
@@ -571,9 +581,9 @@ export function OperationsLanding() {
       from: fromBoundary,
       to: toBoundary,
       limit: RUN_PAGE_LIMIT,
-      cursor: problemPage.cursor,
+      cursor: problemRunLink ? null : problemPage.cursor,
     }),
-    enabled: token !== null && problemSurface,
+    enabled: token !== null && problemSurface && !problemRunLink,
   });
   // Slice52 RO-3: the run-list banner inside the already-visible chrome (view
   // navigation and filters) appears only when the inventory read is
@@ -583,13 +593,28 @@ export function OperationsLanding() {
     query.data === undefined && !query.isError,
   );
   const showProblemWait = useReadReveal(
-    problemSurface && problemQuery.data === undefined && !problemQuery.isError,
+    problemSurface &&
+      !problemRunLink &&
+      problemQuery.data === undefined &&
+      !problemQuery.isError,
   );
 
   /** The full current list state (filters, page and selection) as URL search. */
   const listSearch = (runId?: string): Record<string, RunSearchValue> => {
     const search = listStateSearch(filters, view);
-    if (problemSurface) {
+    // The panel's exact Task/type/page stays part of every bounded list state
+    // that keeps it reachable: opening a file or a detail tab must not lose
+    // the page the operator will return to.
+    if (problemRunLink) {
+      search["problemRun"] = problemRunId;
+      if (chosenProblemType !== null && !isRecoveryView(view)) {
+        search["problemType"] = chosenProblemType;
+      }
+      if (problemPage.cursor !== null) {
+        search["problemCursor"] = problemPage.cursor;
+        search["problemDir"] = problemPage.direction;
+      }
+    } else if (problemSurface) {
       if (problemFileType !== null && !isRecoveryView(view)) {
         search["problemType"] = problemFileType;
       }
@@ -698,6 +723,20 @@ export function OperationsLanding() {
     void queryClient.removeQueries({ queryKey: [runOverviewQueryKey] });
   };
 
+  /** Close the legacy per-run panel back to the same list and filter state. */
+  const closeProblemRun = () => {
+    const search = listStateSearch(filters, view);
+    if (view === "attention" && chosenProblemType !== null) {
+      search["problemType"] = chosenProblemType;
+    }
+    void navigate({
+      to: "/operations",
+      search,
+      replace: true,
+      resetScroll: false,
+    });
+  };
+
   /** Move one aggregate problem-file page by replacing the list state. */
   const turnProblemPage = (
     nextCursor: string,
@@ -706,6 +745,39 @@ export function OperationsLanding() {
     const search = listSearch();
     search["problemCursor"] = nextCursor;
     search["problemDir"] = nextDirection;
+    void navigate({
+      to: "/operations",
+      search,
+      replace: true,
+      resetScroll: false,
+    });
+  };
+
+  /**
+   * Restart the aggregate problem-file collection at its first page. The
+   * submitted type and creation dates are kept: a cursor the server refuses
+   * or a page whose last row settled only changes the position.
+   */
+  const resetProblemPage = () => {
+    const search = listStateSearch(filters, view);
+    if (view === "attention" && problemFileType !== null) {
+      search["problemType"] = problemFileType;
+    }
+    void navigate({
+      to: "/operations",
+      search,
+      replace: true,
+      resetScroll: false,
+    });
+  };
+
+  /** Restart the legacy per-run list at its first page, keeping Task and type. */
+  const resetProblemRunPage = () => {
+    const search = listStateSearch(filters, view);
+    search["problemRun"] = problemRunId;
+    if (chosenProblemType !== null && !isRecoveryView(view)) {
+      search["problemType"] = chosenProblemType;
+    }
     void navigate({
       to: "/operations",
       search,
@@ -1007,7 +1079,22 @@ export function OperationsLanding() {
                         />
                       </div>
                     </section>
-                    {problemSurface ? (
+                    {problemRunLink ? (
+                      // The per-run link owns this area: while its detail is
+                      // open the panel returns with the same page on close.
+                      legacyProblemPanelOpen ? (
+                        <ProblemFilePanel
+                          key={`${problemRunId}:${problemFileType}`}
+                          runId={problemRunId}
+                          problem={problemFileType}
+                          cursor={problemPage.cursor}
+                          onPage={turnProblemPage}
+                          onOpenEvidence={openProblemItemEvidence}
+                          onClose={closeProblemRun}
+                          onResetPage={resetProblemRunPage}
+                        />
+                      ) : null
+                    ) : problemSurface ? (
                       <ProblemInbox
                         query={problemQuery}
                         problem={problemFileType}
@@ -1018,7 +1105,8 @@ export function OperationsLanding() {
                         onPage={turnProblemPage}
                         filtered={filtered}
                         onClearFilters={resetFilters}
-                        direction={problemPage.direction}
+                        hasCursor={problemPage.cursor !== null}
+                        onResetPage={resetProblemPage}
                       />
                     ) : query.data === undefined ? (
                       showRunListWait ? (
@@ -1117,9 +1205,11 @@ export function OperationsLanding() {
                   }
                   preparationLinkSearch={preparationLinkSearch}
                   fallbackFocusId={
-                    problemSurface
-                      ? "mf-problem-filter-all"
-                      : "mf-operations-heading"
+                    problemRunLink
+                      ? "mf-problem-panel-title"
+                      : problemSurface
+                        ? "mf-problem-filter-all"
+                        : "mf-operations-heading"
                   }
                   // The hosted organizer is the topmost card: the run detail
                   // keeps its content and state but must not keep its own focus
@@ -1311,7 +1401,8 @@ function ProblemInbox({
   onPage,
   filtered,
   onClearFilters,
-  direction,
+  hasCursor,
+  onResetPage,
 }: {
   readonly query: UseQueryResult<RunProblemFilesRead, Error>;
   readonly problem: RunProblemType | null;
@@ -1322,15 +1413,34 @@ function ProblemInbox({
   readonly onPage: (cursor: string, direction: "forward" | "backward") => void;
   readonly filtered: boolean;
   readonly onClearFilters: () => void;
-  readonly direction: "forward" | "backward";
+  readonly hasCursor: boolean;
+  readonly onResetPage: () => void;
 }) {
   const page = query.data?.ok === true ? query.data.model : null;
+  // Every count is a read fact or visibly unknown; a failed read never
+  // presents the five filters as a real zero.
+  const readFailed =
+    query.isError || (query.data !== undefined && !query.data.ok);
+  // A previous page is not a current count: until this exact read succeeds,
+  // every count stays visibly unknown rather than showing a stale number.
+  const countText = (value: number): string =>
+    readFailed || page === null ? "—" : String(value);
   const counts = page?.problemFileCounts ?? {
     recognition: 0,
     metadata: 0,
     classification: 0,
     conflict: 0,
   };
+  const resetPageAction =
+    hasCursor && (readFailed || page?.items.length === 0) ? (
+      <button
+        type="button"
+        className="mf-button mf-button-secondary"
+        onClick={onResetPage}
+      >
+        回到第一页
+      </button>
+    ) : null;
   const groups =
     page === null
       ? []
@@ -1363,8 +1473,11 @@ function ProblemInbox({
       <header className="mf-problem-inbox-head">
         <h3 id="mf-problem-inbox-title">问题文件</h3>
         <span aria-live="polite">
-          {page === null ? "读取中" : `${page.total} 个文件`}
-          {page !== null && page.total > 0 ? ` · ${page.taskTotal} 个任务` : ""}
+          {readFailed
+            ? "计数未知"
+            : page !== null
+              ? `${page.total} 个文件`
+              : "读取中"}
         </span>
       </header>
       <div
@@ -1378,7 +1491,7 @@ function ProblemInbox({
           aria-pressed={problem === null}
           onClick={() => onFilter(null)}
         >
-          全部 <span>{page?.problemFileTotal ?? 0}</span>
+          全部 <span>{countText(page?.problemFileTotal ?? 0)}</span>
         </button>
         {RUN_PROBLEM_TYPES.map((type) => (
           <button
@@ -1387,7 +1500,8 @@ function ProblemInbox({
             aria-pressed={problem === type}
             onClick={() => onFilter(type)}
           >
-            {RUN_PROBLEM_FILTER_LABELS[type]} <span>{counts[type]}</span>
+            {RUN_PROBLEM_FILTER_LABELS[type]}{" "}
+            <span>{countText(counts[type])}</span>
           </button>
         ))}
       </div>
@@ -1400,6 +1514,7 @@ function ProblemInbox({
             <RefreshControl
               onRefresh={() => query.refetch({ cancelRefetch: false })}
             />
+            {resetPageAction}
           </div>
         </StatusBanner>
       ) : query.data === undefined ? (
@@ -1415,6 +1530,7 @@ function ProblemInbox({
             <RefreshControl
               onRefresh={() => query.refetch({ cancelRefetch: false })}
             />
+            {resetPageAction}
             {filtered && (
               <button
                 type="button"
@@ -1449,6 +1565,9 @@ function ProblemInbox({
               </button>
             </div>
           )}
+          {resetPageAction ? (
+            <div className="mf-actions">{resetPageAction}</div>
+          ) : null}
         </StatusBanner>
       ) : (
         <>
@@ -1538,11 +1657,7 @@ function ProblemInbox({
             <button
               type="button"
               className="mf-button mf-button-secondary"
-              disabled={
-                direction === "forward"
-                  ? page.nextCursor === null
-                  : page.previousCursor === null
-              }
+              disabled={page.nextCursor === null}
               onClick={() =>
                 page.nextCursor && onPage(page.nextCursor, "forward")
               }

@@ -390,9 +390,11 @@ test("the Files dialog search submits the current year and completes the correct
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, discoveryId as string);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
+  // The Files entry lands on its shared overview first; the exact source is
+  // one row there and opens the ordinary per-file review in place.
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  await overview.getByRole("button", { name: `查看 ${PROBE_FILE}` }).click();
   // The probe source matches its own rule, so the analysis reaches the real
   // Metadata correction card without a Recognition step.
   await expect(card.getByText("修正作品搜索")).toBeVisible({ timeout: 30_000 });
@@ -403,7 +405,7 @@ test("the Files dialog search submits the current year and completes the correct
   await expect(year).toHaveValue("2025");
 
   await year.fill("2024");
-  await card.getByRole("button", { name: "搜索作品" }).click();
+  await card.getByRole("button", { name: "搜索元数据" }).click();
   const yearCandidate = card.getByRole("radio", {
     name: /DialogYear \(2024\)/,
   });
@@ -415,7 +417,7 @@ test("the Files dialog search submits the current year and completes the correct
   });
 
   await year.fill("");
-  await card.getByRole("button", { name: "搜索作品" }).click();
+  await card.getByRole("button", { name: "搜索元数据" }).click();
   await expect(
     card.getByRole("radio", { name: /DialogYear \(2024\)/ }),
   ).toHaveCount(0);
@@ -447,9 +449,11 @@ test("the Files dialog search submits the current year and completes the correct
   expect(await probeFileState(request, PROBE_FILE)).toEqual(before);
 
   await driveDiscoveryFor(page, request, discoveryId as string);
-  await expect(card.getByText("纳入本次整理").first()).toBeVisible({
-    timeout: 30_000,
-  });
+  // The resolved file returns to the same overview with its exact read-back.
+  await expect(overview).toBeVisible({ timeout: 30_000 });
+  await expect(
+    card.getByText(`「${PROBE_FILE}」已可确认。整理方案已更新，整理尚未提交。`),
+  ).toBeVisible({ timeout: 30_000 });
   expect(
     commands.filter(
       (command) =>
@@ -495,10 +499,14 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
   const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
   expect(discoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, discoveryId as string);
-  await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
-    { timeout: 30_000 },
-  );
-  await expect(card.getByText("选择正确的作品")).toBeVisible({
+  // The Files entry lands on its shared overview first; the exact source is
+  // one row there and opens the ordinary per-file review in place.
+  const seasonOverview = card.getByRole("region", { name: "本次整理概览" });
+  await expect(seasonOverview).toBeVisible({ timeout: 30_000 });
+  await seasonOverview
+    .getByRole("button", { name: `查看 ${SEASON_PROBE_FILE}` })
+    .click();
+  await expect(card.getByText("确认作品")).toBeVisible({
     timeout: 30_000,
   });
   expect(await seasonProbeFileState(request)).toEqual(before);
@@ -514,7 +522,7 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
   ).toBeVisible();
   await expect(card.getByLabel("搜索标题")).toHaveValue(SEASON_PROBE_TITLE);
   await expect(card.getByLabel("年份（可留空）")).toHaveValue("2024");
-  await expect(card.getByLabel("媒体类型")).toHaveValue("tv");
+  await expect(card.getByLabel("作品类型")).toHaveValue("tv");
   expect(await seasonProbeFileState(request)).toEqual(before);
 
   // Close the dialog and continue the same file in the Task Center.
@@ -550,23 +558,30 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
     recovery.getByRole("button", { name: "保存并重新分析" }),
   ).toBeEnabled();
 
-  // Resolve this exact TaskItem for the durable engine passes below.
-  const problemRunId = String(seeded.taskId);
-  expect(problemRunId).toBeTruthy();
+  // Resolve this exact TaskItem for the durable engine passes below. The
+  // opened detail address names the exact run and item, and the same Task's
+  // own file page must return that identity and its source.
+  const opened = new URL(page.url());
+  const problemRunId = opened.searchParams.get("run") ?? "";
+  const openedItemId = opened.searchParams.get("item") ?? "";
+  expect(problemRunId).not.toBe("");
+  expect(openedItemId).not.toBe("");
   const problemItems = await adminGet(
     request,
     `/api/operations/runs/${problemRunId}/problem-items?problem=metadata&limit=20`,
   );
   const probeItem = (
     (problemItems["items"] as Record<string, unknown>[] | undefined) ?? []
-  ).find((item) =>
-    String(item["sourcePath"] ?? item["source_path"] ?? "").endsWith(
-      SEASON_PROBE_FILE,
-    ),
+  ).find(
+    (item) => String(item["itemId"] ?? item["item_id"] ?? "") === openedItemId,
   );
   expect(probeItem).toBeTruthy();
-  const itemId = String(probeItem?.["itemId"] ?? probeItem?.["item_id"] ?? "");
-  expect(itemId).not.toBe("");
+  expect(
+    String(
+      probeItem?.["sourcePath"] ?? probeItem?.["source_path"] ?? "",
+    ).endsWith(SEASON_PROBE_FILE),
+  ).toBe(true);
+  const itemId = openedItemId;
 
   // Only the year is cleared; the saved title and TV type stay. The save and
   // its zero-mutation re-analysis stay on the same Task with no file effect.
@@ -599,12 +614,12 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
   // The unbounded re-search reaches the Provider without the filename year.
   await advanceRecoveryItem(request, itemId);
   await expect(
-    recovery.getByRole("radio", { name: /候选 1：黑袍纠察队 · 2024/ }),
+    recovery.getByRole("radio", { name: /候选 1 黑袍纠察队 \(2024\)/ }),
   ).toBeVisible({
     timeout: 60_000,
   });
   await expect(
-    recovery.getByRole("radio", { name: /候选 2：黑袍纠察队 · 2019/ }),
+    recovery.getByRole("radio", { name: /候选 2 黑袍纠察队 \(2019\)/ }),
   ).toBeVisible();
   expect(await probeCalls(request)).toContainEqual({
     mediaType: "tv",
@@ -615,7 +630,7 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
   // The 2019 identity owns Season 4 E01: choosing it prepares the real
   // summary on the same Task.
   await recovery
-    .getByRole("radio", { name: /候选 2：黑袍纠察队 · 2019/ })
+    .getByRole("radio", { name: /候选 2 黑袍纠察队 \(2019\)/ })
     .check();
   const secondDecision = page.waitForResponse(
     (response) =>

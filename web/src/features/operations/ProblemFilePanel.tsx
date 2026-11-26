@@ -309,6 +309,7 @@ export function ProblemFilePanel({
   onPage,
   onOpenEvidence,
   onClose,
+  onResetPage,
 }: {
   readonly runId: string;
   readonly problem: RunProblemType;
@@ -316,6 +317,8 @@ export function ProblemFilePanel({
   readonly onPage: (cursor: string, direction: "forward" | "backward") => void;
   readonly onOpenEvidence: (taskId: string, itemId: string) => void;
   readonly onClose: () => void;
+  /** Return to this Task/type's first file page after a refused stale cursor. */
+  readonly onResetPage: () => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const token = useAuthToken();
@@ -354,7 +357,7 @@ export function ProblemFilePanel({
   return (
     <section className="mf-problem-panel" aria-label="问题文件处理">
       <header className="mf-dashboard-head">
-        <h3 tabIndex={-1} ref={headingRef}>
+        <h3 tabIndex={-1} ref={headingRef} id="mf-problem-panel-title">
           {RUN_PROBLEM_LABELS[problem]} — 文件清单
         </h3>
         <button
@@ -386,6 +389,15 @@ export function ProblemFilePanel({
                   <RefreshControl
                     onRefresh={() => query.refetch({ cancelRefetch: false })}
                   />
+                  {cursor !== null ? (
+                    <button
+                      type="button"
+                      className="mf-button mf-button-secondary"
+                      onClick={onResetPage}
+                    >
+                      回到第一页
+                    </button>
+                  ) : null}
                 </div>
               </StatusBanner>
             );
@@ -408,6 +420,15 @@ export function ProblemFilePanel({
                   <RefreshControl
                     onRefresh={() => query.refetch({ cancelRefetch: false })}
                   />
+                  {cursor !== null ? (
+                    <button
+                      type="button"
+                      className="mf-button mf-button-secondary"
+                      onClick={onResetPage}
+                    >
+                      回到第一页
+                    </button>
+                  ) : null}
                 </div>
               </StatusBanner>
             );
