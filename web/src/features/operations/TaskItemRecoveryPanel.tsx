@@ -1596,8 +1596,9 @@ export function TaskItemRecoveryPanel({
   // recovery step of this exact item.  The factual stage, effect certainty,
   // retry safety, reason, results, logs and export stay readable either way.
   const owesRecoveryAction =
-    model?.recoveryKind === "business_problem" ||
-    model?.recoveryKind === "recovery_lineage";
+    (!hostedDiagnostics || recoveryExpected) &&
+    (model?.recoveryKind === "business_problem" ||
+      model?.recoveryKind === "recovery_lineage");
   const canPreparePreview =
     owesRecoveryAction &&
     activePreparation === null &&
@@ -1653,16 +1654,27 @@ export function TaskItemRecoveryPanel({
     currentAnalysisObservation?.phase === "failed";
   const analysisUnknownBySession =
     currentAnalysisObservation?.phase === "unknown";
+  // A prepared reference can arrive ahead of the exact preview. Keep the
+  // saved-decision view through that read instead of inserting a summary
+  // loading screen between analysis and a reviewable plan.
+  const readingAnalyzedSummary =
+    hostedDiagnostics &&
+    decisionReceipt !== null &&
+    activePreparation?.status === "prepared" &&
+    confirmationPreviewQuery.isPending;
   const savedDecisionAwaitingAnalysis = decision === null && owesRecoveryAction;
   const savedDecisionAnalysisVisible =
-    savedDecisionAwaitingAnalysis && !offersExplicitSummaryStep;
+    savedDecisionAwaitingAnalysis &&
+    (!offersExplicitSummaryStep || readingAnalyzedSummary);
   const analysisUnknown =
     savedDecisionAnalysisVisible &&
     (analysisUnknownBySession || (repeatLocked && decision === null));
   const analysisWaiting =
     savedDecisionAnalysisVisible &&
     !analysisUnknown &&
-    (analysisAcceptedBySession || analysisDurableActive);
+    (analysisAcceptedBySession ||
+      analysisDurableActive ||
+      readingAnalyzedSummary);
   const analysisActionVisible =
     savedDecisionAnalysisVisible &&
     !analysisWaiting &&
@@ -1767,6 +1779,7 @@ export function TaskItemRecoveryPanel({
   const savedDecisionPanel = (() => {
     if (!savedDecisionAnalysisVisible) return null;
     const savedChoice =
+      readingAnalyzedSummary ||
       decisionReceipt?.checkpointVersion === checkpoint?.checkpointVersion
         ? decisionReceipt?.label
         : null;
@@ -1801,7 +1814,7 @@ export function TaskItemRecoveryPanel({
           phase={
             currentAnalysisObservation?.phase === "requesting" &&
             !analysisDurableActive
-              ? filesDecision
+              ? filesDecision || hostedDiagnostics
                 ? "starting"
                 : "requesting"
               : "waiting"
@@ -2030,7 +2043,8 @@ export function TaskItemRecoveryPanel({
   // no 审核与恢复 area at all. The recovery read still happened and the
   // session state stays intact for the next render.
   const hasLiveRecoveryAction =
-    owesRecoveryAction || activePreparation !== null;
+    owesRecoveryAction ||
+    (activePreparation !== null && (!hostedDiagnostics || recoveryExpected));
   const submittingConfirmation = busy && pendingAction === "confirm";
   const matchingConfirmation = submittingConfirmation
     ? submittedConfirmation
@@ -2049,7 +2063,9 @@ export function TaskItemRecoveryPanel({
     ? recoveryExpected
       ? matchingConfirmation.previewId
       : null
-    : owesRecoveryAction && activePreparation?.status === "prepared"
+    : owesRecoveryAction &&
+        activePreparation?.status === "prepared" &&
+        !readingAnalyzedSummary
       ? activePreparation.previewId
       : null;
   // The regular handoff has no separate acknowledgement screen. Keep the
@@ -2336,7 +2352,7 @@ export function TaskItemRecoveryPanel({
         />
       )}
       {planPreviewId === null &&
-        activePreparation === null &&
+        (activePreparation === null || readingAnalyzedSummary) &&
         savedDecisionPanel}
       {canPreparePreview && planPreviewId === null && checkpoint !== null && (
         <div className="mf-count-section">

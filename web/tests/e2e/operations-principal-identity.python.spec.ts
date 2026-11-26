@@ -217,9 +217,11 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
     recognition_type: "C",
   });
   await expect(
-    detail.getByRole("region", { name: "条目证据" }).getByText("文件已整理", {
-      exact: true,
-    }),
+    detail
+      .getByRole("region", { name: "条目证据" })
+      .getByText("移动已验证，目标文件可用。原位置已移除。", {
+        exact: true,
+      }),
   ).toBeVisible();
   expect(
     await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),

@@ -2868,7 +2868,9 @@ describe("selected-run detail tabs", () => {
     const evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：a.mkv");
     // The file's own result is readable first…
-    expect(within(evidence).getByText("文件已整理")).toBeVisible();
+    expect(
+      within(evidence).getByText("移动已验证，目标文件可用。原位置已移除。"),
+    ).toBeVisible();
     // …and the main file and subtitle keep separate outcomes.
     expect(
       within(evidence).getByText("主文件已完成；附件有警告"),
@@ -3102,7 +3104,9 @@ describe("selected-run detail tabs", () => {
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     const evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：a.mkv");
-    expect(within(evidence).getByText("文件已整理")).toBeVisible();
+    expect(
+      within(evidence).getByText("移动已验证，目标文件可用。原位置已移除。"),
+    ).toBeVisible();
     // The real API returns an uppercase SUCCESS status; it reads as the same
     // business fact as the lowercase item status, inside the file's one
     // merged execution history.
@@ -3400,11 +3404,7 @@ describe("selected-run detail tabs", () => {
       within(evidence).queryByRole("region", { name: "来源与目标" }),
     ).toBeNull();
     expect(within(evidence).queryByText("没有已记录的目标文件")).toBeNull();
-    // The unchanged technical diagnostics remain after the decision.
-    expect(
-      decision.compareDocumentPosition(within(evidence).getByText(/技术诊断/)) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(within(evidence).getByText("技术诊断")).not.toBeVisible();
     // The same backend-permitted decision remains selectable, and no write has
     // happened merely by opening this evidence.
     expect(

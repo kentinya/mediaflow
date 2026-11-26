@@ -1673,14 +1673,16 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   await expect(copiedRow.getByText(/已结束的条目不再提供重放/)).toHaveCount(0);
   await copiedRow.getByRole("button", { name: "查看证据" }).click();
   const copiedEvidence = detail.getByRole("region", { name: "条目证据" });
-  await expect(copiedEvidence.getByText("文件已整理")).toBeVisible();
+  await expect(
+    copiedEvidence.getByText("复制已验证，目标文件可用。原文件仍保留。"),
+  ).toBeVisible();
   await expect(
     copiedEvidence
       .getByText(`media-target:${originalTarget}`, { exact: true })
       .and(copiedEvidence.locator(".mf-exact-identity")),
   ).toBeVisible();
   await expect(
-    copiedEvidence.getByText("复制 · 已验证完成", { exact: true }),
+    copiedEvidence.getByText("复制 · 原文件保留", { exact: true }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "关闭详情" }).click();

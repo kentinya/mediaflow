@@ -2130,6 +2130,46 @@ function RunEvidenceSection({
             : (latestResult?.operation ??
               evidence.planEvidence.plan?.operation);
           const certainty = checkpoint.effectCertainty;
+          const operationName =
+            operation == null ? null : storageStepName(operation);
+          const removesSource = operation?.toUpperCase() === "MOVE";
+          const preservesSource = [
+            "COPY",
+            "HARD_LINK",
+            "SOFT_LINK",
+            "LINK",
+          ].includes(operation?.toUpperCase() ?? "");
+          const admittedFile =
+            evidence.planEvidence.executionId !== null &&
+            ((item.status === "pending" && item.stage === "admitted") ||
+              (item.status === "processing" && item.stage === "organizing"));
+          const verifiedFile =
+            item.status === "success" &&
+            certainty === "verified_complete" &&
+            latestResult?.effectCertainty === "verified_complete" &&
+            latestResult.destinationPath !== null &&
+            operationName !== null &&
+            operationName !== undefined &&
+            (removesSource || preservesSource);
+          const fileResult = admittedFile
+            ? item.status === "processing"
+              ? "已进入执行阶段，正在等待实际文件结果。"
+              : "执行请求已受理，正在等待后台安排。"
+            : verifiedFile
+              ? `${operationName}已验证，目标文件可用。${removesSource ? "原位置已移除。" : "原文件仍保留。"}`
+              : item.status === "skipped" && certainty === "none"
+                ? "已记录跳过决定，来源和原有目标均保留。"
+                : item.status === "ignored" && certainty === "none"
+                  ? "已按允许的决定忽略，来源文件未变更。"
+                  : null;
+          const sourceEffect =
+            admittedFile || verifiedFile
+              ? removesSource
+                ? "成功后原位置移除"
+                : preservesSource
+                  ? "原文件保留"
+                  : null
+              : null;
           const missingResult =
             latestResult === null &&
             RESULT_OWING_ITEM_STATUSES.has(item.status);
@@ -2158,9 +2198,18 @@ function RunEvidenceSection({
           // carry actual facts.  A read-only item keeps the established
           // result -> source/target -> execution -> evidence order.
           const recoveryActionable =
+            !admittedFile &&
             !READ_ONLY_OUTCOME_ITEM_STATUSES.has(item.status) &&
             (isRecoveryActionKind(evidence.recoveryKind) ||
               checkpoint.blockerKind !== null);
+          const showTechnicalDiagnostics =
+            !recoveryActionable ||
+            latestResult !== null ||
+            failure !== null ||
+            checkpoint.uncertainEffects.length > 0 ||
+            certainty === "attempted_unverified" ||
+            (certainty === "unknown" &&
+              !isRecoveryActionKind(evidence.recoveryKind));
           const processingBasis =
             processingBasisRows.length > 0 ? (
               <details className="mf-run-evidence-fold">
@@ -2182,7 +2231,7 @@ function RunEvidenceSection({
                         <span
                           className={`mf-run-outcome mf-run-outcome-${outcome.tone}`}
                         >
-                          {outcome.text}
+                          {fileResult ?? outcome.text}
                         </span>
                         {failureReason !== null && <p>{failureReason}。</p>}
                       </dd>
@@ -2207,8 +2256,10 @@ function RunEvidenceSection({
                       <div>
                         <dt>操作与影响</dt>
                         <dd>
-                          {storageStepName(operation) ?? operation} ·{" "}
-                          {RUN_EFFECT_CERTAINTY_LABELS[certainty] ?? certainty}
+                          {operationName ?? operation} ·{" "}
+                          {sourceEffect ??
+                            RUN_EFFECT_CERTAINTY_LABELS[certainty] ??
+                            certainty}
                         </dd>
                       </div>
                     )}
@@ -2272,7 +2323,10 @@ function RunEvidenceSection({
                 decisionDraft={decisionDraft}
                 onDecisionDraftChange={onDecisionDraftChange}
               />
-              <details className="mf-run-evidence-fold">
+              <details
+                className="mf-run-evidence-fold"
+                hidden={!showTechnicalDiagnostics}
+              >
                 <summary>技术诊断</summary>
                 {latestResult !== null && (
                   <section

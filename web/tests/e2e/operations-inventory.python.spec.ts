@@ -342,7 +342,7 @@ async function confirmNativeRecovery(
       await expect(summary).toHaveCount(0);
       await expect(
         detail.getByRole("region", { name: "条目证据" }),
-      ).toContainText("当前结果");
+      ).toContainText("执行请求已受理，正在等待后台安排。");
       await expect(
         detail.getByText("恢复操作状态", { exact: true }),
       ).toHaveCount(0);
@@ -603,7 +603,9 @@ async function finishNativeRecovery(
   await expect(
     detail.getByRole("heading", { name: /^流程已完成/ }),
   ).toBeVisible();
-  await expect(evidence.getByText("文件已整理")).toBeVisible();
+  await expect(
+    evidence.getByText("移动已验证，目标文件可用。原位置已移除。"),
+  ).toBeVisible();
   await expect(
     detail.locator(".mf-run-item-row-open .mf-run-item-status"),
   ).toHaveText("已验证成功");
@@ -1185,9 +1187,13 @@ test("the selected run detail reads progress, filtered items, evidence and recor
     }),
   ).toBeVisible();
   const readableResult = evidence.locator(".mf-run-evidence-facts");
-  await expect(readableResult.getByText("文件已整理")).toBeVisible();
+  await expect(
+    readableResult.getByText(/已验证，目标文件可用。/),
+  ).toBeVisible();
   // The compact facts state the verified operation separately from the outcome.
-  await expect(evidence.getByText(/ · 已验证完成/)).toBeVisible();
+  await expect(
+    readableResult.getByText(/ · (成功后原位置移除|原文件保留)/),
+  ).toBeVisible();
   await expect(readableResult.getByText("目标", { exact: true })).toBeVisible();
   // This repository-written historical fixture has no reviewed manual plan;
   // its captured analysis remains in diagnostics without an empty basis block.
@@ -1600,7 +1606,9 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
 
   const itemEvidence = detail.getByRole("region", { name: "条目证据" });
   await expect(
-    itemEvidence.getByText("文件已整理", { exact: true }),
+    itemEvidence.getByText("移动已验证，目标文件可用。原位置已移除。", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(itemEvidence.getByText(/执行记录 1（.*）：成功/)).toBeHidden();
   // The successful Worker result states recognition, match, naming and the
@@ -2699,7 +2707,9 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
 
   const itemEvidence = detail.getByRole("region", { name: "条目证据" });
   await expect(
-    itemEvidence.getByText("文件已整理", { exact: true }),
+    itemEvidence.getByText("移动已验证，目标文件可用。原位置已移除。", {
+      exact: true,
+    }),
   ).toBeVisible();
   await itemEvidence.getByText("技术诊断").click();
   // The reviewed-plan section keeps its honest unavailability…

@@ -5984,17 +5984,21 @@ export function ManualOrganizeDialog({
   const analysisReadbackFile =
     filesAnalysisArrivalView?.decision ?? filesSummaryReadback;
   const reviewFile = analysisReadbackFile?.itemId ?? currentItemId ?? "";
-  const stageTransitionKey = firstPlanPreparationView
-    ? `preparation:${preparationStep ?? preparationStatusView?.title ?? "loading"}`
-    : organizeFlowEnded && !filesSettledOverview
-      ? "history"
-      : filesRecordDetail !== null
-        ? `record:${filesRecordDetail.taskItemId}`
-        : filesHost && filesOverviewVisible
-          ? "overview"
-          : step === "confirm"
-            ? "confirm"
-            : `review:${reviewFile}${filesReanalysisView || analysisReadbackFile !== null ? ":analysis" : ""}`;
+  const filesHandoffPending =
+    filesHost && (executeMutation.isPending || openingTaskDetail);
+  const stageTransitionKey = filesHandoffPending
+    ? "handoff"
+    : firstPlanPreparationView
+      ? `preparation:${preparationStep ?? preparationStatusView?.title ?? "loading"}`
+      : organizeFlowEnded && !filesSettledOverview
+        ? "history"
+        : filesRecordDetail !== null
+          ? `record:${filesRecordDetail.taskItemId}`
+          : filesHost && filesOverviewVisible
+            ? "overview"
+            : step === "confirm"
+              ? "confirm"
+              : `review:${reviewFile}${filesReanalysisView || analysisReadbackFile !== null ? ":analysis" : ""}`;
   const stageRef = useRef<HTMLDivElement | null>(null);
   const renderedStageKey = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -6012,12 +6016,16 @@ export function ManualOrganizeDialog({
     stage.removeAttribute("data-organize-arrival");
     // The waiting screen replaces the form immediately. All later arrivals
     // move only the current stage, without fading it over another screen.
-    if (stageTransitionKey.endsWith(":analysis")) return;
+    if (
+      stageTransitionKey === "handoff" ||
+      stageTransitionKey.endsWith(":analysis")
+    )
+      return;
     stage.getBoundingClientRect();
     stage.setAttribute("data-organize-arrival", "");
   }, [stageTransitionKey]);
 
-  const body =
+  const renderBody = () =>
     session.phase === "submitting" || preparationUnavailable ? (
       renderPreparationContent()
     ) : preparation === undefined ? (
@@ -6408,11 +6416,9 @@ export function ManualOrganizeDialog({
             executeMutation.mutate(submission);
           }}
         >
-          {openingTaskDetail
-            ? "正在打开任务详情…"
-            : executeMutation.isPending
-              ? "正在提交..."
-              : `确认整理 ${activeSelection.length} 项`}
+          {executeMutation.isPending
+            ? "正在提交..."
+            : `确认整理 ${activeSelection.length} 项`}
         </Button>
       </div>
     </>
@@ -6448,7 +6454,7 @@ export function ManualOrganizeDialog({
       title={pageTitle}
       titleId={titleId}
       description={
-        firstPlanPreparationView
+        firstPlanPreparationView || filesHandoffPending
           ? null
           : "每次复核一个主文件及其关联附件;分析与翻页零媒体变更,只有最后的确认才会提交执行并在任务中心查看结果。"
       }
@@ -6458,15 +6464,15 @@ export function ManualOrganizeDialog({
       size="detail"
       bodyClassName="mf-modal-body-scroll mf-organize-dialog-body"
       cardClassName="mf-organize-dialog"
-      footer={footer}
+      footer={filesHandoffPending ? undefined : footer}
       footerClassName={
         filesDecisionFooter
           ? "mf-organize-files-decision-footer mf-organize-reanalysis-footer"
           : undefined
       }
     >
-      {taskReadNotice}
-      {discardPromptOpen ? (
+      {!filesHandoffPending && taskReadNotice}
+      {!filesHandoffPending && discardPromptOpen ? (
         <div
           className="mf-organize-discard"
           role="alertdialog"
@@ -6504,7 +6510,14 @@ export function ManualOrganizeDialog({
         aria-label="整理内容"
         tabIndex={-1}
       >
-        {body}
+        {filesHandoffPending ? (
+          <p className="mf-organize-handoff mf-dashboard-meta" role="status">
+            <span className="mf-organize-busy-dot" aria-hidden="true" />
+            {openingTaskDetail ? "正在打开任务详情…" : "正在提交整理…"}
+          </p>
+        ) : (
+          renderBody()
+        )}
       </div>
     </ModalCardShell>
   );

@@ -816,7 +816,9 @@ test("one item's evidence opens through exact links and closes again", async ({
     }),
   ).toBeVisible();
   const result = evidence.locator(".mf-run-evidence-facts");
-  await expect(result.getByText("文件已整理")).toBeVisible();
+  await expect(
+    result.getByText("移动已验证，目标文件可用。原位置已移除。"),
+  ).toBeVisible();
   // The one merged execution history keeps the main file and its subtitle as
   // separate outcomes beside the current conclusion.
   const history = evidence.getByRole("region", { name: "附件执行结果" });
@@ -830,7 +832,7 @@ test("one item's evidence opens through exact links and closes again", async ({
   await expect(
     paths.getByText("Media/Movies/The Matrix (1999)/The Matrix (1999).mkv"),
   ).toBeVisible();
-  await expect(evidence.getByText(/移动 · 已验证完成/)).toBeVisible();
+  await expect(evidence.getByText("移动 · 成功后原位置移除")).toBeVisible();
   // The technical plan/log/audit records stay reachable inside diagnostics.
   await evidence.getByText(/技术诊断/).click();
   await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
@@ -902,7 +904,9 @@ test("PATCH-20261107-1 keeps the mixed completed run and its independent file ou
       name: "文件证据：The Matrix (1999).mkv",
     }),
   ).toBeVisible();
-  await expect(evidence.getByText("文件已整理")).toBeVisible();
+  await expect(
+    evidence.getByText("移动已验证，目标文件可用。原位置已移除。"),
+  ).toBeVisible();
   await expect(evidence.getByText("主文件已完成；附件有警告")).toBeVisible();
   await expect(evidence.getByText(/subtitle（zh）/)).toBeVisible();
 
@@ -952,7 +956,9 @@ test("PATCH-20261107-1 states an unconfirmed target result instead of a confirme
   await expect(
     evidence.getByText("目标文件结果尚未确认", { exact: true }),
   ).toBeVisible();
-  await expect(evidence.getByText("文件已整理")).toHaveCount(0);
+  await expect(
+    evidence.getByText("移动已验证，目标文件可用。原位置已移除。"),
+  ).toHaveCount(0);
 });
 
 test("the native action downloads the eligible linked Task's result package", async ({

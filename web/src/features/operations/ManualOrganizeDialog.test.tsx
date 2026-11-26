@@ -2068,8 +2068,9 @@ describe("ManualOrganizeDialog", () => {
     backend.holdExecute();
     fireEvent.click(confirm);
     fireEvent.click(confirm);
-    await screen.findByRole("button", { name: "正在提交..." });
-    expect(screen.getByRole("button", { name: "正在提交..." })).toBeDisabled();
+    expect(await screen.findByText("正在提交整理…")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "整批复核" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
     await waitFor(() => expect(backend.calls.executePosts).toHaveLength(1));
     expect(backend.calls.executePosts[0]?.["itemIds"]).toHaveLength(FILE_COUNT);
     expect(backend.calls.executePosts[0]?.["confirmation"]).toBe(true);
@@ -4781,7 +4782,8 @@ describe("ManualOrganizeDialog", () => {
     await waitFor(() =>
       expect(backend.calls.admissionReads).toBeGreaterThanOrEqual(1),
     );
-    await screen.findByText(/暂未确认/);
+    expect(await screen.findByText("正在提交整理…")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "整批复核" })).toBeNull();
     expect(screen.queryByRole("button", { name: /核对提交结果/ })).toBeNull();
     expect(executeAttempts).toBe(1);
 
