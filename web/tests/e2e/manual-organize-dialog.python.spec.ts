@@ -47,6 +47,9 @@ const READABILITY_OUTPUT = "test-results/manual-organize-readability";
 const DECISION_FOOTER_OUTPUT = "test-results/manual-organize-decision-footers";
 const PRIMARY_LIMIT_MESSAGE =
   "本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。";
+const PRIMARY_LIMIT_SETTLED =
+  "找到第 101 个主文件后已停止检查，整批未进入执行。任务已结束，可以缩小原选择后重新发起。";
+const PRIMARY_LIMIT_PROGRESS = "上限 100 个 · 找到至少 101 个";
 const PRIMARY_LIMIT_WAITING =
   "检查已在主文件数量上限处停止；正在结束关联任务，结束后请缩小选择范围重新发起。";
 
@@ -4400,15 +4403,30 @@ test("Task59.1 a 101-file directory settles as a failed preparation and the same
   });
 
   // The same mounted card continues reading the same preparation until the
-  // linked Task's settlement lands, then presents the factual failed end.
-  await expect(card.getByText("本次整理工作已结束")).toBeVisible({
-    timeout: 30_000,
-  });
+  // linked Task's settlement lands.  The preparation first screen remains the
+  // authoritative terminal body: no generic ended-history replacement, and
+  // no fabricated summary claim.
   await expect(
-    card.getByText(PRIMARY_LIMIT_MESSAGE, { exact: true }),
+    card.getByRole("heading", { name: "超出主文件上限" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    card.getByText(PRIMARY_LIMIT_SETTLED, { exact: true }),
   ).toBeVisible();
+  await expect(card.getByText("来源资源库")).toBeVisible();
+  await expect(card.getByText("1 个文件夹", { exact: true })).toBeVisible();
+  await expect(
+    card.getByText(PRIMARY_LIMIT_PROGRESS, { exact: true }),
+  ).toBeVisible();
+  const limitScope = card.locator("details.mf-organize-scope-details");
+  await limitScope.getByText(/查看确切路径（1 项）/).click();
+  await expect(
+    limitScope.getByText(PRIMARY_LIMIT_DIRECTORY, { exact: true }),
+  ).toBeVisible();
+  await expect(card.locator(".mf-organize-preparation-spinner")).toHaveCount(0);
+  await expect(card.getByText("本次整理工作已结束")).toHaveCount(0);
   await expect(card.getByText(/原计划摘要保留为只读历史/)).toHaveCount(0);
   await expect(card.getByText(/本次整理从未生成过计划摘要/)).toHaveCount(0);
+  await expect(card.getByText("此阶段无媒体变更")).toBeVisible();
   await expect(card.getByRole("button", { name: /确认整理/ })).toHaveCount(0);
   await expect(
     card.getByRole("button", { name: "保存并重新分析" }),
@@ -4420,6 +4438,14 @@ test("Task59.1 a 101-file directory settles as a failed preparation and the same
         /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
     ),
   ).toHaveLength(0);
+
+  // The Files return action is the same close/focus lifecycle: it removes only
+  // the exact preparation marker and lands back on the preserved file page.
+  await card.getByRole("button", { name: "返回文件页" }).click();
+  await expect(card).toHaveCount(0);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
+  expect(new URL(page.url()).searchParams.get("organizeDiscovery")).toBeNull();
+  await expect(page.getByRole("table")).toBeVisible();
 
   // Read the retained preparation and Task identity directly from the real
   // API: the truncated manifest stays readable, with no plan or execution.
@@ -4538,6 +4564,161 @@ test("Task59.1 a 101-file directory settles as a failed preparation and the same
     sourceExists: true,
     destinationTargets: [],
   });
+});
+
+test("Task59.4 a preparation cancelled from another tab keeps the shared Files first screen", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const authHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await connect(page);
+  const commands = recordCommands(page);
+  await openDialogDirectory(page, "Dialog01.2011.mkv");
+  await selectFiles(page, ["Dialog01.2011.mkv", "Dialog02.2011.mkv"]);
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  await expect(card).toBeVisible();
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const discoveryId = new URL(page.url()).searchParams.get("organizeDiscovery");
+  expect(discoveryId).toBeTruthy();
+  await expect(card.locator(".mf-organize-preparation-state")).toBeVisible();
+  await expect(card.getByText("已受理，等待后台处理")).toBeVisible();
+
+  // Read the same exact preparation/Task identity the open card follows.
+  const before = await request.get(
+    `${BASE}/api/operations/organize/discoveries/${encodeURIComponent(
+      discoveryId as string,
+    )}`,
+    { headers: authHeaders },
+  );
+  expect(before.ok()).toBe(true);
+  const beforePreparation = (await before.json()) as {
+    readonly status: string;
+    readonly previewId: string | null;
+    readonly organizeTaskId: string;
+  };
+  expect(beforePreparation.status).toBe("queued");
+  expect(beforePreparation.previewId).toBeNull();
+  const taskId = beforePreparation.organizeTaskId;
+  expect(taskId).toBeTruthy();
+
+  // A second tab cancels that still-queued Task through its real Task Center
+  // control, while the first tab keeps the same admitted preparation mounted.
+  const other = await page.context().newPage();
+  await other.goto(`${BASE}/operations?run=${encodeURIComponent(taskId)}`);
+  await submitSignIn(other, accountForToken(ADMIN_TOKEN));
+  const detail = other.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible({ timeout: 30_000 });
+  const cancel = detail.getByRole("button", { name: "取消运行" });
+  await expect(cancel).toBeVisible();
+  await cancel.click();
+  await expect(other.getByText(/取消请求已受理/)).toBeVisible({
+    timeout: 30_000,
+  });
+
+  // The first tab reads the same durable cancellation into the shared
+  // preparation first screen, not the generic ended-history body.
+  await expect(
+    card.getByRole("heading", { name: "整理准备已取消" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    card.getByText("后台已停止检查。本次未生成可确认方案，原文件仍在。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(card.getByText("来源资源库")).toBeVisible();
+  await expect(card.getByText("2 个文件", { exact: true })).toBeVisible();
+  await expect(card.getByText("在准备阶段停止", { exact: true })).toBeVisible();
+  const scope = card.locator("details.mf-organize-scope-details");
+  await expect(scope.getByText(/查看确切路径（2 项）/)).toBeVisible();
+  await scope.getByText(/查看确切路径（2 项）/).click();
+  await expect(scope.getByText("Dialog01.2011.mkv")).toBeVisible();
+  await expect(scope.getByText("Dialog02.2011.mkv")).toBeVisible();
+  await expect(card.locator(".mf-organize-preparation-spinner")).toHaveCount(0);
+  await expect(card.getByText("本次整理工作已结束")).toHaveCount(0);
+  await expect(card.getByText(/原计划摘要保留为只读历史/)).toHaveCount(0);
+  await expect(card.getByText(/从未生成过计划摘要/)).toHaveCount(0);
+  await expect(card.getByText("此阶段无媒体变更")).toBeVisible();
+  await expect(card.getByRole("button", { name: /确认整理/ })).toHaveCount(0);
+  await expect(
+    card.getByRole("button", { name: "保存并重新分析" }),
+  ).toHaveCount(0);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+  expect(
+    commands.filter(
+      (command) =>
+        command.method === "POST" &&
+        /\/organize\/discoveries\/[^/]+\/analyze$/.test(command.path),
+    ),
+  ).toHaveLength(0);
+
+  const after = await request.get(
+    `${BASE}/api/operations/organize/discoveries/${encodeURIComponent(
+      discoveryId as string,
+    )}`,
+    { headers: authHeaders },
+  );
+  expect(after.ok()).toBe(true);
+  const cancelledPreparation = (await after.json()) as {
+    readonly status: string;
+    readonly previewId: string | null;
+    readonly organizeFlow: {
+      readonly status: string;
+      readonly continuable: boolean;
+    };
+  };
+  expect(cancelledPreparation.status).toBe("cancelled");
+  expect(cancelledPreparation.previewId).toBeNull();
+  expect(cancelledPreparation.organizeFlow).toMatchObject({
+    status: "cancelled",
+    continuable: false,
+  });
+  const taskRead = await request.get(`${BASE}/api/tasks/${taskId}`, {
+    headers: authHeaders,
+  });
+  expect(taskRead.ok()).toBe(true);
+  const task = (await taskRead.json()) as {
+    readonly status?: string;
+    readonly taskStatus?: string;
+  };
+  expect(task.status ?? task.taskStatus).toBe("cancelled");
+
+  await page.screenshot({
+    path: "test-results/task59.4-cancelled-preparation-1440.png",
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(card.getByRole("button", { name: "返回文件页" })).toBeVisible();
+  const footerBox = await card.locator(".mf-modal-footer").boundingBox();
+  expect(footerBox).not.toBeNull();
+  expect((footerBox?.x ?? 0) + (footerBox?.width ?? 0)).toBeLessThanOrEqual(
+    391,
+  );
+  await page.screenshot({
+    path: "test-results/task59.4-cancelled-preparation-390.png",
+    fullPage: false,
+  });
+
+  // The Files return keeps the existing close/focus contract.
+  await card.getByRole("button", { name: "返回文件页" }).click();
+  await expect(card).toHaveCount(0);
+  await expect(page).toHaveURL(/\/resourcelib\/files/);
+  expect(new URL(page.url()).searchParams.get("organizeDiscovery")).toBeNull();
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.activeElement?.textContent?.trim() ?? ""),
+    )
+    .toBe("批量整理");
+  await other.close();
 });
 
 test("Task59.3 a running detail re-reads the visited success filter and second page after the Task settles", async ({

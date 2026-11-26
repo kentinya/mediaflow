@@ -901,6 +901,25 @@ export function ManualOrganizeDialog({
   );
   const preview: OrganizePreviewModel | undefined =
     previewQuery.data?.ok === true ? previewQuery.data.model : undefined;
+  /**
+   * The shared preparation first screen owns a settlement only while this
+   * mounted card saw the same work as live and had not handed over to a plan
+   * review. A bounded-address reopen of an already ended flow, or a terminal
+   * state reached after the operator entered the review, keeps the existing
+   * read-only history entry instead.
+   */
+  const [preparationObservedLive, setPreparationObservedLive] = useState(false);
+  if (
+    preparation !== undefined &&
+    !organizeFlowEnded &&
+    !preparationObservedLive
+  ) {
+    setPreparationObservedLive(true);
+  }
+  const [preparationPlanObserved, setPreparationPlanObserved] = useState(false);
+  if (preview !== undefined && !preparationPlanObserved) {
+    setPreparationPlanObserved(true);
+  }
   // Files rows present the reviewed library identity only when those reads
   // confirm the plan's Storage/root. Task Center continuation keeps its Base
   // presentation and never starts these extra reads.
@@ -3145,11 +3164,6 @@ export function ManualOrganizeDialog({
 
   const pageTitle = "整理所选文件";
   const titleId = "mf-organize-dialog-title";
-  const firstPlanPreparationView =
-    session.phase === "submitting" ||
-    preparationUnavailable ||
-    preparation === undefined ||
-    (!organizeFlowEnded && preview === undefined);
 
   /** The preparation's own analysis request, reported where it was made. */
   const renderPreparationNotice = () =>
@@ -3264,7 +3278,7 @@ export function ManualOrganizeDialog({
     if (preparation === undefined) return null;
     if (primaryLimitStopped) return "超出主文件上限";
     if (preparation.status === "failed") return "准备失败";
-    if (preparation.status === "cancelled") return "准备已取消";
+    if (preparation.status === "cancelled") return "整理准备已取消";
     if (preparationSummaryReadFailed) return "计划摘要暂时无法读取";
     if (preparationNoPrimarySources) {
       return preparation.progress.incomplete
@@ -3280,6 +3294,17 @@ export function ManualOrganizeDialog({
     }
     return null;
   })();
+  const preparationTerminalFirstScreen =
+    organizeFlowEnded &&
+    preparationObservedLive &&
+    !preparationPlanObserved &&
+    preparationStoppedTitle !== null;
+  const firstPlanPreparationView =
+    session.phase === "submitting" ||
+    preparationUnavailable ||
+    preparation === undefined ||
+    preparationTerminalFirstScreen ||
+    (!organizeFlowEnded && preview === undefined);
   /**
    * Only a step that actually needs the resident Worker reports it missing.
    * A preparation that already reached its own durable result (zero primary
@@ -3338,7 +3363,9 @@ export function ManualOrganizeDialog({
     }
     if (preparationStoppedTitle !== null) {
       const copy = primaryLimitStopped
-        ? "找到第 101 个主文件后已停止检查，整批未进入执行；请缩小选择范围后重新发起。"
+        ? primaryLimitAwaitingSettlement
+          ? "检查已在主文件数量上限处停止；正在结束关联任务，结束后请缩小选择范围重新发起。"
+          : "找到第 101 个主文件后已停止检查，整批未进入执行。任务已结束，可以缩小原选择后重新发起。"
         : preparationSummaryReadFailed
           ? "计划已经生成，已保存的范围与选择仍在；重新读取原计划即可继续核对。"
           : preparationManualAnalysisAvailable
@@ -3346,7 +3373,9 @@ export function ManualOrganizeDialog({
             : preparationNoPrimarySources
               ? "本次没有生成整理方案，也没有整理任何文件；请调整所选范围后重新发起。"
               : preparation?.status === "cancelled"
-                ? "后台已停止检查。本次未生成可确认方案，原文件仍在。"
+                ? summaryPreviewId === ""
+                  ? "后台已停止检查。本次未生成可确认方案，原文件仍在。"
+                  : "后台已停止检查。本次不再提供确认；已生成的原计划摘要保留为只读历史，原文件仍在。"
                 : preparation?.progress.incomplete
                   ? "遍历未完整，本次未产生可确认方案；请缩小选择范围后重新发起。"
                   : "后台检查未完成，没有产生可确认方案，也未修改文件；请重新读取或从文件页重新发起。";
@@ -3454,12 +3483,14 @@ export function ManualOrganizeDialog({
     }
     if (preparationStoppedTitle !== null) {
       return primaryLimitStopped
-        ? "已停止：超过 100 个主文件"
-        : preparationSummaryReadFailed
-          ? "计划已生成 · 摘要读取失败"
-          : preparationNoPrimarySources
-            ? "检查完成 · 未产生可整理的主文件"
-            : "准备已停止";
+        ? "上限 100 个 · 找到至少 101 个"
+        : preparation?.status === "cancelled"
+          ? "在准备阶段停止"
+          : preparationSummaryReadFailed
+            ? "计划已生成 · 摘要读取失败"
+            : preparationNoPrimarySources
+              ? "检查完成 · 未产生可整理的主文件"
+              : "准备已停止";
     }
     const found =
       preparationPrimarySourceCount > 0
@@ -3493,6 +3524,86 @@ export function ManualOrganizeDialog({
         return counts;
     }
   })();
+
+  const renderTerminalPreparationSummary = () => {
+    if (summaryPreviewId === "") return null;
+    if (previewQuery.isError || previewQuery.data?.ok === false) {
+      return (
+        <StatusBanner variant="error" title="无法读取原计划摘要">
+          <p role="status">
+            原计划摘要暂时无法读取;没有重新分析、没有创建执行,也没有修改文件。
+          </p>
+          <div className="mf-actions">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void previewQuery.refetch()}
+            >
+              重新读取原计划摘要
+            </Button>
+          </div>
+        </StatusBanner>
+      );
+    }
+    if (preview === undefined) {
+      return (
+        <div className="mf-modal-card-status" role="status" aria-busy="true">
+          <p>正在读取原计划摘要作为只读历史…</p>
+        </div>
+      );
+    }
+    return (
+      <section aria-label="只读原计划摘要">
+        <h3>只读原计划摘要</h3>
+        <p className="mf-dashboard-meta">
+          方案 {preview.previewId}
+          {preview.intentVersion !== null
+            ? ` · 版本 ${preview.intentVersion}`
+            : ""}{" "}
+          · 零变更历史,不可重新分析、不可确认、不可执行。
+        </p>
+        {preview.items.length === 0 ? (
+          <p className="mf-dashboard-meta">原摘要没有可读条目。</p>
+        ) : (
+          <ul className="mf-organize-review-list">
+            {preview.items.map((item) => (
+              <li key={`terminal-history-${item.itemId}`}>
+                {item.sourceFilename ?? item.itemId} ·{" "}
+                {operationLabel(item.operation)} →{" "}
+                <span className="mf-exact-identity">
+                  {item.targetStorageId ?? "—"}:
+                  {item.targetPath ??
+                    item.destination?.storageRelativePath ??
+                    "—"}
+                </span>
+                {item.attachments.length > 0
+                  ? ` · 附件 ${item.attachments.length} 个`
+                  : ""}
+                {item.current ? "" : " · 已被后续方案取代"}
+                {filesHost && previewItemTechnicalStage(item) === "metadata" ? (
+                  <span role="status">
+                    {" "}
+                    —{" "}
+                    {metadataTechnicalFailureSummary(
+                      preparation?.organizeTaskId ?? null,
+                      true,
+                    )}
+                  </span>
+                ) : item.failure !== null ? (
+                  <span role="status"> — {item.failure.message}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+        {preview.truncated ? (
+          <p className="mf-dashboard-meta" role="status">
+            该历史摘要曾被截断,只保留了部分条目。
+          </p>
+        ) : null}
+      </section>
+    );
+  };
 
   const renderFirstPlanPreparation = () => {
     // A linked plan needs no Worker, only the summary read that is already in
@@ -3615,15 +3726,12 @@ export function ManualOrganizeDialog({
             <dd>{preparationProgressText}</dd>
           </div>
         </dl>
-        {primaryLimitStopped ? (
-          <div className="mf-organize-preparation-note" role="status">
-            <p>
-              {primaryLimitAwaitingSettlement
-                ? "检查已在主文件数量上限处停止；正在结束关联任务，结束后请缩小选择范围重新发起。"
-                : "检查已在主文件数量上限处停止，本次未执行整理；请关闭本弹窗返回原文件页，缩小选择范围后重新发起。"}
-            </p>
-          </div>
-        ) : preparationSourceReadIncomplete ? (
+        {preparationTerminalFirstScreen
+          ? renderTerminalPreparationSummary()
+          : null}
+        {primaryLimitStopped ||
+        preparation?.status ===
+          "cancelled" ? null : preparationSourceReadIncomplete ? (
           <div className="mf-organize-preparation-note" role="status">
             <p>
               部分来源读取失败；已完成检查的已知来源保留为明确复核的子集，
@@ -3660,11 +3768,6 @@ export function ManualOrganizeDialog({
             <p>
               没有修改任何文件；请重新读取本准备，或关闭后从文件页重新发起。
             </p>
-          </div>
-        ) : null}
-        {preparation !== undefined && preparation.status === "cancelled" ? (
-          <div className="mf-organize-preparation-note" role="status">
-            <p>准备已取消，没有执行任何整理；请关闭后从文件页重新发起。</p>
           </div>
         ) : null}
         {preparationSummaryReadFailed ? (
@@ -3782,7 +3885,7 @@ export function ManualOrganizeDialog({
     if (preparation === undefined) {
       return renderFirstPlanPreparation();
     }
-    if (organizeFlowEnded) {
+    if (organizeFlowEnded && !preparationTerminalFirstScreen) {
       return (
         <>
           <StatusBanner variant="warning" title="本次整理工作已结束">
@@ -5922,7 +6025,9 @@ export function ManualOrganizeDialog({
       currentAnalysisReadback !== null) &&
     currentIntentItem !== undefined &&
     intent !== undefined;
-  const footer =
+  const preparationTerminalFirstScreenFooter =
+    organizeFlowEnded && preparationTerminalFirstScreen;
+  const defaultFooter =
     organizeFlowEnded || preparationOnlyFooter ? (
       <>
         {organizeFlowEnded ? null : (
@@ -6169,6 +6274,28 @@ export function ManualOrganizeDialog({
         </div>
       </>
     );
+  const footer = preparationTerminalFirstScreenFooter ? (
+    <>
+      <span className="mf-dashboard-meta">此阶段无媒体变更</span>
+      <span className="mf-modal-footer-spacer" />
+      {filesHost ? (
+        <Button type="button" disabled={closeLocked} onClick={attemptClose}>
+          返回文件页
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={closeLocked}
+          onClick={attemptClose}
+        >
+          关闭
+        </Button>
+      )}
+    </>
+  ) : (
+    defaultFooter
+  );
 
   return (
     <ModalCardShell

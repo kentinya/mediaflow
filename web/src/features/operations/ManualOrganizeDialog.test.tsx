@@ -76,6 +76,14 @@ function makeBackend() {
     // Leading primary-limit reads whose linked Task has not settled yet.  The
     // walk's refusal and the Task's terminal status are separate commits.
     primaryLimitSettlementReads: 0 as number,
+    // The same first preparation is cancelled from another tab while its
+    // linked Task is still queued.  The next durable read is the settled
+    // cancellation; no plan or execution was ever generated.
+    cancelAfterReads: 0 as number,
+    cancelled: false as boolean,
+    // A cancellation that lands after the exact summary was linked keeps that
+    // summary readable as history, but must never make it confirmable again.
+    cancelKeepsPreview: false as boolean,
     // The number of leading discovery reads that still report an unchanged
     // waiting state before the plan links.
     waitingReads: 0 as number,
@@ -403,6 +411,30 @@ function makeBackend() {
           nextAction: "start the resident Processing Worker",
         };
       }
+    }
+    if (state.cancelled) {
+      value["status"] = "cancelled";
+      value["previewId"] = state.cancelKeepsPreview ? state.previewId : null;
+      value["prepared"] = false;
+      value["intentId"] = state.cancelKeepsPreview ? INTENT_ID : null;
+      value["frozen"] = false;
+      value["autoPrepare"] = false;
+      value["cancelRequested"] = true;
+      value["organizeFlow"] = {
+        taskId: "organize-task-1",
+        status: "cancelled",
+        continuable: false,
+      };
+      const progress = value["progress"] as Json;
+      progress["phase"] = "cancelled";
+      progress["incomplete"] = true;
+      progress["incompleteReason"] = "cancelled";
+      progress["refusalReasons"] = [];
+      progress["materialRefusal"] = null;
+      progress["message"] =
+        "this organizing work was cancelled by the operator; its known findings and summary are preserved as history";
+      value["nextAction"] =
+        "start a new bounded preparation from Files if this scope is still wanted";
     }
     return value;
   };
@@ -1176,6 +1208,10 @@ function makeBackend() {
         if (state.primaryLimit && state.primaryLimitSettlementReads > 0) {
           state.primaryLimitSettlementReads -= 1;
           if (state.primaryLimitSettlementReads === 0) state.endedFlow = true;
+        }
+        if (state.cancelAfterReads > 0) {
+          state.cancelAfterReads -= 1;
+          if (state.cancelAfterReads === 0) state.cancelled = true;
         }
         if (state.workerUnavailableReads > 0) {
           state.workerUnavailableReads -= 1;
@@ -3412,19 +3448,114 @@ describe("ManualOrganizeDialog", () => {
     );
     expect(screen.queryByText("本次整理工作已结束")).toBeNull();
 
-    // The settlement commits on a later read; the same mounted card follows
-    // it to the factual failed end with no second submission.
-    await screen.findByText("本次整理工作已结束", {}, { timeout: 15_000 });
-    expect(
-      screen.getByText(
-        "本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。",
-      ),
-    ).toBeVisible();
+    // The settlement commits on a later read; the same mounted card keeps the
+    // shared preparation first screen instead of replacing it with the generic
+    // ended-history body.  The final failure is distinct from the pending
+    // settlement copy above.
+    await screen.findByText(
+      "找到第 101 个主文件后已停止检查，整批未进入执行。任务已结束，可以缩小原选择后重新发起。",
+      { exact: true },
+      { timeout: 15_000 },
+    );
+    expect(screen.getByText("超出主文件上限")).toBeVisible();
+    expect(screen.getByText("上限 100 个 · 找到至少 101 个")).toBeVisible();
+    expect(screen.getByText("来源资源库")).toBeVisible();
+    expect(screen.getByText("准备进度")).toBeVisible();
+    expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
+    expect(screen.queryByText("本次整理工作已结束")).toBeNull();
     expect(screen.queryByText(/原计划摘要保留为只读历史/)).toBeNull();
+    expect(screen.getByText("此阶段无媒体变更")).toBeVisible();
+    expect(screen.getByRole("button", { name: "返回文件页" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
     expect(backend.calls.discoveryPosts).toHaveLength(1);
     expect(backend.calls.analyzePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
     expect(backend.state.discoveryReads).toBeGreaterThanOrEqual(3);
+  }, 30_000);
+
+  it("settles a queued first preparation as the shared cancelled preparation", async () => {
+    const user = userEvent.setup();
+    const backend = await openPreparationDialog(
+      user,
+      (value) => {
+        value.state.queuedReads = 1;
+        value.state.cancelAfterReads = 2;
+        value.state.scopeSelections = [
+          { kind: "file", path: `Movies/${filename(0)}` },
+          { kind: "file", path: `Movies/${filename(1)}` },
+        ];
+      },
+      [filename(0), filename(1)],
+    );
+
+    expect(await screen.findByText("已受理，等待后台处理")).toBeVisible();
+    await screen.findByText("整理准备已取消", {}, { timeout: 10_000 });
+    expect(
+      screen.getByText("后台已停止检查。本次未生成可确认方案，原文件仍在。", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(screen.getByText("在准备阶段停止")).toBeVisible();
+    expect(screen.getByText("来源资源库")).toBeVisible();
+    expect(screen.getByText("准备进度")).toBeVisible();
+    expect(screen.getByText("2 个文件")).toBeVisible();
+    expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
+    expect(screen.queryByText("本次整理工作已结束")).toBeNull();
+    expect(screen.queryByText(/原计划摘要保留为只读历史/)).toBeNull();
+    expect(screen.queryByText(/本次整理从未生成过计划摘要/)).toBeNull();
+    expect(screen.getByText("此阶段无媒体变更")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+    expect(backend.calls.discoveryPosts).toHaveLength(1);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
+    expect(backend.calls.executePosts).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "返回文件页" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
+    );
+    expect(
+      new URLSearchParams(window.location.search).get("organizeDiscovery"),
+    ).toBeNull();
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.textContent).toBe(
+        "批量整理",
+      ),
+    );
+  }, 30_000);
+
+  it("keeps a linked summary as read-only history when a first preparation is cancelled", async () => {
+    const user = userEvent.setup();
+    const backend = await openPreparationDialog(user, (value) => {
+      value.state.queuedReads = 1;
+      value.state.cancelAfterReads = 2;
+      value.state.cancelKeepsPreview = true;
+      value.state.holdFirstPreviewRead = true;
+    });
+
+    expect(await screen.findByText("已受理，等待后台处理")).toBeVisible();
+    await screen.findByText("整理准备已取消", {}, { timeout: 10_000 });
+    expect(
+      screen.getByText(
+        "后台已停止检查。本次不再提供确认；已生成的原计划摘要保留为只读历史，原文件仍在。",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    // The linked summary stays a separate read-only history section; the
+    // cancellation copy does not claim that no summary was ever generated.
+    expect(
+      await screen.findByText(/正在读取原计划摘要作为只读历史/),
+    ).toBeVisible();
+    backend.releasePreviewRead();
+    const history = await screen.findByRole("region", {
+      name: "只读原计划摘要",
+    });
+    expect(within(history).getByText(/方案 preview-1/)).toBeVisible();
+    expect(
+      within(history).getAllByText(/Movie\.01\.mkv/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
   }, 30_000);
 
   it("renders the linked plan as read-only history when an ended flow kept it", async () => {
