@@ -1,6 +1,6 @@
 # Task 59.4 — 整理弹窗共用真实阶段的准备页
 
-Next Action: DEVELOPER CORRECTS PREPARATION SETTLEMENT IN TASK 59.4
+Next Action: DEVELOPER CORRECTS FIRST-READ SETTLEMENT IN TASK 59.4
 
 ```text
 Task ID: 59.4
@@ -9,7 +9,7 @@ Parent Slice: 59
 Status: FIX REQUIRED
 Task Base: bccfb2c4c014eb181d33ebc5b99140c1c722b446
 Planning Contract: 36f60fe0ef75c9cbb9e0b30e258c2d6f4075f24d
-Reviewed Implementation Head: 523628eab5b0f3c3ea7287e16f88c0642f5f4110
+Reviewed Implementation Head: 5a20e866a4e9f158bc2fae2e0baa5ae959efca58
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
@@ -17,7 +17,32 @@ Planner / Reviewer: B
 
 ## Task 59.4 B 复核
 
-本轮复核了 `bccfb2c4c014eb181d33ebc5b99140c1c722b446..523628eab5b0f3c3ea7287e16f88c0642f5f4110`
+**`5a20e866` · FIX REQUIRED · RO-1 / AC-01、AC-06。** 复核原 Task Base 到本候选及完整 Slice
+区间。标准超限旅程在 1440 和 390 px 保留了「超出主文件上限」、来源、范围、准备进度和返回动作。
+取消旅程在本机补齐 Worker 就绪夹具后也通过，截图确认保留了范围，且没有矛盾的摘要提示。
+
+从 Files 提交 `PrimaryLimit` 文件夹，保持弹窗在「正在读取准备状态」，将浏览器首次准备 GET
+暂缓至实际 Worker 完成。第一份真实读回是 `partial_success`，关联 Task 为 `failed`，
+超限事实为 `primary_limit`，执行请求为零。弹窗进入「本次整理工作已结束」，受理范围、
+准备进度和「返回文件页」均消失。候选仅在本次挂载已经读到过未结束状态时使用共用收尾页面，
+遗漏本次从 Files 发起且在首次读回前结算的路径。
+
+1. 用同一弹窗已发起这次准备及是否已进入复核的事实决定准备收尾归属。Files 本次提交的首次读回
+   如果已停止，直接显示真实准备终态和适用动作。通过准确历史地址打开，或在已进入复核后结算时，
+   沿现有历史读取条件显示只读内容。
+2. 加入真实 101 项用例的首次读回变体，保持页面等待，直至实际 Worker 将原 Task 结算，再释放首个
+   GET。断言原范围、进度、返回焦点及零执行请求。保留两次读回的超限变体和准确历史地址的断言。
+   取消回归在本用例内注册测试 Worker，使它可以单独运行。
+
+Web 类型、Lint、格式、构建、治理、区间空白检查、148 项组件测试及计划中的 9 项原生浏览器
+用例通过。新增时序复现失败，单独运行提交版取消用例时缺少 Worker 就绪，补齐同一测试夹具后通过。
+日志、截图和复现代码位于
+`.git/validation-evidence/5a20e866a4e9f158bc2fae2e0baa5ae959efca58/b-task59.4-review/`。
+`probe.log` 记录首次读回，`limit-visual.log` 与 `cancel-fixture.log` 记录标准超限和取消。
+
+### 上轮复核
+
+上轮复核了 `bccfb2c4c014eb181d33ebc5b99140c1c722b446..523628eab5b0f3c3ea7287e16f88c0642f5f4110`
 和完整 Slice 区间。治理、区间空白检查、Web 类型、Lint、格式、构建及夹具 Ruff 检查通过。
 两组组件共 146 项通过。真实 Python/API/SQLite/Worker 原生浏览器 9 项通过，含 Files 方案交接、
 摘要读取失败及重读、100/101 项边界、任务中心准备中重开及已就绪原位续作。
