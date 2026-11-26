@@ -805,11 +805,33 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
 
   await openBatchReview(card);
   await expectBatchSelected(card, 10);
+  await page.evaluate(() => {
+    function sampleEntrance() {
+      const card = document.querySelector(".mf-run-detail-card");
+      if (card === null) {
+        requestAnimationFrame(sampleEntrance);
+        return;
+      }
+      const shade = card.parentElement?.querySelector(".mf-modal-backdrop");
+      card.setAttribute(
+        "data-first-frame-opacity",
+        getComputedStyle(card).opacity,
+      );
+      if (shade) {
+        card.setAttribute(
+          "data-first-frame-backdrop",
+          getComputedStyle(shade).opacity,
+        );
+      }
+    }
+    requestAnimationFrame(sampleEntrance);
+  });
   await page.getByRole("button", { name: "确认整理 10 项" }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/);
-  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
-    timeout: 30_000,
-  });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(detail).toBeVisible({ timeout: 30_000 });
+  await expect(detail).toHaveAttribute("data-first-frame-opacity", "1");
+  await expect(detail).toHaveAttribute("data-first-frame-backdrop", "1");
   expect(executePosts()).toHaveLength(1);
   expect(executePosts()[0]?.body?.["itemIds"]).toHaveLength(10);
 
@@ -823,6 +845,9 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
     status: "completed",
     itemCount: 10,
   });
+  await expect(
+    detail.getByRole("heading", { name: "流程已完成" }),
+  ).toBeVisible();
 });
 
 test("Task59.1 an unknown Execute response is reconciled into the exact Task without a replay", async ({

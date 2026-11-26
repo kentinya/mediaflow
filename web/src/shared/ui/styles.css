@@ -5543,21 +5543,61 @@ tr[aria-selected="true"] {
   color: #8a4b0f;
 }
 
-/* Readable file evidence: result, source/target, steps and reason each get
-   their own short block before the collapsible technical diagnostics. */
-.mf-run-evidence-block {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 10px;
+/* The approved inline file evidence uses one compact list of readable facts. */
+.mf-run-evidence-facts {
+  margin: 4px 0 0;
+  border: 1px solid var(--line, #e2e7ef);
+  border-radius: 11px;
+  padding: 0 14px;
 }
 
-.mf-run-evidence-block h5 {
+.mf-run-evidence-facts > div {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 9px 0;
+  font-size: 13px;
+}
+
+.mf-run-evidence-facts > div + div {
+  border-top: 1px solid #edf0f6;
+}
+
+.mf-run-evidence-facts dt,
+.mf-run-evidence-fold {
+  color: var(--muted);
+}
+
+.mf-run-evidence-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mf-run-evidence-facts dd p {
   margin: 0;
 }
 
-.mf-run-evidence-block .mf-dashboard-facts {
-  margin: 0;
+.mf-run-evidence-fold {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.mf-run-evidence-fold > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: #23456e;
+  font-weight: 650;
+}
+
+@media (max-width: 640px) {
+  .mf-run-evidence-facts {
+    padding-inline: 9px;
+  }
+
+  .mf-run-evidence-facts > div {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
 }
 
 .mf-run-result-list {
@@ -5699,15 +5739,16 @@ tr[aria-selected="true"] {
 }
 
 .mf-run-item-evidence {
-  padding: 10px 12px 12px;
+  padding: 13px 14px 15px;
   border-top: 1px solid #e9edf5;
-  background: #f8fafd;
+  background: #f7f9fd;
   overflow-wrap: anywhere;
 }
 
-.mf-run-item-evidence > .mf-count-section,
-.mf-run-detail-card .mf-run-evidence-standalone > .mf-count-section {
-  margin: 0;
+@media (max-width: 640px) {
+  .mf-run-item-evidence {
+    padding-inline: 8px;
+  }
 }
 
 .mf-run-items-empty,
@@ -5721,7 +5762,6 @@ tr[aria-selected="true"] {
   overflow-wrap: anywhere;
 }
 
-.mf-run-basis,
 .mf-run-history {
   margin-bottom: 10px;
 }
@@ -8800,6 +8840,11 @@ tr[aria-selected="true"] {
 
 .mf-modal-card-detail {
   width: min(680px, 100%);
+}
+
+.mf-modal-layer-handoff > .mf-modal-backdrop,
+.mf-modal-layer-handoff > .mf-modal-card {
+  animation: none;
 }
 
 .mf-modal-layer-exiting .mf-modal-backdrop {

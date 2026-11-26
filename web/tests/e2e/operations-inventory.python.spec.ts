@@ -582,16 +582,15 @@ async function runNativeRecoveryJourney(
     .filter({ hasText: nativeFileName })
     .first();
   await expect(nativeRow).toBeVisible();
-  await expect(
-    nativeRow.getByText(problemReason[kind], { exact: true }),
-  ).toBeVisible();
+  await expect(nativeRow.locator(".mf-run-item-summary")).toHaveText(
+    problemReason[kind],
+  );
   await expect(
     nativeRow.getByRole("button", { name: "查看证据" }),
   ).toBeVisible();
   await expect(
     nativeDetail
       .getByRole("region", { name: "条目证据" })
-      .getByRole("region", { name: "需处理原因" })
       .getByText(problemReason[kind]),
   ).toBeVisible();
   const metadataSearches: string[] = [];
@@ -1063,9 +1062,7 @@ test("the selected run detail reads progress, filtered items, evidence and recor
     }),
   ).toBeVisible();
   await expect(
-    skippedEvidence
-      .getByRole("region", { name: "处理结果" })
-      .getByText("已跳过"),
+    skippedEvidence.locator(".mf-run-evidence-facts").getByText("已跳过"),
   ).toBeVisible();
 
   // A status filter is submitted to the server and kept in the URL, while
@@ -1096,25 +1093,16 @@ test("the selected run detail reads progress, filtered items, evidence and recor
       name: "文件证据：Arrival.2016.2160p.mkv",
     }),
   ).toBeVisible();
-  const readableResult = evidence.getByRole("region", { name: "处理结果" });
+  const readableResult = evidence.locator(".mf-run-evidence-facts");
   await expect(readableResult.getByText("文件已整理")).toBeVisible();
-  // The durable result's verified effect reads inside the one merged
-  // execution history instead of restating the current conclusion.
-  await expect(
-    evidence
-      .getByRole("region", { name: "执行记录" })
-      .getByText("效果：已验证完成", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    evidence.getByRole("region", { name: "来源与目标" }),
-  ).toBeVisible();
+  // The compact facts state the verified operation separately from the outcome.
+  await expect(evidence.getByText(/ · 已验证完成/)).toBeVisible();
+  await expect(readableResult.getByText("目标", { exact: true })).toBeVisible();
   // This repository-written historical fixture has no reviewed manual plan;
   // its captured analysis remains in diagnostics without an empty basis block.
-  await expect(evidence.getByRole("region", { name: "处理依据" })).toHaveCount(
-    0,
-  );
+  await expect(evidence.getByText("处理依据", { exact: true })).toHaveCount(0);
   // The technical records stay reachable inside the diagnostics group.
-  await evidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
+  await evidence.getByText("技术诊断").click();
   await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
   await expect(evidence.getByText("精确关联日志(1)")).toBeVisible();
 
@@ -1129,17 +1117,15 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   ).toBeVisible();
   await expect(
     uncertainEvidence
-      .getByRole("region", { name: "处理结果" })
-      .getByText("目标文件结果尚未确认"),
+      .locator(".mf-run-evidence-facts")
+      .getByText("目标文件结果尚未确认", { exact: true }),
   ).toBeVisible();
   await expect(
     uncertainEvidence
-      .getByRole("region", { name: "来源与目标" })
+      .locator(".mf-run-evidence-facts")
       .getByText("Movies/Blade Runner 1982/Blade Runner 1982.mkv"),
   ).toBeVisible();
-  await expect(
-    uncertainEvidence.getByText("效果：已尝试,未验证"),
-  ).toBeVisible();
+  await expect(uncertainEvidence.getByText(/ · 已尝试,未验证/)).toBeVisible();
 
   // 操作记录 pages exactly-linked records on the server: the seeded
   // operational log, both Results and the captured evidence row.
@@ -1491,9 +1477,10 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   await expect(
     itemEvidence.getByText("文件已整理", { exact: true }),
   ).toBeVisible();
-  await expect(itemEvidence.getByText(/执行记录 1（.*）：成功/)).toBeVisible();
+  await expect(itemEvidence.getByText(/执行记录 1（.*）：成功/)).toBeHidden();
   // The successful Worker result states recognition, match, naming and the
-  // Movies/Anime classification reason without opening the raw plan diagnostics.
+  // Movies/Anime classification reason in the processing basis.
+  await itemEvidence.getByText("处理依据", { exact: true }).click();
   await expect(
     itemEvidence.getByText("从文件名识别为《One》 (2001)；识别类型 C"),
   ).toBeVisible();
@@ -1528,16 +1515,17 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   // technical-failure tutorial; its terminal no-replay token stays technical.
   await expect(itemEvidence.getByText("需处理原因")).toHaveCount(0);
   await expect(itemEvidence.getByText(/技术失败条目/)).toHaveCount(0);
-  // The settled no-op 审核与恢复 shell is gone from the evidence host;
-  // the recovery read still happened without rendering an empty area.
+  // The settled file has no recovery loading or action area.
   await expect(
     itemEvidence.getByRole("region", { name: "条目审核与恢复" }),
   ).toHaveCount(0);
   await expect(itemEvidence.getByText(/没有待处理操作/)).toHaveCount(0);
+  await itemEvidence.getByText("技术诊断", { exact: true }).click();
   await expect(
-    itemEvidence.getByText(/未启用\(本次执行没有获得源目录清理授权\)/),
+    itemEvidence
+      .getByRole("region", { name: "最近一次执行" })
+      .getByText(/未启用\(本次执行没有获得源目录清理授权\)/),
   ).toBeVisible();
-  await itemEvidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
   await expect(
     itemEvidence.getByText(/已结束的条目不再提供重放/),
   ).toBeVisible();
@@ -1580,7 +1568,9 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   await expect(records.getByText(/^共 1 条记录 · 结果 1/)).toBeVisible();
   await detail.getByRole("button", { name: "任务详情" }).click();
   const restoredItems = detail.getByRole("region", { name: "主条目" });
-  await restoredItems.getByRole("button", { name: "查看证据" }).click();
+  await expect(
+    restoredItems.getByRole("button", { name: "查看证据" }),
+  ).toHaveAttribute("aria-expanded", "true");
 
   // Restart the actual Python runtime over the same SQLite file, reload the
   // browser's exact item context through authentication continuation, and
@@ -1597,6 +1587,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
     name: "条目证据",
   });
   // The same durable plan still explains the completed file after restart.
+  await reloadedEvidence.getByText("处理依据", { exact: true }).click();
   await expect(
     reloadedEvidence.getByText("从文件名识别为《One》 (2001)；识别类型 C"),
   ).toBeVisible();
@@ -1605,9 +1596,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
       "媒体库 movies，相对路径 Movies/Anime；规则 japanese-animation 命中；依据 媒体类型 电影、类型 Animation、国家/地区 JP",
     ),
   ).toBeVisible();
-  await reloadedEvidence
-    .getByText(/技术诊断（检查点、计划、日志与审计/)
-    .click();
+  await reloadedEvidence.getByText("技术诊断").click();
   await expect(
     reloadedEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
   ).toBeVisible();
@@ -1829,9 +1818,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   // The captured plan now lives inside the collapsed technical diagnostics;
   // the operator opens that disclosure before reading it. Do not expand it by
   // default or move the plan back into the primary body.
-  await restoredEvidence
-    .getByText(/技术诊断（检查点、计划、日志与审计/)
-    .click();
+  await restoredEvidence.getByText("技术诊断").click();
   await expect(
     restoredEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
   ).toBeVisible();
@@ -1912,11 +1899,12 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   const items = detail.getByRole("region", { name: "主条目" });
   const evidence = detail.getByRole("region", { name: "条目证据" });
   const openEvidence = async (filename: string) => {
-    await items
+    const row = items
       .locator(".mf-run-item-row")
       .filter({ hasText: filename })
-      .getByRole("button", { name: "查看证据" })
-      .click();
+      .getByRole("button", { name: "查看证据" });
+    await expect(row).toBeVisible();
+    if ((await row.getAttribute("aria-expanded")) !== "true") await row.click();
     await expect(evidence).toBeVisible();
   };
   const saveRecognition = async () => {
@@ -1932,14 +1920,17 @@ test("the opened item reconciles the exact sibling subset admission it did not s
     );
     await recovery.getByRole("button", { name: "保存并重新分析" }).click();
     expect((await decision).status()).toBe(200);
-    await evidence.getByRole("button", { name: "关闭证据" }).click();
+    await detail
+      .getByRole("region", { name: "主条目" })
+      .getByRole("button", { expanded: true })
+      .click();
   };
   await openEvidence("Fifteenth.2015.mkv");
   // Task 59.2 AC-06: the current decision is the body of the expanded item;
   // a historical empty target no longer occupies the space above it.
   await expect(evidence.getByLabel("识别决策")).toBeVisible();
   await expect(
-    evidence.getByRole("region", { name: "需处理原因" }),
+    evidence.getByText("识别结果需要确认", { exact: true }),
   ).toBeVisible();
   await expect(evidence.getByText("没有已记录的目标文件")).toHaveCount(0);
   await saveRecognition();
@@ -2086,7 +2077,10 @@ test("the opened item reconciles the exact sibling subset admission it did not s
 
   // Closing and reopening the evidence keeps the known admission fact in the
   // exact item session instead of resubmitting it.
-  await evidence.getByRole("button", { name: "关闭证据" }).click();
+  await restoredDetail
+    .getByRole("region", { name: "主条目" })
+    .getByRole("button", { expanded: true })
+    .click();
   await openEvidence("Fifteenth.2015.mkv");
   await expect(restoredDetail.getByText(/本次确认已经受理/)).toBeVisible();
   expect(exactExecutePosts()).toHaveLength(1);
@@ -2174,9 +2168,18 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   ).toBeEnabled({ timeout: 30_000 });
   await reopenedCard.getByRole("button", { name: "保存并重新分析" }).click();
   await driveDiscovery();
-  await expect(reopenedCard.getByText("纳入本次整理").first()).toBeVisible({
+  await expect(
+    reopenedCard.getByRole("heading", { name: "本次整理概览" }),
+  ).toBeVisible({
     timeout: 30_000,
   });
+  await expect(
+    reopenedCard
+      .getByRole("region", { name: "本次整理概览" })
+      .getByText(
+        /「Fifteenth\.2015\.mkv」已重新分析，当前出现新的待处理问题：作品搜索修正/,
+      ),
+  ).toBeVisible();
   expect(exactExecutePosts()).toHaveLength(1);
   const admissionAfterRework = await request.get(
     `${BASE}/api/operations/organize/previews/${committed!.previewId}/admission?${admissionParams.toString()}`,
@@ -2560,7 +2563,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await expect(
     itemEvidence.getByText("文件已整理", { exact: true }),
   ).toBeVisible();
-  await itemEvidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
+  await itemEvidence.getByText("技术诊断").click();
   // The reviewed-plan section keeps its honest unavailability…
   await expect(
     itemEvidence.getByRole("heading", { name: "持久审核计划(不可用)" }),
@@ -2594,12 +2597,10 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
     itemEvidence.getByText(/源目录：未启用\(本次执行没有获得源目录清理授权\)/),
   ).toBeVisible();
 
-  // Refresh keeps the same durable facts — the run is not recomputed.
-  await itemEvidence
-    .locator(".mf-run-items-head")
-    .first()
-    .getByRole("button", { name: "刷新", exact: true })
-    .click();
+  // Reopening the disclosure preserves the same durable execution facts.
+  const diagnostics = itemEvidence.getByText("技术诊断", { exact: true });
+  await diagnostics.click();
+  await diagnostics.click();
   await expect(
     itemEvidence.getByText("创建目录（CREATE_DIRECTORY）、移动（MOVE）", {
       exact: true,
@@ -2624,9 +2625,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
       exact: true,
     }),
   ).not.toHaveCount(0);
-  await reloadedEvidence
-    .getByText(/技术诊断（检查点、计划、日志与审计/)
-    .click();
+  await reloadedEvidence.getByText("技术诊断").click();
   await expect(
     reloadedEvidence.getByText(/createdDirectories=Movies\/Movies\/Anime/),
   ).toBeVisible();
@@ -2944,15 +2943,8 @@ test("a mixed run never offers its technical or unknown-era siblings for batch r
     readonly mixedConflictItemId: string;
   };
   await connect(page);
-  await openInventory(page);
-  // The mixed run has current business problems in the attention population.
-  await page
-    .getByRole("navigation", { name: "任务中心视图" })
-    .getByRole("button", { name: "需要处理", exact: true })
-    .click();
-  const runRow = page.getByRole("row").filter({ hasText: "TaskCenter/Mixed" });
-  await expect(runRow).toHaveCount(1);
-  await runRow.getByRole("button").first().click();
+  // Read the exact run so the technical siblings are in the same file list.
+  await page.goto(`${BASE}/operations?run=${seeded.mixedTaskId}`);
   const detail = page.getByRole("dialog", { name: "运行详情" });
   const items = detail.getByRole("region", { name: "主条目" });
   const technicalRow = items.locator(
@@ -2984,9 +2976,7 @@ test("a mixed run never offers its technical or unknown-era siblings for batch r
   // is factual history, not a standing "technical failure" tutorial.
   const itemEvidence = detail.getByRole("region", { name: "条目证据" });
   await expect(
-    itemEvidence
-      .getByRole("region", { name: "需处理原因" })
-      .getByText("目标存储拒绝操作。", { exact: true }),
+    itemEvidence.getByText("目标存储拒绝操作。", { exact: true }),
   ).toBeVisible();
   const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
   await expect(recovery).toHaveCount(0);
@@ -3000,7 +2990,7 @@ test("a mixed run never offers its technical or unknown-era siblings for batch r
       )
       .first(),
   ).toBeHidden();
-  await itemEvidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
+  await itemEvidence.getByText("技术诊断").click();
   await expect(
     itemEvidence.getByText(
       "repair the destination Storage permission, then re-check this item",
@@ -3090,11 +3080,12 @@ test("the retired batch continuation is a bounded refusal while the center offer
   expect(after.itemStatuses).toEqual(before.itemStatuses);
   expect(after.sourceExists).toEqual(before.sourceExists);
 
-  await page
-    .getByRole("dialog", { name: "运行详情" })
-    .getByRole("button", { name: "刷新", exact: true })
-    .first()
-    .click();
+  await expect(
+    detail.getByRole("region", { name: "主条目" }).getByRole("button", {
+      name: "刷新",
+      exact: true,
+    }),
+  ).toHaveCount(0);
   expect(before.sourceExists["Batch/C/BatchEligible.2007.mkv"]).toBe(true);
 });
 
@@ -3131,9 +3122,7 @@ test("the exact undecided batch item is reachable read-only without a generic re
   // concrete zero-effect failure reason and no standing tutorial.
   const itemEvidence = detail.getByRole("region", { name: "条目证据" });
   await expect(
-    itemEvidence
-      .getByRole("region", { name: "需处理原因" })
-      .getByText("安全分析中断。", { exact: true }),
+    itemEvidence.getByText("安全分析中断。", { exact: true }),
   ).toBeVisible();
   const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
   await expect(recovery).toHaveCount(0);

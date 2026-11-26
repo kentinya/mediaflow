@@ -427,7 +427,7 @@ export interface TaskItemRecoveryPanelProps {
    * accepted response, an explicit refusal and a lost response all keep the
    * same pre-request read-back baseline.
    */
-  readonly onAnalysisStarted?: () => void;
+  readonly onAnalysisStarted?: (savedChoice?: string) => void;
   /** Called after this exact item's analysis continuation was accepted. */
   readonly onAnalysisRequested?: () => void;
   /**
@@ -470,6 +470,8 @@ export interface TaskItemRecoveryPanelProps {
    * facts and diagnostics.
    */
   readonly hostedDiagnostics?: boolean;
+  /** Whether the host's evidence already reports an actionable item. */
+  readonly recoveryExpected?: boolean;
 }
 
 /** Native per-item decisions and analysis-only recovery in the selected run. */
@@ -488,6 +490,7 @@ export function TaskItemRecoveryPanel({
   onDecisionDraftChange,
   onDecisionStatusChange,
   hostedDiagnostics = false,
+  recoveryExpected = true,
 }: TaskItemRecoveryPanelProps) {
   const decisionMode = mode === "decision";
   const [actionBarTarget, setActionBarTarget] = useState<HTMLElement | null>(
@@ -954,6 +957,7 @@ export function TaskItemRecoveryPanel({
   const continueAt = async (
     expectedCheckpointVersion: string,
     manageBusy = true,
+    savedChoice?: string,
   ) => {
     if (manageBusy) {
       if (busy || repeatLocked) return false;
@@ -963,7 +967,12 @@ export function TaskItemRecoveryPanel({
       // follow-up is part of the same operator action, not a second command.
       updateRecoverySession({ pendingAction: "continue" });
     }
-    onAnalysisStarted?.();
+    onAnalysisStarted?.(
+      savedChoice ??
+        (decisionReceipt?.checkpointVersion === expectedCheckpointVersion
+          ? decisionReceipt.label
+          : undefined),
+    );
     updateRecoverySession({
       analysis: {
         phase: "requesting",
@@ -1099,7 +1108,7 @@ export function TaskItemRecoveryPanel({
         ),
       );
       if (updated.checkpoint.permittedActionIds.includes("retry")) {
-        await continueAt(updated.checkpoint.checkpointVersion, false);
+        await continueAt(updated.checkpoint.checkpointVersion, false, label);
       } else {
         // A skip/ignore decision ends this exact item; there is no analysis to
         // wait for. The response's own checkpoint is the durable result.
@@ -1617,6 +1626,12 @@ export function TaskItemRecoveryPanel({
               ? "analysis_refused"
               : "analysis_read_pending"
         : null;
+  const hasSessionFeedback =
+    busy ||
+    pendingAction !== null ||
+    message !== null ||
+    repeatLocked ||
+    submittedConfirmation !== null;
   const lastDecisionStatusRef = useRef<TaskItemRecoveryDecisionStatus | null>(
     null,
   );
@@ -1630,6 +1645,17 @@ export function TaskItemRecoveryPanel({
     lastDecisionStatusRef.current = decisionStatus;
     onDecisionStatusChange?.(decisionStatus);
   }, [decisionStatus, onDecisionStatusChange]);
+  // Technical history has nothing to reveal while its auxiliary read is
+  // pending. Keep the panel mounted so a recovery acknowledged just before
+  // the terminal checkpoint still reconciles and shows its own feedback.
+  if (
+    hostedDiagnostics &&
+    !recoveryExpected &&
+    !hasSessionFeedback &&
+    query.data?.ok !== true
+  ) {
+    return null;
+  }
   if (query.data === undefined) {
     return (
       <section className="mf-count-section" aria-label="条目审核与恢复">
@@ -1922,12 +1948,6 @@ export function TaskItemRecoveryPanel({
   // session state stays intact for the next render.
   const hasLiveRecoveryAction =
     owesRecoveryAction || activePreparation !== null;
-  const hasSessionFeedback =
-    busy ||
-    pendingAction !== null ||
-    message !== null ||
-    repeatLocked ||
-    submittedConfirmation !== null;
   if (hostedDiagnostics && !hasLiveRecoveryAction && !hasSessionFeedback) {
     return null;
   }

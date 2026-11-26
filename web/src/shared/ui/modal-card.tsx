@@ -326,6 +326,8 @@ export function useModalLayer(options: ModalLayerOptions): ModalLayer {
 export interface ModalCardShellProps {
   readonly layerRef: RefObject<HTMLDivElement | null>;
   readonly closing: boolean;
+  /** A destination card replacing a visible card can enter fully opaque. */
+  readonly skipEntrance?: boolean;
   readonly busy: boolean;
   readonly title: string;
   readonly titleId: string;
@@ -357,6 +359,7 @@ export interface ModalCardShellProps {
 export function ModalCardShell({
   layerRef,
   closing,
+  skipEntrance,
   busy,
   title,
   titleId,
@@ -377,9 +380,7 @@ export function ModalCardShell({
   return (
     <div
       ref={layerRef}
-      className={
-        closing ? "mf-modal-layer mf-modal-layer-exiting" : "mf-modal-layer"
-      }
+      className={`mf-modal-layer${closing ? " mf-modal-layer-exiting" : skipEntrance ? " mf-modal-layer-handoff" : ""}`}
       onMouseDown={(event) => {
         // The owner decides whether leaving is allowed right now (for example
         // a Storage command already in flight). Backdrop and layer-edge

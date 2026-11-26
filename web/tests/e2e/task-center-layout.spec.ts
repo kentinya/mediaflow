@@ -691,9 +691,9 @@ test("the detail card keeps a long file identity readable in its compact row", a
   await evidenceButton.click();
   const evidence = detail.getByRole("region", { name: "条目证据" });
   await expect(evidence).toBeVisible();
-  await expect(
-    evidence.getByRole("region", { name: "来源与目标" }),
-  ).toContainText(LONG_ITEM_SOURCE);
+  await expect(evidence.locator(".mf-run-evidence-facts")).toContainText(
+    LONG_ITEM_SOURCE,
+  );
   await page.screenshot({
     path: testInfo.outputPath("item-evidence-1536.png"),
   });
@@ -721,21 +721,18 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
   const evidence = detail.getByRole("region", { name: "条目证据" });
   await expect(evidence).toBeVisible();
   await expect(evidenceTrigger).toHaveAttribute("aria-expanded", "true");
-  // The evidence region and its close action stay inside the compact row and
-  // the viewport horizontally.
-  const closeHorizontal = await evidence
-    .getByRole("button", { name: "关闭证据" })
-    .evaluate((button) => {
-      const rect = button.getBoundingClientRect();
-      return {
-        left: rect.left,
-        right: rect.right,
-        viewport: window.innerWidth,
-      };
-    });
-  expect(closeHorizontal.left).toBeGreaterThanOrEqual(0);
-  expect(closeHorizontal.right).toBeLessThanOrEqual(
-    closeHorizontal.viewport + 1,
+  // The evidence and its row control stay within the viewport horizontally.
+  const triggerHorizontal = await evidenceTrigger.evaluate((button) => {
+    const rect = button.getBoundingClientRect();
+    return {
+      left: rect.left,
+      right: rect.right,
+      viewport: window.innerWidth,
+    };
+  });
+  expect(triggerHorizontal.left).toBeGreaterThanOrEqual(0);
+  expect(triggerHorizontal.right).toBeLessThanOrEqual(
+    triggerHorizontal.viewport + 1,
   );
   const evidenceBounds = await evidence.evaluate((region) => {
     const row = region.closest(".mf-run-item-row");
@@ -755,18 +752,13 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
     }),
   ).toBeVisible();
   await expect(
-    evidence.getByRole("region", { name: "处理结果" }),
-  ).toBeVisible();
+    evidence.locator(".mf-run-evidence-facts > div > dt"),
+  ).toHaveText(["当前结果", "来源", "目标", "操作与影响", "附件记录"]);
   await expect(
-    evidence.getByRole("region", { name: "来源与目标" }),
-  ).toBeVisible();
-  await expect(
-    evidence.getByRole("region", { name: "执行记录" }),
-  ).toBeVisible();
+    items.getByRole("button", { name: /刷新|关闭证据/ }),
+  ).toHaveCount(0);
   expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
-  await evidence
-    .getByRole("heading", { name: /文件证据/ })
-    .scrollIntoViewIfNeeded();
+  await evidence.locator(".mf-run-evidence-facts").scrollIntoViewIfNeeded();
   await page.screenshot({
     path: testInfo.outputPath("patch-file-evidence-390.png"),
   });
@@ -775,8 +767,7 @@ test("PATCH-20261107-1 keeps the readable file evidence usable at 390px", async 
   await evidence.getByText(/技术诊断/).click();
   await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
   expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
-  const closeEvidence = evidence.getByRole("button", { name: "关闭证据" });
-  await closeEvidence.focus();
+  await evidenceTrigger.focus();
   await page.keyboard.press("Enter");
   await expect(detail.getByRole("region", { name: "条目证据" })).toHaveCount(0);
   await expect(evidenceTrigger).toBeFocused();

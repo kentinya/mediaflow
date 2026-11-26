@@ -797,15 +797,13 @@ test("one item's evidence opens through exact links and closes again", async ({
   await page.screenshot({
     path: testInfo.outputPath("inline-evidence-1536.png"),
   });
-  // A short desktop window keeps the evidence header and close action
-  // reachable once the evidence is scrolled into view.
+  // A short desktop window keeps the same row available for toggling.
   await page.setViewportSize({ width: 1536, height: 600 });
-  await evidence
-    .getByRole("heading", { name: "文件证据：The Matrix (1999).mkv" })
-    .scrollIntoViewIfNeeded();
+  await evidenceTrigger.scrollIntoViewIfNeeded();
+  await expect(evidenceTrigger).toBeInViewport();
   await expect(
-    evidence.getByRole("button", { name: "关闭证据" }),
-  ).toBeInViewport();
+    items.getByRole("button", { name: /刷新|关闭证据/ }),
+  ).toHaveCount(0);
   await page.screenshot({
     path: testInfo.outputPath("inline-evidence-1536x600.png"),
   });
@@ -816,27 +814,22 @@ test("one item's evidence opens through exact links and closes again", async ({
       name: "文件证据：The Matrix (1999).mkv",
     }),
   ).toBeVisible();
-  const result = evidence.getByRole("region", { name: "处理结果" });
+  const result = evidence.locator(".mf-run-evidence-facts");
   await expect(result.getByText("文件已整理")).toBeVisible();
   // The one merged execution history keeps the main file and its subtitle as
   // separate outcomes beside the current conclusion.
-  const history = evidence.getByRole("region", { name: "执行记录" });
+  const history = evidence.getByRole("region", { name: "附件执行结果" });
   await expect(history.getByText("主文件已完成；附件有警告")).toBeVisible();
   await expect(history.getByText(/subtitle（zh）/)).toBeVisible();
   await expect(history.getByText(/附件效果尚未验证/)).toBeVisible();
-  const paths = evidence.getByRole("region", { name: "来源与目标" });
+  const paths = evidence.locator(".mf-run-evidence-facts");
   await expect(
     paths.getByText("local-media:movies/The Matrix (1999).mkv"),
   ).toBeVisible();
   await expect(
     paths.getByText("Media/Movies/The Matrix (1999)/The Matrix (1999).mkv"),
   ).toBeVisible();
-  await expect(
-    evidence
-      .getByRole("region", { name: "执行记录" })
-      .getByText(/移动（move）/)
-      .first(),
-  ).toBeVisible();
+  await expect(evidence.getByText(/移动 · 已验证完成/)).toBeVisible();
   // The technical plan/log/audit records stay reachable inside diagnostics.
   await evidence.getByText(/技术诊断/).click();
   await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
@@ -847,7 +840,7 @@ test("one item's evidence opens through exact links and closes again", async ({
   expect(html).not.toContain("snapshot_digest");
   expect(html).not.toContain("fingerprint-value");
 
-  await evidence.getByRole("button", { name: "关闭证据" }).click();
+  await evidenceTrigger.click();
   await expect(page).not.toHaveURL(/item=item-001/);
   await expect(detail.getByRole("region", { name: "条目证据" })).toHaveCount(0);
   await expect(evidenceTrigger).toBeFocused();
@@ -1065,7 +1058,8 @@ test("PATCH-20261113-1 keeps equal-status attempts as two complete history entri
     .getByRole("button", { name: /The Matrix \(1999\)\.mkv/ })
     .click();
   const evidence = detail.getByRole("region", { name: "条目证据" });
-  const current = evidence.getByRole("region", { name: "执行记录" });
+  const current = evidence.getByRole("region", { name: "最近一次执行" });
+  await evidence.getByText("技术诊断", { exact: true }).click();
   const history = evidence.getByRole("list", { name: "此前执行记录" });
   await expect(history).toBeHidden();
   await evidence.getByText("此前尝试（1 次）", { exact: true }).click();
@@ -1083,8 +1077,12 @@ test("PATCH-20261113-1 keeps equal-status attempts as two complete history entri
     await expect(
       entry.getByText("已完成：移动（move）", { exact: true }),
     ).toBeVisible();
-    await expect(entry.getByText("主文件已完成；附件有警告")).toBeVisible();
-    await expect(entry.getByText(/附件效果尚未验证/)).toBeVisible();
+    const attachments =
+      index === 0 ? evidence.locator(".mf-run-evidence-facts") : entry;
+    await expect(
+      attachments.getByText("主文件已完成；附件有警告"),
+    ).toBeVisible();
+    await expect(attachments.getByText(/附件效果尚未验证/)).toBeVisible();
   }
   expect(writes).toEqual([]);
 });
@@ -1110,7 +1108,7 @@ test("PATCH-20261113-1 attributes different next steps within one file diagnosis
     .getByRole("button", { name: /Inception \(2010\)\.mkv/ })
     .click();
   const evidence = detail.getByRole("region", { name: "条目证据" });
-  await evidence.getByText(/技术诊断（检查点、计划、日志与审计/).click();
+  await evidence.getByText("技术诊断").click();
   await expect(evidence.getByText("服务下一步（失败记录）")).toBeVisible();
   await expect(evidence.getByText("服务下一步（检查点）")).toBeVisible();
   await expect(

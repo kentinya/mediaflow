@@ -2567,11 +2567,13 @@ export function StorageFilesPage() {
   };
   /** One proved admission hands its exact durable task to the existing task-center selection (RO-3). */
   const handoffToTaskCenter = (taskId: string) => {
-    setOrganizeSession(null);
+    // Retire the reread URL, but keep the outgoing card visible until the
+    // router commits the destination.
     updateOrganizeRouteState(null);
     void navigate({
       to: "/operations",
       search: operationsLandingSearch(operationsReturn, taskId),
+      state: { organizeHandoffRunId: taskId },
     });
   };
 

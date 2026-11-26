@@ -1071,6 +1071,9 @@ export function ManualOrganizeDialog({
   interface DecisionReturn {
     readonly itemId: string;
     readonly filename: string;
+    readonly source: string;
+    readonly pageLabel: string;
+    readonly savedChoice?: string;
     readonly previewId: string;
     readonly signature: string;
     readonly problem: string | null;
@@ -2517,10 +2520,23 @@ export function ManualOrganizeDialog({
       : items.length === 0
         ? 0
         : Math.max(0, Math.min(index, items.length - 1));
+  const filesReturningToSameFile =
+    filesHost &&
+    filesRecordDetail === null &&
+    !filesOverviewVisible &&
+    step === "review" &&
+    filesDecisionReturn !== null &&
+    filesDecisionReturn.itemId === anchorItemId;
+  // Only the old file identity may be carried over a read gap. The unread
+  // plan never inherits the old plan's selections or confirmation authority.
+  const filesSummaryReadback =
+    filesReturningToSameFile && preview === undefined && !organizeFlowEnded
+      ? filesDecisionReturn
+      : null;
   // Adopt the durable anchor as soon as items exist (first entry), and
   // re-adopt once when a newer summary no longer contains it, so a later
   // reorder can never fall back to a stale array position.
-  if (items.length > 0 && anchoredPosition < 0) {
+  if (items.length > 0 && anchoredPosition < 0 && !filesReturningToSameFile) {
     const fallback = items[pageInfo];
     if (fallback !== undefined && fallback.itemId !== anchorItemId) {
       setAnchorItemId(fallback.itemId);
@@ -2529,6 +2545,7 @@ export function ManualOrganizeDialog({
   /** One browse-only page move: it saves nothing and runs no analysis. */
   const goTo = (position: number) => {
     clearAnalysisReadback();
+    setFilesDecisionReturn(null);
     const clamped = Math.max(
       0,
       Math.min(position, Math.max(items.length - 1, 0)),
@@ -2558,13 +2575,6 @@ export function ManualOrganizeDialog({
     currentProblemItemId === null
       ? null
       : (decisionStatuses[currentProblemItemId] ?? null);
-  /**
-   * The one local stage identity for the current file, display phase and
-   * durable plan. An unchanged poll keeps it stable, so the existing content
-   * and the operator's focus never replay a transition by themselves. The
-   * initial decision read is part of the new file's own reveal, not a second
-   * saved-analysis transition.
-   */
   const filesReviewingDecision =
     filesHost &&
     filesRecordDetail === null &&
@@ -2592,24 +2602,39 @@ export function ManualOrganizeDialog({
     currentDecisionStatus === "decision_required"
       ? ""
       : currentDecisionStatus;
-  const stageTransitionKey = [
-    session.phase,
-    preparationUnavailable ? "unavailable" : "",
-    organizeFlowEnded ? "ended" : "",
-    preparation?.status ?? "unread",
-    preparation?.previewId ?? "",
-    preview === undefined
-      ? "plan-pending"
-      : preview.current
-        ? "plan-current"
-        : "plan-superseded",
-    preview?.previewId ?? "",
-    filesHost && filesOverviewVisible ? "overview" : "detail",
-    step,
-    currentItemId ?? "",
-    savedDecisionStage,
-    filesCorrectionWaiting ? "correction_waiting" : "",
-  ].join("|");
+  // After the first plan, navigation determines the visual stage. Publishing
+  // a new summary or changing the analysis status within a file doesn't
+  // replay the entry animation.
+  const filesReviewStage =
+    filesHost && preparationPlanObserved && !organizeFlowEnded
+      ? filesRecordDetail !== null
+        ? `record:${filesRecordDetail.taskItemId}`
+        : filesOverviewVisible
+          ? "overview"
+          : step === "confirm"
+            ? "confirm"
+            : `review:${filesSummaryReadback?.itemId ?? currentItemId ?? ""}`
+      : null;
+  const stageTransitionKey =
+    filesReviewStage ??
+    [
+      session.phase,
+      preparationUnavailable ? "unavailable" : "",
+      organizeFlowEnded ? "ended" : "",
+      preparation?.status ?? "unread",
+      preparation?.previewId ?? "",
+      preview === undefined
+        ? "plan-pending"
+        : preview.current
+          ? "plan-current"
+          : "plan-superseded",
+      preview?.previewId ?? "",
+      filesHost && filesOverviewVisible ? "overview" : "detail",
+      step,
+      currentItemId ?? "",
+      savedDecisionStage,
+      filesCorrectionWaiting ? "correction_waiting" : "",
+    ].join("|");
   const lastScrollAnchor = useRef<string | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const renderedStageKey = useRef<string | null>(null);
@@ -2618,11 +2643,13 @@ export function ManualOrganizeDialog({
   // previous file's unrelated content.
   useLayoutEffect(() => {
     const anchor =
-      preview === undefined
-        ? "preparation"
-        : filesHost && filesOverviewVisible
-          ? "overview"
-          : `${step}:${currentItemId ?? ""}`;
+      filesReviewStage !== null
+        ? filesReviewStage
+        : preview === undefined
+          ? "preparation"
+          : filesHost && filesOverviewVisible
+            ? "overview"
+            : `${step}:${currentItemId ?? ""}`;
     if (lastScrollAnchor.current === anchor) return;
     lastScrollAnchor.current = anchor;
     const body = layer.layerRef.current?.querySelector<HTMLElement>(
@@ -2633,6 +2660,7 @@ export function ManualOrganizeDialog({
     currentItemId,
     filesHost,
     filesOverviewVisible,
+    filesReviewStage,
     layer.layerRef,
     preview,
     step,
@@ -2644,16 +2672,33 @@ export function ManualOrganizeDialog({
   useLayoutEffect(() => {
     const previous = renderedStageKey.current;
     renderedStageKey.current = stageTransitionKey;
-    if (previous === null || previous === stageTransitionKey) return;
+    if (previous === null) return;
     const stage = stageRef.current;
     if (stage === null) return;
-    if (document.activeElement === document.body) {
+    const stageChanged = previous !== stageTransitionKey;
+    if (
+      (stageChanged ||
+        filesReanalysisWaiting ||
+        filesSummaryReadback !== null) &&
+      document.activeElement === document.body
+    ) {
       stage.focus({ preventScroll: true });
     }
+    if (
+      !stageChanged ||
+      (filesOverviewVisible && filesOverviewNotice?.planUpdated)
+    )
+      return;
     stage.style.animation = "none";
     stage.getBoundingClientRect();
     stage.style.animation = "";
-  }, [stageTransitionKey]);
+  }, [
+    filesOverviewNotice?.planUpdated,
+    filesOverviewVisible,
+    filesReanalysisWaiting,
+    filesSummaryReadback,
+    stageTransitionKey,
+  ]);
 
   const recognitionOptions = (intent?.options.recognitionTypes ?? []).filter(
     (value) => value.enabled,
@@ -2707,20 +2752,25 @@ export function ManualOrganizeDialog({
    */
   const decisionBaselineFor = (
     item: ManualPreviewItemModel,
+    savedChoice?: string,
   ): DecisionReturn | null => {
     if (preview === undefined) return null;
     return {
       itemId: item.itemId,
       filename: item.sourceFilename ?? item.itemId,
+      source: `${item.sourceStorageId ?? "—"}:${item.sourcePath ?? "—"}`,
+      pageLabel: `第 ${pageInfo + 1} / ${items.length} 个文件`,
+      savedChoice,
       previewId: preview.previewId,
       signature: previewItemResultSignature(item),
       problem: previewItemProblemKind(item, !filesHost),
       draftRevision: fileDraftRevision.current,
     };
   };
-  const beginFilesDecisionReturn = (itemId: string) => {
+  const beginFilesDecisionReturn = (itemId: string, savedChoice?: string) => {
     const item = items.find((value) => value.itemId === itemId);
-    const baseline = item === undefined ? null : decisionBaselineFor(item);
+    const baseline =
+      item === undefined ? null : decisionBaselineFor(item, savedChoice);
     if (baseline !== null) setFilesDecisionReturn(baseline);
   };
   /**
@@ -2991,7 +3041,7 @@ export function ManualOrganizeDialog({
     filesDecisionReturnItem === undefined
       ? ""
       : previewItemResultSignature(filesDecisionReturnItem);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!filesHost || filesDecisionReturn === null) return;
     // The operator already moved to another file, the batch review or the
     // overview: the late read still updates data, but never navigates or
@@ -3002,7 +3052,7 @@ export function ManualOrganizeDialog({
     if (
       filesOverviewVisible ||
       step !== "review" ||
-      currentItemId !== filesDecisionReturn.itemId
+      !filesReturningToSameFile
     ) {
       // Leaving this exact file is the event that retires the pending return.
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -3130,7 +3180,6 @@ export function ManualOrganizeDialog({
     clearAnalysisReadback();
   }, [
     clearAnalysisReadback,
-    currentItemId,
     executableIds,
     filesDecisionReturn,
     filesDecisionReturnItem,
@@ -3138,6 +3187,7 @@ export function ManualOrganizeDialog({
     analysisReadback,
     filesHost,
     filesOverviewVisible,
+    filesReturningToSameFile,
     preview,
     step,
   ]);
@@ -3444,7 +3494,9 @@ export function ManualOrganizeDialog({
     preparationUnavailable ||
     preparation === undefined ||
     preparationTerminalFirstScreen ||
-    (!organizeFlowEnded && (preview === undefined || !preparationPlanObserved));
+    (!organizeFlowEnded &&
+      filesSummaryReadback === null &&
+      (preview === undefined || !preparationPlanObserved));
   /**
    * Only a step that actually needs the resident Worker reports it missing.
    * A preparation that already reached its own durable result (zero primary
@@ -5043,14 +5095,14 @@ export function ManualOrganizeDialog({
                 actionBarTargetId={
                   filesHost ? FILES_REVIEW_ACTION_ID : undefined
                 }
-                onAnalysisStarted={() => {
+                onAnalysisStarted={(savedChoice) => {
                   // The baseline reads the edit revision captured at the
                   // operator's action, never during this render. Only the
                   // Files host returns to its overview from this native form;
                   // the in-place host keeps the panel's own status handling.
                   if (!filesHost) return;
                   // eslint-disable-next-line react-hooks/refs
-                  beginFilesDecisionReturn(item.itemId);
+                  beginFilesDecisionReturn(item.itemId, savedChoice);
                 }}
                 onAnalysisRequested={decisionAnalysisRequested}
                 onDecisionStarted={() => {
@@ -6156,6 +6208,49 @@ export function ManualOrganizeDialog({
       renderPreparationContent()
     ) : organizeFlowEnded ? (
       renderPreparationContent()
+    ) : filesSummaryReadback !== null ? (
+      <>
+        <header className="mf-organize-file-head mf-organize-files-file-head mf-organize-reanalysis-file">
+          <span className="mf-organize-reanalysis-file-icon" aria-hidden="true">
+            ↻
+          </span>
+          <div className="mf-organize-file-title">
+            <h3>
+              <span className="mf-organize-file-eyebrow">
+                {filesSummaryReadback.pageLabel}
+              </span>
+              <span className="mf-organize-file-name mf-exact-identity">
+                {filesSummaryReadback.filename}
+              </span>
+            </h3>
+            <p className="mf-organize-file-path mf-dashboard-meta">
+              {filesSummaryReadback.source}
+            </p>
+          </div>
+        </header>
+        {preparationSummaryReadFailed ? (
+          <StatusBanner variant="warning" title="新方案暂时无法读取">
+            <p>当前文件的新方案尚未读回，整理尚未提交。</p>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void previewQuery.refetch()}
+              disabled={previewQuery.isFetching}
+            >
+              重新读取方案
+            </Button>
+          </StatusBanner>
+        ) : (
+          <OrganizeReanalysis
+            phase="waiting"
+            savedChoice={
+              filesSummaryReadback.savedChoice ??
+              notices[filesSummaryReadback.itemId]?.acceptedAnalysis
+                ?.savedChoice
+            }
+          />
+        )}
+      </>
     ) : preview === undefined || !preparationPlanObserved ? (
       renderPreparationContent()
     ) : (
@@ -6199,6 +6294,7 @@ export function ManualOrganizeDialog({
   // re-analysis entry.
   const preparationOnlyFooter =
     !organizeFlowEnded &&
+    filesSummaryReadback === null &&
     (preview === undefined || items.length === 0 || !preparationPlanObserved);
   const filesOverviewFooter =
     filesHost &&
@@ -6537,7 +6633,7 @@ export function ManualOrganizeDialog({
       footer={footer}
       footerClassName={
         filesDecisionFooter
-          ? `mf-organize-files-decision-footer${filesReanalysisWaiting ? " mf-organize-reanalysis-footer" : ""}`
+          ? `mf-organize-files-decision-footer${filesReanalysisWaiting || filesSummaryReadback !== null ? " mf-organize-reanalysis-footer" : ""}`
           : undefined
       }
     >

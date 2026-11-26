@@ -1061,7 +1061,12 @@ function stubDetailJourney(
     }
     if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
       return jsonResponse(
-        options.evidenceItem1 ?? manualExecutionEvidenceDocument(),
+        options.evidenceItem1 ??
+          manualExecutionEvidenceDocument(
+            options.recoveryItem1 === undefined
+              ? {}
+              : { recoveryKind: "recovery_lineage" },
+          ),
       );
     }
     if (url.startsWith("/api/operations/runs/task-001/items?")) {
@@ -2724,10 +2729,10 @@ describe("selected-run detail tabs", () => {
     expect(within(evidence).getByText("目标文件结果尚未确认")).toBeVisible();
     expect(
       within(
-        within(evidence).getByRole("region", { name: "来源与目标" }),
-      ).getByText("Movies/Two (2002)/Two (2002).mkv"),
+        evidence.querySelector<HTMLElement>("dl.mf-run-evidence-facts")!,
+      ).getByText(/Movies\/Two \(2002\)\/Two \(2002\)\.mkv/),
     ).toBeVisible();
-    expect(within(evidence).getByText("效果：已尝试,未验证")).toBeVisible();
+    expect(within(evidence).getByText(/移动 · 已尝试,未验证/)).toBeVisible();
     expect(
       within(evidence).getByText(
         /执行已尝试，目标文件结果尚未确认；请先核对，不要直接重放。/,
@@ -2891,7 +2896,8 @@ describe("selected-run detail tabs", () => {
     // The missing-result truth and the checkpoint's known steps stay in the
     // file's one execution record instead of a fabricated Result; an empty
     // execution block is not rendered.
-    expect(within(evidence).getByText("已完成：移动（MOVE）")).toBeVisible();
+    await userEvent.setup().click(within(evidence).getByText("技术诊断"));
+    expect(within(evidence).getByText("移动（MOVE）")).toBeVisible();
     expect(
       within(evidence).queryByText("该文件还没有持久执行结果。"),
     ).toBeNull();
@@ -2939,11 +2945,7 @@ describe("selected-run detail tabs", () => {
     ).toBeVisible();
     await userEvent
       .setup()
-      .click(
-        within(differentEvidence).getByText(
-          /技术诊断（检查点、计划、日志与审计/,
-        ),
-      );
+      .click(within(differentEvidence).getByText("技术诊断"));
     // Same-kind fields from different sources stay distinguishable instead
     // of collapsing into one ambiguous 服务下一步.
     expect(
@@ -2968,11 +2970,7 @@ describe("selected-run detail tabs", () => {
     (shared.checkpoint as { nextAction: string | null }).nextAction =
       "verify the destination storage";
     const sharedEvidence = await renderFailedEvidence(shared);
-    await userEvent
-      .setup()
-      .click(
-        within(sharedEvidence).getByText(/技术诊断（检查点、计划、日志与审计/),
-      );
+    await userEvent.setup().click(within(sharedEvidence).getByText("技术诊断"));
     expect(
       within(sharedEvidence).getByText("服务下一步（失败记录与检查点一致）"),
     ).toBeVisible();
@@ -2992,11 +2990,7 @@ describe("selected-run detail tabs", () => {
     const failureOnlyEvidence = await renderFailedEvidence(failureOnly);
     await userEvent
       .setup()
-      .click(
-        within(failureOnlyEvidence).getByText(
-          /技术诊断（检查点、计划、日志与审计/,
-        ),
-      );
+      .click(within(failureOnlyEvidence).getByText("技术诊断"));
     expect(
       within(failureOnlyEvidence).getByText("服务下一步（失败记录）"),
     ).toBeVisible();
@@ -3017,11 +3011,7 @@ describe("selected-run detail tabs", () => {
     const checkpointOnlyEvidence = await renderFailedEvidence(checkpointOnly);
     await userEvent
       .setup()
-      .click(
-        within(checkpointOnlyEvidence).getByText(
-          /技术诊断（检查点、计划、日志与审计/,
-        ),
-      );
+      .click(within(checkpointOnlyEvidence).getByText("技术诊断"));
     expect(
       within(checkpointOnlyEvidence).queryByText("服务下一步（失败记录）"),
     ).toBeNull();
@@ -3074,7 +3064,9 @@ describe("selected-run detail tabs", () => {
     // The real API returns an uppercase SUCCESS status; it reads as the same
     // business fact as the lowercase item status, inside the file's one
     // merged execution history.
-    expect(within(evidence).getByText(/执行记录 1（.*）：成功/)).toBeVisible();
+    expect(
+      within(evidence).getByText(/执行记录 1（.*）：成功/),
+    ).not.toBeVisible();
 
     // Recognition, metadata, naming and classification stay in this item's
     // processing basis, opened in place without querying current configuration.
@@ -3098,22 +3090,21 @@ describe("selected-run detail tabs", () => {
 
     // A completed successful technical-history file renders no 审核与恢复
     // area in the evidence host: no no-op conclusion and no empty region.
-    // The recovery read still happened; the settled facts live in the body
-    // and the one unified diagnostics entry.
+    // The settled facts live in the body and the one diagnostics entry.
     await waitFor(() =>
       expect(
         within(evidence).queryByRole("region", { name: "条目审核与恢复" }),
       ).toBeNull(),
     );
-    expect(within(evidence).queryByText(/没有待处理操作/)).toBeNull();
+    expect(
+      within(evidence).queryByText(/没有待处理操作|正在读取条目恢复状态/),
+    ).toBeNull();
     expect(within(evidence).queryByText(/技术失败条目/)).toBeNull();
     expect(within(evidence).queryByText(/需处理原因/)).toBeNull();
 
     // The terminal refusal and the raw entry/checkpoint stay in the single
     // collapsed technical diagnostics, not in the primary body.
-    await user.click(
-      within(evidence).getByText(/技术诊断（检查点、计划、日志与审计/),
-    );
+    await user.click(within(evidence).getByText("技术诊断"));
     expect(
       await within(evidence).findByText(/已结束的条目不再提供重放/),
     ).toBeVisible();
@@ -3268,7 +3259,6 @@ describe("selected-run detail tabs", () => {
     await within(evidence).findByText("文件证据：b.mkv");
     // The readable body names the concrete blocker and the file's own result
     // instead of surfacing the raw review tokens as the primary facts.
-    expect(within(evidence).getByText(/当前阻塞/)).toBeVisible();
     expect(within(evidence).getByText(/元数据候选需要确认/)).toBeVisible();
     // The technical next action, refusal token and fixed configuration stay
     // reachable inside the collapsed diagnostics instead of the readable body.
@@ -3292,12 +3282,37 @@ describe("selected-run detail tabs", () => {
     // The URL carries the inspected item in the URL so refresh/history/reconnect restore it.
     expect(router.history.location.search).toContain("item=item-2");
 
-    await user.click(
-      within(evidence).getByRole("button", { name: "关闭证据" }),
-    );
+    await user.click(inspectButtons[1]);
     await waitFor(() =>
       expect(screen.queryByText("条目证据:item-2")).toBeNull(),
     );
+  });
+
+  it("only offers an evidence refresh when that exact read failed", async () => {
+    const user = userEvent.setup();
+    const itemUrl = "/api/operations/runs/task-001/items/item-1";
+    let failed = true;
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === itemUrl) {
+        return failed
+          ? jsonResponse({ error: { code: "unavailable" } }, 503)
+          : jsonResponse(manualExecutionEvidenceDocument());
+      }
+      return stubDetailJourneyResponse(url);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001&item=item-1");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const evidence = await findInlineEvidence(detail);
+    const retry = await within(evidence).findByRole("button", { name: "刷新" });
+    failed = false;
+    await user.click(retry);
+    expect(await within(evidence).findByText("当前结果")).toBeVisible();
+    expect(
+      within(detail).queryByRole("button", { name: /刷新|关闭证据/ }),
+    ).toBeNull();
   });
 
   it("leads a live four-type problem with its decision instead of historical outcome blocks (Task 59.2 AC-06)", async () => {
@@ -3315,10 +3330,8 @@ describe("selected-run detail tabs", () => {
     const evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：b.mkv");
     // The current problem and its one legal decision lead the file body.
-    const reason = within(evidence).getByRole("region", {
-      name: "需处理原因",
-    });
-    expect(within(reason).getByText(/识别结果需要确认/)).toBeVisible();
+    const reason = within(evidence).getByText(/识别结果需要确认/);
+    expect(reason).toBeVisible();
     const decision = await within(evidence).findByLabelText("识别决策");
     expect(
       reason.compareDocumentPosition(decision) &
@@ -3397,9 +3410,7 @@ describe("selected-run detail tabs", () => {
       within(items).getAllByRole("region", { name: "条目证据" }),
     ).toHaveLength(1);
 
-    await user.click(
-      within(secondEvidence).getByRole("button", { name: "关闭证据" }),
-    );
+    await user.click(secondTrigger);
     await waitFor(() =>
       expect(
         within(items).queryByRole("region", { name: "条目证据" }),
@@ -3772,18 +3783,22 @@ describe("selected-run detail tabs", () => {
     // A different item has its own session: switching evidence does not show
     // this item's unknown outcome, and returning keeps it isolated.
     await user.click(
-      within(reopened).getByRole("button", { name: "关闭证据" }),
+      within(reopened).getByRole("button", {
+        name: /查看证据$/,
+        expanded: true,
+      }),
     );
     await user.click(
       within(reopened).getAllByRole("button", { name: /查看证据$/ })[0]!,
     );
-    const otherRecovery = await within(reopened).findByRole("region", {
-      name: "条目审核与恢复",
-    });
-    expect(otherRecovery).toBeVisible();
-    expect(within(otherRecovery).queryByText(/请求响应未送达/)).toBeNull();
+    const otherEvidence = await findInlineEvidence(reopened);
+    expect(await within(otherEvidence).findByText("当前结果")).toBeVisible();
+    expect(within(otherEvidence).queryByText(/请求响应未送达/)).toBeNull();
     await user.click(
-      within(reopened).getByRole("button", { name: "关闭证据" }),
+      within(reopened).getByRole("button", {
+        name: /查看证据$/,
+        expanded: true,
+      }),
     );
     await user.click(
       within(reopened).getAllByRole("button", { name: /查看证据$/ })[1]!,
@@ -3872,7 +3887,7 @@ describe("selected-run detail tabs", () => {
     expect(within(detail).queryByText("没有已记录的目标文件")).toBeNull();
     expect(
       summary.compareDocumentPosition(
-        within(detail).getByText(/技术诊断（检查点/),
+        within(await findInlineEvidence(detail)).getByText("技术诊断"),
       ) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     // The same-page summary leads with its status, the exact source/target
@@ -3893,16 +3908,18 @@ describe("selected-run detail tabs", () => {
 
     // Switching to another item leaves the exact confirmation session with
     // item-2: the other item's panel never shows this confirmation.
-    await user.click(within(detail).getByRole("button", { name: "关闭证据" }));
+    await user.click(
+      within(detail).getByRole("button", { name: /查看证据$/, expanded: true }),
+    );
     await user.click(
       within(detail).getAllByRole("button", { name: /查看证据$/ })[0]!,
     );
-    const otherRecovery = await within(detail).findByRole("region", {
-      name: "条目审核与恢复",
-    });
-    expect(otherRecovery).toBeVisible();
-    expect(within(otherRecovery).queryByText(/本次确认已经受理/)).toBeNull();
-    await user.click(within(detail).getByRole("button", { name: "关闭证据" }));
+    const otherEvidence = await findInlineEvidence(detail);
+    expect(await within(otherEvidence).findByText("当前结果")).toBeVisible();
+    expect(within(otherEvidence).queryByText(/本次确认已经受理/)).toBeNull();
+    await user.click(
+      within(detail).getByRole("button", { name: /查看证据$/, expanded: true }),
+    );
 
     // Closing the card while the confirmation is in flight is a legal exit:
     // the list context is restored and the request is never cancelled.

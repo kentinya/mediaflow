@@ -4,7 +4,7 @@
 Task ID: 59.6
 Task Type: SLICE
 Parent Slice: 59
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 71787a05f18a089753966fbc9b1469c7fb3b4877
 Difficulty: Medium
 Test Level: T3
@@ -46,6 +46,18 @@ B 独立检查 Task Base 到候选差异、浏览器关键旅程与相应 T3 安
 
 开发使用受影响组件、原生 Playwright 和原测试站的桌面及 390 px 录帧验证三处问题。
 B 独立复核准确任务、权限、读取失败与重开的安全边界。
+
+## 本轮开发交接
+
+文件证据使用批准稿的行内字段和两项折叠，普通条目收起由原行控制。四类恢复确认仍保留原请求的受理核对。
+真实效果未知记录可以读出其未确认的操作步骤。新方案读回保留当前文件，确认受理后原任务详情首帧可见。
+
+受影响组件分别通过 144 项和 99 项（其中条目详情集重跑）。真实 Python 浏览器 15 项通过，
+模拟浏览器 7 项通过。类型、变动文件 ESLint 与 Prettier、生产构建和治理均通过。
+本机 53 个场景均可创建、登录并打开。桌面和 390 px 录帧验证了两处切换，
+并复验了附件失败、效果未知、结果缺失和新方案读取失败后重读。日志及截图见
+`.git/validation-evidence/71787a05/slice59-local-site/followup-*.log` 和同目录 `verified-*.png`。
+B 独立验收待完成。
 
 ## 上一候选交接
 

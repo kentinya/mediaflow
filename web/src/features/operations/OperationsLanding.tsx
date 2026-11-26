@@ -19,7 +19,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useNavigate, useSearch, Link } from "@tanstack/react-router";
+import {
+  useLocation,
+  useNavigate,
+  useSearch,
+  Link,
+} from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   mutateLifecycle,
@@ -481,6 +486,9 @@ export function OperationsLanding() {
   const view = readView(searchParams);
   const filters = readFilters(searchParams);
   const selectedId = readSafeSearchValue(searchParams, "run");
+  const handoffRunId = useLocation({
+    select: (location) => location.state.organizeHandoffRunId,
+  });
   // The one closed hosted-card marker. It names no preparation: the exact
   // discovery is read from the selected Task's own backend association below.
   const organizeDialogRequested =
@@ -1236,6 +1244,7 @@ export function OperationsLanding() {
                   // controls; the durable session store keeps each run's own
                   // unknown outcomes and confirmations isolated by run id.
                   key={selectedId}
+                  fromOrganizeHandoff={handoffRunId === selectedId}
                   query={overviewQuery}
                   onClose={closeRun}
                   detailState={detailState}
@@ -1933,6 +1942,7 @@ function RunTable({
  * context they came from.
  */
 function RunDetailPanel({
+  fromOrganizeHandoff,
   query,
   onClose,
   detailState,
@@ -1944,6 +1954,7 @@ function RunDetailPanel({
   fallbackFocus,
   suspended,
 }: {
+  readonly fromOrganizeHandoff: boolean;
   readonly query: UseQueryResult<RunOverviewRead, Error>;
   readonly onClose: () => void;
   readonly detailState: RunDetailState;
@@ -2121,6 +2132,7 @@ function RunDetailPanel({
     <ModalCardShell
       layerRef={modal.layerRef}
       closing={exit.closing}
+      skipEntrance={fromOrganizeHandoff}
       busy={query.isPending}
       title={
         overview === null

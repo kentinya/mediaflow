@@ -466,10 +466,11 @@ export function normalizeTaskResultSummary(
     return fail();
   }
   if (
-    uncertainEffects.length > 0 !==
-    (effectCertainty === "attempted_unverified")
+    effectCertainty !== "unknown" &&
+    uncertainEffects.length > 0 !== (effectCertainty === "attempted_unverified")
   ) {
-    // Unverified effect evidence and its explicit effect list must agree.
+    // Unknown outcomes can record a specific unresolved effect. The named
+    // steps remain unverified and never turn the result into a success.
     fail();
   }
   return {

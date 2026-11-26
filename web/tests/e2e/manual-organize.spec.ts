@@ -580,13 +580,11 @@ test.describe("manual organize journey", () => {
     // exactly separable facts.
     await expect(
       evidence
-        .getByRole("region", { name: "处理结果" })
+        .locator(".mf-run-evidence-facts")
         .getByText("文件处理已结束，结果未记录"),
     ).toBeVisible();
     await expect(evidence.getByText(/元数据服务未完成查询/)).toBeVisible();
-    await expect(
-      evidence.getByRole("region", { name: "需处理原因" }),
-    ).toBeVisible();
+    await expect(evidence.getByText("最后已知状态")).toBeVisible();
     // Reading evidence is a bounded read, not a mutation: this journey only
     // ever issued GETs, never submitted or replayed anything.
     const recorded = await manualEvidence(page);

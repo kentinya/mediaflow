@@ -3,6 +3,7 @@ import {
   normalizeTaskDetailPage,
   normalizeTaskListPage,
   normalizeTaskRecord,
+  normalizeTaskResultSummary,
 } from "./task";
 
 const NOW = "2026-08-22T12:00:00+00:00";
@@ -261,6 +262,22 @@ describe("normalizeTaskDetailPage", () => {
         results_truncated: false,
       }),
     ).toThrow();
+  });
+
+  it("retains the recorded steps of an unknown Storage outcome", () => {
+    expect(
+      normalizeTaskResultSummary(
+        result({
+          status: "PARTIAL",
+          effect_certainty: "unknown",
+          uncertain_effects: ["mutation_outcome"],
+        }),
+      ),
+    ).toMatchObject({
+      status: "PARTIAL",
+      effectCertainty: "unknown",
+      uncertainEffects: ["mutation_outcome"],
+    });
   });
 
   it("rejects a result whose uncertain-effect evidence contradicts its certainty", () => {
