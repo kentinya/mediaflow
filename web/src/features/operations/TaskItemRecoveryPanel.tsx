@@ -1166,15 +1166,16 @@ export function TaskItemRecoveryPanel({
       } else {
         // A skip/ignore decision ends this exact item; there is no analysis to
         // wait for. The response's own checkpoint is the durable result.
-        if (
-          updated.checkpoint.status === "skipped" ||
-          updated.checkpoint.status === "ignored"
-        ) {
-          onDecisionSettled?.({ status: updated.checkpoint.status });
+        const status = updated.checkpoint.status;
+        const decisionSettled = status === "skipped" || status === "ignored";
+        if (decisionSettled) {
+          onDecisionSettled?.({ status });
         }
         updateRecoverySession({
           message:
-            "决策已保存。此操作没有创建文件执行授权；请检查更新后的条目状态。 ",
+            hostedDiagnostics && decisionSettled
+              ? null
+              : "决策已保存。此操作没有创建文件执行授权；请检查更新后的条目状态。 ",
         });
         refreshLinkedReads();
       }
@@ -1193,7 +1194,9 @@ export function TaskItemRecoveryPanel({
       });
       if (result.ok) {
         updateRecoverySession({
-          message: "条目已忽略并保留审核记录；没有执行文件操作。 ",
+          message: hostedDiagnostics
+            ? null
+            : "条目已忽略并保留审核记录；没有执行文件操作。 ",
           repeatLocked: false,
         });
         // The ignore command answers with an acknowledgement only. A host
@@ -2197,7 +2200,9 @@ export function TaskItemRecoveryPanel({
         !(
           hostedDiagnostics &&
           decision !== null &&
-          (pendingAction === "decision" || pendingAction === "search")
+          (pendingAction === "decision" ||
+            pendingAction === "search" ||
+            pendingAction === "ignore")
         ) && (
           <StatusBanner variant="info" title="操作请求仍在进行">
             <p>

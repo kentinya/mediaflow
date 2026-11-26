@@ -2159,8 +2159,10 @@ function RunEvidenceSection({
               ? `${operationName}已验证，目标文件可用。${removesSource ? "原位置已移除。" : "原文件仍保留。"}`
               : item.status === "skipped" && certainty === "none"
                 ? "已记录跳过决定，来源和原有目标均保留。"
-                : item.status === "ignored" && certainty === "none"
-                  ? "已按允许的决定忽略，来源文件未变更。"
+                : item.status === "ignored"
+                  ? certainty === "none"
+                    ? "已按允许的决定忽略，来源文件未变更。"
+                    : "已按允许的决定忽略。此次决定未执行文件操作。"
                   : null;
           const sourceEffect =
             admittedFile || verifiedFile
