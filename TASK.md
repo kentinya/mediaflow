@@ -1,6 +1,6 @@
 # Task 59.5 — 任务中心按问题文件直达原位恢复
 
-Next Action: DEVELOPER PRESERVES TASK 59.5 PROBLEM-LIST RETURN AND DATE FILTER CONTEXT
+Next Action: DEVELOPER ALIGNS THE ATTENTION FILTER ROW WITH THE APPROVED NARROW LAYOUT
 
 ```text
 Task ID: 59.5
@@ -57,6 +57,10 @@ Planner / Reviewer: B
 
 ## 测试
 
+测试分工遵循[开发工作流](docs/development-workflow.md#6-test-levels)。
+
+### Developer — 新增／修改与直接受影响测试
+
 Developer 在仓库根运行治理、Git 空白及受影响的仓库检查。修改只读投影时，在既有任务中心测试中
 覆盖总体、权限、重叠归属、快照、分页及合法／无效输入。Web 覆盖选择、筛选、聚合结果、回落和原位恢复。
 
@@ -72,7 +76,9 @@ npm run build
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'Task59.5|native recognition recovery|native Metadata|native Classification|native conflict recovery|dated views and 21-file'
 ```
 
-B 独立运行上述适用组、Web Lint/格式和
+### B — 独立验收与完整回归
+
+**B** 对候选版本独立运行上述适用组、Web Lint/格式和
 `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/task-center-layout.spec.ts`。
 以真实 API、SQLite、Worker 和临时媒体根从原入口复验手动、定时或运行一次的四类恢复。
 保存 1440、390 px 和适用矮窗口的对照证据，核对确切消费的 Task/条目、审计、允许的文件效果、
@@ -154,3 +160,34 @@ Python 任务中心 31 项、Web 组件 147 项、Node 浏览器 39 项、真实
 20 项通过。Ruff、Web 类型、Lint、格式及生产构建通过。浏览器组合保留四类同任务恢复与手动续作。
 上述两项另用真实浏览器走查复现。截图、测量和原始命令在本机
 [验收证据](.git/validation-evidence/36b4f7159bd36c72f65999045a16340118d15460/b-task59.5-recheck/)。
+
+## B 复验 — `39f4da8e` · FIX REQUIRED
+
+B 复核 `5d20ae33c7b5e1d5b84fc908c3d1204084005b72..39f4da8e9a60da6fc46aacb54f40e08874c5a13f`。
+此前两项修正通过。390 px 下从合法旧链接打开明细，关闭后原文件按钮保留焦点与滚动位置。
+浏览器返回保留原筛选与游标。元数据第二页改日期后保留类型并重置游标，清除日期后恢复原类型实际计数与翻页。
+
+### 修正窄屏「需要处理」布局（P1，RO-5 / AC-06/07）
+
+批准稿在 390 × 844 下将「全部、识别、元数据、分类、冲突」及文件数放在一行，首个问题文件在首屏可见。
+正式页面在同视口、五项均为个位数时已经换成两行，首个文件行从视口下方才开始。两侧筛选容器同为 336 px。
+桌面和窄屏都多出重复说明待处理任务数的黄色横幅，拉开统计卡和视图入口。对照证据包含两种视口和真实读回。
+
+1. 在现有「需要处理」中把五项筛选排成紧凑单行。390 px 验证个位及常见两位数的真实计数。
+   更窄视口或计数更长时允许筛选区内横向滚动，键盘可达所有选项，标签和真实计数可读，页面无横向溢出。
+2. 按批准稿将任务统计直接衔接主视图，删除单独重复的正常待处理统计横幅。保留统计卡和真实加载、读取失败及
+   恢复提示。优化 390 px 的日期、问题文件标题及任务组头占高，复验同等短名称场景能直接看到第一条问题文件。
+   长名称和实际内容可以正常折行。
+3. 在既有视觉浏览器测试中量测五个问题筛选控件处于同一行。核对桌面、390 px 和矮窗截图、换类、
+   日期、计数、进入原任务及返回焦点。留用现有 API 和所有分页、深链、恢复断言。
+
+本轮 Python 任务中心 31 项、Web 组件 149 项、真实 API / SQLite / Worker 浏览器组合 21 项和
+OpenList 原生浏览器 1 项通过。治理、Web 类型、Lint、格式、构建、wheel 安装和 Docker 安全烟测通过。
+Node 任务中心与布局 39 项通过。补齐测试分工链接后，Python 全量重跑 2332 项，7 项既有跳过。
+
+B 对齐 Files 测试夹具的原 Task 关联、概览入口和关闭控件，保留原受理、草稿及效果断言。
+全量组件第一次 1720 项通过、1 项失败，更新该组件测试后对应文件 66 项通过。第二轮 Node 浏览器全量
+285 项通过、2 项失败、2 项未运行，使用正确概览入口并释放被占用的认证端口后，Files 入口和认证组合
+18 项通过。共用数据库的原生组合 28 项通过、12 项失败。对应失败用例按适用的独立数据库分组
+复验通过，保留原始组合日志与重跑记录。任务中心窄屏布局需修正后再交 A 终验。
+[对照截图、浏览器测量及日志](.git/validation-evidence/39f4da8e9a60da6fc46aacb54f40e08874c5a13f/b-task59.5-final/)。
