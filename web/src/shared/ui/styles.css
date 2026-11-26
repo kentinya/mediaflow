@@ -14041,3 +14041,300 @@ tr[aria-selected="true"] {
     font-size: 0.8rem;
   }
 }
+
+/* Files organizer screens share the compact hierarchy of the offline journey. */
+:is(.mf-organize-overview, .mf-organize-batch-review):has(
+  .mf-organize-status-card
+) {
+  padding-block-start: 12px;
+}
+
+:is(.mf-organize-overview, .mf-organize-batch-review) .mf-organize-status-card {
+  gap: 17px;
+  padding: 22px;
+  border-radius: 14px;
+}
+
+:is(.mf-organize-overview, .mf-organize-batch-review) .mf-organize-status-copy {
+  gap: 6px;
+}
+
+:is(.mf-organize-overview, .mf-organize-batch-review) .mf-organize-status-text {
+  max-width: 56ch;
+}
+
+:is(.mf-organize-overview, .mf-organize-batch-review)
+  .mf-organize-status-card-blue {
+  background: linear-gradient(112deg, #edf2ff, #f7f9ff 78%);
+}
+
+:is(.mf-organize-overview, .mf-organize-batch-review) .mf-organize-status-icon {
+  width: 48px;
+  height: 48px;
+  border: 1px solid #dbe5ff;
+  font-size: 20px;
+}
+
+:is(.mf-organize-overview, .mf-organize-batch-review)
+  .mf-organize-status-title {
+  font-size: clamp(20px, 3vw, 27px);
+  line-height: 1.24;
+  letter-spacing: -0.04em;
+}
+
+:is(.mf-organize-overview, .mf-organize-batch-review) .mf-organize-status-tag {
+  justify-self: start;
+  padding: 3px 8px;
+  border-radius: 100px;
+  background: #e8efff;
+  color: #164cab;
+  font-size: 11px;
+}
+
+.mf-organize-status-card-green .mf-organize-status-tag {
+  background: #e5f5ea;
+  color: #17683a;
+}
+
+.mf-organize-status-card-amber .mf-organize-status-tag {
+  background: #fff3df;
+  color: #834c00;
+}
+
+:is(.mf-organize-overview-counts, .mf-organize-files-batch-summary) {
+  background: #fff;
+}
+
+:is(.mf-organize-overview-counts, .mf-organize-files-batch-summary) > div {
+  gap: 1px;
+  padding: 8px 12px;
+}
+
+:is(.mf-organize-overview-counts, .mf-organize-files-batch-summary) dt {
+  font-size: 11px;
+  font-weight: 400;
+}
+
+:is(.mf-organize-overview-counts, .mf-organize-files-batch-summary) dd {
+  font-size: 21px;
+  line-height: 1.25;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.mf-organize-overview-file .mf-organize-overview-status,
+.mf-organize-files-plan .mf-organize-overview-status,
+.mf-organize-decision-reference .mf-organize-decision-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.mf-organize-overview-file .mf-organize-overview-status::before,
+.mf-organize-files-plan .mf-organize-overview-status::before,
+.mf-organize-decision-reference .mf-organize-decision-type::before,
+:is(.mf-organize-overview, .mf-organize-batch-review)
+  .mf-organize-status-tag:not(:has(.mf-organize-status-dot))::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.mf-organize-overview-file .mf-organize-overview-status-ready,
+.mf-organize-files-plan .mf-organize-overview-status-ready {
+  background: #e5f4ee;
+  color: #15644e;
+}
+
+@media (max-width: 640px) {
+  :is(.mf-organize-overview, .mf-organize-batch-review)
+    .mf-organize-status-card {
+    gap: 9px;
+    padding: 13px;
+  }
+
+  :is(.mf-organize-overview, .mf-organize-batch-review)
+    .mf-organize-status-icon {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+.mf-organize-overview-group .mf-organize-overview-list {
+  display: block;
+  border: 1px solid #e2e9f3;
+  border-radius: 10px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.mf-organize-overview-group .mf-organize-overview-item {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.mf-organize-overview-group .mf-organize-overview-item + li {
+  border-top: 1px solid #e9edf5;
+}
+
+.mf-organize-overview-group button.mf-organize-overview-row {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 9px 11px;
+  border: 0;
+  background: #fff;
+  color: #14223c;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.mf-organize-overview-group button.mf-organize-overview-row:hover {
+  background: #f5f7ff;
+}
+
+.mf-organize-overview-group button.mf-organize-overview-row:focus-visible {
+  outline-offset: -3px;
+}
+
+.mf-organize-overview-file-copy strong {
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-overview-file-copy .mf-organize-overview-summary {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.mf-organize-overview-row .mf-organize-overview-file-icon,
+.mf-organize-files-batch-list .mf-organize-overview-file-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 7px;
+  background: #eef2f9;
+  color: #536f9c;
+}
+
+.mf-organize-section.mf-organize-files-batch-section {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.mf-organize-files-batch-section .mf-organize-section-head {
+  margin: 12px 0 8px;
+}
+
+.mf-organize-files-batch-section .mf-organize-files-batch-list {
+  gap: 0;
+  margin-bottom: 4px;
+  border: 1px solid #e2e9f3;
+  border-radius: 10px;
+}
+
+.mf-organize-files-batch-list > li {
+  padding: 8px 11px;
+}
+
+.mf-organize-files-batch-list
+  :is(.mf-organize-batch-file-icon, .mf-organize-batch-operation) {
+  align-self: center;
+}
+
+.mf-organize-dialog-body
+  .mf-organize-decision-reference
+  .mf-organize-decision-title {
+  margin-top: 14px;
+}
+
+.mf-organize-decision-reference .mf-organize-decision-option {
+  gap: 10px;
+  padding: 8px 15px;
+  border-radius: 8px;
+}
+
+.mf-organize-file-head.mf-organize-files-file-head.mf-organize-reanalysis-file {
+  padding-top: 8px;
+  margin-bottom: 27px;
+}
+
+.mf-organize-decision-reference .mf-organize-decision-option input {
+  width: 14px;
+  height: 14px;
+  margin-top: 4px;
+}
+
+.mf-organize-decision-reference .mf-organize-decision-target {
+  padding-inline: 14px;
+  background: #fff;
+}
+
+.mf-organize-decision-reference .mf-organize-decision-target > div {
+  display: grid;
+  grid-template-columns: minmax(68px, 100px) minmax(0, 1fr);
+}
+
+.mf-organize-decision-reference .mf-organize-decision-target dd {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.mf-organize-section.mf-organize-files-plan {
+  padding: 0;
+  border: 0;
+}
+
+.mf-organize-files-plan .mf-organize-section-head {
+  margin: 13px 0 5px;
+}
+
+.mf-organize-files-plan .mf-organize-facts {
+  gap: 0;
+  padding-inline: 14px;
+  border: 1px solid #e2e9f3;
+  border-radius: 11px;
+}
+
+.mf-organize-files-plan .mf-organize-facts > div {
+  grid-template-columns: minmax(68px, 104px) minmax(0, 1fr);
+  gap: 10px;
+  padding-block: 9px;
+}
+
+.mf-organize-files-plan .mf-organize-facts > div + div {
+  border-top: 1px solid #edf0f6;
+}
+
+.mf-organize-files-file-head .mf-organize-file-path,
+.mf-organize-files-plan .mf-exact-identity,
+.mf-organize-files-batch-list
+  :is(.mf-organize-batch-source, .mf-organize-batch-target) {
+  color: #3a4a6c;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.mf-organize-dialog .mf-modal-footer .mf-organize-return-overview {
+  border-color: transparent;
+  background: transparent;
+  color: #164cab;
+}
+
+.mf-organize-return-overview::before {
+  content: "‹";
+  margin-right: 4px;
+}

@@ -46,6 +46,7 @@ from mediaflow.domain.classification_review import ClassificationSelection
 from mediaflow.domain.manual_organize import (
     ManualChoice,
     ManualIntentError,
+    ManualIntentItem,
     ManualIntentItemStatus,
     ManualIntentUnavailable,
     ManualOrganizeIntent,
@@ -1400,25 +1401,39 @@ class ManualOrganizePreviewService:
         source_evidence = self._source_evidence_versions(source)
         reviews = self._review_versions(source)
         conflicts = self._conflict_versions(source)
-        payload = {
-            "source": source.document(),
-            "choice": item.choice.document(),
-            "intentVersion": intent.version,
-            "itemVersion": item.version,
-            "configurationSnapshotId": intent.snapshot_id,
-            "configurationSnapshotDigest": intent.snapshot_digest,
-            "sourceEvidenceVersions": source_evidence,
-            "reviewVersions": reviews,
-            "conflictVersions": conflicts,
-        }
         return {
             "source": source,
             "sourceFingerprint": source.fingerprint or _fingerprint(source.document()),
             "sourceEvidenceVersions": source_evidence,
             "reviewVersions": reviews,
             "conflictVersions": conflicts,
-            "inputFingerprint": _fingerprint(payload),
+            "inputFingerprint": self._input_fingerprint(
+                intent, item, source, source_evidence, reviews, conflicts
+            ),
         }
+
+    @staticmethod
+    def _input_fingerprint(
+        intent: ManualOrganizeIntent,
+        item: ManualIntentItem,
+        source: ManualSourceIdentity,
+        source_evidence: tuple[dict[str, object], ...],
+        reviews: tuple[dict[str, object], ...],
+        conflicts: tuple[dict[str, object], ...],
+    ) -> str:
+        return _fingerprint(
+            {
+                "source": source.document(),
+                "choice": item.choice.document(),
+                "intentVersion": intent.version,
+                "itemVersion": item.version,
+                "configurationSnapshotId": intent.snapshot_id,
+                "configurationSnapshotDigest": intent.snapshot_digest,
+                "sourceEvidenceVersions": source_evidence,
+                "reviewVersions": reviews,
+                "conflictVersions": conflicts,
+            }
+        )
 
     def _source_evidence_versions(
         self, source: ManualSourceIdentity
@@ -3088,9 +3103,59 @@ class ManualOrganizePreviewService:
             except Exception:
                 stale.append(item.item_id)
                 continue
-            if state["inputFingerprint"] != item.input_fingerprint:
-                stale.append(item.item_id)
+            if state["inputFingerprint"] == item.input_fingerprint:
+                continue
+            if self._only_linked_review_changed(intent, current, item, state):
+                continue
+            stale.append(item.item_id)
         return tuple(stale)
+
+    def _only_linked_review_changed(
+        self,
+        intent: ManualOrganizeIntent,
+        current: ManualIntentItem,
+        item: ManualPreviewItem,
+        state,
+    ) -> bool:
+        # Files analysis can publish a native review while building a blocked
+        # row. Its own review can advance independently of executable siblings.
+        # Compare all other inputs normally, including any other task's review.
+        if item.status is not ManualPreviewItemStatus.BLOCKED or not isinstance(item.plan, dict):
+            return False
+        linked_item_id = item.plan.get("problemTaskItemId")
+        if not isinstance(linked_item_id, str) or not linked_item_id:
+            return False
+
+        def other_reviews(reviews):
+            return tuple(review for review in reviews if review.get("itemId") != linked_item_id)
+
+        def other_conflicts(conflicts, reviews):
+            linked_conflicts = {
+                review.get("reviewId")
+                for review in reviews
+                if review.get("itemId") == linked_item_id
+                and review.get("kind") == "conflict"
+                and isinstance(review.get("reviewId"), str)
+            }
+            return tuple(
+                conflict
+                for conflict in conflicts
+                if conflict.get("confirmationId") not in linked_conflicts
+            )
+
+        reviews = state["reviewVersions"]
+        if other_reviews(reviews) != other_reviews(item.review_versions) or other_conflicts(
+            state["conflictVersions"], reviews
+        ) != other_conflicts(item.conflict_versions, item.review_versions):
+            return False
+        return item.input_fingerprint == self._input_fingerprint(
+            intent,
+            current,
+            state["source"],
+            state["sourceEvidenceVersions"],
+            item.review_versions,
+            item.conflict_versions,
+        )
 
     def _invalidate_items(
         self, item_ids: Sequence[str], reason: str, *, intent_id: str | None = None

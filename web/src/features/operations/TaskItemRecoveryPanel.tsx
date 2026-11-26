@@ -515,6 +515,8 @@ export function TaskItemRecoveryPanel({
   evidenceFile,
 }: TaskItemRecoveryPanelProps) {
   const decisionMode = mode === "decision";
+  const filesDecision = decisionMode && actionBarTargetId !== undefined;
+  const explicitConflictChoice = hostedDiagnostics || filesDecision;
   const [actionBarTarget, setActionBarTarget] = useState<HTMLElement | null>(
     null,
   );
@@ -686,13 +688,13 @@ export function TaskItemRecoveryPanel({
   // the form once the real identity arrives.
   const [internalDecisionDraft, setInternalDecisionDraft] =
     useState<TaskItemDecisionDraft>(() =>
-      decisionDraftFrom(decision, decisionKey, hostedDiagnostics),
+      decisionDraftFrom(decision, decisionKey, explicitConflictChoice),
     );
   const [resetDecisionKey, setResetDecisionKey] = useState(decisionKey);
   if (resetDecisionKey !== decisionKey) {
     setResetDecisionKey(decisionKey);
     setInternalDecisionDraft(
-      decisionDraftFrom(decision, decisionKey, hostedDiagnostics),
+      decisionDraftFrom(decision, decisionKey, explicitConflictChoice),
     );
   }
   // A draft belongs to one exact checkpoint/decision.  While the first model
@@ -716,7 +718,7 @@ export function TaskItemRecoveryPanel({
       ...inputs,
       dirty: !sameDecisionInputs(
         inputs,
-        decisionDraftFrom(decision, decisionKey, hostedDiagnostics),
+        decisionDraftFrom(decision, decisionKey, explicitConflictChoice),
       ),
     };
     if (!callerDraftMatches) setInternalDecisionDraft(next);
@@ -752,13 +754,13 @@ export function TaskItemRecoveryPanel({
     }
     if (decisionDraft.decisionKey === decisionKey) return;
     onDecisionDraftChange?.(
-      decisionDraftFrom(decision, decisionKey, hostedDiagnostics),
+      decisionDraftFrom(decision, decisionKey, explicitConflictChoice),
     );
   }, [
     decision,
     decisionDraft,
     decisionKey,
-    hostedDiagnostics,
+    explicitConflictChoice,
     onDecisionDraftChange,
   ]);
 
@@ -1156,7 +1158,7 @@ export function TaskItemRecoveryPanel({
             updated.checkpoint.checkpointVersion,
             updated.decision?.kind ?? null,
           ]),
-          hostedDiagnostics,
+          explicitConflictChoice,
         ),
       );
       if (updated.checkpoint.permittedActionIds.includes("retry")) {
@@ -1987,7 +1989,7 @@ export function TaskItemRecoveryPanel({
             canIgnore={permitted.has("ignore")}
             permitted={permitted}
             busy={busy}
-            presentation="dialog"
+            presentation={filesDecision ? "files" : "dialog"}
             actionsTarget={actionBarTarget}
           />
         )}
@@ -2384,13 +2386,15 @@ function DecisionForm(props: {
    * `dialog` uses the current-file wording; `recovery` reuses that approved
    * row-and-field layout inside the Task Center's exact file evidence.
    */
-  readonly presentation?: "full" | "dialog" | "recovery";
+  readonly presentation?: "full" | "dialog" | "files" | "recovery";
   /** The Files footer slot; when present the one save group moves there. */
   readonly actionsTarget?: HTMLElement | null;
 }) {
   const { decision } = props;
-  const dialog = props.presentation === "dialog";
+  const files = props.presentation === "files";
+  const dialog = props.presentation === "dialog" || files;
   const recovery = props.presentation === "recovery";
+  const approvedRows = files || recovery;
   const compact = dialog || recovery;
   const canSave =
     decision.kind === "metadata_correction"
@@ -2415,7 +2419,7 @@ function DecisionForm(props: {
   );
   const ignoreButton =
     props.canIgnore &&
-    (!recovery ||
+    (!approvedRows ||
       (decision.kind !== "classification" && decision.kind !== "conflict")) ? (
       <button
         type="button"
@@ -2515,7 +2519,7 @@ function DecisionForm(props: {
         recovery
           ? "mf-recovery-decision"
           : dialog
-            ? "mf-organize-decision-files"
+            ? `mf-organize-decision-files${files ? " mf-organize-decision-reference" : ""}`
             : "mf-count-section"
       }
       aria-label={`${DECISION_LABELS[decision.kind]}决策`}
@@ -2613,8 +2617,8 @@ function DecisionForm(props: {
               String(choice.rank),
               props.selectedChoice === String(choice.rank),
               () => props.onSelectChoice(String(choice.rank)),
-              recovery ? null : `候选 ${choice.rank}`,
-              `${choice.name}${choice.year === null ? "" : recovery ? ` · ${choice.year}` : ` (${choice.year})`}`,
+              approvedRows ? null : `候选 ${choice.rank}`,
+              `${choice.name}${choice.year === null ? "" : approvedRows ? ` · ${choice.year}` : ` (${choice.year})`}`,
               [
                 mediaTypeLabel(choice.mediaType),
                 choice.description === null
@@ -2622,7 +2626,7 @@ function DecisionForm(props: {
                   : `原名 ${choice.description}`,
                 choice.providerId === null
                   ? null
-                  : recovery && choice.provider
+                  : approvedRows && choice.provider
                     ? `${choice.provider.toUpperCase()} #${choice.providerId}`
                     : `ID ${choice.providerId}`,
               ]
@@ -2865,13 +2869,13 @@ function DecisionForm(props: {
               String(choice.rank),
               props.selectedChoice === String(choice.rank),
               () => props.onSelectChoice(String(choice.rank)),
-              recovery ? null : `目标 ${choice.rank}`,
-              recovery
-                ? `${choice.mediaLibraryId ?? "媒体库"} / ${choice.relativePath || "根目录"}`
+              approvedRows ? null : `目标 ${choice.rank}`,
+              approvedRows
+                ? `${(files ? choice.name : choice.mediaLibraryId) || "媒体库"} / ${choice.relativePath || "根目录"}`
                 : choice.name,
-              recovery
+              approvedRows
                 ? [
-                    choice.name === "" ? null : `规则 ${choice.name}`,
+                    files || choice.name === "" ? null : `规则 ${choice.name}`,
                     choice.description,
                   ]
                     .filter((part): part is string => part !== null)
@@ -2941,7 +2945,7 @@ function DecisionForm(props: {
             role="radiogroup"
             aria-label="冲突处理方式"
           >
-            {(recovery
+            {(approvedRows
               ? ["rename", "skip", "overwrite"].filter((strategy) =>
                   decision.allowedStrategies.includes(strategy),
                 )
@@ -2952,10 +2956,10 @@ function DecisionForm(props: {
                 props.conflictStrategy === strategy,
                 () => props.onConflictStrategy(strategy),
                 null,
-                recovery
+                approvedRows
                   ? recoveryConflictStrategyTitle(strategy)
                   : conflictStrategyTitle(strategy),
-                recovery
+                approvedRows
                   ? recoveryConflictStrategyHint(strategy)
                   : conflictStrategyHint(strategy),
               ),
@@ -2972,7 +2976,7 @@ function DecisionForm(props: {
                 }
               />
               <span>
-                {recovery
+                {approvedRows
                   ? "我选择按许可覆盖此目标，执行前再次核对实际影响"
                   : "我明确选择覆盖此冲突目标；本次仍只保存决定并重新分析。"}
               </span>
@@ -2981,7 +2985,7 @@ function DecisionForm(props: {
         </>
       )}
 
-      {dialog ? (
+      {dialog && !files ? (
         <details className="mf-organize-decision-diagnostics">
           <summary>展开技术诊断</summary>
           <dl>

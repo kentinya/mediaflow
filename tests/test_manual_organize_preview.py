@@ -681,6 +681,62 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             directory.cleanup()
             target_directory.cleanup()
 
+    def test_linked_blocked_review_does_not_age_ready_siblings(self):
+        fixture = self._fixture(("One.2001.mkv", "Unknown.2024.mkv"))
+        (
+            directory,
+            target_directory,
+            database,
+            source_root,
+            target_root,
+            sources,
+            configuration,
+            provider,
+        ) = fixture
+        self.addCleanup(directory.cleanup)
+        self.addCleanup(target_directory.cleanup)
+        with SQLiteTaskRepository(database) as repository:
+            intents, previews, _, _ = self._services(
+                repository, configuration, provider, source_root, target_root
+            )
+            links = {}
+
+            def publish_review(**kwargs):
+                links[kwargs["source"].path] = (
+                    FileReviewLink("metadata_correction", "review", "pending", "task", "item"),
+                )
+                return "item"
+
+            repository.publish_task_item_problem = publish_review
+            repository.list_file_review_links = lambda storage_id, path, limit=100: links.get(
+                path, ()
+            )
+            intent = intents.create(sources, actor="operator")
+            preview = previews.create(
+                intent.intent_id, expected_version=1, actor="operator", problem_task_id="task"
+            )
+            ready, blocked = preview.items
+            self.assertEqual(ManualPreviewItemStatus.PREVIEWED, ready.status)
+            self.assertEqual(ManualPreviewItemStatus.BLOCKED, blocked.status)
+            self.assertEqual("item", blocked.plan["problemTaskItemId"])
+            self.assertTrue(previews.get_readonly(preview.preview_id).current)
+
+            path = blocked.source.path
+            links[path] = (replace(links[path][0], status="resolved"),)
+            self.assertTrue(previews.get_readonly(preview.preview_id).current)
+
+            unrelated = FileReviewLink(
+                "metadata", "other-review", "pending", "other-task", "other-item"
+            )
+            links[path] += (unrelated,)
+            self.assertFalse(previews.get_readonly(preview.preview_id).current)
+            links[path] = links[path][:1]
+            links[ready.source.path] = (unrelated,)
+            stale = previews.get_readonly(preview.preview_id)
+            self.assertFalse(stale.current)
+            self.assertEqual(ManualPreviewItemStatus.STALE, stale.items[0].status)
+            self.assertEqual([], list(Path(target_root).rglob("*.mkv")))
+
     def test_source_and_choice_changes_mark_preview_stale_without_rebuilding(self):
         fixture = self._fixture(("One.2001.mkv", "Unknown.2024.mkv"))
         (
