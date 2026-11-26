@@ -100,6 +100,11 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   await expect(card.getByText("纳入本次整理").first()).toBeVisible({
     timeout: 30_000,
   });
+  await expect(
+    card.getByRole("checkbox", { name: "纳入 Three.2003.mkv" }),
+  ).toBeChecked();
+  await card.getByRole("button", { name: "返回整理概览" }).click();
+  await expect(overview).toBeVisible();
   expect(
     await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
   ).toEqual({ sourceExists: true, destinationTargets: [] });
@@ -116,12 +121,13 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
         return;
       }
       droppedExecuteResponse = true;
-      await route.fetch();
+      const admission = await route.fetch();
+      expect(admission.status()).toBe(202);
       await route.abort("connectionreset");
     },
   );
-  await page.getByRole("button", { name: /整批复核/ }).click();
-  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await card.getByRole("button", { name: "整批复核(已选 1 项)" }).click();
+  await card.getByRole("button", { name: "确认整理 1 项" }).click();
   // The retained request is reconciled automatically under the same
   // backend-authenticated principal; there is no manual query button.
   await expect(page).toHaveURL(/\/operations\?.*run=/, {
@@ -196,7 +202,9 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
       response.request().method() === "GET" &&
       response.url().includes(`/operations/runs/${runId}/items/`),
   );
-  await items.getByRole("button", { name: "查看证据" }).click();
+  await items
+    .getByRole("button", { name: /Three\.2003\.mkv.*查看证据/ })
+    .click();
   const evidence = (await (await evidenceResponse).json()) as {
     readonly results: readonly {
       readonly effect_certainty: string;
