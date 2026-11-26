@@ -1,6 +1,6 @@
 # Task 59.4 — 整理弹窗共用真实阶段的准备页
 
-Next Action: DEVELOPER CORRECTS CANCELLATION DURING THE FIRST PLAN READ IN TASK 59.4
+Next Action: DEVELOPER VERIFIES CONTINUATION AT FIRST PLAN HANDOFF IN TASK 59.4
 
 ```text
 Task ID: 59.4
@@ -9,13 +9,38 @@ Parent Slice: 59
 Status: FIX REQUIRED
 Task Base: bccfb2c4c014eb181d33ebc5b99140c1c722b446
 Planning Contract: 36f60fe0ef75c9cbb9e0b30e258c2d6f4075f24d
-Reviewed Implementation Head: 9845da5236e5bcfa6c4f262ff180841ccfdd4d4e
+Reviewed Implementation Head: 0af3e6ec89d8ac3d6331d7ac9b80f60b82f500f6
 Difficulty: Medium
 Test Level: T3
 Planner / Reviewer: B
 ```
 
 ## Task 59.4 B 复核
+
+**`0af3e6ec` · FIX REQUIRED · RO-1 / AC-01、AC-06。** 复核原 Task Base 至本候选及完整 Slice
+区间。首份摘要等待期间，先读到取消状态的路径已通过。准备页结束动效，保留原范围和进度，
+随后在同页显示只读摘要，并可返回原 Files 位置和焦点。
+
+从 Files 发起整理并等待首份摘要，在另一标签页从任务中心取消同一任务。使用真实 Worker、API
+及 SQLite，仅调整浏览器收到两个原响应的先后。后台已保存 `cancelled` 和 `continuable=false`，
+此时先交付早先读取的摘要，下一次准备状态读取尚未返回。Files 错进「本次整理概览」并显示
+「整批复核」。摘要到达后组件沿用此前的可继续状态，记录已进复核并停止准备轮询，等待多个正常
+轮询周期后仍在概览。该次验证发送的分析和执行请求均为零。
+
+1. 首份摘要可读时，在进入概览或托管复核前，使用现有读口核对同一准备和关联任务的当前可继续
+   状态，以及当前关联的摘要身份。以与本次交接对应的状态读回为准。读回在等待时保留准备页，
+   读取失败时提供原位重读。正常读回直接交接。
+2. 当上一步读回已取消时，让原摘要作为只读内容加入共用准备终态，保留原范围、进度和「返回文件页」。
+   仅在检查通过且实际交接时记录已进入复核。保留准确历史地址以及进入复核后结算的原有只读行为。
+3. 在现有真实浏览器取消用例添加摘要响应先到的变体。断言取消在摘要交付前已持久生效，随后一直留在
+   准备页，读到取消后仍可核对同一只读摘要并恢复返回焦点。保留取消状态先到、正常交接和零分析及执行请求断言。
+
+治理、Task 与 Slice 区间空白检查、Web 类型、Lint、格式、构建及夹具 Ruff 检查通过。
+组件 150 项及计划内真实浏览器 12 项通过，补充的响应顺序用例复现上述阻塞。
+`.git/validation-evidence/0af3e6ec89d8ac3d6331d7ac9b80f60b82f500f6/b-task59.4-review/`
+中的 `cancel-response-order-retest.log` 和对应浏览器产物记录实际先后顺序、页面和请求。
+
+### 前序复核
 
 **`9845da52` · FIX REQUIRED · RO-1 / AC-01、AC-06。** 复核原 Task Base 至本候选及完整 Slice
 区间。首次读取前已超限结算、经历两次读回后超限结算、排队期间从另一标签页取消均通过。
