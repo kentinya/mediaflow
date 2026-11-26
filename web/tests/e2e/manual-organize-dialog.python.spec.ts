@@ -198,20 +198,79 @@ async function driveDiscoveryFor(
  * analysis starts, so the durable request boundary is the stable evidence,
  * not transient copy that can be replaced by the next problem.
  */
-async function saveNativeDecision(page: Page, card: Locator): Promise<void> {
+async function saveNativeDecision(
+  page: Page,
+  card: Locator,
+  checkTransition = false,
+): Promise<void> {
+  const decisionPath = /\/recovery\/decision$/;
+  const continuationPath = /\/recovery\/continue$/;
+  let releaseDecision = () => {};
+  let releaseContinuation = () => {};
+  const decisionGate = new Promise<void>((resolve) => {
+    releaseDecision = resolve;
+  });
+  const continuationGate = new Promise<void>((resolve) => {
+    releaseContinuation = resolve;
+  });
+  if (checkTransition) {
+    await page.route(decisionPath, async (route) => {
+      await decisionGate;
+      await route.continue();
+    });
+    await page.route(continuationPath, async (route) => {
+      await continuationGate;
+      await route.continue();
+    });
+  }
   const decision = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      /\/recovery\/decision$/.test(new URL(response.url()).pathname),
+      decisionPath.test(new URL(response.url()).pathname),
   );
   const continuation = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      /\/recovery\/continue$/.test(new URL(response.url()).pathname),
+      continuationPath.test(new URL(response.url()).pathname),
   );
-  await card.getByRole("button", { name: "保存并重新分析" }).click();
-  expect((await decision).ok()).toBe(true);
-  expect((await continuation).ok()).toBe(true);
+  const fileHeader = card.locator(".mf-organize-files-file-head");
+  const fileName = fileHeader.locator(".mf-organize-file-name");
+  const icon = fileHeader.locator(".mf-organize-reanalysis-file-icon");
+  const identity = checkTransition
+    ? { name: await fileName.innerText(), icon: await icon.innerText() }
+    : null;
+  try {
+    await card.getByRole("button", { name: "保存并重新分析" }).click();
+    if (identity !== null) {
+      await expect(
+        card.getByRole("button", { name: "正在保存并重新分析…" }),
+      ).toBeDisabled();
+      await expect(card.getByText("操作请求仍在进行")).toHaveCount(0);
+      await expect(fileName).toHaveText(identity.name);
+    }
+    releaseDecision();
+    expect((await decision).ok()).toBe(true);
+    if (identity !== null) {
+      await expect(
+        card.getByRole("heading", { name: "正在重新分析", exact: true }),
+      ).toBeVisible();
+      await expect(
+        card.getByText("正在请求重新分析", { exact: true }),
+      ).toHaveCount(0);
+      await expect(card.getByText(/正在请求原任务重新分析/)).toBeVisible();
+      await expect(fileName).toHaveText(identity.name);
+      await expect(icon).toHaveText(identity.icon);
+    }
+    releaseContinuation();
+    expect((await continuation).ok()).toBe(true);
+  } finally {
+    releaseDecision();
+    releaseContinuation();
+    if (checkTransition) {
+      await page.unroute(decisionPath);
+      await page.unroute(continuationPath);
+    }
+  }
   // The saved decision must hand directly to the one accepted-analysis wait
   // state.  The old retry-shaped checkpoint may still advertise `retry`, but
   // the same save/analyse button must not reappear as a second command.
@@ -775,7 +834,7 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
         requestAnimationFrame(sample);
       });
     }
-    await saveNativeDecision(page, card);
+    await saveNativeDecision(page, card, index === 1);
     if (index === 1) {
       const stage = card.locator(".mf-organize-stage");
       await expect(stage).toHaveAttribute("data-reanalysis-frame", "seen");
@@ -795,14 +854,14 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
     }
 
     await driveDiscovery(request, true);
+    const overview = card.getByRole("region", { name: "本次整理概览" });
+    await expect(overview).toBeVisible({ timeout: 30_000 });
     if (index === 1) {
       await expect(
-        card.getByRole("heading", { name: "新方案已读回" }),
+        overview.getByRole("heading", { name: "整理方案已更新" }),
       ).toBeVisible();
       await expect(card.getByRole("radio", { name: /候选 2/ })).toHaveCount(0);
     }
-    const overview = card.getByRole("region", { name: "本次整理概览" });
-    await expect(overview).toBeVisible({ timeout: 30_000 });
     // The exact file's new summary is read back before the card returns here;
     // its filename and current state stay visible in the overview.
     await expect(overview).toContainText(filename);
@@ -873,10 +932,30 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
     }
     requestAnimationFrame(sampleEntrance);
   });
-  await page.getByRole("button", { name: "确认整理 10 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
   const detail = page.getByRole("dialog", { name: "运行详情" });
-  await expect(detail).toBeVisible({ timeout: 30_000 });
+  const runOverviewPath = /\/api\/operations\/runs\/[^/?]+$/;
+  let releaseOverview = () => {};
+  const overviewGate = new Promise<void>((resolve) => {
+    releaseOverview = resolve;
+  });
+  await page.route(runOverviewPath, async (route) => {
+    await overviewGate;
+    await route.continue();
+  });
+  try {
+    await page.getByRole("button", { name: "确认整理 10 项" }).click();
+    await expect(page).toHaveURL(/\/operations\?.*run=/);
+    await expect(
+      detail.getByRole("heading", { name: "正在加载运行详情" }),
+    ).toBeVisible();
+    await expect(card).toHaveCount(0);
+  } finally {
+    releaseOverview();
+  }
+  await expect(
+    detail.getByRole("heading", { name: "正在加载运行详情" }),
+  ).toHaveCount(0);
+  await page.unroute(runOverviewPath);
   await expect(detail).toHaveAttribute("data-first-frame-opacity", "1");
   await expect(detail).toHaveAttribute("data-first-frame-backdrop", "1");
   await expect(detail).toHaveCSS("animation-duration", "0.34s");
@@ -1597,11 +1676,11 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   await expect(copiedEvidence.getByText("文件已整理")).toBeVisible();
   await expect(
     copiedEvidence
-      .getByRole("region", { name: "来源与目标" })
-      .getByText(originalTarget, { exact: true }),
+      .getByText(`media-target:${originalTarget}`, { exact: true })
+      .and(copiedEvidence.locator(".mf-exact-identity")),
   ).toBeVisible();
   await expect(
-    copiedEvidence.getByText("效果：已验证完成", { exact: true }),
+    copiedEvidence.getByText("复制 · 已验证完成", { exact: true }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "关闭详情" }).click();
@@ -1696,9 +1775,12 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   await driveDiscoveryFor(page, request, secondDiscoveryId as string);
   const secondOverview = card.getByRole("region", { name: "本次整理概览" });
   await expect(secondOverview).toBeVisible({ timeout: 30_000 });
-  await expect(secondOverview).toContainText(
-    `「${conflictFile}」已可确认。整理方案已更新，整理尚未提交。`,
-  );
+  await expect(
+    secondOverview.getByRole("heading", { name: "整理方案已更新" }),
+  ).toBeVisible();
+  await expect(
+    secondOverview.getByRole("button", { name: `查看 ${conflictFile}` }),
+  ).toContainText("可确认");
   expect(await fileState()).toEqual(copied);
   expect(lostAnalysisResponses).toBe(1);
   // Leave the healthy sibling out of the single execution confirmation.
@@ -3498,9 +3580,12 @@ test("Task59.1 a lost direct analysis response stays locked until the same prepa
   await driveDiscoveryFor(page, request, discoveryId as string);
   const overview = card.getByRole("region", { name: "本次整理概览" });
   await expect(overview).toBeVisible({ timeout: 30_000 });
-  await expect(overview).toContainText(
-    `「${targetFile}」已可确认。整理方案已更新，整理尚未提交。`,
-  );
+  await expect(
+    overview.getByRole("heading", { name: "整理方案已更新" }),
+  ).toBeVisible();
+  await expect(
+    overview.getByRole("button", { name: `查看 ${targetFile}` }),
+  ).toContainText("可确认");
   expect(analyzePosts()).toHaveLength(1);
   expect(await fileState()).toEqual(before);
 });

@@ -1038,16 +1038,18 @@ export function ManualOrganizeDialog({
     !preparationPlanObserved;
   const preparationEnteredReview =
     preparationObservedLive && preparationPlanObserved;
-  // Files rows present the reviewed library identity only when those reads
-  // confirm the plan's Storage/root. Task Center continuation keeps its Base
-  // presentation and never starts these extra reads.
+  // Both batch-review entries use the verified library names and paths.
   const filesSystemStatusQuery = useQuery({
     ...systemStatusQueryOptions(token),
-    enabled: filesHost && token !== null,
+    enabled:
+      token !== null &&
+      (filesHost || (preview !== undefined && !organizeFlowEnded)),
   });
   const filesMediaLibraryListQuery = useQuery({
     ...mediaLibraryListQueryOptions(token),
-    enabled: filesHost && token !== null,
+    enabled:
+      token !== null &&
+      (filesHost || (preview !== undefined && !organizeFlowEnded)),
   });
   const executionHistoryQuery = useQuery(
     organizeExecutionListQueryOptions(
@@ -1116,6 +1118,10 @@ export function ManualOrganizeDialog({
   }
   const [filesDecisionReturn, setFilesDecisionReturn] =
     useState<DecisionReturn | null>(null);
+  const [filesCorrectionRequest, setFilesCorrectionRequest] = useState<{
+    readonly itemId: string;
+    readonly savedChoice: string | null;
+  } | null>(null);
   const [filesAnalysisArrival, setFilesAnalysisArrival] = useState<{
     readonly decision: DecisionReturn;
     readonly previewId: string;
@@ -1370,20 +1376,23 @@ export function ManualOrganizeDialog({
     if (read?.ok === true) filesTaskItemFacts.set(value.itemId, read.model);
   });
   /**
-   * The same organize Task's durable settled items. The Files host reads only
-   * the two terminal dispositions through the bounded run-items endpoint, so
+   * The same Task's durable skipped and ignored items for either review host.
+   * Read only those two dispositions through the bounded run-items endpoint, so
    * a normal success or a technical failure never becomes an overview record.
    */
   const filesSettledRecordReads = useQueries({
     queries: (["skipped", "ignored"] as const).map((status) =>
       filesSettledRecordsQueryOptions(token, {
-        runId: filesHost ? (filesOrganizeTaskId ?? "") : "",
+        runId:
+          filesHost || (preview !== undefined && !organizeFlowEnded)
+            ? (filesOrganizeTaskId ?? "")
+            : "",
         status,
       }),
     ),
   });
   const filesSettledRecords: FilesSettledRecord[] = [];
-  if (filesHost && filesOrganizeTaskId !== null) {
+  if (filesOrganizeTaskId !== null) {
     (["skipped", "ignored"] as const).forEach((_status, index) => {
       const read = filesSettledRecordReads[index]?.data;
       if (read?.ok !== true) return;
@@ -1818,6 +1827,9 @@ export function ManualOrganizeDialog({
         });
         if (!saved.ok) throw { stage: "save", code: saved.code };
       }
+      if (filesHost && options.itemId !== "") {
+        setFilesCorrectionRequest({ itemId: options.itemId, savedChoice });
+      }
       const analyzed = await requestOrganizeDiscoveryAnalysis(token, {
         discoveryId: preparation.discoveryId,
         expectedVersion: preparation.version,
@@ -1861,6 +1873,7 @@ export function ManualOrganizeDialog({
       setPreparationNotice(null);
     },
     onSuccess: async (value, variables) => {
+      setFilesCorrectionRequest(null);
       if (variables.onlyAnalysis && variables.itemId === "") {
         if (value.analyzed) {
           setPreparationNotice({
@@ -2003,6 +2016,8 @@ export function ManualOrganizeDialog({
       }
     },
     onError: (error, variables) => {
+      setFilesCorrectionRequest(null);
+      if (filesHost) setFilesDecisionReturn(null);
       const stage = isSaveStageError(error) ? error.stage : "save";
       const code = isSaveStageError(error) ? error.code : "unknown";
       const message =
@@ -2058,7 +2073,7 @@ export function ManualOrganizeDialog({
       setResult(null);
       setAmbiguousRefusal(null);
     },
-    onSuccess: async (outcome, submission) => {
+    onSuccess: (outcome, submission) => {
       if (outcome.kind === "duplicate") return;
       const value = outcome.value;
       if (value.ok) {
@@ -2067,7 +2082,7 @@ export function ManualOrganizeDialog({
         });
         const taskId = value.model.taskId;
         if (taskId !== "") {
-          await handleHandoff(taskId, () => {
+          handleHandoff(taskId, () => {
             if (principalId !== null) {
               clearOrganizeConfirmation(
                 principalId,
@@ -2135,54 +2150,40 @@ export function ManualOrganizeDialog({
   });
 
   /** One deliberate handoff to the Task named by the admission evidence. */
-  const handleHandoff = async (
-    taskId: string,
-    clearConfirmation: () => void,
-  ) => {
-    if (handoffDoneRef.current) return;
+  const handleHandoff = (taskId: string, clearConfirmation: () => void) => {
+    if (
+      handoffDoneRef.current ||
+      (filesHost && layer.layerRef.current === null)
+    )
+      return;
     handoffDoneRef.current = true;
     if (filesHost) {
       setOpeningTaskDetail(true);
-      // Prepare the first detail screen while the existing card stays visible.
-      // Read the items after the overview so a terminal overview cannot
-      // reuse an item page read before the Task settled.
-      const reads = queryClient
-        .fetchQuery({
-          ...runOverviewQueryOptions(token, taskId),
-          staleTime: 0,
-        })
-        .then((overview) => {
-          if (!overview.ok) return;
-          return queryClient.prefetchQuery({
-            ...runItemsQueryOptions(token, {
-              runId: taskId,
-              status: null,
-              cursor: null,
-              active: false,
-            }),
-            staleTime: 0,
-          });
+      // Discard exact pre-admission reads. The destination can mount while its
+      // data is loading, and shares the same in-flight read with this prefetch.
+      const overview = runOverviewQueryOptions(token, taskId);
+      const firstItems = runItemsQueryOptions(token, {
+        runId: taskId,
+        status: null,
+        cursor: null,
+        active: false,
+      });
+      void queryClient.resetQueries({
+        queryKey: overview.queryKey,
+        exact: true,
+      });
+      void queryClient.resetQueries({
+        queryKey: firstItems.queryKey,
+        exact: true,
+      });
+      void queryClient
+        .fetchQuery(overview)
+        .then((read) => {
+          if (read.ok) return queryClient.prefetchQuery(firstItems);
         })
         .catch(() => {
-          // The detail owns authorization, failures and rereading.
+          // The detail owns read errors and retry.
         });
-      const animate = window.matchMedia?.(
-        "(prefers-reduced-motion: no-preference)",
-      ).matches;
-      let timer: number | undefined;
-      await Promise.all([
-        Promise.race([
-          reads,
-          new Promise<void>((resolve) => {
-            timer = window.setTimeout(resolve, 500);
-          }),
-        ]),
-        animate
-          ? new Promise<void>((resolve) => window.setTimeout(resolve, 400))
-          : undefined,
-      ]);
-      window.clearTimeout(timer);
-      if (layer.layerRef.current === null) return;
     }
     clearConfirmation();
     refreshRetained();
@@ -2708,10 +2709,17 @@ export function ManualOrganizeDialog({
     !isExecutable &&
     currentDecisionStatus !== null &&
     currentDecisionStatus !== "decision_required";
+  const filesCorrectionStarting =
+    filesReturningToSameFile &&
+    saveMutation.isPending &&
+    filesCorrectionRequest?.itemId === anchorItemId
+      ? filesCorrectionRequest
+      : null;
   const filesCorrectionWaiting =
     filesReviewingDecision &&
     currentProblemItemId === null &&
-    (currentAnalysisReadback?.phase === "awaiting" ||
+    (filesCorrectionStarting !== null ||
+      currentAnalysisReadback?.phase === "awaiting" ||
       (currentNotice?.acceptedAnalysis !== undefined &&
         currentNotice.acceptedAnalysis.previewId === preview?.previewId));
   const filesReanalysisView = filesNativeAnalysis || filesCorrectionWaiting;
@@ -4715,6 +4723,46 @@ export function ManualOrganizeDialog({
     );
   };
 
+  const renderFilesReviewHeader = (
+    {
+      filename,
+      pageLabel,
+      source,
+      problem,
+    }: Pick<DecisionReturn, "filename" | "pageLabel" | "source" | "problem">,
+    showDraft = false,
+  ) => (
+    <header className="mf-organize-file-head mf-organize-files-file-head mf-organize-reanalysis-file">
+      <span className="mf-organize-reanalysis-file-icon" aria-hidden="true">
+        {(
+          {
+            recognition: "◎",
+            metadata: "≡",
+            metadata_correction: "≡",
+            classification: "↳",
+            conflict: "◇",
+          } as Record<string, string>
+        )[problem ?? ""] ?? "▷"}
+      </span>
+      <div className="mf-organize-file-title">
+        <h3>
+          <span className="mf-organize-file-eyebrow">{pageLabel}</span>
+          <span className="mf-organize-file-name mf-exact-identity">
+            {filename}
+          </span>
+        </h3>
+        {source !== "" && (
+          <p className="mf-organize-file-path mf-dashboard-meta">{source}</p>
+        )}
+        {showDraft && (
+          <p className="mf-organize-file-draft" role="status">
+            有未保存的修正
+          </p>
+        )}
+      </div>
+    </header>
+  );
+
   const renderReview = () => {
     if (items.length === 0 || currentItem === undefined) {
       return (
@@ -4823,48 +4871,20 @@ export function ManualOrganizeDialog({
       filesHost && (draftDirty || currentDecisionDraftDirty);
     const reviewHeader = () =>
       filesHost ? (
-        <header className="mf-organize-file-head mf-organize-files-file-head mf-organize-reanalysis-file">
+        renderFilesReviewHeader(
           {
-            <span
-              className="mf-organize-reanalysis-file-icon"
-              aria-hidden="true"
-            >
-              {(
-                {
-                  recognition: "◎",
-                  metadata: "≡",
-                  metadata_correction: "≡",
-                  classification: "↳",
-                  conflict: "◇",
-                } as Record<string, string>
-              )[previewItemProblemKind(item) ?? ""] ?? "▷"}
-            </span>
-          }
-          <div className="mf-organize-file-title">
-            <h3>
-              <span className="mf-organize-file-eyebrow">
-                第 {pageInfo + 1} / {items.length} 个文件
-              </span>
-              <span className="mf-organize-file-name mf-exact-identity">
-                {filename}
-              </span>
-            </h3>
-            {!isExecutable && (
-              <p className="mf-organize-file-path mf-dashboard-meta">
-                {filesSourceLocation(
+            filename,
+            pageLabel: `第 ${pageInfo + 1} / ${items.length} 个文件`,
+            problem: previewItemProblemKind(item),
+            source: isExecutable
+              ? ""
+              : filesSourceLocation(
                   item,
                   filesSystemStatusQuery.data?.resourceLibraries ?? [],
-                ).text.replace(/^来源 /, "")}
-              </p>
-            )}
-            {/* The draft note belongs to this file, not the shared footer. */}
-            {filesCurrentDraft && !filesReanalysisView ? (
-              <p className="mf-organize-file-draft" role="status">
-                有未保存的修正
-              </p>
-            ) : null}
-          </div>
-        </header>
+                ).text.replace(/^来源 /, ""),
+          },
+          filesCurrentDraft && !filesReanalysisView,
+        )
       ) : (
         <header className="mf-organize-file-head">
           <div className="mf-organize-file-title">
@@ -4893,10 +4913,15 @@ export function ManualOrganizeDialog({
     if (filesCorrectionWaiting) {
       return (
         <>
-          {reviewHeader()}
+          {filesDecisionReturn !== null
+            ? renderFilesReviewHeader(filesDecisionReturn)
+            : reviewHeader()}
           <OrganizeReanalysis
-            phase="waiting"
-            savedChoice={notice?.acceptedAnalysis?.savedChoice}
+            phase={filesCorrectionStarting === null ? "waiting" : "starting"}
+            savedChoice={
+              filesCorrectionStarting?.savedChoice ??
+              notice?.acceptedAnalysis?.savedChoice
+            }
           />
         </>
       );
@@ -5640,73 +5665,14 @@ export function ManualOrganizeDialog({
     const filesResourceLibraries =
       filesSystemStatusQuery.data?.resourceLibraries ?? [];
     const filesMediaLibraries = filesMediaLibraryListQuery.data?.items ?? [];
-    const skippedItems = items.filter(
-      (item) => !activeSelection.includes(item.itemId),
+    const omittedRows = filesOverviewRows.filter(
+      (row) => row.item === null || !activeSelection.includes(row.item.itemId),
     );
-    const omittedRows = filesHost
-      ? filesOverviewRows.filter(
-          (row) =>
-            row.item === null || !activeSelection.includes(row.item.itemId),
-        )
-      : [];
-    const omittedCount = filesHost ? omittedRows.length : skippedItems.length;
-    const operations = [
-      ...new Set(selectedItems.map((item) => operationLabel(item.operation))),
-    ].join("、");
-    const targets = [
-      ...new Set(
-        selectedItems.map(
-          (item) =>
-            `${item.targetStorageId ?? "—"}:${
-              item.targetPath ?? item.destination?.storageRelativePath ?? "—"
-            }`,
-        ),
-      ),
-    ];
-    const moveCount = selectedItems.filter(
-      (item) => item.operation === "MOVE",
-    ).length;
-    const retainedCount = selectedItems.filter(
-      (item) => item.operation === "COPY" || item.operation === "LINK",
-    ).length;
-    const noFileOperationCount = selectedItems.filter(
-      (item) => item.operation === "NOOP" || item.operation === "SKIP",
-    ).length;
-    const missingOperationCount = selectedItems.filter(
-      (item) => item.operation === null,
-    ).length;
-    const overwriteCount = selectedItems.filter(
-      (item) => item.destructiveImplications?.overwriteRequired === true,
-    ).length;
-    const cleanupCount = selectedItems.filter(
-      (item) => item.destructiveImplications?.sourceCleanupRequired === true,
-    ).length;
-    const sourceEffects = [
-      moveCount > 0 ? `移动 ${moveCount} 项：整理成功后来源位置不再保留` : null,
-      retainedCount > 0 ? `复制或链接 ${retainedCount} 项：来源保留` : null,
-      noFileOperationCount > 0
-        ? `不执行文件操作 ${noFileOperationCount} 项：来源保留`
-        : null,
-      missingOperationCount > 0
-        ? `操作尚未生成 ${missingOperationCount} 项`
-        : null,
-    ].filter((value): value is string => value !== null);
+    const omittedCount = omittedRows.length;
     const attachmentCount = selectedItems.reduce(
       (total, item) => total + item.attachments.length,
       0,
     );
-    const impactText =
-      selectedItems.length === 0
-        ? "当前没有所选就绪项，确认不会提交。"
-        : `${sourceEffects.length === 0 ? "来源效果按上方操作核对" : sourceEffects.join("；")}；${
-            overwriteCount > 0
-              ? `包含覆盖已有目标 ${overwriteCount} 个（需单独授权）`
-              : "无覆盖"
-          }；${
-            cleanupCount > 0
-              ? `包含清理来源目录 ${cleanupCount} 个（需单独授权）`
-              : "无来源清理"
-          }。`;
     const batchAttachments = (item: (typeof selectedItems)[number]) =>
       item.attachments.length === 0 ? null : (
         <details className="mf-organize-batch-attachments-details">
@@ -5757,205 +5723,101 @@ export function ManualOrganizeDialog({
             ? ` · 版本 ${preview.intentVersion}`
             : ""}
         </p>
-        {filesHost ? null : (
-          <dl>
-            <dt>入选条目</dt>
-            <dd>{selectedItems.length}</dd>
-            <dt>未纳入条目</dt>
-            <dd>{skippedItems.length}</dd>
-            <dt>目标位置</dt>
-            <dd>{targets.length}</dd>
-          </dl>
-        )}
       </details>
     );
     return (
       <>
         <section aria-label="整批复核" className="mf-organize-batch-review">
-          {filesHost ? (
-            <FilesStatusCard
-              tag={
-                summaryConfirmationBlocker !== null
-                  ? "暂不能确认"
-                  : "等待明确确认"
-              }
-              title="整批复核"
-              copy={
-                summaryConfirmationBlocker !== null
-                  ? `${summaryConfirmationBlocker.reason} ${summaryConfirmationBlocker.nextAction}`
-                  : "确认后只提交下列已选文件。目标路径、操作和对来源的影响以本页所示方案为准。"
-              }
-              tone={summaryConfirmationBlocker !== null ? "amber" : "blue"}
-              icon="≡"
-            />
-          ) : (
-            <div className="mf-organize-section-head">
-              <h3>整批复核</h3>
-              <span className="mf-organize-section-note">
-                确认受理前不修改任何文件
-              </span>
-            </div>
-          )}
+          <FilesStatusCard
+            tag={
+              summaryConfirmationBlocker !== null
+                ? "暂不能确认"
+                : "等待明确确认"
+            }
+            title="整批复核"
+            copy={
+              summaryConfirmationBlocker !== null
+                ? `${summaryConfirmationBlocker.reason} ${summaryConfirmationBlocker.nextAction}`
+                : "确认后只提交下列已选文件。目标路径、操作和对来源的影响以本页所示方案为准。"
+            }
+            tone={summaryConfirmationBlocker !== null ? "amber" : "blue"}
+            icon="≡"
+          />
           <dl
-            className={`mf-organize-batch-summary${
-              filesHost ? " mf-organize-files-batch-summary" : ""
-            }`}
+            className="mf-organize-batch-summary mf-organize-files-batch-summary"
             aria-label="整批复核计数与范围"
           >
-            {filesHost ? (
-              <>
-                <div>
-                  <dt>本次确认</dt>
-                  <dd>{activeSelection.length} 项</dd>
-                </div>
-                <div>
-                  <dt>未纳入</dt>
-                  <dd>{omittedCount} 项</dd>
-                </div>
-                <div>
-                  <dt>关联附件</dt>
-                  <dd>{attachmentCount} 个</dd>
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <dt>将整理</dt>
-                  <dd>{activeSelection.length} 项</dd>
-                </div>
-                <div>
-                  <dt>未纳入</dt>
-                  <dd>{skippedItems.length} 项</dd>
-                </div>
-                {preparation !== undefined &&
-                preparation.selection.refused.length > 0 ? (
-                  <div>
-                    <dt>未受理</dt>
-                    <dd>{preparation.selection.refused.length} 项</dd>
-                  </div>
-                ) : null}
-                <div>
-                  <dt>操作</dt>
-                  <dd>{operations === "" ? "—" : operations}</dd>
-                </div>
-                <div>
-                  <dt>目标</dt>
-                  <dd>{targets.length} 个位置</dd>
-                </div>
-              </>
-            )}
+            <div>
+              <dt>本次确认</dt>
+              <dd>{activeSelection.length} 项</dd>
+            </div>
+            <div>
+              <dt>未纳入</dt>
+              <dd>{omittedCount} 项</dd>
+            </div>
+            <div>
+              <dt>关联附件</dt>
+              <dd>{attachmentCount} 个</dd>
+            </div>
           </dl>
-          {filesHost ? null : (
-            <>
-              <p className="mf-organize-impact" role="status">
-                <strong>实际影响：</strong>
-                {impactText}
-              </p>
-              <p className="mf-organize-section-note">
-                仅所选就绪项进入执行;未选、已受理、未就绪及历史不确定的兄弟项保持独立，不会被重放。
-              </p>
-            </>
-          )}
-          {filesHost ? null : filesReanalysisAction()}
-          {filesHost ? null : planDiagnostics}
         </section>
 
         <section
-          className={`mf-organize-section mf-organize-batch-list-section${
-            filesHost ? " mf-organize-files-batch-section" : ""
-          }`}
-          aria-label={filesHost ? "来源与目标" : "本次确认的文件"}
+          className="mf-organize-section mf-organize-batch-list-section mf-organize-files-batch-section"
+          aria-label="来源与目标"
         >
           <div className="mf-organize-section-head">
-            <h4>{filesHost ? "来源与目标" : "本次确认的文件"}</h4>
-            <span className="mf-organize-section-note">
-              {filesHost ? "按当前方案" : `共 ${selectedItems.length} 项`}
-            </span>
+            <h4>来源与目标</h4>
+            <span className="mf-organize-section-note">按当前方案</span>
           </div>
-          <ul
-            className={`mf-organize-review-list mf-organize-batch-list${
-              filesHost ? " mf-organize-files-batch-list" : ""
-            }`}
-          >
+          <ul className="mf-organize-review-list mf-organize-batch-list mf-organize-files-batch-list">
             {selectedItems.map((item) => {
-              const retention = operationRetentionLabel(item.operation);
               const fileName = item.sourceFilename ?? item.itemId;
-              if (filesHost) {
-                const sourceLocation = filesSourceLocation(
-                  item,
-                  filesResourceLibraries,
-                );
-                const targetLocation = filesTargetLocation(
-                  item,
-                  filesMediaLibraries,
-                );
-                const attachmentSummary = attachmentBrief(item.attachments);
-                return (
-                  <li key={`selected-${item.itemId}`}>
-                    <span
-                      className="mf-organize-overview-file-icon mf-organize-batch-file-icon"
-                      aria-hidden="true"
-                    >
-                      ▷
-                    </span>
-                    <div className="mf-organize-files-batch-main">
-                      <span className="mf-organize-batch-file">{fileName}</span>
-                      <span
-                        className={`mf-organize-batch-source${
-                          sourceLocation.exact ? " mf-exact-identity" : ""
-                        }`}
-                      >
-                        {sourceLocation.text}
-                      </span>
-                      <span
-                        className={`mf-organize-batch-target${
-                          targetLocation.exact ? " mf-exact-identity" : ""
-                        }`}
-                      >
-                        {targetLocation.text}
-                      </span>
-                      <span className="mf-organize-batch-effect">
-                        来源影响：
-                        {operationImpactLabel(item.operation) ??
-                          "按当前操作核对，尚未生成"}
-                        {attachmentSummary !== null
-                          ? ` · ${attachmentSummary}`
-                          : ""}
-                      </span>
-                      {batchAttachments(item)}
-                    </div>
-                    <span className="mf-organize-batch-operation">
-                      {operationLabel(item.operation)}
-                    </span>
-                  </li>
-                );
-              }
+              const sourceLocation = filesSourceLocation(
+                item,
+                filesResourceLibraries,
+              );
+              const targetLocation = filesTargetLocation(
+                item,
+                filesMediaLibraries,
+              );
+              const attachmentSummary = attachmentBrief(item.attachments);
               return (
                 <li key={`selected-${item.itemId}`}>
-                  <button
-                    type="button"
-                    className="mf-link-button mf-organize-batch-file"
-                    aria-label={`查看 ${fileName}`}
-                    onClick={() => {
-                      // eslint-disable-next-line react-hooks/refs
-                      goTo(
-                        items.findIndex((row) => row.itemId === item.itemId),
-                      );
-                      setStep("review");
-                      setFilesOverviewVisible(false);
-                    }}
+                  <span
+                    className="mf-organize-overview-file-icon mf-organize-batch-file-icon"
+                    aria-hidden="true"
                   >
-                    {fileName}
-                  </button>
+                    ▷
+                  </span>
+                  <div className="mf-organize-files-batch-main">
+                    <span className="mf-organize-batch-file">{fileName}</span>
+                    <span
+                      className={`mf-organize-batch-source${
+                        sourceLocation.exact ? " mf-exact-identity" : ""
+                      }`}
+                    >
+                      {sourceLocation.text}
+                    </span>
+                    <span
+                      className={`mf-organize-batch-target${
+                        targetLocation.exact ? " mf-exact-identity" : ""
+                      }`}
+                    >
+                      {targetLocation.text}
+                    </span>
+                    <span className="mf-organize-batch-effect">
+                      来源影响：
+                      {operationImpactLabel(item.operation) ??
+                        "按当前操作核对，尚未生成"}
+                      {attachmentSummary !== null
+                        ? ` · ${attachmentSummary}`
+                        : ""}
+                    </span>
+                    {batchAttachments(item)}
+                  </div>
                   <span className="mf-organize-batch-operation">
                     {operationLabel(item.operation)}
-                    {retention !== null ? ` · ${retention}` : ""}
-                  </span>
-                  <span className="mf-organize-batch-target mf-exact-identity">
-                    {item.targetStorageId ?? "—"}:
-                    {item.targetPath ??
-                      item.destination?.storageRelativePath ??
-                      "—"}
                   </span>
                 </li>
               );
@@ -5964,46 +5826,11 @@ export function ManualOrganizeDialog({
         </section>
 
         {omittedCount > 0 ? (
-          <details
-            className={`mf-organize-skipped${filesHost ? " mf-organize-overview-group" : ""}`}
-          >
+          <details className="mf-organize-skipped mf-organize-overview-group">
             <summary>未纳入本次确认的文件 · {omittedCount} 项</summary>
-            {filesHost ? (
-              <ul className="mf-organize-overview-list">
-                {omittedRows.map((row) => renderFilesOverviewRow(row, true))}
-              </ul>
-            ) : (
-              <ul>
-                {skippedItems.map((item) => (
-                  <li key={`skipped-${item.itemId}`}>
-                    <button
-                      type="button"
-                      className="mf-link-button"
-                      aria-label={`查看 ${item.sourceFilename ?? item.itemId}`}
-                      onClick={() => {
-                        goTo(
-                          items.findIndex((row) => row.itemId === item.itemId),
-                        );
-                        setStep("review");
-                        setFilesOverviewVisible(false);
-                      }}
-                    >
-                      {item.sourceFilename ?? item.itemId}
-                    </button>{" "}
-                    —{" "}
-                    {admittedItemIds.has(item.itemId)
-                      ? "已受理执行,保持独立进度"
-                      : item.current === false
-                        ? "本方案中该文件已失效；返回逐项复核查看原因"
-                        : excluded.has(item.itemId)
-                          ? "你选择了暂不纳入(不是持久忽略)"
-                          : item.failure !== null
-                            ? item.failure.message
-                            : "未就绪"}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <ul className="mf-organize-overview-list">
+              {omittedRows.map((row) => renderFilesOverviewRow(row, true))}
+            </ul>
           </details>
         ) : null}
 
@@ -6025,12 +5852,8 @@ export function ManualOrganizeDialog({
           </details>
         ) : null}
 
-        {filesHost ? (
-          <>
-            {filesReanalysisAction()}
-            {summaryConfirmationBlocker !== null && planDiagnostics}
-          </>
-        ) : null}
+        {filesReanalysisAction()}
+        {summaryConfirmationBlocker !== null && planDiagnostics}
 
         {!preview.current ? (
           <StatusBanner
@@ -6209,26 +6032,11 @@ export function ManualOrganizeDialog({
       )
     ) : organizeFlowEnded ? (
       renderPreparationContent()
+    ) : filesRecordDetail !== null ? (
+      renderFilesRecordDetail()
     ) : analysisReadbackFile !== null ? (
       <>
-        <header className="mf-organize-file-head mf-organize-files-file-head mf-organize-reanalysis-file">
-          <span className="mf-organize-reanalysis-file-icon" aria-hidden="true">
-            ↻
-          </span>
-          <div className="mf-organize-file-title">
-            <h3>
-              <span className="mf-organize-file-eyebrow">
-                {analysisReadbackFile.pageLabel}
-              </span>
-              <span className="mf-organize-file-name mf-exact-identity">
-                {analysisReadbackFile.filename}
-              </span>
-            </h3>
-            <p className="mf-organize-file-path mf-dashboard-meta">
-              {analysisReadbackFile.source}
-            </p>
-          </div>
-        </header>
+        {renderFilesReviewHeader(analysisReadbackFile)}
         {preparationSummaryReadFailed ? (
           <StatusBanner variant="warning" title="新方案暂时无法读取">
             <p>当前文件的新方案尚未读回，整理尚未提交。</p>
@@ -6243,9 +6051,10 @@ export function ManualOrganizeDialog({
           </StatusBanner>
         ) : (
           <OrganizeReanalysis
-            phase="waiting"
+            phase={filesCorrectionStarting === null ? "waiting" : "starting"}
             savedChoice={
               analysisReadbackFile.savedChoice ??
+              filesCorrectionStarting?.savedChoice ??
               notices[analysisReadbackFile.itemId]?.acceptedAnalysis
                 ?.savedChoice
             }
@@ -6276,16 +6085,14 @@ export function ManualOrganizeDialog({
           </StatusBanner>
         ) : null}
         <OrganizeHistoryReminder items={items} />
-        {filesHost && filesRecordDetail !== null
-          ? renderFilesRecordDetail()
-          : filesHost &&
-              filesOverviewVisible &&
-              preview !== undefined &&
-              items.length > 0
-            ? renderFilesOverview()
-            : step === "review"
-              ? renderReview()
-              : renderConfirm()}
+        {filesHost &&
+        filesOverviewVisible &&
+        preview !== undefined &&
+        items.length > 0
+          ? renderFilesOverview()
+          : step === "review"
+            ? renderReview()
+            : renderConfirm()}
       </>
     );
 
@@ -6403,14 +6210,21 @@ export function ManualOrganizeDialog({
         整批复核 · {activeSelection.length} 项
       </Button>
     </>
-  ) : filesHost && filesRecordDetail !== null ? (
+  ) : filesRecordDetail !== null ? (
     <Button
       type="button"
       className="mf-organize-return-overview"
       variant="secondary"
-      onClick={returnToFilesOverview}
+      onClick={
+        filesHost
+          ? returnToFilesOverview
+          : () => {
+              setFilesRecordDetail(null);
+              openBatchReview();
+            }
+      }
     >
-      返回整理概览
+      {filesHost ? "返回整理概览" : "返回整批复核"}
     </Button>
   ) : step === "review" && filesHost ? (
     // Approved Files decision footer: the overview return alone on the left,
@@ -6525,7 +6339,7 @@ export function ManualOrganizeDialog({
     <>
       <Button
         type="button"
-        className={filesHost ? "mf-organize-return-overview" : undefined}
+        className="mf-organize-return-overview"
         variant="secondary"
         disabled={openingTaskDetail}
         onClick={() => {
@@ -6536,19 +6350,9 @@ export function ManualOrganizeDialog({
         {filesHost ? "返回整理概览" : "返回逐项复核"}
       </Button>
       <span className="mf-modal-footer-spacer" />
-      {filesHost ? null : (
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={closeLocked}
-          onClick={attemptClose}
-        >
-          关闭
-        </Button>
-      )}
       <div
         className={`mf-organize-confirm-submit${
-          filesHost && confirmationBlocker === null
+          confirmationBlocker === null
             ? " mf-organize-confirm-submit-inline"
             : ""
         }`}

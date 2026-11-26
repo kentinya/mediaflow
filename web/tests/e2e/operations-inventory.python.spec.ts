@@ -2410,7 +2410,10 @@ test("a selected execution never blocks the unselected sibling's correction and 
   // Correct the unselected sibling's RecognitionType on this card; the
   // analysis must only review the remaining item and succeed.
   const recognition = card.locator('select[aria-label^="识别类型 "]');
-  await card.getByText("修正识别或作品", { exact: true }).click();
+  await card.getByText("规则与方案证据", { exact: true }).click();
+  const correction = card.getByText("修正识别或作品", { exact: true });
+  await expect(correction).toBeVisible();
+  await correction.click();
   await recognition.selectOption("C");
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
@@ -2430,9 +2433,12 @@ test("a selected execution never blocks the unselected sibling's correction and 
     name: "本次整理概览",
   });
   await expect(reanalyzedOverview).toBeVisible({ timeout: 30_000 });
-  await expect(reanalyzedOverview).toContainText(
-    "「Tenth.2010.mkv」已可确认。整理方案已更新，整理尚未提交。",
-  );
+  await expect(
+    reanalyzedOverview.getByRole("heading", { name: "整理方案已更新" }),
+  ).toBeVisible();
+  await expect(
+    reanalyzedOverview.getByRole("button", { name: "查看 Tenth.2010.mkv" }),
+  ).toContainText("可确认");
   // No second execution was admitted by the correction/re-analysis.
   expect(
     api.filter(
@@ -2484,11 +2490,9 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
   await expect(
     card.getByRole("region", { name: "本次整理概览" }),
   ).toBeVisible();
-  await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(
-    page.getByRole("button", { name: "确认整理 0 项" }),
+    card.getByRole("button", { name: "整批复核 · 0 项" }),
   ).toBeDisabled();
-  await page.getByRole("button", { name: "返回整理概览" }).click();
   await openFilesOverviewFile(card, "Eleventh.2011.mkv");
   expect(
     await (
@@ -2502,15 +2506,18 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
   // the older intent identity select is not mounted as a second, independently
   // writable choice for the same file.
   await expect(card.getByRole("heading", { name: "确认作品" })).toBeVisible();
-  await expect(card.getByRole("radio", { name: /候选 1/ })).toBeVisible();
-  await expect(card.getByRole("radio", { name: /候选 2/ })).toBeVisible();
+  const candidates = card.getByRole("radio", { name: /TMDB #/i });
+  await expect(candidates).toHaveCount(2);
+  const selectedCandidate = card.getByRole("radio", { name: /TMDB #911/i });
+  await expect(card.getByRole("radio", { name: /TMDB #111/i })).toBeVisible();
+  await expect(selectedCandidate).toBeVisible();
   await expect(card.locator('select[aria-label^="元数据身份 "]')).toHaveCount(
     0,
   );
 
   // Choose one grounded candidate; the same-page analysis produces a real
   // executable summary.
-  await card.getByRole("radio", { name: /候选 2/ }).check();
+  await selectedCandidate.check();
   const decision = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -2538,9 +2545,12 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
     name: "本次整理概览",
   });
   await expect(reanalyzedOverview).toBeVisible({ timeout: 30_000 });
-  await expect(reanalyzedOverview).toContainText(
-    "「Eleventh.2011.mkv」已可确认。整理方案已更新，整理尚未提交。",
-  );
+  await expect(
+    reanalyzedOverview.getByRole("heading", { name: "整理方案已更新" }),
+  ).toBeVisible();
+  await expect(
+    reanalyzedOverview.getByRole("button", { name: "查看 Eleventh.2011.mkv" }),
+  ).toContainText("可确认");
   // Nothing has mutated before the explicit confirmation.
   expect(
     await (
@@ -6003,10 +6013,19 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   await expect(
     originalBatch.getByRole("heading", { name: "整批复核" }),
   ).toBeVisible();
+  await expect(originalBatch.getByText("等待明确确认")).toBeVisible();
   await expect(
-    originalBatch.getByText("确认受理前不修改任何文件"),
+    originalBatch.getByText("本次确认", { exact: true }),
   ).toBeVisible();
-  await expect(originalBatch.getByText("附件", { exact: true })).toHaveCount(0);
+  await expect(
+    originalBatch.getByText("未纳入", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    originalBatch.getByText("关联附件", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    reviewDialog.getByRole("region", { name: "来源与目标" }),
+  ).toContainText("Two.2002.mkv");
   await reviewDialog.getByRole("button", { name: "返回逐项复核" }).click();
   await expect(
     reviewDialog.getByRole("heading", { name: /第 1 \/ 1 个/ }),
@@ -6233,11 +6252,12 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   // The original card still reviews the exact scope it is about to confirm.
   await reviewDialog.getByRole("button", { name: /整批复核/ }).click();
   const inPlaceBatch = reviewDialog.getByRole("region", {
-    name: "本次确认的文件",
+    name: "来源与目标",
   });
   await expect(inPlaceBatch).toBeVisible();
   await expect(inPlaceBatch).toContainText(inPlaceFile);
-  await expect(inPlaceBatch).toContainText("复制 · 来源保留");
+  await expect(inPlaceBatch).toContainText("复制");
+  await expect(inPlaceBatch).toContainText("来源影响：来源文件保留");
   await expect(inPlaceBatch).toContainText("Two (2002)");
   expect(analyzePosts()).toHaveLength(1);
   expect(

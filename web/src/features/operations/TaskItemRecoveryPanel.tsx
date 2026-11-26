@@ -1801,7 +1801,9 @@ export function TaskItemRecoveryPanel({
           phase={
             currentAnalysisObservation?.phase === "requesting" &&
             !analysisDurableActive
-              ? "requesting"
+              ? filesDecision
+                ? "starting"
+                : "requesting"
               : "waiting"
           }
           savedChoice={savedChoice}
@@ -1891,14 +1893,17 @@ export function TaskItemRecoveryPanel({
             </button>
           </StatusBanner>
         )}
-        {busy && pendingAction !== null && !savedDecisionAnalysisVisible && (
-          <StatusBanner variant="info" title="操作请求仍在进行">
-            <p>
-              “{PENDING_ACTION_LABELS[pendingAction] ?? pendingAction}
-              ”请求尚未返回；结果返回前不会重复提交，保存也不会执行整理。
-            </p>
-          </StatusBanner>
-        )}
+        {busy &&
+          pendingAction !== null &&
+          !savedDecisionAnalysisVisible &&
+          !(filesDecision && pendingAction === "decision") && (
+            <StatusBanner variant="info" title="操作请求仍在进行">
+              <p>
+                “{PENDING_ACTION_LABELS[pendingAction] ?? pendingAction}
+                ”请求尚未返回；结果返回前不会重复提交，保存也不会执行整理。
+              </p>
+            </StatusBanner>
+          )}
         {message &&
           submittedConfirmation === null &&
           !savedDecisionAnalysisVisible && (
