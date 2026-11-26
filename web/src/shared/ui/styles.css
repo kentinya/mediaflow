@@ -4853,17 +4853,6 @@ button.mf-grid-button {
   font-size: 0.92rem;
   color: var(--muted);
 }
-.mf-task-center-alert {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 16px 0 0;
-  padding: 12px 16px;
-  border: 1px solid #f2d08a;
-  border-radius: 8px;
-  background: #fdf6e6;
-  color: #8a5a06;
-}
 .mf-task-center-panel {
   margin-top: 18px;
   background: var(--panel);
@@ -7495,11 +7484,6 @@ tr[aria-selected="true"] {
 
 .mf-task-center-summary .mf-count-label {
   font-size: 0.88rem;
-}
-
-.mf-operations-inventory .mf-task-center-alert {
-  margin: 10px 0 0;
-  padding: 8px 12px;
 }
 
 .mf-operations-inventory .mf-task-center-panel {
@@ -13356,63 +13340,75 @@ tr[aria-selected="true"] {
 .mf-problem-inbox {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 .mf-problem-inbox-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .mf-problem-inbox-head h3 {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: 1rem;
+  line-height: 20px;
 }
 .mf-problem-inbox-head > span {
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
 }
+/* Five light filters stay on one line; a narrower viewport or a longer
+   count scrolls this strip instead of wrapping into a second row. */
 .mf-problem-inbox-filters {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
 }
 .mf-problem-inbox-filters button {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel);
-  color: var(--muted);
+  justify-content: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: #f2f5f9;
+  color: #42516b;
   font: inherit;
+  font-size: 0.85rem;
+  white-space: nowrap;
   cursor: pointer;
 }
+.mf-problem-inbox-filters button:hover {
+  background: #e9eef6;
+}
 .mf-problem-inbox-filters button span {
-  min-width: 1.25rem;
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: var(--disabled-surface);
-  color: var(--disabled-ink);
-  font-size: 0.78rem;
-  text-align: center;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
 }
 .mf-problem-inbox-filters button[aria-pressed="true"] {
-  border-color: var(--accent);
+  border-color: #cddfff;
   background: var(--accent-soft);
   color: var(--accent-strong);
+  font-weight: 650;
 }
 .mf-problem-inbox-filters button[aria-pressed="true"] span {
-  background: var(--accent);
-  color: #ffffff;
+  color: inherit;
 }
 .mf-problem-groups {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 .mf-problem-group {
   border: 1px solid var(--line);
@@ -13422,22 +13418,31 @@ tr[aria-selected="true"] {
 }
 .mf-problem-group-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--line);
   background: #f8fafd;
 }
+.mf-problem-group-head > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  flex: 1 1 120px;
+  gap: 4px 8px;
+  min-width: 0;
+}
 .mf-problem-group-head h4 {
   margin: 0;
-  font-size: 0.98rem;
+  font-size: 0.92rem;
   overflow-wrap: anywhere;
 }
 .mf-problem-group-head p {
-  margin: 3px 0 0;
+  margin: 0;
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 .mf-problem-group-head .mf-link-button {
   flex: none;
@@ -13509,13 +13514,23 @@ tr[aria-selected="true"] {
   line-height: 1;
 }
 @media (max-width: 640px) {
-  .mf-problem-group-head {
-    flex-direction: column;
+  .mf-problem-inbox-filters {
+    gap: 4px;
+  }
+  .mf-problem-inbox-filters button {
+    min-height: 38px;
+    padding: 4px 6px;
+    gap: 4px;
+    font-size: 0.78rem;
+  }
+  .mf-problem-inbox-filters button span {
+    font-size: 0.72rem;
   }
   .mf-problem-file-row {
     align-items: flex-start;
     flex-wrap: wrap;
     gap: 6px 10px;
+    padding: 10px 12px;
   }
   .mf-problem-file-copy {
     flex-basis: 100%;
@@ -13523,5 +13538,28 @@ tr[aria-selected="true"] {
   .mf-problem-file-name {
     white-space: normal;
     overflow-wrap: anywhere;
+  }
+}
+/* The creation-day controls also stay on one compact row at 390 px; each
+   field gives up width before the strip wraps. */
+@media (max-width: 560px) {
+  .mf-operations-inventory .mf-run-date-group {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  .mf-operations-inventory .mf-run-date-group > span:first-child {
+    font-size: 0.82rem;
+  }
+  .mf-operations-inventory .mf-run-date-group .mf-run-filter-field {
+    flex: 1 1 0;
+    min-width: 0;
+    gap: 4px;
+  }
+  .mf-operations-inventory .mf-run-date-group input {
+    width: 100%;
+    min-width: 0;
+    padding: 5px 4px;
+    font-size: 0.8rem;
   }
 }

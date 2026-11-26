@@ -79,11 +79,53 @@ test("capture the four task-center views and the problem-file states", async ({
   const inbox = page.getByRole("region", { name: "问题文件" });
   await expect(inbox).toBeVisible();
   const typeFilters = inbox.getByRole("group", { name: "问题类型" });
-  for (const label of ["全部", "识别", "元数据", "分类", "冲突"]) {
+  const typeLabels: readonly (readonly [string, string | null])[] = [
+    ["全部", null],
+    ["识别", "recognition"],
+    ["元数据", "metadata"],
+    ["分类", "classification"],
+    ["冲突", "conflict"],
+  ];
+  for (const [label] of typeLabels) {
     await expect(
       typeFilters.getByRole("button", { name: new RegExp(`^${label}`) }),
     ).toBeVisible();
   }
+  // The visible counts are the complete authorized read, not a page or view
+  // estimate: compare each filter with the same API projection.
+  const problemRead = await page.request.get(
+    `${BASE}/api/operations/problem-items?limit=100`,
+  );
+  expect(problemRead.ok()).toBeTruthy();
+  const problemBody = (await problemRead.json()) as {
+    readonly problem_file_total: number;
+    readonly problem_file_counts: Record<string, number>;
+  };
+  const measureTypeFilters = () =>
+    typeFilters.evaluate((group) => {
+      const buttons = Array.from(group.querySelectorAll("button"));
+      return {
+        rowTops: buttons.map((button) =>
+          Math.round(button.getBoundingClientRect().top),
+        ),
+        names: buttons.map((button) => (button.textContent ?? "").trim()),
+        scrollWidth: group.scrollWidth,
+        clientWidth: group.clientWidth,
+      };
+    });
+  const assertFilterCounts = (names: readonly string[]) => {
+    expect(names[0]).toContain(String(problemBody.problem_file_total));
+    for (const [label, key] of typeLabels.slice(1)) {
+      const count = problemBody.problem_file_counts[key!]!;
+      expect(names.some((name) => name.startsWith(label))).toBe(true);
+      expect(names.find((name) => name.startsWith(label))).toContain(
+        String(count),
+      );
+    }
+  };
+  const desktopFilters = await measureTypeFilters();
+  expect(new Set(desktopFilters.rowTops).size).toBe(1);
+  assertFilterCounts(desktopFilters.names);
   await page.waitForTimeout(250);
   await page.screenshot({
     path: `${OUTPUT}/task-center-attention.png`,
@@ -151,6 +193,133 @@ test("capture the four task-center views and the problem-file states", async ({
   await expect(lastView).toBeFocused();
   await page.screenshot({
     path: `${OUTPUT}/task-center-390x844.png`,
+    fullPage: false,
+  });
+
+  // The five problem filters stay on one compact line at 390 px with real
+  // one- and two-digit counts. The statistics connect directly to the panel,
+  // the date controls keep one row, and the first problem file is visible in
+  // the first screen.
+  await typeFilters.getByRole("button", { name: /^全部/ }).click();
+  await expect(page).not.toHaveURL(/problemType=/);
+  await expect(inbox).toBeVisible();
+  const narrowFilters = await measureTypeFilters();
+  expect(new Set(narrowFilters.rowTops).size).toBe(1);
+  expect(narrowFilters.scrollWidth).toBeLessThanOrEqual(
+    narrowFilters.clientWidth,
+  );
+  assertFilterCounts(narrowFilters.names);
+  const narrowFilterHeight = await typeFilters.evaluate((group) =>
+    Math.round(group.getBoundingClientRect().height),
+  );
+  expect(narrowFilterHeight).toBeLessThanOrEqual(44);
+  const dateRowTops = await page
+    .getByRole("region", { name: "运行筛选" })
+    .evaluate((filters) =>
+      Array.from(
+        filters.querySelectorAll(".mf-run-date-group .mf-run-filter-field"),
+        (field) => Math.round(field.getBoundingClientRect().top),
+      ),
+    );
+  expect(new Set(dateRowTops).size).toBe(1);
+  const firstProblemRow = inbox.locator("[data-problem-file-row]").first();
+  await expect(firstProblemRow).toBeVisible();
+  const firstRowTop = await firstProblemRow.evaluate((row) =>
+    Math.round(row.getBoundingClientRect().top),
+  );
+  expect(firstRowTop).toBeLessThan(844);
+  const stackedBanner =
+    await page.getByText(/个任务需要处理，可按恢复类型集中查看/);
+  await expect(stackedBanner).toHaveCount(0);
+  const statisticsToPanelGap = await page.evaluate(() => {
+    const summary = document.querySelector(".mf-task-center-summary");
+    const panel = document.querySelector(".mf-task-center-panel");
+    if (summary === null || panel === null) return null;
+    return Math.round(
+      panel.getBoundingClientRect().top -
+        summary.getBoundingClientRect().bottom,
+    );
+  });
+  expect(statisticsToPanelGap).not.toBeNull();
+  expect(statisticsToPanelGap!).toBeLessThanOrEqual(16);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: `${OUTPUT}/task-center-attention-390x844.png`,
+    fullPage: false,
+  });
+
+  // A narrower viewport may scroll this one-row strip, but every filter stays
+  // keyboard reachable and the page itself never grows sideways.
+  await page.setViewportSize({ width: 320, height: 720 });
+  const compactFilters = await measureTypeFilters();
+  expect(new Set(compactFilters.rowTops).size).toBe(1);
+  const lastFilter = typeFilters.getByRole("button").last();
+  await lastFilter.focus();
+  await expect(lastFilter).toBeFocused();
+  await expect(lastFilter).toBeInViewport();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  // A date applies to the selected type without dropping that filter; clearing
+  // it returns to the same first page and keeps the compact filter row.
+  await typeFilters.getByRole("button", { name: /^元数据/ }).click();
+  await expect(page).toHaveURL(/problemType=metadata/);
+  const localDay = await page.evaluate(() => {
+    const today = new Date();
+    const pad = (value: number) => String(value).padStart(2, "0");
+    return `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  });
+  await page.getByLabel("开始日期").fill(localDay);
+  await expect(page).toHaveURL(new RegExp(`from=${localDay}`));
+  await expect(page).toHaveURL(/problemType=metadata/);
+  await expect(
+    typeFilters.getByRole("button", { name: /^元数据/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(new Set((await measureTypeFilters()).rowTops).size).toBe(1);
+  expect(
+    await page
+      .locator(".mf-run-date-group")
+      .evaluate((group) => Math.round(group.getBoundingClientRect().height)),
+  ).toBeLessThanOrEqual(38);
+  await page
+    .getByRole("region", { name: "运行筛选" })
+    .getByRole("button", { name: "清除", exact: true })
+    .click();
+  await expect(page).not.toHaveURL(/from=/);
+  await expect(page).toHaveURL(/problemType=metadata/);
+
+  // The row opens the exact Task/file detail and closing restores the row.
+  const returnRow = inbox.locator("[data-problem-file-row]").first();
+  await expect(returnRow).toBeVisible();
+  await returnRow.click();
+  const openedDetail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(openedDetail).toBeVisible();
+  await openedDetail.getByRole("button", { name: "关闭详情" }).click();
+  await expect(openedDetail).toHaveCount(0);
+  await expect(page).toHaveURL(/problemType=metadata/);
+  await expect(returnRow).toBeFocused();
+
+  // The short viewport keeps the same filter row and page width without an
+  // extra reflow.
+  await page.setViewportSize({ width: 390, height: 520 });
+  await expect(inbox).toBeVisible();
+  const shortFilters = await measureTypeFilters();
+  expect(new Set(shortFilters.rowTops).size).toBe(1);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: `${OUTPUT}/task-center-attention-390x520.png`,
     fullPage: false,
   });
 

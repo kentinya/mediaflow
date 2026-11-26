@@ -1355,15 +1355,6 @@ function ViewSummary({
           </li>
         ))}
       </ul>
-      {summary.attention !== null && summary.attention > 0 && (
-        <p className="mf-task-center-alert" role="status">
-          <span aria-hidden="true">⚠</span>
-          <span>
-            {summary.attention}{" "}
-            个任务需要处理，可按恢复类型集中查看。同一任务可能涉及多种问题。
-          </span>
-        </p>
-      )}
     </section>
   );
 }
@@ -1541,6 +1532,12 @@ function ProblemInbox({
           id="mf-problem-filter-all"
           type="button"
           aria-pressed={problem === null}
+          onFocus={(event) =>
+            event.currentTarget.scrollIntoView?.({
+              block: "nearest",
+              inline: "nearest",
+            })
+          }
           onClick={() => onFilter(null)}
         >
           全部 <span>{countText(page?.problemFileTotal ?? 0)}</span>
@@ -1550,6 +1547,12 @@ function ProblemInbox({
             key={type}
             type="button"
             aria-pressed={problem === type}
+            onFocus={(event) =>
+              event.currentTarget.scrollIntoView?.({
+                block: "nearest",
+                inline: "nearest",
+              })
+            }
             onClick={() => onFilter(type)}
           >
             {RUN_PROBLEM_FILTER_LABELS[type]}{" "}

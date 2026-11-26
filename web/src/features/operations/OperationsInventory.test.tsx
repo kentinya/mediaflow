@@ -2113,6 +2113,11 @@ describe("Operations run inventory landing", () => {
       await screen.findByRole("heading", { name: "问题文件" }),
     ).toBeVisible();
     expect(screen.queryByRole("table")).toBeNull();
+    // The four statistics already state the attention population; the list
+    // has no second yellow banner repeating the same task count.
+    expect(
+      screen.queryByText(/个任务需要处理，可按恢复类型集中查看/),
+    ).toBeNull();
     expect(
       requested.some(
         (url) =>
