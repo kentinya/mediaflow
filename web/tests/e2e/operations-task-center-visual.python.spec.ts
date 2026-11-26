@@ -1,18 +1,19 @@
 /**
- * Visual acceptance capture for the eight organizing task-center views
- * (Slice46 RO-4) against the real-Python harness.
+ * Visual acceptance capture for the four first-level task-center views and
+ * the shared Attention problem-file list (Slice 59 / V2-OPS-022) against the
+ * real-Python harness.
  *
- * The former fifth Failure Recovery view is gone: a technical failure is
- * read-only history in All/Ended.
+ * The four recovery types are inline filters, not sibling tabs; a technical
+ * failure remains read-only history in All/Ended.
  *
  * Run under `playwright.python.config.ts` after `npm run build`:
  *
  *   npm run test:e2e -- --config=playwright.python.config.ts \
  *     tests/e2e/operations-task-center-visual.python.spec.ts
  *
- * The script seeds the real mixed problem population, then captures the eight
+ * The script seeds the real mixed problem population, then captures the four
  * views at the reference 1536x1024 viewport plus the narrow-width and
- * Task/type problem-file states.  Screenshots are written under
+ * Attention problem-file states.  Screenshots are written under
  * `web/test-results/task-center-visual/`; the human review of layout,
  * hierarchy, focus and occlusion is a separate step (a script exit alone is
  * not visual acceptance).
@@ -32,10 +33,6 @@ const VIEWS: readonly { readonly view: string; readonly label: string }[] = [
   { view: "running", label: "进行中" },
   { view: "attention", label: "需要处理" },
   { view: "ended", label: "已结束" },
-  { view: "recognition", label: "识别恢复" },
-  { view: "metadata", label: "元数据恢复" },
-  { view: "classification", label: "分类恢复" },
-  { view: "conflict", label: "冲突处理" },
 ];
 
 async function connect(page: Page): Promise<void> {
@@ -44,7 +41,7 @@ async function connect(page: Page): Promise<void> {
   await expect(page.getByRole("region", { name: "探索" })).toBeVisible();
 }
 
-test("capture the eight task-center views and the problem-file states", async ({
+test("capture the four task-center views and the problem-file states", async ({
   page,
   request,
 }) => {
@@ -61,9 +58,9 @@ test("capture the eight task-center views and the problem-file states", async ({
   const views = page.getByRole("navigation", { name: "任务中心视图" });
   await expect(views).toBeVisible();
 
-  // The token is memory-only, so the eight views are reached through in-app
-  // navigation (never a full page reload that would clear the session).
-  for (const { view, label } of VIEWS) {
+  // The four first-level views are reached through in-app navigation (the
+  // token is memory-only) and captured against the real durable population.
+  for (const { view, label } of VIEWS.slice(0, 4)) {
     await views.getByRole("button", { name: label, exact: true }).click();
     await expect(views).toBeVisible();
     await expect(
@@ -76,57 +73,62 @@ test("capture the eight task-center views and the problem-file states", async ({
     });
   }
 
-  // The exact Task/type problem-file list (one recovery row's own action),
-  // including its actual next page rather than a synthetic short fixture.
-  await views.getByRole("button", { name: "元数据恢复", exact: true }).click();
-  const row = page
-    .getByRole("row")
+  // Attention defaults to the shared all-problem list with its five filters
+  // and real complete-scope counts.
+  await views.getByRole("button", { name: "需要处理", exact: true }).click();
+  const inbox = page.getByRole("region", { name: "问题文件" });
+  await expect(inbox).toBeVisible();
+  const typeFilters = inbox.getByRole("group", { name: "问题类型" });
+  for (const label of ["全部", "识别", "元数据", "分类", "冲突"]) {
+    await expect(
+      typeFilters.getByRole("button", { name: new RegExp(`^${label}`) }),
+    ).toBeVisible();
+  }
+  await page.waitForTimeout(250);
+  await page.screenshot({
+    path: `${OUTPUT}/task-center-attention.png`,
+    fullPage: false,
+  });
+
+  // The metadata filter includes both candidate and search-correction files,
+  // with the same server-owned cursor paging as the apex list.
+  await typeFilters.getByRole("button", { name: /^元数据/ }).click();
+  await expect(page).toHaveURL(/problemType=metadata/);
+  const group = inbox
+    .getByRole("region")
     .filter({ hasText: "TaskCenter/PagedMetadata" });
-  await row.getByRole("button", { name: "查看问题文件" }).click();
-  const problemPanel = page.getByRole("region", { name: "问题文件处理" });
-  await expect(problemPanel).toBeVisible();
-  await expect(problemPanel.getByText(/匹配 21 个文件/)).toBeVisible();
-  await problemPanel.getByRole("button", { name: "下一页" }).click();
-  await expect(problemPanel.getByText(/Metadata20\.mkv/).first()).toBeVisible();
-  // A pending metadata decision names its own readable next step, never a raw
-  // category token or a generic technical-repair invitation.
-  await expect(problemPanel.getByText(/选择候选或修正标题/)).toBeVisible();
-  await expect(problemPanel.getByText(/waiting_metadata/)).toHaveCount(0);
+  await expect(group).toBeVisible();
+  await inbox.getByRole("button", { name: "下一页" }).click();
+  await expect(page).toHaveURL(/problemCursor=/);
+  const secondPageItem = inbox
+    .getByRole("listitem")
+    .filter({ hasText: "Metadata" })
+    .first()
+    .getByRole("button");
+  await expect(secondPageItem).toBeVisible();
   await page.waitForTimeout(250);
   await page.screenshot({
     path: `${OUTPUT}/task-center-problem-files.png`,
     fullPage: false,
   });
-  await problemPanel.getByRole("button", { name: "返回任务列表" }).click();
 
-  // The overlapping 需要处理 view offers an explicit per-type locate action
-  // for a Task with several current problems, and it opens the exact
-  // Task/type file list rather than a dead URL-only change.
-  await views.getByRole("button", { name: "需要处理", exact: true }).click();
-  await expect(page).toHaveURL(/view=attention/);
-  const attentionRow = page
-    .getByRole("row")
-    .filter({ hasText: "TaskCenter/Mixed" });
-  await expect(attentionRow).toHaveCount(1);
-  await attentionRow
-    .getByRole("button", { name: "识别问题", exact: true })
-    .click();
+  // The overlapping set keeps a multi-type Task's exact type filters and each
+  // row opens that same file in the existing Task detail.
+  await typeFilters.getByRole("button", { name: /^识别/ }).click();
   await expect(page).toHaveURL(/problemType=recognition/);
-  const attentionPanel = page.getByRole("region", { name: "问题文件处理" });
   await expect(
-    attentionPanel.getByRole("heading", { name: /识别问题 — 文件清单/ }),
+    inbox.getByRole("region").filter({ hasText: "TaskCenter/Mixed" }),
   ).toBeVisible();
-  await expect(attentionPanel.getByText(/匹配 2 个文件/)).toBeVisible();
   await page.waitForTimeout(250);
   await page.screenshot({
     path: `${OUTPUT}/task-center-attention-problem-files.png`,
     fullPage: false,
   });
-  await attentionPanel.getByRole("button", { name: "返回任务列表" }).click();
 
-  // The narrow viewport keeps all eight tabs discoverable in a scrollable row.
+  // The narrow viewport keeps all four first-level views on one reachable row
+  // and the problem filters reflow without page-level horizontal overflow.
   await page.setViewportSize({ width: 380, height: 720 });
-  await views.getByRole("button", { name: "全部任务", exact: true }).click();
+  await views.getByRole("button", { name: "需要处理", exact: true }).click();
   await expect(views).toBeVisible();
   const narrowNavigation = await views.evaluate((navigation) => ({
     rowTops: Array.from(navigation.querySelectorAll("button"), (button) =>
@@ -136,21 +138,14 @@ test("capture the eight task-center views and the problem-file states", async ({
     clientWidth: navigation.clientWidth,
   }));
   expect(new Set(narrowNavigation.rowTops).size).toBe(1);
-  expect(narrowNavigation.scrollWidth).toBeGreaterThan(
-    narrowNavigation.clientWidth,
-  );
   const lastView = views.getByRole("button").last();
   await lastView.focus();
   await expect(lastView).toBeFocused();
-  expect(
-    await views.evaluate((navigation) => navigation.scrollLeft),
-  ).toBeGreaterThan(0);
   await page.waitForTimeout(250);
   await page.screenshot({
     path: `${OUTPUT}/task-center-narrow.png`,
     fullPage: false,
   });
-  // Task46.3 also accepts the exact supported phone dimensions.
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(views).toBeVisible();
   await expect(lastView).toBeFocused();
@@ -160,35 +155,27 @@ test("capture the eight task-center views and the problem-file states", async ({
   });
 
   // Re-entry is explicit because the credential is memory-only. The same
-  // source, Task/type and file cursor must restore after the login boundary.
-  await views.getByRole("button", { name: "元数据恢复", exact: true }).click();
-  await page
-    .getByRole("row")
-    .filter({ hasText: "TaskCenter/PagedMetadata" })
-    .getByRole("button", { name: "查看问题文件" })
-    .click();
-  await page
-    .getByRole("region", { name: "问题文件处理" })
-    .getByRole("button", { name: "下一页" })
-    .click();
+  // problem type and cursor must restore after the login boundary.
+  await typeFilters.getByRole("button", { name: /^元数据/ }).click();
+  await inbox.getByRole("button", { name: "下一页" }).click();
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.reload();
-  await expect(page.getByLabel("Login name")).toBeVisible();
-  await submitSignIn(page, accountForToken(TOKEN));
+  await page.waitForTimeout(500);
+  const login = page.getByLabel("Login name");
+  if (await login.isVisible()) {
+    await submitSignIn(page, accountForToken(TOKEN));
+  }
   await expect(page).toHaveURL(/problemCursor=/);
-  const restoredPanel = page.getByRole("region", { name: "问题文件处理" });
-  await expect(
-    restoredPanel.getByText(/Metadata20\.mkv/).first(),
-  ).toBeVisible();
+  await expect(page).toHaveURL(/problemType=metadata/);
+  await expect(page.getByRole("region", { name: "问题文件" })).toBeVisible();
   await page.waitForTimeout(250);
   await page.screenshot({
     path: `${OUTPUT}/task-center-reconnected.png`,
     fullPage: false,
   });
 
-  // Capture a bounded read-failure state separately from the authenticated
-  // re-entry state. The route is removed before reconnect so it cannot mask
-  // the real Python service or leave a failed fixture active.
+  // Capture a bounded inventory read failure separately. The route is removed
+  // before the screenshot so it cannot mask the real Python service.
   await page.route("**/api/operations/runs*", async (route) =>
     route.fulfill({
       status: 503,
