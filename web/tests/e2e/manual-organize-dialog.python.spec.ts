@@ -239,12 +239,23 @@ async function saveNativeDecision(
   const identity = checkTransition
     ? { name: await fileName.innerText(), icon: await icon.innerText() }
     : null;
+  const save = card.getByRole("button", {
+    name: "保存并重新分析",
+    exact: true,
+  });
+  const footerLayout = () =>
+    card.locator(".mf-modal-footer").evaluate((footer) =>
+      Array.from(footer.querySelectorAll("button"), (button) => {
+        const { x, y, width, height } = button.getBoundingClientRect();
+        return { label: button.textContent, x, y, width, height };
+      }),
+    );
+  const footerBefore = checkTransition ? await footerLayout() : null;
   try {
-    await card.getByRole("button", { name: "保存并重新分析" }).click();
+    await save.click();
     if (identity !== null) {
-      await expect(
-        card.getByRole("button", { name: "正在保存并重新分析…" }),
-      ).toBeDisabled();
+      await expect(save).toBeDisabled();
+      expect(await footerLayout()).toEqual(footerBefore);
       await expect(card.getByText("操作请求仍在进行")).toHaveCount(0);
       await expect(fileName).toHaveText(identity.name);
     }

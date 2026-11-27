@@ -352,12 +352,11 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
               activeSelection.length === 0 ||
               !destructiveConfirmed
             }
+            aria-busy={compact && props.submitting ? true : undefined}
             onClick={props.onConfirm}
           >
-            {props.busy
-              ? compact
-                ? "正在提交…"
-                : "正在受理…"
+            {props.busy && !compact
+              ? "正在受理…"
               : confirmLabel(activeSelection.length)}
           </button>
         )}

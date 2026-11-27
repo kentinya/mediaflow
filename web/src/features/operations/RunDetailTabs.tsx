@@ -71,6 +71,7 @@ import {
   runItemsQueryOptions,
   runRecordsQueryKey,
   runRecordsQueryOptions,
+  taskItemRecoveryQueryOptions,
 } from "./run-detail-query";
 import type { RunDetailState, RunDetailTab } from "./run-detail-state";
 import { taskFailureReason } from "./ProblemFilePanel";
@@ -1851,11 +1852,13 @@ function fileNameOf(path: string): string {
  * confirmed result. The sentence is the concrete state of this file, not a
  * standing tutorial about the statistics.
  */
-function itemOutcome(evidence: RunItemEvidence): {
+function itemOutcome(
+  evidence: RunItemEvidence,
+  status: string,
+): {
   readonly text: string;
   readonly tone: "normal" | "warning" | "error";
 } {
-  const status = evidence.item.status;
   const certainty = evidence.checkpoint.effectCertainty;
   const resultOwing = RESULT_OWING_ITEM_STATUSES.has(status);
   if (evidence.results.length === 0 && resultOwing) {
@@ -2100,6 +2103,14 @@ function RunEvidenceSection({
   const token = useAuthToken();
   const pending = token !== null && query.isPending;
   const showWait = useReadReveal(pending);
+  // The recovery form already reads the same TaskItem. Observe that read
+  // without making another request: a durable skip/ignore can be displayed
+  // before the separate evidence document has caught up.
+  const taskId = query.data?.ok ? query.data.model.taskId : "";
+  const { data: recoveryRead } = useQuery({
+    ...taskItemRecoveryQueryOptions(token, { taskId, itemId, runId, active }),
+    enabled: false,
+  });
   return (
     <section
       id={id}
@@ -2129,7 +2140,26 @@ function RunEvidenceSection({
           const evidence: RunItemEvidence = data.model;
           const item = evidence.item;
           const checkpoint = evidence.checkpoint;
-          const outcome = itemOutcome(evidence);
+          const admittedFile =
+            evidence.planEvidence.executionId !== null &&
+            ((item.status === "pending" && item.stage === "admitted") ||
+              (item.status === "processing" && item.stage === "organizing"));
+          const awaitingDecisionEvidence =
+            !admittedFile &&
+            !READ_ONLY_OUTCOME_ITEM_STATUSES.has(item.status) &&
+            (isRecoveryActionKind(evidence.recoveryKind) ||
+              checkpoint.blockerKind !== null);
+          const recovery = recoveryRead?.ok ? recoveryRead.model : null;
+          const decisionSettlement =
+            awaitingDecisionEvidence &&
+            recovery?.taskId === evidence.taskId &&
+            recovery.itemId === itemId &&
+            (recovery.checkpoint.status === "skipped" ||
+              recovery.checkpoint.status === "ignored")
+              ? recovery.checkpoint
+              : null;
+          const status = decisionSettlement?.status ?? item.status;
+          const outcome = itemOutcome(evidence, status);
           const processingBasisRows = planProcessingRows(evidence.planEvidence);
           // Results are served newest-first. The newest persisted attempt is
           // this file's current operation and effect; the remaining attempts
@@ -2137,9 +2167,9 @@ function RunEvidenceSection({
           const latestResult = evidence.results[0] ?? null;
           const priorResults = evidence.results.slice(1);
           const noExecution =
-            item.status === "skipped" ||
-            item.status === "ignored" ||
-            item.status === "cancelled";
+            status === "skipped" ||
+            status === "ignored" ||
+            status === "cancelled";
           const target = noExecution
             ? null
             : (latestResult?.destinationPath ?? item.destinationPath);
@@ -2151,7 +2181,8 @@ function RunEvidenceSection({
             ? null
             : (latestResult?.operation ??
               evidence.planEvidence.plan?.operation);
-          const certainty = checkpoint.effectCertainty;
+          const certainty =
+            decisionSettlement?.effectCertainty ?? checkpoint.effectCertainty;
           const operationName =
             operation == null ? null : storageStepName(operation);
           const removesSource = operation?.toUpperCase() === "MOVE";
@@ -2161,10 +2192,6 @@ function RunEvidenceSection({
             "SOFT_LINK",
             "LINK",
           ].includes(operation?.toUpperCase() ?? "");
-          const admittedFile =
-            evidence.planEvidence.executionId !== null &&
-            ((item.status === "pending" && item.stage === "admitted") ||
-              (item.status === "processing" && item.stage === "organizing"));
           const verifiedFile =
             item.status === "success" &&
             certainty === "verified_complete" &&
@@ -2179,9 +2206,9 @@ function RunEvidenceSection({
               : "执行请求已受理，正在等待后台安排。"
             : verifiedFile
               ? `${operationName}已验证，目标文件可用。${removesSource ? "原位置已移除。" : "原文件仍保留。"}`
-              : item.status === "skipped" && certainty === "none"
+              : status === "skipped" && certainty === "none"
                 ? "已记录跳过决定，来源和原有目标均保留。"
-                : item.status === "ignored"
+                : status === "ignored"
                   ? certainty === "none"
                     ? "已按允许的决定忽略，来源文件未变更。"
                     : "已按允许的决定忽略。此次决定未执行文件操作。"
@@ -2197,7 +2224,7 @@ function RunEvidenceSection({
           const missingResult =
             latestResult === null &&
             RESULT_OWING_ITEM_STATUSES.has(item.status);
-          const failure = item.failure;
+          const failure = decisionSettlement === null ? item.failure : null;
           const failureReason =
             failure === null
               ? null
@@ -2222,12 +2249,9 @@ function RunEvidenceSection({
           // carry actual facts.  A read-only item keeps the established
           // result -> source/target -> execution -> evidence order.
           const recoveryActionable =
-            !admittedFile &&
-            !READ_ONLY_OUTCOME_ITEM_STATUSES.has(item.status) &&
-            (isRecoveryActionKind(evidence.recoveryKind) ||
-              checkpoint.blockerKind !== null);
+            awaitingDecisionEvidence && decisionSettlement === null;
           const showTechnicalDiagnostics =
-            !recoveryActionable ||
+            !awaitingDecisionEvidence ||
             latestResult !== null ||
             failure !== null ||
             checkpoint.uncertainEffects.length > 0 ||

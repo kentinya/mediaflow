@@ -147,6 +147,7 @@ function makeBackend() {
     failMetadataDecision: false as boolean,
     failMetadataContinue: false as boolean,
     recoveryAnalysisQueued: false as boolean,
+    holdMetadataSearch: null as Promise<void> | null,
     // B-PATCH-01: the next year-conditioned search is refused by the real
     // API's invalid_year envelope before any Provider call.
     rejectMetadataSearchYear: false as boolean,
@@ -1399,6 +1400,7 @@ function makeBackend() {
       ) {
         const body = JSON.parse(String(init?.body ?? "{}")) as Json;
         calls.metadataSearchPosts.push(body);
+        if (state.holdMetadataSearch !== null) await state.holdMetadataSearch;
         if (state.rejectMetadataSearchYear) {
           return jsonResponse(
             {
@@ -2325,7 +2327,27 @@ describe("ManualOrganizeDialog", () => {
     expect(year).toHaveValue(2001);
     await user.clear(year);
     await user.type(year, "2024");
-    await user.click(screen.getByRole("button", { name: "搜索元数据" }));
+    const search = screen.getByRole("button", { name: "搜索元数据" });
+    const save = screen.getByRole("button", { name: "保存并重新分析" });
+    let releaseSearch!: () => void;
+    backend.state.holdMetadataSearch = new Promise<void>((resolve) => {
+      releaseSearch = resolve;
+    });
+    try {
+      await user.click(search);
+      expect(search).toHaveAccessibleName("搜索元数据");
+      expect(search).toBeDisabled();
+      expect(save).toHaveAccessibleName("保存并重新分析");
+      expect(save).toBeDisabled();
+      expect(screen.getByText("正在搜索元数据…")).toHaveAttribute(
+        "role",
+        "status",
+      );
+      expect(screen.queryByText("操作请求仍在进行")).toBeNull();
+    } finally {
+      releaseSearch();
+      backend.state.holdMetadataSearch = null;
+    }
     await waitFor(() =>
       expect(backend.calls.metadataSearchPosts).toHaveLength(1),
     );

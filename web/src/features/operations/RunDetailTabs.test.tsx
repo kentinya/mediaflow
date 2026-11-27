@@ -3755,8 +3755,15 @@ describe("selected-run detail tabs", () => {
     );
     expect(
       within(recovery).getByRole("button", {
-        name: "正在保存并重新分析…",
+        name: "保存并重新分析",
       }),
+    ).toBeDisabled();
+    expect(within(recovery).getByText("正在保存决定…")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    expect(
+      within(recovery).getByRole("button", { name: "忽略此文件" }),
     ).toBeDisabled();
     expect(decisionPosts).toBe(1);
 
@@ -3780,7 +3787,7 @@ describe("selected-run detail tabs", () => {
     // with the form disabled instead of offering a second submission.
     expect(
       await within(reopenedRecovery).findByRole("button", {
-        name: "正在保存并重新分析…",
+        name: "保存并重新分析",
       }),
     ).toBeDisabled();
     expect(decisionPosts).toBe(1);
@@ -3799,6 +3806,82 @@ describe("selected-run detail tabs", () => {
       }),
     ).toBeNull();
     expect(decisionPosts).toBe(1);
+  });
+
+  it("keeps ignore locked until read-back and shows the exact result before the evidence catches up", async () => {
+    const user = userEvent.setup();
+    let posted = false;
+    let releaseReadBack!: () => void;
+    const readBack = new Promise<void>((resolve) => {
+      releaseReadBack = resolve;
+    });
+    stubDetailJourney([], {
+      // This read deliberately keeps the old blocker, even after settlement.
+      evidenceItem2: recognitionWaitingEvidenceDocument(),
+      recovery: async (_input, init) => {
+        if (init?.method === "POST") {
+          expect(JSON.parse(String(init.body))).toMatchObject({
+            actionId: "ignore",
+          });
+          posted = true;
+          return jsonResponse({
+            task_id: "task-001",
+            item_id: "item-2",
+            action_id: "ignore",
+            accepted: true,
+            sideEffects: "none",
+            next_action: "read the ignored item",
+          });
+        }
+        if (!posted) return jsonResponse(pendingRecognitionRecoveryDocument());
+        await readBack;
+        return jsonResponse(
+          recognitionRecoveryDocument({
+            checkpoint: {
+              status: "ignored",
+              stage: "ignored",
+              raw_stage: "ignored",
+              effects: { certainty: "unknown" },
+              retry_safety: "safe",
+              checkpoint_version: "c".repeat(64),
+              blocker: null,
+              permitted_action_ids: [],
+              refusal_reason: null,
+              next_action: null,
+            },
+            recoveryKind: "technical_history",
+          }),
+        );
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/operations?run=task-001");
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    await within(detail).findAllByText("a.mkv");
+    await user.click(
+      within(detail).getAllByRole("button", { name: /查看证据$/ })[1]!,
+    );
+    const evidence = await findInlineEvidence(detail);
+    const ignore = await within(evidence).findByRole("button", {
+      name: "忽略此文件",
+    });
+    try {
+      await user.click(ignore);
+      expect(posted).toBe(true);
+      expect(ignore).toBeDisabled();
+      expect(within(evidence).queryByText("当前结果")).toBeNull();
+    } finally {
+      releaseReadBack();
+    }
+    expect(
+      await within(evidence).findByText(
+        "已按允许的决定忽略。此次决定未执行文件操作。",
+      ),
+    ).toBeVisible();
+    expect(within(evidence).getByText("当前结果")).toBeVisible();
+    expect(
+      within(evidence).queryByRole("button", { name: "忽略此文件" }),
+    ).toBeNull();
   });
 
   it("keeps an unknown native decision reconcilable across card close and reopen", async () => {
@@ -4002,9 +4085,11 @@ describe("selected-run detail tabs", () => {
         name: "确认继续整理 1 项",
       }),
     );
-    expect(
-      within(summary).getByRole("button", { name: "正在提交…" }),
-    ).toBeDisabled();
+    const submitting = within(summary).getByRole("button", {
+      name: "确认继续整理 1 项",
+    });
+    expect(submitting).toBeDisabled();
+    expect(submitting).toHaveAttribute("aria-busy", "true");
     expect(within(summary).getByText("提交中")).toBeVisible();
     expect(within(recovery).queryByText("操作请求仍在进行")).toBeNull();
     expect(confirmPosts).toBe(1);

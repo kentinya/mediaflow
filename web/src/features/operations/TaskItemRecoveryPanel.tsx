@@ -770,10 +770,12 @@ export function TaskItemRecoveryPanel({
     onDecisionDraftChange,
   ]);
 
-  const refreshLinkedReads = () => {
-    void queryClient.invalidateQueries({
-      queryKey: [taskItemRecoveryQueryKey, taskId, itemId],
-    });
+  const refreshLinkedReads = (includeRecovery = true) => {
+    if (includeRecovery) {
+      void queryClient.invalidateQueries({
+        queryKey: [taskItemRecoveryQueryKey, taskId, itemId],
+      });
+    }
     void queryClient.invalidateQueries({
       queryKey: [runItemEvidenceQueryKey, runId, itemId],
     });
@@ -1219,19 +1221,23 @@ export function TaskItemRecoveryPanel({
             : "条目已忽略并保留审核记录；没有执行文件操作。 ",
           repeatLocked: false,
         });
-        // The ignore command answers with an acknowledgement only. A host
-        // that needs this item's terminal result reads the exact durable item
-        // back; other hosts keep their existing single-refresh behavior.
-        if (onDecisionSettled !== undefined) {
+        // The acknowledgement contains no terminal checkpoint. Keep this
+        // form locked for the exact read-back so it cannot flash back to an
+        // enabled decision while the verified outcome is on its way.
+        if (hostedDiagnostics || onDecisionSettled !== undefined) {
           const readBack = await query.refetch({ cancelRefetch: false });
           if (
             readBack.data?.ok === true &&
+            readBack.data.model.taskId === taskId &&
+            readBack.data.model.itemId === itemId &&
             readBack.data.model.checkpoint.status === "ignored"
           ) {
-            onDecisionSettled({ status: "ignored" });
+            onDecisionSettled?.({ status: "ignored" });
           }
+          refreshLinkedReads(false);
+        } else {
+          refreshLinkedReads();
         }
-        refreshLinkedReads();
       } else {
         await reportUnknown(result.code, result.status);
         refreshLinkedReads();
@@ -1899,17 +1905,32 @@ export function TaskItemRecoveryPanel({
     );
   })();
 
+  // The two organizer hosts keep the current editor and its actions in
+  // place while a request is pending. Announce the actual command without a
+  // growing button label or an inserted banner that pushes the form down.
+  const decisionRequestMessage =
+    (decisionMode || hostedDiagnostics) && busy
+      ? pendingAction === "search"
+        ? "正在搜索元数据…"
+        : pendingAction === "ignore"
+          ? "正在保存忽略决定…"
+          : pendingAction === "decision"
+            ? decision?.kind === "conflict" &&
+              effectiveDecisionDraft.conflictStrategy === "skip"
+              ? "正在保存跳过决定…"
+              : "正在保存决定…"
+            : null
+      : null;
+  const decisionRequestStatus = (
+    <p className="mf-sr-only" role="status">
+      {decisionRequestMessage}
+    </p>
+  );
+
   if (decisionMode) {
     // The organizer already owns the "当前状态" section heading. The native
     // decision form is that section's content, not a second nested card with
     // its own header and refresh toolbar.
-    const settlingWithoutAnalysis =
-      filesDecision &&
-      busy &&
-      (pendingAction === "ignore" ||
-        (pendingAction === "decision" &&
-          decision?.kind === "conflict" &&
-          effectiveDecisionDraft.conflictStrategy === "skip"));
     return (
       <section
         className="mf-organize-decision-host"
@@ -1938,8 +1959,7 @@ export function TaskItemRecoveryPanel({
         {busy &&
           pendingAction !== null &&
           !savedDecisionAnalysisVisible &&
-          !settlingWithoutAnalysis &&
-          !(filesDecision && pendingAction === "decision") && (
+          decisionRequestMessage === null && (
             <StatusBanner variant="info" title="操作请求仍在进行">
               <p>
                 “{PENDING_ACTION_LABELS[pendingAction] ?? pendingAction}
@@ -1947,17 +1967,11 @@ export function TaskItemRecoveryPanel({
               </p>
             </StatusBanner>
           )}
-        {settlingWithoutAnalysis && (
-          <p className="mf-sr-only" role="status">
-            {pendingAction === "ignore"
-              ? "正在保存忽略决定…"
-              : "正在保存跳过决定…"}
-          </p>
-        )}
+        {decisionRequestStatus}
         {message &&
           message !== "决定未保存，未请求分析" &&
           submittedConfirmation === null &&
-          !settlingWithoutAnalysis &&
+          decisionRequestMessage === null &&
           !(
             filesDecision &&
             decision !== null &&
@@ -2051,7 +2065,6 @@ export function TaskItemRecoveryPanel({
             canIgnore={permitted.has("ignore")}
             permitted={permitted}
             busy={busy}
-            keepSaveLabel={settlingWithoutAnalysis}
             presentation={filesDecision ? "files" : "dialog"}
             actionsTarget={actionBarTarget}
           />
@@ -2248,13 +2261,7 @@ export function TaskItemRecoveryPanel({
         !holdingSummary &&
         !(hostedDiagnostics && submittingConfirmation && !recoveryExpected) &&
         !(pendingAction === "continue" && savedDecisionAnalysisVisible) &&
-        !(
-          hostedDiagnostics &&
-          decision !== null &&
-          (pendingAction === "decision" ||
-            pendingAction === "search" ||
-            pendingAction === "ignore")
-        ) && (
+        decisionRequestMessage === null && (
           <StatusBanner variant="info" title="操作请求仍在进行">
             <p>
               “{PENDING_ACTION_LABELS[pendingAction] ?? pendingAction}
@@ -2262,6 +2269,7 @@ export function TaskItemRecoveryPanel({
             </p>
           </StatusBanner>
         )}
+      {hostedDiagnostics && decisionRequestStatus}
       {confirmationStatusText !== null &&
         !holdingSummary &&
         !(hostedDiagnostics && submittingConfirmation && !recoveryExpected) && (
@@ -2303,6 +2311,7 @@ export function TaskItemRecoveryPanel({
       )}
       {message &&
         !holdingSummary &&
+        decisionRequestMessage === null &&
         submittedConfirmation === null &&
         !savedDecisionAnalysisVisible &&
         !(activePreparation !== null && message.startsWith("选择已保存")) && (
@@ -2466,7 +2475,6 @@ function DecisionForm(props: {
   readonly canIgnore: boolean;
   readonly permitted: ReadonlySet<string>;
   readonly busy: boolean;
-  readonly keepSaveLabel?: boolean;
   /**
    * `dialog` uses the current-file wording; `recovery` reuses that approved
    * row-and-field layout inside the Task Center's exact file evidence.
@@ -2499,9 +2507,7 @@ function DecisionForm(props: {
       disabled={props.disabled || !canSave || !props.permitted.has(actionId)}
       onClick={props.onSave}
     >
-      {props.busy && !props.keepSaveLabel
-        ? "正在保存并重新分析…"
-        : "保存并重新分析"}
+      {props.busy && !compact ? "正在保存并重新分析…" : "保存并重新分析"}
     </button>
   );
   const ignoreButton =
@@ -2860,7 +2866,7 @@ function DecisionForm(props: {
               }
               onClick={props.onSearch}
             >
-              {props.busy ? "正在搜索…" : "搜索元数据"}
+              搜索元数据
             </button>
           </div>
           {recovery && props.metadataResult?.candidates.length === 0 && (

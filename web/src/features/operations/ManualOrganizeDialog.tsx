@@ -5001,17 +5001,16 @@ export function ManualOrganizeDialog({
               <Button
                 type="button"
                 disabled={currentCorrectionSaveDisabled}
+                aria-busy={saveMutation.isPending || undefined}
                 onClick={() => submitCurrentCorrection(item.itemId)}
               >
                 {itemAnalysisReadback?.phase === "reading"
                   ? "正在核对分析结果…"
-                  : saveMutation.isPending
-                    ? "正在保存并重新分析…"
-                    : itemAnalysisReadback?.phase === "awaiting"
-                      ? "等待新的零变更方案…"
-                      : itemAnalysisReadback?.phase === "unreadable"
-                        ? "分析结果待核对"
-                        : "保存并重新分析"}
+                  : itemAnalysisReadback?.phase === "awaiting"
+                    ? "等待新的零变更方案…"
+                    : itemAnalysisReadback?.phase === "unreadable"
+                      ? "分析结果待核对"
+                      : "保存并重新分析"}
               </Button>
               {itemAnalysisReadback?.phase === "unreadable" ? (
                 <Button
@@ -6423,17 +6422,16 @@ export function ManualOrganizeDialog({
             <Button
               type="button"
               disabled={currentCorrectionSaveDisabled}
+              aria-busy={saveMutation.isPending || undefined}
               onClick={() => submitCurrentCorrection(currentItemId)}
             >
               {currentAnalysisReadback?.phase === "reading"
                 ? "正在核对分析结果…"
-                : saveMutation.isPending
-                  ? "正在保存并重新分析…"
-                  : currentAnalysisReadback?.phase === "awaiting"
-                    ? "等待新的零变更方案…"
-                    : currentAnalysisReadback?.phase === "unreadable"
-                      ? "分析结果待核对"
-                      : "保存并重新分析"}
+                : currentAnalysisReadback?.phase === "awaiting"
+                  ? "等待新的零变更方案…"
+                  : currentAnalysisReadback?.phase === "unreadable"
+                    ? "分析结果待核对"
+                    : "保存并重新分析"}
             </Button>
             {currentAnalysisReadback?.phase === "unreadable" ? (
               <Button

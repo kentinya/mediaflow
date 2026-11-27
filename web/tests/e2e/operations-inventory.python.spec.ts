@@ -309,10 +309,16 @@ async function confirmNativeRecovery(
           };
         });
       const before = await geometry();
+      const confirmSize = () =>
+        confirm.evaluate((element) => {
+          const { width, height } = element.getBoundingClientRect();
+          return { width, height };
+        });
+      const beforeSize = await confirmSize();
       await confirm.click();
-      await expect(
-        summary.getByRole("button", { name: "正在提交…" }),
-      ).toBeDisabled();
+      await expect(confirm).toBeDisabled();
+      await expect(confirm).toHaveAttribute("aria-busy", "true");
+      expect(await confirmSize()).toEqual(beforeSize);
       await expect(recovery.getByText("操作请求仍在进行")).toHaveCount(0);
       const submitting = await geometry();
       expect(Math.abs(submitting.y - before.y)).toBeLessThan(2);
@@ -330,14 +336,11 @@ async function confirmNativeRecovery(
       await expect(
         detail.getByRole("heading", { name: "已受理，等待执行" }),
       ).toBeVisible();
-      await expect(
-        summary.getByRole("button", { name: "正在提交…" }),
-      ).toBeDisabled();
+      await expect(confirm).toBeDisabled();
       await expect(summary.getByText("已受理", { exact: true })).toHaveCount(0);
       expect(
         Math.abs((await geometry()).height - submitting.height),
       ).toBeLessThan(2);
-      await expect(confirm).toHaveCount(0);
       releaseEvidence();
       await expect(summary).toHaveCount(0);
       await expect(
