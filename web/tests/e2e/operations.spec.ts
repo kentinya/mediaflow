@@ -1080,7 +1080,7 @@ test("PATCH-20261113-1 keeps equal-status attempts as two complete history entri
   ].entries()) {
     await expect(
       entry.getByText(
-        `执行记录 ${index + 1}（${localRunTime(instant)}）：已完成`,
+        `执行记录 ${index + 1}（${localRunTime(instant)}）：成功`,
       ),
     ).toBeVisible();
     await expect(

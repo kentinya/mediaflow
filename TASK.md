@@ -517,3 +517,14 @@ Result 汇总确定、未确认和缺失的文件结果。「已结束」与详�
 的任务，及真实执行的成功／失败混合任务。Ruff、变动文件 ESLint 与 Prettier、类型检查、
 生产构建和治理通过。日志位于 `.git/validation-evidence/2746c6db/b59-06-01-developer/`。
 待独立 B 在本修正提交上执行最终验证；此交接不是 PASS。
+
+### B 门禁反馈后的相同 Task 修正
+
+`62f9b4a3` 全量初轮发现：新字段误出现在自动化执行记录；默认浏览器夹具把单文件
+成功的 Result 错用 Task 流程值 `completed`，导致 5 条证据／历史用例失败。
+本提交只将新字段限于 Task Center 摘要与详情，并将夹具及其对应结果文案改为正式
+Result 口径，保留效果、历史与可访问性断言。未改正式 Web 代码。
+52 项 Operations 与 39 项 Automation Python 用例、26 项默认 Operations 浏览器与 390 px
+证据用例通过；真实 Python/SQLite 在桌面和窄屏仍显示同一计数，读路径无写请求。
+Ruff、变动夹具的 ESLint／Prettier 和治理通过。
+证据位于 `.git/validation-evidence/62f9b4a3/fixture-developer/`，全量须由 B 在最终候选核实。

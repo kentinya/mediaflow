@@ -349,7 +349,7 @@ const TASK_RESULTS = [
     classification_policy_id: "class-a",
     organize_policy_id: "organize-move",
     operation: "move",
-    status: "completed",
+    status: "SUCCESS",
     created_at: "2026-08-22T12:05:00+00:00",
     title: "The Matrix",
     failure: null,

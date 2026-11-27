@@ -12047,7 +12047,7 @@ class MediaFlowApi:
             start_response,
             200,
             {
-                "items": [self._operations_run_document(item) for item in page],
+                "items": [self._task_center_run_document(item) for item in page],
                 "limit": limit,
                 "status": query["status"],
                 "command": query["command"],
@@ -12145,7 +12145,7 @@ class MediaFlowApi:
         overview, progress = self._operations_run_detail(repository, run_id)
         if overview is None:
             raise LookupError(f"operations run {run_id!r} was not found")
-        document = self._operations_run_document(overview)
+        document = self._task_center_run_document(overview)
         document["progress"] = (
             run_progress_document(progress, command=overview.command)
             if progress is not None
@@ -12973,6 +12973,12 @@ class MediaFlowApi:
             scope=scope,
         )
 
+    def _task_center_run_document(self, overview) -> dict[str, object]:
+        document = self._operations_run_document(overview)
+        counts = overview.file_result_counts
+        document["file_result_counts"] = dict(counts) if counts is not None else None
+        return document
+
     def _operations_run_document(self, overview) -> dict[str, object]:
         """One bounded, secret-free inventory/overview run document.
 
@@ -13015,11 +13021,6 @@ class MediaFlowApi:
             "partial_items": overview.partial_items,
             "uncertain_effect_items": overview.uncertain_effect_items,
             "missing_result_items": overview.missing_result_items,
-            "file_result_counts": (
-                dict(overview.file_result_counts)
-                if overview.file_result_counts is not None
-                else None
-            ),
             "current_stage": overview.current_stage,
             "attention": overview.attention,
             "problem_types": list(overview.problem_types),
