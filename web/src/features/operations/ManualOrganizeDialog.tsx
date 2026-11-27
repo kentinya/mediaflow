@@ -1008,24 +1008,39 @@ export function ManualOrganizeDialog({
     !organizeFlowEnded || showLiveFileSettlement
       ? (preparation?.previewId ?? savedPlanId ?? "")
       : "";
-  const previewQuery = useQuery(
-    organizePreviewQueryOptions(
+  const previewQuery = useQuery({
+    ...organizePreviewQueryOptions(
       token,
       summaryPreviewId,
       summaryPreviewId !== "",
     ),
-  );
+    // A completed sibling can retire a cached preview before its stale time.
+    refetchOnMount: filesHost ? true : "always",
+  });
   // Keep the old overview readable while this explicitly requested refresh
   // links and reads its replacement. It cannot authorize confirmation.
   const [rangeReanalysisFrom, setRangeReanalysisFrom] =
     useState<OrganizePreviewModel | null>(null);
+  const [subsetRefresh, setSubsetRefresh] = useState<{
+    readonly from: OrganizePreviewModel;
+    readonly preparation: OrganizeDiscoveryModel;
+    readonly selected: readonly string[];
+    readonly phase: "reading" | "awaiting" | "unreadable" | "refused";
+    readonly accepted?: boolean;
+  } | null>(null);
   const readPreview =
     previewQuery.data?.ok === true ? previewQuery.data.model : undefined;
   const rangeReanalysisPending =
     rangeReanalysisFrom !== null &&
     (readPreview === undefined ||
       rangeReanalysisFrom.previewId === readPreview.previewId);
-  const preview = readPreview ?? rangeReanalysisFrom ?? undefined;
+  const preview =
+    readPreview ?? subsetRefresh?.from ?? rangeReanalysisFrom ?? undefined;
+  const subsetRefreshPending =
+    subsetRefresh !== null &&
+    (readPreview === undefined ||
+      readPreview.previewId === subsetRefresh.from.previewId ||
+      readPreview.previewId !== preparation?.previewId);
   const linkedPlanId = preparation?.previewId;
   const planReadingStarted = useRef<{ id: string; time: number } | null>(null);
   useLayoutEffect(() => {
@@ -1144,13 +1159,14 @@ export function ManualOrganizeDialog({
       token !== null &&
       (filesHost || (preview !== undefined && !organizeFlowEnded)),
   });
-  const executionHistoryQuery = useQuery(
-    organizeExecutionListQueryOptions(
+  const executionHistoryQuery = useQuery({
+    ...organizeExecutionListQueryOptions(
       token,
       { previewId: preview?.previewId ?? "", limit: 100 },
       preview !== undefined,
     ),
-  );
+    refetchOnMount: filesHost ? true : "always",
+  });
   const executionHistory =
     executionHistoryQuery.data?.ok === true
       ? executionHistoryQuery.data.model
@@ -1448,6 +1464,48 @@ export function ManualOrganizeDialog({
   );
   const items = useMemo(() => preview?.items ?? [], [preview]);
   const filesOrganizeTaskId = preparation?.organizeTaskId ?? null;
+  const [continuedSubset, setContinuedSubset] = useState<{
+    readonly completed: readonly ManualPreviewItemModel[];
+    readonly remaining: ReadonlySet<string>;
+  } | null>(null);
+  const subsetExecution = !filesHost
+    ? executionHistory?.items.find(
+        (entry) =>
+          entry.taskId === filesOrganizeTaskId &&
+          entry.previewId === preview?.previewId &&
+          entry.intentId === preparation?.intentId &&
+          entry.status === "completed" &&
+          executableIds.some((id) => entry.unselectedItemIds.includes(id)),
+      )
+    : undefined;
+  const enteringSubset =
+    continuedSubset === null && subsetExecution !== undefined
+      ? new Set(
+          subsetExecution.unselectedItemIds.filter(
+            (id) => executableIds.includes(id) && !admittedItemIds.has(id),
+          ),
+        )
+      : null;
+  const subsetEntryPending =
+    !filesHost &&
+    preview !== undefined &&
+    !preparationPlanObserved &&
+    (previewQuery.isFetching || executionHistoryQuery.isFetching);
+  if (
+    enteringSubset !== null &&
+    enteringSubset.size > 0 &&
+    subsetExecution !== undefined
+  ) {
+    setContinuedSubset({
+      completed: items.filter((item) =>
+        subsetExecution.selectedItemIds.includes(item.itemId),
+      ),
+      remaining: enteringSubset,
+    });
+    setExcluded((previous) => new Set([...previous, ...enteringSubset]));
+    const first = items.find((item) => enteringSubset.has(item.itemId));
+    if (first !== undefined) setAnchorItemId(first.itemId);
+  }
   /**
    * A plan item whose exact TaskItem is still readable is the only place the
    * overview may learn that a published problem ended (skipped or ignored) or
@@ -1710,14 +1768,22 @@ export function ManualOrganizeDialog({
       .filter((item) => filesSettledDecisionFor(item) !== null)
       .map((item) => item.itemId),
   );
-  const activeSelection = executableIds
+  const reviewSelection = executableIds
     .filter(
       (itemId) => !excluded.has(itemId) && !settledSelectionIds.has(itemId),
     )
     // Already-admitted siblings are never part of a fresh confirmation: the
     // filter runs over the exact candidate list, so stale local state or a
     // reload can never re-submit a completed, failed or uncertain sibling.
-    .filter((itemId) => !admittedItemIds.has(itemId));
+    .filter(
+      (itemId) =>
+        !admittedItemIds.has(itemId) &&
+        !continuedSubset?.completed.some((item) => item.itemId === itemId),
+    );
+  const activeSelection =
+    step === "confirm" && subsetRefresh !== null
+      ? subsetRefresh.selected.filter((id) => reviewSelection.includes(id))
+      : reviewSelection;
   /** One overview row, backed by the current plan, its record, or both. */
   interface FilesOverviewRow {
     readonly item: ManualPreviewItemModel | null;
@@ -2538,12 +2604,99 @@ export function ManualOrganizeDialog({
     preview !== undefined &&
     intent?.latestPlan != null &&
     intent.latestPlan.previewId !== preview.previewId;
+  // The original plan can describe the unsubmitted sibling, but only a
+  // fresh plan can authorize it. Do not use this shortcut for live problems,
+  // incomplete reads, or an original submission still being reconciled.
+  const canRefreshContinuedSubset =
+    continuedSubset !== null &&
+    preparation?.organizeFlow?.continuable === true &&
+    !preparation.cancelRequested &&
+    preparation.actions.prepare.available &&
+    !preparationStatusRunning &&
+    preview !== undefined &&
+    preview.previewId === preparation.previewId &&
+    !preview.current &&
+    !preview.truncated &&
+    !preparation.progress.incomplete &&
+    !previewSupersededByNewerPlan &&
+    !executionHistoryQuery.isFetching &&
+    retained.length === 0 &&
+    stalePlanItemCount > 0 &&
+    items.every((item) =>
+      item.current
+        ? continuedSubset.remaining.has(item.itemId) &&
+          executableIds.includes(item.itemId) &&
+          item.problemTaskItemId === null
+        : admittedItemIds.has(item.itemId) &&
+          continuedSubset.completed.some((old) => old.itemId === item.itemId),
+    );
+  const readSubsetRefresh = async (
+    baseline: OrganizeDiscoveryModel,
+    accepted: boolean,
+  ) => {
+    const read = await preparationQuery.refetch();
+    const now =
+      read.data?.ok === true && !read.isError ? read.data.model : null;
+    setSubsetRefresh((state) => {
+      if (state === null || state.preparation !== baseline) return state;
+      return {
+        ...state,
+        accepted,
+        phase:
+          now === null
+            ? "unreadable"
+            : !accepted &&
+                now.version === baseline.version &&
+                now.status === baseline.status &&
+                now.previewId === baseline.previewId
+              ? "refused"
+              : "awaiting",
+      };
+    });
+    if (
+      now !== null &&
+      now.previewId === summaryPreviewId &&
+      now.previewId !== baseline.previewId
+    ) {
+      void previewQuery.refetch({ cancelRefetch: false });
+    }
+  };
+  const refreshSubsetMutation = useMutation({
+    mutationFn: (baseline: OrganizeDiscoveryModel) =>
+      requestOrganizeDiscoveryAnalysis(token, {
+        discoveryId: baseline.discoveryId,
+        expectedVersion: baseline.version,
+      }),
+    retry: false,
+    onSuccess: (response, baseline) => readSubsetRefresh(baseline, response.ok),
+    onError: (_error, baseline) => readSubsetRefresh(baseline, false),
+  });
+  const subsetReadFailed =
+    subsetRefreshPending &&
+    (subsetRefresh?.phase === "unreadable" ||
+      preparationQuery.isError ||
+      preparationQuery.data?.ok === false ||
+      previewQuery.isError ||
+      previewQuery.data?.ok === false);
+  const subsetRefused =
+    subsetRefreshPending && subsetRefresh?.phase === "refused";
+  const subsetAnalysisStopped =
+    subsetRefreshPending && preparation?.status === "failed";
+  const subsetRefreshCopy = subsetReadFailed
+    ? "暂时无法读取同一任务的新方案。当前不会确认或重发，重新读取方案后再继续。"
+    : subsetRefused
+      ? "本次分析未受理，文件没有变更。可重新更新剩余文件的方案。"
+      : subsetAnalysisStopped
+        ? "新方案未生成，本次没有提交整理。关闭后可在原任务中核对原因。"
+        : "正在更新剩余文件的方案；已整理的文件不会再次执行。";
   const executeDisabled =
     preview === undefined ||
     preview.executeAction.available !== true ||
     organizeFlowEnded ||
     preparationStatusRunning ||
     confirmationBlockedByHistory ||
+    subsetRefreshPending ||
+    refreshSubsetMutation.isPending ||
     executionHistoryQuery.isFetching ||
     executeMutation.isPending ||
     openingTaskDetail ||
@@ -2564,6 +2717,9 @@ export function ManualOrganizeDialog({
         reason: "本次整理工作已结束。",
         nextAction: "关闭后从资源库文件页重新选择发起。",
       };
+    }
+    if (subsetRefreshPending) {
+      return { reason: subsetRefreshCopy, nextAction: "" };
     }
     if (preparationStatusRunning) {
       return {
@@ -2653,6 +2809,15 @@ export function ManualOrganizeDialog({
     if (preview === undefined || executeMutation.isPending) return null;
     if (summaryConfirmationBlocker !== null) {
       return summaryConfirmationBlocker;
+    }
+    if (
+      subsetRefresh !== null &&
+      activeSelection.length !== subsetRefresh.selected.length
+    ) {
+      return {
+        reason: "新方案的可确认范围有变化。",
+        nextAction: "返回逐项复核，核对各文件后再选择。",
+      };
     }
     if (activeSelection.length === 0) {
       return {
@@ -2882,7 +3047,12 @@ export function ManualOrganizeDialog({
       ) ||
         preparationPlanExpected ||
         primaryLimitAwaitingSettlement)) ||
-      preparationAwaitingPlanHandoff);
+      preparationAwaitingPlanHandoff ||
+      (subsetRefreshPending &&
+        subsetRefresh?.phase === "awaiting" &&
+        preparation?.previewId === subsetRefresh.from.previewId &&
+        !subsetAnalysisStopped &&
+        !subsetReadFailed));
   const refetchPreparation = preparationQuery.refetch;
   useEffect(() => {
     if (!preparationPolling) return;
@@ -2934,7 +3104,13 @@ export function ManualOrganizeDialog({
   // Adopt the durable anchor as soon as items exist (first entry), and
   // re-adopt once when a newer summary no longer contains it, so a later
   // reorder can never fall back to a stale array position.
-  if (items.length > 0 && anchoredPosition < 0 && !filesReturningToSameFile) {
+  if (
+    items.length > 0 &&
+    anchoredPosition < 0 &&
+    !filesReturningToSameFile &&
+    !subsetEntryPending &&
+    (enteringSubset?.size ?? 0) === 0
+  ) {
     const fallback = items[pageInfo];
     if (fallback !== undefined && fallback.itemId !== anchorItemId) {
       setAnchorItemId(fallback.itemId);
@@ -2968,6 +3144,7 @@ export function ManualOrganizeDialog({
     currentItemId !== null &&
     executableIds.includes(currentItemId) &&
     !admittedItemIds.has(currentItemId) &&
+    !continuedSubset?.completed.some((item) => item.itemId === currentItemId) &&
     !organizeFlowEnded;
   const isIncluded =
     currentItemId !== null && isExecutable && !excluded.has(currentItemId);
@@ -3893,8 +4070,8 @@ export function ManualOrganizeDialog({
           preparation?.progress.materialRefusal != null)));
   const firstPlanPreparationView =
     session.phase === "submitting" ||
-    preparationUnavailable ||
-    preparation === undefined ||
+    (subsetRefresh === null &&
+      (preparationUnavailable || preparation === undefined)) ||
     preparationTerminalFirstScreen ||
     (!organizeFlowEnded &&
       filesSummaryReadback === null &&
@@ -4935,6 +5112,7 @@ export function ManualOrganizeDialog({
     const hasGeneratedScheme = hasGeneratedTarget || item.operation !== null;
     const compactHostedPlan = !filesHost && isExecutable && !hasNativeProblem;
     const compactFilesPlan = filesHost && isExecutable && !hasNativeProblem;
+    const compactSubsetPlan = compactHostedPlan && continuedSubset !== null;
     const compactPlan = compactHostedPlan || compactFilesPlan;
     const attachmentWarnings = item.attachments.filter(
       (attachment) => attachment.nextAction !== null,
@@ -5027,7 +5205,14 @@ export function ManualOrganizeDialog({
               {filename}
             </p>
             <p className="mf-organize-file-path mf-dashboard-meta">
-              来源库：{item.resourceLibraryId ?? "—"}
+              来源库：
+              {(continuedSubset !== null
+                ? filesSystemStatusQuery.data?.resourceLibraries.find(
+                    (library) => library.id === item.resourceLibraryId,
+                  )?.name
+                : null) ??
+                item.resourceLibraryId ??
+                "—"}
               {hasGeneratedScheme ? null : (
                 <>
                   {" · "}
@@ -5587,7 +5772,7 @@ export function ManualOrganizeDialog({
                     <div className="mf-organize-source-fact">
                       <dt>来源</dt>
                       <dd className="mf-exact-identity">
-                        {compactFilesPlan
+                        {compactFilesPlan || compactSubsetPlan
                           ? filesSourceLocation(
                               item,
                               filesSystemStatusQuery.data?.resourceLibraries ??
@@ -5600,7 +5785,7 @@ export function ManualOrganizeDialog({
                       <div className="mf-organize-target-fact">
                         <dt>目标</dt>
                         <dd className="mf-exact-identity">
-                          {compactFilesPlan
+                          {compactFilesPlan || compactSubsetPlan
                             ? filesTargetLocation(
                                 item,
                                 filesMediaLibraryListQuery.data?.items ?? [],
@@ -5706,7 +5891,7 @@ export function ManualOrganizeDialog({
             <div className="mf-organize-hosted-selection">
               {selectionControl}
             </div>
-            {correctionControl}
+            {!compactSubsetPlan && correctionControl}
           </>
         ) : null}
 
@@ -5767,15 +5952,18 @@ export function ManualOrganizeDialog({
           className="mf-organize-diagnostics"
           hidden={filesReanalysisView || filesDecisionLayout}
           open={
-            compactFilesPlan && (draftDirty || !!notice?.retryAnalysis)
+            (compactFilesPlan || compactSubsetPlan) &&
+            (draftDirty || !!notice?.retryAnalysis)
               ? true
               : undefined
           }
         >
           <summary>
-            {compactFilesPlan ? "规则与方案证据" : "查看匹配与方案依据"}
+            {compactFilesPlan || compactSubsetPlan
+              ? "规则与方案证据"
+              : "查看匹配与方案依据"}
           </summary>
-          {compactFilesPlan && correctionControl}
+          {(compactFilesPlan || compactSubsetPlan) && correctionControl}
           {compactFilesPlan && item.attachments.length > 0 && (
             <ItemFindings item={item} />
           )}
@@ -5946,11 +6134,14 @@ export function ManualOrganizeDialog({
     const omittedRows = filesOverviewRows.filter(
       (row) => row.item === null || !selection.includes(row.item.itemId),
     );
+    const completedOmitted = (continuedSubset?.completed ?? []).filter(
+      (item) => !items.some((row) => row.itemId === item.itemId),
+    );
     const omittedCount =
       latestRetained !== null && retainedPlan !== undefined
         ? retainedPlan.items.filter((item) => !selection.includes(item.itemId))
             .length
-        : omittedRows.length;
+        : omittedRows.length + completedOmitted.length;
     const attachmentCount = selectedItems.reduce(
       (total, item) => total + item.attachments.length,
       0,
@@ -6012,9 +6203,14 @@ export function ManualOrganizeDialog({
         <section aria-label="整批复核" className="mf-organize-batch-review">
           <FilesStatusCard
             tag={
-              summaryConfirmationBlocker !== null && confirmationNotice === null
-                ? "暂不能确认"
-                : "等待明确确认"
+              subsetRefreshPending
+                ? subsetRefused || subsetReadFailed || subsetAnalysisStopped
+                  ? "暂不能确认"
+                  : "正在更新方案"
+                : summaryConfirmationBlocker !== null &&
+                    confirmationNotice === null
+                  ? "暂不能确认"
+                  : "等待明确确认"
             }
             title="整批复核"
             copy={
@@ -6026,6 +6222,12 @@ export function ManualOrganizeDialog({
               summaryConfirmationBlocker !== null && confirmationNotice === null
                 ? "amber"
                 : "blue"
+            }
+            busy={
+              subsetRefreshPending &&
+              !subsetRefused &&
+              !subsetReadFailed &&
+              !subsetAnalysisStopped
             }
             icon="≡"
           />
@@ -6134,6 +6336,21 @@ export function ManualOrganizeDialog({
             <summary>未纳入本次确认的文件 · {omittedCount} 项</summary>
             <ul className="mf-organize-overview-list">
               {omittedRows.map((row) => renderFilesOverviewRow(row, true))}
+              {completedOmitted.map((item) => (
+                <li key={item.itemId} className="mf-organize-overview-item">
+                  <div className="mf-organize-overview-row">
+                    <span className="mf-organize-overview-file-copy">
+                      <strong>{item.sourceFilename ?? item.sourcePath}</strong>
+                      <span className="mf-organize-overview-summary">
+                        已受理执行 · 实际结果见原任务
+                      </span>
+                    </span>
+                    <span className="mf-organize-overview-status mf-organize-overview-status-recorded">
+                      已有记录
+                    </span>
+                  </div>
+                </li>
+              ))}
             </ul>
           </details>
         ) : null}
@@ -6157,10 +6374,13 @@ export function ManualOrganizeDialog({
 
         {confirmationNotice === null && filesReanalysisAction()}
         {summaryConfirmationBlocker !== null &&
+          !subsetRefreshPending &&
           confirmationNotice === null &&
           planDiagnostics}
 
-        {!preview.current && confirmationNotice === null ? (
+        {!preview.current &&
+        !subsetRefreshPending &&
+        confirmationNotice === null ? (
           <StatusBanner
             variant="warning"
             title={
@@ -6202,6 +6422,7 @@ export function ManualOrganizeDialog({
           </StatusBanner>
         ) : null}
         {preview.executeAction.available !== true &&
+        !subsetRefreshPending &&
         confirmationNotice === null ? (
           <StatusBanner variant="warning" title="暂不能确认整理">
             <p>
@@ -6338,7 +6559,8 @@ export function ManualOrganizeDialog({
 
   const renderBody = () =>
     session.phase === "submitting" ||
-    (analysisReadbackFile === null &&
+    (subsetRefresh === null &&
+      analysisReadbackFile === null &&
       (preparationUnavailable || preparation === undefined)) ? (
       renderPreparationContent()
     ) : filesSettledOverview ? (
@@ -6389,6 +6611,13 @@ export function ManualOrganizeDialog({
           />
         )}
       </>
+    ) : subsetEntryPending && !firstPlanPreparationView ? (
+      <FilesStatusCard
+        tag="正在读取方案"
+        title="正在读取已生成的方案"
+        copy="正在核对同一任务中哪些文件仍未提交。"
+        busy
+      />
     ) : firstPlanPreparationView || preview === undefined ? (
       renderPreparationContent()
     ) : (
@@ -6396,7 +6625,8 @@ export function ManualOrganizeDialog({
         {!rangeReanalysisPending && renderPreparationNotice()}
         {preparationStatusRunning &&
         !filesReanalysisView &&
-        !rangeReanalysisPending ? (
+        !rangeReanalysisPending &&
+        !subsetRefreshPending ? (
           <StatusBanner variant="info" title="正在重新分析,当前方案不可确认">
             <p role="status">
               {label(PREPARATION_STATUS_LABELS, preparation?.status ?? "")};
@@ -6405,7 +6635,9 @@ export function ManualOrganizeDialog({
             </p>
           </StatusBanner>
         ) : null}
-        {executionHistory !== undefined && admittedItemIds.size > 0 ? (
+        {continuedSubset === null &&
+        executionHistory !== undefined &&
+        admittedItemIds.size > 0 ? (
           <StatusBanner variant="info" title="已有受理的兄弟项">
             <p>
               本准备中已有 {admittedItemIds.size}
@@ -6431,7 +6663,10 @@ export function ManualOrganizeDialog({
   const preparationOnlyFooter =
     !organizeFlowEnded &&
     analysisReadbackFile === null &&
-    (preview === undefined || items.length === 0 || !preparationPlanObserved);
+    (preview === undefined ||
+      items.length === 0 ||
+      !preparationPlanObserved ||
+      subsetEntryPending);
   const filesOverviewFooter =
     filesHost &&
     filesOverviewVisible &&
@@ -6450,6 +6685,24 @@ export function ManualOrganizeDialog({
     setFilesOverviewNotice(null);
     setStep("confirm");
     setFilesOverviewVisible(false);
+    if (canRefreshContinuedSubset && activeSelection.length > 0) {
+      beginSubsetRefresh();
+    }
+  };
+  const beginSubsetRefresh = () => {
+    if (
+      preview === undefined ||
+      preparation === undefined ||
+      refreshSubsetMutation.isPending
+    )
+      return;
+    setSubsetRefresh({
+      from: preview,
+      preparation,
+      selected: [...activeSelection],
+      phase: "reading",
+    });
+    refreshSubsetMutation.mutate(preparation);
   };
   const retainedHasEditableSibling =
     latestRetained !== null &&
@@ -6706,7 +6959,10 @@ export function ManualOrganizeDialog({
         </Button>
         <Button
           type="button"
-          disabled={items.length === 0}
+          disabled={
+            items.length === 0 ||
+            (continuedSubset !== null && activeSelection.length === 0)
+          }
           onClick={openBatchReview}
         >
           整批复核(已选 {activeSelection.length} 项)
@@ -6784,10 +7040,13 @@ export function ManualOrganizeDialog({
         type="button"
         className="mf-organize-return-overview"
         variant="secondary"
-        disabled={openingTaskDetail}
+        disabled={openingTaskDetail || (subsetRefreshPending && !subsetRefused)}
         onClick={() => {
           if (filesHost) returnToFilesOverview();
-          else setStep("review");
+          else {
+            setSubsetRefresh(null);
+            setStep("review");
+          }
         }}
       >
         {filesHost ? "返回整理概览" : "返回逐项复核"}
@@ -6800,7 +7059,9 @@ export function ManualOrganizeDialog({
             : ""
         }`}
       >
-        {confirmationBlocker !== null && confirmationRejection === null ? (
+        {!subsetRefreshPending &&
+        confirmationBlocker !== null &&
+        confirmationRejection === null ? (
           <span className="mf-organize-confirm-blocker" role="status">
             暂不能确认：{confirmationBlocker.reason}
             {confirmationBlocker.nextAction === ""
@@ -6808,7 +7069,32 @@ export function ManualOrganizeDialog({
               : ` ${confirmationBlocker.nextAction}`}
           </span>
         ) : null}
-        {confirmationRejection === "stale" ? (
+        {subsetReadFailed && subsetRefresh !== null ? (
+          <Button
+            type="button"
+            disabled={
+              preparationQuery.isFetching ||
+              previewQuery.isFetching ||
+              refreshSubsetMutation.isPending
+            }
+            onClick={() =>
+              void readSubsetRefresh(
+                subsetRefresh.preparation,
+                subsetRefresh.accepted === true,
+              )
+            }
+          >
+            重新读取方案
+          </Button>
+        ) : subsetRefused && canRefreshContinuedSubset ? (
+          <Button
+            type="button"
+            disabled={refreshSubsetMutation.isPending}
+            onClick={beginSubsetRefresh}
+          >
+            重新更新方案
+          </Button>
+        ) : confirmationRejection === "stale" ? (
           preparation?.actions.prepare.available === true ? (
             <Button
               type="button"

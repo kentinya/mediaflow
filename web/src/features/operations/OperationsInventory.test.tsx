@@ -1352,9 +1352,7 @@ describe("Operations run inventory landing", () => {
     const detail = await screen.findByRole("dialog", { name: "运行详情" });
     expect(await within(detail).findByText("等待确认")).toBeVisible();
     expect(
-      within(detail).getByText(
-        "已有 1 次确认记录被受理；点击右上角「继续整理」，核对 1 个文件的方案。",
-      ),
+      within(detail).getByText("点击右上角「继续整理」，核对 1 个文件的方案。"),
     ).toBeVisible();
     expect(
       within(detail).getByRole("link", { name: "继续整理" }),
@@ -1362,16 +1360,8 @@ describe("Operations run inventory landing", () => {
     // The full range does not hide the executed sibling: the settled result
     // and the still-unconfirmed file are stated separately.
     const progress = within(detail).getByRole("region", { name: "处理进度" });
-    expect(
-      within(progress).getByText(
-        "已进入准备与分析 2 / 2 个主条目（准备与分析计数，含 1 个等待确认）",
-      ),
-    ).toBeVisible();
-    expect(
-      within(progress).getByText(
-        "已执行 1 个文件；1 个文件等待确认，确认前不执行文件操作。",
-      ),
-    ).toBeVisible();
+    expect(within(progress).getByText("1 / 2 个主文件")).toBeVisible();
+    expect(within(progress).queryByText(/已进入准备与分析/)).toBeNull();
   });
 
   it("PATCH-20261113-3 continues the exact Files preparation above the preserved task center", async () => {
@@ -1715,7 +1705,7 @@ describe("Operations run inventory landing", () => {
       }
       if (missing) {
         expect(
-          within(results).getByText(/文件处理已结束，结果未记录 1 个/),
+          within(results).getByText(/其他结果 1 项，可在对应文件中核对。/),
         ).toBeVisible();
       }
     },
@@ -3841,7 +3831,7 @@ describe("Operations run inventory landing", () => {
       within(results).getByText(/目标文件结果尚未确认 1 个/),
     ).toBeVisible();
     expect(
-      within(results).getByText(/文件处理已结束，结果未记录 1 个/),
+      within(results).getByText(/其他结果 1 项，可在对应文件中核对。/),
     ).toBeVisible();
     expect(
       within(detail).queryByText(/口径:|成功含义:|非成功率|单独计数/),

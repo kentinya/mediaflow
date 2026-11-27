@@ -604,7 +604,8 @@ class OperationsRunProgress:
     inventing a total or a percentage.  ``dispositions`` partitions the
     primary item population; ``uncertain_success`` counts items whose status
     says success while their latest durable Result still declares uncertain
-    effects — those are never presented as success.  ``effect_counts``
+    effects. ``missing_result_statuses`` counts ended attempts without a
+    formal Result by their recorded status. Neither is confirmed success. ``effect_counts``
     summarizes the latest Result effect certainty per item (a non-exclusive
     facet), ``scan_errors`` counts scan-level errors kept separate from
     primary items, and ``attachment_steps`` counts attachment operations
@@ -632,6 +633,8 @@ class OperationsRunProgress:
     #: An exact Files or inline recovery plan waits on its saved four-type
     #: decision's separate execution confirmation. Wire name kept for clients.
     files_recovery_confirmation_pending: bool = False
+    #: Ended file statuses whose own formal Result is absent.
+    missing_result_statuses: Mapping[str, int] = field(default_factory=_empty_counts)
 
 
 @dataclass(frozen=True)
@@ -645,6 +648,8 @@ class OperationsRunItemWindow:
     uncertain_success: int
     has_next: bool
     has_previous: bool
+    #: Only IDs on this page, read from the same snapshot as their status.
+    missing_result_item_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

@@ -182,6 +182,7 @@ export interface RunProgressAvailable {
   readonly dispositions: Readonly<Record<RunDisposition, number>>;
   readonly confirmedSuccess: number;
   readonly uncertainSuccess: number;
+  readonly missingResultStatuses: Readonly<Record<string, number>>;
   readonly scanErrors: number | null;
   readonly scanDiscoveryComplete: boolean | null;
   readonly scanProgress: Readonly<Record<string, number>>;
@@ -232,8 +233,8 @@ function intMap(
  * The backend guarantees a mutually exclusive partition that reconciles to
  * the known total (with admitted-but-not-yet-materialized rows published
  * inside `pending`), an honest indeterminate state whose total and processed
- * are null, and a success status count split exactly into confirmed plus
- * uncertain — this guard turns any drift into a malformed read.
+ * are null, and a success status count split exactly into confirmed,
+ * uncertain and missing formal results.
  */
 export function normalizeRunProgress(payload: unknown): RunProgress {
   const source = readRecord(payload, "progress");
@@ -276,9 +277,23 @@ export function normalizeRunProgress(payload: unknown): RunProgress {
   }
   const confirmedSuccess = count(source, "confirmed_success");
   const uncertainSuccess = count(source, "uncertain_success");
-  if (confirmedSuccess + uncertainSuccess !== dispositions.success) {
-    // Uncertain-effect items are carved out of the success status count,
-    // never invented and never double-counted.
+  const missingResultStatuses =
+    source["missing_result_statuses"] === undefined
+      ? {}
+      : intMap(source, "missing_result_statuses");
+  if (
+    confirmedSuccess +
+      uncertainSuccess +
+      (missingResultStatuses["success"] ?? 0) !==
+      dispositions.success ||
+    (missingResultStatuses["failed"] ?? 0) +
+      (missingResultStatuses["partial"] ?? 0) >
+      dispositions.failed_partial ||
+    Object.keys(missingResultStatuses).some(
+      (status) => !["success", "partial", "failed"].includes(status),
+    )
+  ) {
+    // An uncertain effect or a missing formal result is not confirmed success.
     fail();
   }
   const scanProgress = intMap(source, "scan_progress");
@@ -311,6 +326,7 @@ export function normalizeRunProgress(payload: unknown): RunProgress {
     dispositions,
     confirmedSuccess,
     uncertainSuccess,
+    missingResultStatuses,
     scanErrors: nullableCount(source, "scan_errors"),
     scanDiscoveryComplete: nullableFlag(source, "scan_discovery_complete"),
     scanProgress,

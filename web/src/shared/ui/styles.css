@@ -5772,6 +5772,24 @@ tr[aria-selected="true"] {
   color: #53698e;
 }
 
+.mf-run-item-row-missing-result .mf-run-item-status {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #eaf0f7;
+  color: #465a78;
+}
+
+.mf-run-item-row-missing-result .mf-run-item-status::before {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-inline-end: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 2px;
+  content: "";
+}
+
 .mf-run-item-evidence {
   padding: 13px 14px 15px;
   border-top: 1px solid #e9edf5;

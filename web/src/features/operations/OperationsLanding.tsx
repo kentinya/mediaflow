@@ -2213,6 +2213,26 @@ export function RunDetailPanel({
             );
           }
           const run = data.model;
+          const admitted = new Set(
+            run.manualOrganizeSubmissions.flatMap(
+              (entry) => entry.selectedItemIds,
+            ),
+          );
+          const waitingItems =
+            run.progress?.available === true
+              ? run.progress.dispositions.waiting
+              : 0;
+          const remainingPlanCount =
+            planCandidateCount !== null &&
+            linkedPreview !== null &&
+            admitted.size > 0
+              ? Math.min(
+                  waitingItems,
+                  linkedPreview.executionCandidateItemIds.filter(
+                    (id) => !admitted.has(id),
+                  ).length,
+                )
+              : planCandidateCount;
           const lifecycleVisible =
             run.lifecycle !== null &&
             hasRunLifecycleContent({
@@ -2223,13 +2243,13 @@ export function RunDetailPanel({
             });
           const headline = runStatusHeadline(
             run,
-            planCandidateCount,
+            remainingPlanCount,
             preparationStage,
             canConfirmOrganize,
           );
           const confirmableWaiting =
-            planCandidateCount !== null
-              ? planCandidateCount
+            remainingPlanCount !== null
+              ? remainingPlanCount
               : waitingConfirmationOpen(run)
                 ? run.progress?.available === true
                   ? run.progress.dispositions.waiting
@@ -2239,10 +2259,6 @@ export function RunDetailPanel({
           // own Files plan does not exist yet, and the confirmation boundary
           // while the current plan's candidates are still unconfirmed. Every
           // other reading keeps the backend's own accounting basis.
-          const waitingItems =
-            run.progress?.available === true
-              ? run.progress.dispositions.waiting
-              : 0;
           const progressPhase: RunProgressPhase | null =
             preparationStage !== null &&
             preparationStage !== "reading" &&
@@ -2266,6 +2282,7 @@ export function RunDetailPanel({
                 progress={run.progress}
                 status={run.status}
                 confirmableWaiting={confirmableWaiting}
+                remainingFilesReady={headline.remainingFilesReady}
                 progressPhase={progressPhase}
                 compactProgress={
                   headline.compactProgress === true ||
@@ -2497,6 +2514,7 @@ function preparationHeadline(stage: RunPreparationStage): {
 
 interface RunHeadline {
   readonly compactProgress?: boolean;
+  readonly remainingFilesReady?: boolean;
   readonly title: string;
   readonly copy: string;
   readonly tone?: RunStatusTone;
@@ -2560,14 +2578,23 @@ function waitingHeadline(
     const nextStep = showContinue
       ? `点击右上角「继续整理」，核对 ${confirmableRange} 个文件的方案。`
       : "在下方展开对应文件的证据，核对方案。";
+    const settledSubset =
+      confirmed > 0 &&
+      remaining === 0 &&
+      run.problemTypes.length === 0 &&
+      run.progress?.available === true &&
+      run.progress.processed !== null &&
+      run.progress.processed > waiting;
     return {
       title: "等待确认",
+      remainingFilesReady: settledSubset,
       compactProgress:
-        preparationStage === null &&
-        confirmed === 0 &&
-        remaining === 0 &&
-        run.problemTypes.length === 0,
-      copy: `${prefix}${remaining > 0 ? `${confirmableRange} 个文件可确认，另有 ${remaining} 个等待处理。` : ""}${nextStep}`,
+        settledSubset ||
+        (preparationStage === null &&
+          confirmed === 0 &&
+          remaining === 0 &&
+          run.problemTypes.length === 0),
+      copy: `${settledSubset ? "" : prefix}${remaining > 0 ? `${confirmableRange} 个文件可确认，另有 ${remaining} 个等待处理。` : ""}${nextStep}`,
       tone: "attention",
       showContinue,
     };

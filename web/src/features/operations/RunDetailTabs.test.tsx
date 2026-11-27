@@ -2408,7 +2408,7 @@ describe("selected-run detail tabs", () => {
       within(results).getByText(/目标文件结果尚未确认 1 个/),
     ).toBeVisible();
     expect(
-      within(results).getByText(/文件处理已结束，结果未记录 1 个/),
+      within(results).getByText(/其他结果 1 项，可在对应文件中核对。/),
     ).toBeVisible();
     // The removed standing explanations stay gone; the remaining text states
     // facts, not the accounting rules behind them.
@@ -2503,7 +2503,7 @@ describe("selected-run detail tabs", () => {
       within(results).getByText(/目标文件结果尚未确认 1 个/),
     ).toBeVisible();
     expect(
-      within(results).getByText(/文件处理已结束，结果未记录 1 个/),
+      within(results).getByText(/其他结果 1 项，可在对应文件中核对。/),
     ).toBeVisible();
     expect(
       within(detail).queryByText(/口径:|成功含义:|非成功率|单独计数/),
@@ -2638,7 +2638,7 @@ describe("selected-run detail tabs", () => {
       within(results).getByText(/目标文件结果尚未确认 2 个/),
     ).toBeVisible();
     expect(
-      within(results).getByText(/文件处理已结束，结果未记录 1 个/),
+      within(results).getByText(/其他结果 1 项，可在对应文件中核对。/),
     ).toBeVisible();
     expect(within(results).queryByText("部分成功")).toBeNull();
     expect(within(results).queryByText("失败")).toBeNull();
@@ -2966,7 +2966,11 @@ describe("selected-run detail tabs", () => {
         return jsonResponse(missing);
       }
       if (url.startsWith("/api/operations/runs/task-001/items?")) {
-        return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
+        return jsonResponse(
+          itemsPageDocument({
+            items: [itemRow({ status: "success", missing_result: true })],
+          }),
+        );
       }
       if (url.startsWith("/api/operations/runs/task-001/records")) {
         return jsonResponse(recordsPageDocument());
@@ -2977,10 +2981,14 @@ describe("selected-run detail tabs", () => {
     detail = await screen.findByRole("dialog", { name: "运行详情" });
     evidence = await findInlineEvidence(detail);
     await within(evidence).findByText("文件证据：a.mkv");
-    // A settled attempt with no Result row is not backfilled into a success.
     expect(
-      within(evidence).getByText("文件处理已结束，结果未记录"),
+      within(detail).getByRole("button", {
+        name: /a.mkv，文件结果缺失；查看证据/,
+      }),
     ).toBeVisible();
+    expect(within(detail).queryByRole("link", { name: "继续整理" })).toBeNull();
+    // A settled attempt with no Result row is not backfilled into a success.
+    expect(within(evidence).getByText("文件结果缺失")).toBeVisible();
     // The missing-result truth and the checkpoint's known steps stay in the
     // file's one execution record instead of a fabricated Result; an empty
     // execution block is not rendered.

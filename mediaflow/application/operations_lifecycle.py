@@ -2137,7 +2137,10 @@ def run_progress_document(progress, *, command: object) -> dict[str, object]:
         "processed": processed,
         "dispositions": dispositions,
         "disposition_labels": dict(RUN_DISPOSITION_LABELS),
-        "confirmed_success": dispositions["success"] - uncertain,
+        "confirmed_success": (
+            dispositions["success"] - uncertain - progress.missing_result_statuses.get("success", 0)
+        ),
+        "missing_result_statuses": dict(progress.missing_result_statuses),
         "uncertain_success": uncertain,
         "scan_errors": progress.scan_errors,
         "scan_discovery_complete": progress.scan_discovery_complete,

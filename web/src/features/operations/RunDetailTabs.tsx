@@ -807,6 +807,7 @@ export interface RunDetailTabsProps {
   readonly status?: RunStatus;
   /** The exact confirmable subset of the waiting range, when it is readable. */
   readonly confirmableWaiting?: number | null;
+  readonly remainingFilesReady?: boolean;
   /** The owner of the processed count while this flow has not executed the
    * waiting files: preparation/analysis or the confirmation boundary. */
   readonly progressPhase?: RunProgressPhase | null;
@@ -837,6 +838,7 @@ export function RunDetailTabs({
   progress,
   status,
   confirmableWaiting = null,
+  remainingFilesReady = false,
   progressPhase = null,
   state,
   onStateChange,
@@ -1042,6 +1044,7 @@ export function RunDetailTabs({
             onStateChange={onStateChange}
             onInspectItem={inspectItem}
             active={active}
+            remainingFilesReady={remainingFilesReady}
             evidenceDecisionDrafts={evidenceDecisionDrafts}
             onEvidenceDecisionDraftChange={updateEvidenceDecisionDraft}
           />
@@ -1297,11 +1300,25 @@ function RunFileResultsCard({
     published !== null
       ? confirmedSuccessLabel(published)
       : "成功（已记录状态）";
-  const partial = results?.partial ?? null;
-  const failed = results?.failed ?? null;
+  const partial =
+    results?.partial == null
+      ? null
+      : Math.max(
+          0,
+          results.partial - (published?.missingResultStatuses["partial"] ?? 0),
+        );
+  const failed =
+    results?.failed == null
+      ? null
+      : Math.max(
+          0,
+          results.failed - (published?.missingResultStatuses["failed"] ?? 0),
+        );
   const known = success !== null || partial !== null || failed !== null;
   const uncertain = results?.uncertain ?? 0;
   const missingResult = results?.missingResult ?? 0;
+  const otherResults =
+    extras.reduce((sum, entry) => sum + entry.count, 0) + missingResult;
   if (
     active &&
     (success ?? 0) === 0 &&
@@ -1351,20 +1368,14 @@ function RunFileResultsCard({
           )}
         </ul>
       )}
-      {!taskFailed && extras.length > 0 && (
+      {!taskFailed && otherResults > 0 && (
         <p className="mf-run-result-note">
-          其他结果 {extras.reduce((sum, entry) => sum + entry.count, 0)}{" "}
-          项，可在对应文件中核对。
+          其他结果 {otherResults} 项，可在对应文件中核对。
         </p>
       )}
       {!taskFailed && uncertain > 0 && (
         <p className="mf-run-outcome mf-run-outcome-warning">
           目标文件结果尚未确认 {uncertain} 个
-        </p>
-      )}
-      {!taskFailed && missingResult > 0 && (
-        <p className="mf-run-outcome mf-run-outcome-warning">
-          文件处理已结束，结果未记录 {missingResult} 个
         </p>
       )}
     </section>
@@ -1450,6 +1461,7 @@ function RunItemsSection({
   onStateChange,
   onInspectItem,
   active,
+  remainingFilesReady,
   evidenceDecisionDrafts,
   onEvidenceDecisionDraftChange,
 }: {
@@ -1459,6 +1471,7 @@ function RunItemsSection({
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
   readonly onInspectItem: (itemId: string | null) => void;
   readonly active: boolean;
+  readonly remainingFilesReady: boolean;
   readonly evidenceDecisionDrafts: Readonly<
     Record<string, TaskItemDecisionDraft>
   >;
@@ -1643,9 +1656,18 @@ function RunItemsSection({
                         ? {
                             ...evidenceRead.model.item,
                             checkpoint: evidenceRead.model.checkpoint,
+                            missingResult:
+                              evidenceRead.model.results.length === 0,
                           }
                         : item;
-                    const reading = itemRowReading(rowItem);
+                    const reading = itemRowReading(
+                      rowItem,
+                      active,
+                      remainingFilesReady,
+                    );
+                    const missingResult =
+                      rowItem.missingResult === true &&
+                      RESULT_OWING_ITEM_STATUSES.has(rowItem.status);
                     const summary =
                       reading.reason === "—"
                         ? itemRowSummary(rowItem)
@@ -1653,7 +1675,7 @@ function RunItemsSection({
                     return (
                       <li
                         key={item.itemId}
-                        className={`mf-run-item-row mf-run-item-row-${reading.tone}${expanded ? " mf-run-item-row-open" : ""}`}
+                        className={`mf-run-item-row mf-run-item-row-${reading.tone}${missingResult ? " mf-run-item-row-missing-result" : ""}${expanded ? " mf-run-item-row-open" : ""}`}
                         data-run-item={item.itemId}
                       >
                         <button
@@ -1731,6 +1753,10 @@ function RunItemsSection({
 
 /** A settled processing attempt that owes a durable Result row. */
 const RESULT_OWING_ITEM_STATUSES = new Set(["success", "partial", "failed"]);
+function missingResultCopy(active: boolean) {
+  const subject = active ? "此文件已处理结束" : "任务流程已结束";
+  return `${subject}，此文件没有正式执行结果。可查看已知阶段与日志，文件效果暂不可判断。`;
+}
 
 /** A terminal status whose replay restriction is technical, not a current task. */
 const NO_REPLAY_ITEM_STATUSES = new Set([
@@ -1862,7 +1888,7 @@ function itemOutcome(
   const certainty = evidence.checkpoint.effectCertainty;
   const resultOwing = RESULT_OWING_ITEM_STATUSES.has(status);
   if (evidence.results.length === 0 && resultOwing) {
-    return { text: "文件处理已结束，结果未记录", tone: "warning" };
+    return { text: "文件结果缺失", tone: "warning" };
   }
   if (resultOwing && effectUnconfirmed(certainty)) {
     return { text: "目标文件结果尚未确认", tone: "warning" };
@@ -1897,12 +1923,23 @@ function itemOutcome(
  * failure explanation; the raw stage, attempt count and policy identifiers
  * stay in the item's technical diagnostics.
  */
-function itemRowReading(item: RunItemsPage["items"][number]): {
+function itemRowReading(
+  item: RunItemsPage["items"][number],
+  active: boolean,
+  remainingFilesReady: boolean,
+): {
   readonly disposition: string;
   readonly reason: string;
   readonly tone: "normal" | "warning" | "error" | "muted";
 } {
   const status = item.status;
+  if (item.missingResult === true && RESULT_OWING_ITEM_STATUSES.has(status)) {
+    return {
+      disposition: "文件结果缺失",
+      reason: missingResultCopy(active),
+      tone: "warning",
+    };
+  }
   const certainty = item.checkpoint?.effectCertainty ?? null;
   const unconfirmed = effectUnconfirmed(certainty);
   const disposition =
@@ -1977,6 +2014,13 @@ function itemRowReading(item: RunItemsPage["items"][number]): {
     return {
       disposition,
       reason: refusalReasonLabel(item.checkpoint.refusalReason),
+      tone: "warning",
+    };
+  }
+  if (status === "waiting_confirm" && remainingFilesReady) {
+    return {
+      disposition: "可确认",
+      reason: "已生成方案，可核对后确认。",
       tone: "warning",
     };
   }
@@ -2346,7 +2390,7 @@ function RunEvidenceSection({
                     {missingResult && (
                       <div>
                         <dt>最后已知状态</dt>
-                        <dd>文件处理已结束，当前缺少正式结果。</dd>
+                        <dd>{missingResultCopy(active)}</dd>
                       </div>
                     )}
                   </dl>

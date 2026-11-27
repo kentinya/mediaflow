@@ -528,6 +528,23 @@ describe("run progress normalization", () => {
     ).toThrow(/invalid field|did not match the contract/);
   });
 
+  it("keeps a success status without a formal result out of confirmed success", () => {
+    const document = progressDocument({
+      confirmed_success: 0,
+      missing_result_statuses: { success: 1 },
+    });
+    const progress = normalizeRunProgress(document);
+    expect(progress).toMatchObject({
+      available: true,
+      confirmedSuccess: 0,
+      uncertainSuccess: 1,
+      missingResultStatuses: { success: 1 },
+    });
+    expect(() =>
+      normalizeRunProgress({ ...document, confirmed_success: 1 }),
+    ).toThrow(/invalid field|did not match the contract/);
+  });
+
   it("rejects processed values that are not processed arithmetic", () => {
     expect(() =>
       normalizeRunProgress(progressDocument({ processed: 4 })),

@@ -78,6 +78,7 @@ from mediaflow.domain.recognition import (
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
+    PersistentResultRecord,
     PersistentTaskItem,
     TaskItemStatus,
 )
@@ -1230,6 +1231,59 @@ class AggregateProblemFileTests(_TaskCenterTestCase):
 
 
 class TaskCenterPopulationTests(_TaskCenterTestCase):
+    def test_item_page_identifies_only_the_file_without_a_formal_result(self) -> None:
+        task = self._task("manual_organize")
+        verified = self._processing_item(task.task_id, "verified")
+        missing = self._processing_item(task.task_id, "missing")
+        self._processing_item(task.task_id, "not-settled")
+        for item in (verified, missing):
+            self.repository.upsert_item(
+                replace(item, status=TaskItemStatus.SUCCESS, stage="completed")
+            )
+        self.repository.append_result(
+            PersistentResultRecord(
+                result_id="verified-result",
+                task_id=task.task_id,
+                item_id=verified.item_id,
+                source_storage_id=verified.storage_id,
+                source_path=verified.source_path,
+                destination_storage_id="target",
+                destination_path="Movies/Verified.mkv",
+                recognition_type="A",
+                provider="tmdb",
+                provider_id="101",
+                metadata_policy_id="A",
+                naming_policy_id="A",
+                classification_policy_id="A",
+                organize_policy_id="A",
+                operation="COPY",
+                status="SUCCESS",
+                created_at=NOW,
+                completed_operations=("COPY",),
+                effect_certainty="verified_complete",
+            )
+        )
+        endpoint = f"/api/operations/runs/{task.task_id}/items"
+        code, run = request(self.api, "GET", endpoint.removesuffix("/items"))
+        self.assertEqual(200, code)
+        self.assertEqual(1, run["progress"]["confirmed_success"])
+        self.assertEqual({"success": 1}, run["progress"]["missing_result_statuses"])
+        self.assertEqual(1, run["missing_result_items"])
+        code, first = request(self.api, "GET", endpoint, query="limit=2")
+        self.assertEqual(200, code)
+        self.assertEqual(
+            [("missing", True), ("not-settled", False)],
+            [(item["item_id"], item["missing_result"]) for item in first["items"]],
+        )
+        code, second = request(
+            self.api, "GET", endpoint, query=f"limit=2&cursor={first['next_cursor']}"
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(
+            [("verified", False)],
+            [(item["item_id"], item["missing_result"]) for item in second["items"]],
+        )
+
     """The center's membership rule, exercised over real durable rows (RO-4).
 
     Every case here writes the exact durable shape a real producer writes and

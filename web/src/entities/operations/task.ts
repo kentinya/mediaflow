@@ -140,6 +140,8 @@ export interface TaskItemSummary {
    * never treated as an actionable four-type surface.
    */
   readonly recoveryKind?: TaskItemRecoveryKind | null;
+  /** This ended file's own formal Result is absent, as read on the item page. */
+  readonly missingResult?: boolean;
 }
 
 /**
@@ -439,6 +441,9 @@ export function normalizeTaskItemSummary(
     recoveryKind: normalizeTaskItemRecoveryKind(
       source["recovery_kind"] ?? source["recoveryKind"],
     ),
+    ...(source["missing_result"] === undefined
+      ? {}
+      : { missingResult: source["missing_result"] === true }),
   };
 }
 

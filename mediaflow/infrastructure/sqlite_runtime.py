@@ -6910,6 +6910,21 @@ class SQLiteTaskRepository:
         known_total = None if indeterminate else total
         if uncertain_success > dispositions.get("success", 0):
             uncertain_success = dispositions.get("success", 0)
+        missing_result_statuses = {}
+        if overview.missing_result_items:
+            missing_result_statuses = {
+                row["status"]: int(row["value_count"])
+                for row in self._connection.execute(
+                    """SELECT i.status, COUNT(*) AS value_count
+                    FROM task_items i
+                    WHERE i.task_id = ? AND i.status IN ('success', 'partial', 'failed')
+                      AND i.item_id NOT IN (
+                          SELECT item_id FROM task_results WHERE task_id = ?
+                      )
+                    GROUP BY i.status""",
+                    (task_id, task_id),
+                )
+            }
         # Both a blocked conflict and a ready plan use waiting_confirm. A
         # still-open conflict after an earlier decision is not a ready recovery
         # and must not hide the ordinary confirmation of another file.
@@ -6961,6 +6976,7 @@ class SQLiteTaskRepository:
             primary_unit="task_items",
             execute_authorized=execute_authorized,
             files_recovery_confirmation_pending=files_recovery_confirmation_pending,
+            missing_result_statuses=missing_result_statuses,
         )
 
     def operations_run_items_window(
@@ -7018,9 +7034,16 @@ class SQLiteTaskRepository:
                     else total
                 )
                 rows = self._connection.execute(
-                    f"SELECT * FROM task_items WHERE task_id = ?{page_where} "
-                    f"ORDER BY {order} LIMIT ?",
-                    (task_id, *page_parameters, limit + 1),
+                    f"""SELECT page.*,
+                        (page.status IN ('success', 'partial', 'failed') AND page.item_id NOT IN (
+                            SELECT item_id FROM task_results WHERE task_id = ?
+                        )) AS missing_result
+                    FROM (
+                        SELECT * FROM task_items WHERE task_id = ?{page_where}
+                        ORDER BY {order} LIMIT ?
+                    ) AS page
+                    ORDER BY {order}""",
+                    (task_id, task_id, *page_parameters, limit + 1),
                 ).fetchall()
             except BaseException:
                 self._connection.execute("ROLLBACK")
@@ -7043,6 +7066,9 @@ class SQLiteTaskRepository:
             uncertain_success=uncertain_success,
             has_next=has_next,
             has_previous=has_previous,
+            missing_result_item_ids=frozenset(
+                row["item_id"] for row in rows if row["missing_result"]
+            ),
         )
 
     def operations_run_problem_items_window(

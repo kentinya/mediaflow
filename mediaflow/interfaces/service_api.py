@@ -12597,6 +12597,7 @@ class MediaFlowApi:
                 bounded=True,
                 checkpoint=checkpoint.summary(),
             )
+            document["missing_result"] = item.item_id in window.missing_result_item_ids
             # The same bounded per-item decision the item panel and batch
             # document publish.  The center's per-item selection uses it, so a
             # technical failure beside an unrelated business problem never

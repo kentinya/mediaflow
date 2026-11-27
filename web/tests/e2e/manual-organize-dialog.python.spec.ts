@@ -1353,51 +1353,61 @@ test("Task59.1 a second confirmation on the same Task is reconciled from its own
   await detail.getByRole("link", { name: "继续整理" }).click();
   const reopened = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(reopened).toBeVisible({ timeout: 30_000 });
-  const reopenedHeading = reopened.getByRole("heading", {
-    name: /第 [12] \/ 2 个/,
+  const remaining = reopened.getByRole("checkbox", {
+    name: `纳入 ${secondFile}`,
   });
-  await expect(reopenedHeading).toBeVisible();
-  if ((await reopenedHeading.textContent())?.includes("第 1 /")) {
-    await reopened.getByRole("button", { name: "下一项" }).click();
-  }
-  await expect(reopened.getByText(secondFile).first()).toBeVisible();
-
-  // The remaining sibling gets its own explicit correction and zero-mutation
-  // re-analysis, exactly the existing same-card decision path.
-  await reopened.getByText("修正识别或作品", { exact: true }).click();
-  await reopened.getByLabel(`识别类型 ${secondFile}`).selectOption("C");
-  await reopened.getByRole("button", { name: "保存并重新分析" }).click();
+  await expect(remaining).toBeVisible();
+  await expect(remaining).not.toBeChecked();
   await expect(
-    reopened.getByRole("heading", { name: "正在重新分析,当前方案不可确认" }),
-  ).toBeVisible();
+    reopened.getByRole("button", { name: "整批复核(已选 0 项)" }),
+  ).toBeDisabled();
+  expect(executePosts()).toHaveLength(1);
+  await remaining.check();
+  const reviewMark = commands.length;
+  await reopened.getByRole("button", { name: "整批复核(已选 1 项)" }).click();
+  await expect(reopened.getByText("正在更新方案")).toBeVisible();
+  await expect(
+    reopened.getByRole("button", { name: "确认整理 1 项" }),
+  ).toBeDisabled();
   await driveDiscoveryFor(page, request, discoveryId as string);
-  await expect(reopened.getByText("纳入本次整理").first()).toBeVisible({
+  await expect(
+    reopened.getByRole("button", { name: "确认整理 1 项" }),
+  ).toBeEnabled({
     timeout: 30_000,
   });
+  await expectBatchSelected(reopened, 1);
+  await expect(reopened.getByText("未纳入本次确认的文件 · 1 项")).toBeVisible();
+  expect(
+    commands
+      .slice(reviewMark)
+      .filter((command) => command.method !== "GET")
+      .map((c) => c.path),
+  ).toEqual([`/api/operations/organize/discoveries/${discoveryId}/analyze`]);
+  const firstState = await fileState(firstFile);
+  expect(firstState.destinationTargets).toHaveLength(1);
 
-  // Drop only the second Execute's browser-visible response after the
-  // production API committed its durable admission. The saved B identity is
-  // read automatically; the removed Task card is never required.
+  // The real API admits B, but the browser cannot read its successful
+  // response. The exact B identity is reconciled without another Execute.
   const commandMark = commands.length;
-  let dropped = false;
   await page.route(
     /\/api\/operations\/organize\/previews\/[^/]+\/execute$/,
     async (route) => {
-      if (dropped) {
-        await route.continue();
-        return;
-      }
-      dropped = true;
-      await route.fetch();
-      await route.abort("connectionreset");
+      expect((await route.fetch()).status()).toBe(202);
+      await route.fulfill({
+        status: 503,
+        json: { error: { code: "unavailable" } },
+      });
     },
+    { times: 1 },
   );
-  await reopened.getByRole("button", { name: /整批复核/ }).click();
-  await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/, {
-    timeout: 30_000,
-  });
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/operations" &&
+      url.searchParams.get("run") === taskId &&
+      !url.searchParams.has("dialog"),
+    { timeout: 30_000 },
+  );
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -1417,9 +1427,7 @@ test("Task59.1 a second confirmation on the same Task is reconciled from its own
       /\/operations\/organize\/previews\/[^/]+\/admission$/.test(command.path),
   );
   expect(admissionGets.length).toBeGreaterThanOrEqual(1);
-  // Each retained batch reads only its own original identity. The first
-  // batch's automatic pre-submit read and the second batch's lost-response
-  // read are both legitimate and must not cross.
+  // A read can only carry the exact reviewed selection of its own batch.
   const postByPreview = new Map<string, Json | undefined>();
   for (const post of executePosts()) {
     const previewId = (post.path.match(/previews\/([^/]+)\/execute$/) ?? [])[1];
@@ -1461,6 +1469,12 @@ test("Task59.1 a second confirmation on the same Task is reconciled from its own
   const secondState = await fileState(secondFile);
   expect(secondState.sourceExists).toBe(false);
   expect(secondState.destinationTargets).toHaveLength(1);
+
+  expect(await fileState(firstFile)).toEqual(firstState);
+  const submittedIds = executePosts().map((post) => post.body?.["itemIds"]);
+  expect(submittedIds[0]).toHaveLength(1);
+  expect(submittedIds[1]).toHaveLength(1);
+  expect(submittedIds[0]).not.toEqual(submittedIds[1]);
 
   // A full reload and reconnect reopen the exact Task. Both durable
   // confirmations remain readable through the API, while the Task detail
