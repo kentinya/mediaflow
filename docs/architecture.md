@@ -1600,10 +1600,11 @@ The backend projects the linked Task's existing flow as `organizeFlow {taskId, s
 for the preparation/intent/summary. These response fields add no stored state or schema.
 The center renders its preparation section only when this exact association is continuable.
 Ended work has no preparation section or history/restart links; its flow, item effects and evidence
-remain in Task detail. Existing exact preparation addresses keep the original plan readable through
-the intent `latestPlan.previewId` association even when re-analysis cleared the current preview link.
-The page distinguishes pending history reads, failed reads with page-local reread/Refresh, and a
-successful read with no saved plan. Historical reads do not analyze, issue authority or execute.
+remain in Task detail. An ended Task Center continuation address removes the organizer marker
+while preserving the exact Task and its detail state. Files retains current preparation outcomes
+and an exact Task result link when a previously opened preparation has ended. The intent
+`latestPlan.previewId` association still supports live re-analysis and the separate admission
+read still checks the original submission.
 The Files entry starts deliberate new work under the existing source-history contract.
 
 The retired generic new-organize address is an ordinary not-found; ResourceLibrary Files remains the
@@ -1675,9 +1676,8 @@ or another execution submission. Existing historical execution addresses stay re
 
 Slice53 preserved Task Center task-detail layout/content/progress/results/recovery UI. The later
 independent entry correction follows the current preparation-section contract above; shared recovery
-logic and authority are unchanged. Eligible continue links and exact historical addresses reuse the
-same organizer. Explicit organizer-local section classes preserve the status component's padding
-and borders across Files, continue and historical consumers. The organizer has no second
+logic and authority are unchanged. Eligible continue links reuse the Files organizer. Explicit
+organizer-local section classes preserve status padding and borders in both hosts. The organizer has no second
 progress/result center. Early task admission, legitimate pins, source ownership, five-state flow versus
 file effects, Executor-only mutation, RBAC/fences and completed/uncertain non-replay remain CURRENT.
 

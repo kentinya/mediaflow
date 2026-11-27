@@ -1030,13 +1030,9 @@ unconfirmed summary stays reachable from Running/All after leaving, reload or re
 Ended work has no 文件整理准备 section, ending notice, `查看只读摘要` or `从文件页重新发起`
 entry. The operator reads actual flow, independent file results and inline evidence in the same
 Task detail above its preserved list; new organizing still starts from ResourceLibrary Files.
-For ended work, the canonical in-place continuation address retains the original plan, failure
-stage and known effects as read-only history, without selection, correction, re-analysis or
-confirmation. It is the same `/operations` background with the exact selected Task and one closed
-hosted-card marker; the retired standalone
-receiving page has no route, alias, redirect or guidance shell.
-If no plan was generated, say so; if its history cannot be read, show the read failure and let the
-operator use `重新读取原计划摘要` or Refresh to read it again. These reads create no organizing work.
+An old in-place continuation address for ended work opens the same Task detail and removes the
+organizer marker. An old Files preparation address can point to the linked Task results. The
+current Files card still reports its own preparation outcome, including cancellation and limits.
 
 Only an exact preparation association with backend continuation eligibility shows 文件整理准备,
 the sentence 查看整理摘要，确认后执行。 and 继续整理. The action opens the shared organizer above the
@@ -1046,8 +1042,8 @@ has opened, the same card retains unsaved per-file choices and any unknown Execu
 Use `重新读取任务` there to reread the same Task; the read does not submit or replay work.
 Missing associations or ineligible work show no empty section, guess no preparation and create
 no work. Failure stages, per-file results and known effects remain independently readable. The
-shared Files/continue/historical organizer keeps horizontal space between status text and its
-colored border; removing the ended entry does not remove that shared dialog.
+shared Files and continuation organizer keeps horizontal space between status text and its
+colored border.
 The [in-place continuation B acceptance](https://github.com/kentinya/mediaflow/blob/b199b2dd4ba76a5f804cea0d2280b2707f54d357/TASK.md#patch-20261113-3--b-pass)
 records the current journey and background-read recovery. The earlier
 [entry/padding acceptance](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)
@@ -1211,10 +1207,9 @@ and the Tasks/recovery journey below remain.
    known effects and the legal next action.
 7. **Exit/reopen:** closing cancels no admitted work. Task Center's eligible 继续整理 action and
    the canonical `run` + hosted-card address reopen the exact preparation in place with its existing
-   continue/readonly boundary; the task center background, list position and detail state stay
-   mounted. Ended Task details have no preparation section or duplicate history/restart entries;
-   the canonical historical address remains read-only. Refresh/re-authentication preserves the same
-   exact Task and marker; ended work cannot re-execute. The retired standalone receiving route is
+   continuation boundary. The task center background, list position and detail state stay mounted.
+   Ended Task details show file results and evidence. The old continuation address drops the marker
+   and keeps the exact Task, including after refresh or re-authentication. The retired standalone receiving route is
    an ordinary not-found.
 
 Visual/interaction reference: existing Files new-library and Automation new-task cards. The
