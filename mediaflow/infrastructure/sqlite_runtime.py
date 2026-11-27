@@ -5024,6 +5024,18 @@ class SQLiteTaskRepository:
             "AND followup_preparation.source_task_id <> followup_execution.task_id)))"
         )
 
+    @staticmethod
+    def _ranked_run_results(task_id_sql: str) -> str:
+        # Rank a Task's results once, then match its latest attempt to each
+        # file. Filtering by status before ranking could substitute history.
+        return f"""
+            SELECT result_id, item_id, LOWER(status) AS status, effect_certainty,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY item_id ORDER BY created_at DESC, result_id DESC
+                   ) AS attempt_order
+            FROM task_results WHERE task_id = {task_id_sql}
+        """
+
     def _run_query_document(self) -> str:
         """One derived, deduplicated run population as a subquery.
 
@@ -5396,6 +5408,30 @@ class SQLiteTaskRepository:
                     )
                     AND missing_results.result_id IS NULL
                    ) AS missing_result_items,
+                   CASE WHEN task_status.task_id IS NOT NULL THEN (
+                       WITH latest AS ({self._ranked_run_results("task_status.task_id")})
+                       SELECT json_object(
+                           'success', COUNT(CASE WHEN i.status = 'success'
+                                AND r.effect_certainty = 'verified_complete' THEN 1 END),
+                           'partial', COUNT(CASE WHEN i.status = 'partial'
+                                AND r.effect_certainty IN ('verified_complete', 'none')
+                                THEN 1 END),
+                           'failed', COUNT(CASE WHEN i.status = 'failed'
+                                AND r.effect_certainty IN ('verified_complete', 'none')
+                                THEN 1 END),
+                           'uncertain', COUNT(CASE WHEN r.result_id IS NOT NULL AND (
+                                r.effect_certainty NOT IN ('verified_complete', 'none')
+                                OR (i.status = 'success'
+                                    AND r.effect_certainty <> 'verified_complete')
+                           ) THEN 1 END),
+                           'missing', COUNT(CASE WHEN r.result_id IS NULL THEN 1 END)
+                       )
+                       FROM task_items i
+                       LEFT JOIN latest r ON r.item_id = i.item_id
+                           AND r.attempt_order = 1 AND r.status = i.status
+                       WHERE i.task_id = task_status.task_id
+                         AND i.status IN ('success', 'partial', 'failed')
+                   ) END AS file_result_counts,
                    CASE
                        -- A48-01: the durable supported Task flow status is the
                        -- one flow authority.  A recovered completion is no
@@ -7021,7 +7057,8 @@ class SQLiteTaskRepository:
             page_clauses.append("(created_at < ? OR (created_at = ? AND item_id < ?))")
             page_parameters.extend((timestamp, timestamp, before[1]))
         page_where = f" AND {' AND '.join(page_clauses)}" if page_clauses else ""
-        order = "created_at DESC, item_id DESC" if reverse else "created_at, item_id"
+        direction = "DESC" if reverse else "ASC"
+        order = f"created_at {direction}, item_id {direction}"
         with self._lock:
             self._connection.execute("BEGIN")
             try:
@@ -7034,15 +7071,17 @@ class SQLiteTaskRepository:
                     else total
                 )
                 rows = self._connection.execute(
-                    f"""SELECT page.*,
-                        (page.status IN ('success', 'partial', 'failed') AND page.item_id NOT IN (
-                            SELECT item_id FROM task_results WHERE task_id = ?
-                        )) AS missing_result
+                    f"""WITH latest AS ({self._ranked_run_results("?")})
+                    SELECT page.*,
+                        (page.status IN ('success', 'partial', 'failed')
+                         AND current_result.result_id IS NULL) AS missing_result
                     FROM (
                         SELECT * FROM task_items WHERE task_id = ?{page_where}
                         ORDER BY {order} LIMIT ?
                     ) AS page
-                    ORDER BY {order}""",
+                    LEFT JOIN latest current_result ON current_result.item_id = page.item_id
+                        AND current_result.attempt_order = 1 AND current_result.status = page.status
+                    ORDER BY page.created_at {direction}, page.item_id {direction}""",
                     (task_id, task_id, *page_parameters, limit + 1),
                 ).fetchall()
             except BaseException:
@@ -8181,6 +8220,11 @@ class SQLiteTaskRepository:
             ),
             missing_result_items=(
                 _bounded_item_count(row["missing_result_items"]) if run_kind != "discovery" else 0
+            ),
+            file_result_counts=(
+                json.loads(row["file_result_counts"])
+                if run_kind != "discovery" and row["file_result_counts"] is not None
+                else None
             ),
             uncertain_success_items=(
                 _bounded_item_count(row["uncertain_success_items"])

@@ -13009,14 +13009,17 @@ class MediaFlowApi:
             "completed_items": overview.completed_items,
             "failed_items": overview.failed_items,
             "processed_items": overview.processed_items,
-            # Slice 48 RO-3: the ended list's honest per-file outcome summary.
-            # The file counts read the durable item statuses, independently of
-            # the Task flow status; the two caveat facets (unknown effect,
-            # missing Result) stay separate and never overwrite an outcome.
+            # Retain the status and evidence counters for existing consumers.
+            # The result card and ended list use the separate formal counts.
             "success_items": overview.success_items,
             "partial_items": overview.partial_items,
             "uncertain_effect_items": overview.uncertain_effect_items,
             "missing_result_items": overview.missing_result_items,
+            "file_result_counts": (
+                dict(overview.file_result_counts)
+                if overview.file_result_counts is not None
+                else None
+            ),
             "current_stage": overview.current_stage,
             "attention": overview.attention,
             "problem_types": list(overview.problem_types),

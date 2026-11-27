@@ -1774,6 +1774,10 @@ function RunTable({
             {page.items.map((run) => {
               const detail = detailLinkOf(run);
               const selected = run.runId === selectedId;
+              const counts = run.fileResultCounts;
+              const uncertain =
+                counts?.uncertain ?? run.uncertainEffectItems ?? 0;
+              const missing = counts?.missing ?? run.missingResultItems ?? 0;
               return (
                 <tr
                   key={run.runId}
@@ -1835,16 +1839,14 @@ function RunTable({
                           ? "没有需要处理的文件"
                           : (() => {
                               const parts: string[] = [];
-                              if (run.successItems)
-                                parts.push(`成功 ${run.successItems}`);
-                              if (run.partialItems)
-                                parts.push(`部分成功 ${run.partialItems}`);
-                              // `failedItems` is the backend's failed+partial
-                              // compatibility count; the independent file
-                              // failure line uses the derived failure-only
-                              // count so a partial file is not counted twice.
-                              if (run.failedOnlyItems)
-                                parts.push(`失败 ${run.failedOnlyItems}`);
+                              // Raw status counts in older responses do not
+                              // prove the outcome of the recorded attempt.
+                              if (counts?.success)
+                                parts.push(`成功 ${counts.success}`);
+                              if (counts?.partial)
+                                parts.push(`部分成功 ${counts.partial}`);
+                              if (counts?.failed)
+                                parts.push(`失败 ${counts.failed}`);
                               if (!parts.length) {
                                 parts.push(
                                   `已处理 ${run.processedItems ?? 0} / ${run.totalItems ?? "不可用"} 项`,
@@ -1852,10 +1854,8 @@ function RunTable({
                               }
                               return parts.join("，");
                             })()}
-                      {(run.uncertainEffectItems ?? 0) > 0 &&
-                        "；有文件效果尚不清楚"}
-                      {(run.missingResultItems ?? 0) > 0 &&
-                        "；有文件结果未记录"}
+                      {uncertain > 0 && "；有文件效果尚不清楚"}
+                      {missing > 0 && "；有文件结果未记录"}
                     </td>
                   )}
                   <td className="mf-run-status-cell">
@@ -2306,6 +2306,7 @@ export function RunDetailPanel({
                   failed: run.failedOnlyItems,
                   uncertain: run.uncertainEffectItems,
                   missingResult: run.missingResultItems,
+                  fileResultCounts: run.fileResultCounts,
                 }}
                 facts={<RunDetailFacts run={run} />}
                 taskActions={
@@ -2374,15 +2375,16 @@ function runStatusTone(run: RunSummary): RunStatusTone {
   if (run.status === "completed") {
     if (run.recoveredCompletion) return "success";
     if (
-      (run.partialItems ?? 0) > 0 ||
-      (run.failedOnlyItems ?? 0) > 0 ||
-      (run.uncertainEffectItems ?? 0) > 0 ||
-      (run.missingResultItems ?? 0) > 0 ||
+      (run.fileResultCounts?.partial ?? run.partialItems ?? 0) > 0 ||
+      (run.fileResultCounts?.failed ?? run.failedOnlyItems ?? 0) > 0 ||
+      (run.fileResultCounts?.uncertain ?? run.uncertainEffectItems ?? 0) > 0 ||
+      (run.fileResultCounts?.missing ?? run.missingResultItems ?? 0) > 0 ||
       run.problemTypes.length > 0
     ) {
       return "attention";
     }
-    if ((run.successItems ?? 0) > 0) return "success";
+    if ((run.fileResultCounts?.success ?? run.successItems ?? 0) > 0)
+      return "success";
   }
   return "neutral";
 }
@@ -2615,11 +2617,12 @@ function runStatusHeadline(
   preparationStage: RunPreparationStage | null,
   canConfirmOrganize: boolean,
 ): RunHeadline {
-  const success = run.successItems ?? 0;
-  const partial = run.partialItems ?? 0;
-  const failed = run.failedOnlyItems ?? 0;
-  const uncertain = run.uncertainEffectItems ?? 0;
-  const missing = run.missingResultItems ?? 0;
+  const success = run.fileResultCounts?.success ?? run.successItems ?? 0;
+  const partial = run.fileResultCounts?.partial ?? run.partialItems ?? 0;
+  const failed = run.fileResultCounts?.failed ?? run.failedOnlyItems ?? 0;
+  const uncertain =
+    run.fileResultCounts?.uncertain ?? run.uncertainEffectItems ?? 0;
+  const missing = run.fileResultCounts?.missing ?? run.missingResultItems ?? 0;
   const waiting = waitingItemCount(run);
   // A known pre-plan stage (queued/discovering/analyzing/..., including a
   // stopped preparation) is the durable proof that no plan exists yet, so it

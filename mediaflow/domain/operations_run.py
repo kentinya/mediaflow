@@ -390,6 +390,8 @@ class OperationsRunOverview:
     partial_items: int = 0
     uncertain_effect_items: int = 0
     missing_result_items: int = 0
+    #: Display counts from the latest formal Result of each current file.
+    file_result_counts: Mapping[str, int] | None = None
     #: The admitted item bound the producer persisted with the run, or ``None``
     #: when this run carries no bound at all (a discovery, a legacy row, a
     #: pre-Task failure).  It is the durable admission value, never today's

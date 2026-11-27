@@ -2925,79 +2925,96 @@ describe("selected-run detail tabs", () => {
     expect(within(evidence).queryByText(/口径|成功含义|非成功率/)).toBeNull();
   });
 
-  it("PATCH-20261107-1 distinguishes an unconfirmed target from an ended attempt without a result", async () => {
-    const unknown = manualExecutionEvidenceDocument();
-    // A persisted Result whose Storage effect is still unverified: the file
-    // is not presented as confirmed success.
-    (
-      unknown as { checkpoint: { effects: { certainty: string } } }
-    ).checkpoint.effects.certainty = "attempted_unverified";
-    stubFetch(async (input) => {
-      const url = String(input);
-      if (url === "/api/operations/runs/task-001") {
-        return jsonResponse(overviewDocument());
-      }
-      if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
-        return jsonResponse(unknown);
-      }
-      if (url.startsWith("/api/operations/runs/task-001/items?")) {
-        return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
-      }
-      if (url.startsWith("/api/operations/runs/task-001/records")) {
-        return jsonResponse(recordsPageDocument());
-      }
-      return jsonResponse({ error: { code: "not_found" } }, 404);
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/operations?run=task-001&item=item-1");
-    let detail = await screen.findByRole("dialog", { name: "运行详情" });
-    let evidence = await findInlineEvidence(detail);
-    await within(evidence).findByText("文件证据：a.mkv");
-    expect(within(evidence).getByText("目标文件结果尚未确认")).toBeVisible();
+  it.each([
+    { name: "without any formal result", history: [] },
+    {
+      name: "with only results for former outcomes",
+      history: [evidenceResultRow({ status: "PARTIAL" })],
+    },
+  ])(
+    "distinguishes an unconfirmed target from a current attempt $name",
+    async ({ history }) => {
+      const unknown = manualExecutionEvidenceDocument();
+      // A persisted Result whose Storage effect is still unverified: the file
+      // is not presented as confirmed success.
+      (
+        unknown as { checkpoint: { effects: { certainty: string } } }
+      ).checkpoint.effects.certainty = "attempted_unverified";
+      stubFetch(async (input) => {
+        const url = String(input);
+        if (url === "/api/operations/runs/task-001") {
+          return jsonResponse(overviewDocument());
+        }
+        if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
+          return jsonResponse(unknown);
+        }
+        if (url.startsWith("/api/operations/runs/task-001/items?")) {
+          return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
+        }
+        if (url.startsWith("/api/operations/runs/task-001/records")) {
+          return jsonResponse(recordsPageDocument());
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      });
+      authStore.setToken(TOKEN);
+      renderApp("/operations?run=task-001&item=item-1");
+      let detail = await screen.findByRole("dialog", { name: "运行详情" });
+      let evidence = await findInlineEvidence(detail);
+      await within(evidence).findByText("文件证据：a.mkv");
+      expect(within(evidence).getByText("目标文件结果尚未确认")).toBeVisible();
 
-    cleanup();
-    const missing = manualExecutionEvidenceDocument({ results: [] });
-    stubFetch(async (input) => {
-      const url = String(input);
-      if (url === "/api/operations/runs/task-001") {
-        return jsonResponse(overviewDocument({ status: "completed" }));
+      cleanup();
+      const missing = manualExecutionEvidenceDocument({ results: history });
+      stubFetch(async (input) => {
+        const url = String(input);
+        if (url === "/api/operations/runs/task-001") {
+          return jsonResponse(overviewDocument({ status: "completed" }));
+        }
+        if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
+          return jsonResponse(missing);
+        }
+        if (url.startsWith("/api/operations/runs/task-001/items?")) {
+          return jsonResponse(
+            itemsPageDocument({
+              items: [itemRow({ status: "success", missing_result: true })],
+            }),
+          );
+        }
+        if (url.startsWith("/api/operations/runs/task-001/records")) {
+          return jsonResponse(recordsPageDocument());
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      });
+      renderApp("/operations?run=task-001&item=item-1");
+      detail = await screen.findByRole("dialog", { name: "运行详情" });
+      evidence = await findInlineEvidence(detail);
+      await within(evidence).findByText("文件证据：a.mkv");
+      expect(
+        within(detail).getByRole("button", {
+          name: /a.mkv，文件结果缺失；查看证据/,
+        }),
+      ).toBeVisible();
+      expect(
+        within(detail).queryByRole("link", { name: "继续整理" }),
+      ).toBeNull();
+      // A settled attempt with no Result row is not backfilled into a success.
+      expect(within(evidence).getByText("文件结果缺失")).toBeVisible();
+      // The missing-result truth and the checkpoint's known steps stay in the
+      // file's one execution record instead of a fabricated Result; an empty
+      // execution block is not rendered.
+      await userEvent.setup().click(within(evidence).getByText("技术诊断"));
+      expect(within(evidence).getByText("移动（MOVE）")).toBeVisible();
+      if (history.length > 0) {
+        expect(within(evidence).getByText("此前尝试（1 次）")).toBeVisible();
+        expect(
+          within(evidence).queryByRole("region", { name: "最近一次执行" }),
+        ).toBeNull();
       }
-      if (url.startsWith("/api/operations/runs/task-001/items/item-1")) {
-        return jsonResponse(missing);
-      }
-      if (url.startsWith("/api/operations/runs/task-001/items?")) {
-        return jsonResponse(
-          itemsPageDocument({
-            items: [itemRow({ status: "success", missing_result: true })],
-          }),
-        );
-      }
-      if (url.startsWith("/api/operations/runs/task-001/records")) {
-        return jsonResponse(recordsPageDocument());
-      }
-      return jsonResponse({ error: { code: "not_found" } }, 404);
-    });
-    renderApp("/operations?run=task-001&item=item-1");
-    detail = await screen.findByRole("dialog", { name: "运行详情" });
-    evidence = await findInlineEvidence(detail);
-    await within(evidence).findByText("文件证据：a.mkv");
-    expect(
-      within(detail).getByRole("button", {
-        name: /a.mkv，文件结果缺失；查看证据/,
-      }),
-    ).toBeVisible();
-    expect(within(detail).queryByRole("link", { name: "继续整理" })).toBeNull();
-    // A settled attempt with no Result row is not backfilled into a success.
-    expect(within(evidence).getByText("文件结果缺失")).toBeVisible();
-    // The missing-result truth and the checkpoint's known steps stay in the
-    // file's one execution record instead of a fabricated Result; an empty
-    // execution block is not rendered.
-    await userEvent.setup().click(within(evidence).getByText("技术诊断"));
-    expect(within(evidence).getByText("移动（MOVE）")).toBeVisible();
-    expect(
-      within(evidence).queryByText("该文件还没有持久执行结果。"),
-    ).toBeNull();
-  });
+      expect(
+        within(evidence).queryByText("该文件还没有持久执行结果。"),
+      ).toBeNull();
+    },
+  );
 
   it("keeps failure-record and checkpoint next steps distinguishable in the one diagnostics entry", async () => {
     const failedItem = itemRow({
@@ -3011,6 +3028,13 @@ describe("selected-run detail tabs", () => {
         nextAction: "verify the destination storage",
       },
     });
+    const failedDocument = () =>
+      manualExecutionEvidenceDocument({
+        item: failedItem,
+        results: [
+          evidenceResultRow({ status: "FAILED", effect_certainty: "none" }),
+        ],
+      });
     const renderFailedEvidence = async (
       document: ReturnType<typeof manualExecutionEvidenceDocument>,
     ) => {
@@ -3029,7 +3053,7 @@ describe("selected-run detail tabs", () => {
       return evidence;
     };
 
-    const different = manualExecutionEvidenceDocument({ item: failedItem });
+    const different = failedDocument();
     (different.checkpoint as { nextAction: string | null }).nextAction =
       "check the pinned snapshot before continuing";
     const differentEvidence = await renderFailedEvidence(different);
@@ -3062,7 +3086,7 @@ describe("selected-run detail tabs", () => {
     cleanup();
     // The checkpoint's next action is the same durable failure's projection:
     // an identical value is one fact, not two next steps.
-    const shared = manualExecutionEvidenceDocument({ item: failedItem });
+    const shared = failedDocument();
     (shared.checkpoint as { nextAction: string | null }).nextAction =
       "verify the destination storage";
     const sharedEvidence = await renderFailedEvidence(shared);
@@ -3082,7 +3106,7 @@ describe("selected-run detail tabs", () => {
 
     cleanup();
     // Only the item's failure carries guidance: keep its exact source label.
-    const failureOnly = manualExecutionEvidenceDocument({ item: failedItem });
+    const failureOnly = failedDocument();
     const failureOnlyEvidence = await renderFailedEvidence(failureOnly);
     await userEvent
       .setup()

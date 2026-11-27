@@ -43,7 +43,10 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { useReadReveal } from "../../shared/ui/read-reveal";
-import type { RunStatus } from "../../entities/operations/run";
+import type {
+  RunFileResultCounts,
+  RunStatus,
+} from "../../entities/operations/run";
 import {
   RUN_DISPOSITION_LABELS,
   RUN_DISPOSITIONS,
@@ -750,6 +753,7 @@ export interface RunFileResults {
   readonly failed: number | null;
   readonly uncertain: number | null;
   readonly missingResult: number | null;
+  readonly fileResultCounts?: RunFileResultCounts | null;
 }
 
 /** The visual tone shared by the status card and its badge. */
@@ -1283,6 +1287,7 @@ function RunFileResultsCard({
   // facts. The run-row `success_items` count is only the durable recorded
   // status, so it is labelled as such when no progress model exists.
   const published = progress !== null && progress.available ? progress : null;
+  const counts = results?.fileResultCounts;
   const extras =
     published !== null
       ? (["skipped", "ignored", "cancelled"] as const)
@@ -1293,30 +1298,35 @@ function RunFileResultsCard({
           .filter((entry) => entry.count > 0)
       : [];
   const success =
-    published !== null
+    counts?.success ??
+    (published !== null
       ? published.confirmedSuccess
-      : (results?.success ?? null);
+      : (results?.success ?? null));
   const successLabel =
-    published !== null
-      ? confirmedSuccessLabel(published)
-      : "成功（已记录状态）";
+    counts != null
+      ? "成功"
+      : published !== null
+        ? confirmedSuccessLabel(published)
+        : "成功（已记录状态）";
   const partial =
-    results?.partial == null
+    counts?.partial ??
+    (results?.partial == null
       ? null
       : Math.max(
           0,
           results.partial - (published?.missingResultStatuses["partial"] ?? 0),
-        );
+        ));
   const failed =
-    results?.failed == null
+    counts?.failed ??
+    (results?.failed == null
       ? null
       : Math.max(
           0,
           results.failed - (published?.missingResultStatuses["failed"] ?? 0),
-        );
+        ));
   const known = success !== null || partial !== null || failed !== null;
-  const uncertain = results?.uncertain ?? 0;
-  const missingResult = results?.missingResult ?? 0;
+  const uncertain = counts?.uncertain ?? results?.uncertain ?? 0;
+  const missingResult = counts?.missing ?? results?.missingResult ?? 0;
   const otherResults =
     extras.reduce((sum, entry) => sum + entry.count, 0) + missingResult;
   if (
@@ -1656,8 +1666,9 @@ function RunItemsSection({
                         ? {
                             ...evidenceRead.model.item,
                             checkpoint: evidenceRead.model.checkpoint,
-                            missingResult:
-                              evidenceRead.model.results.length === 0,
+                            missingResult: evidenceMissingResult(
+                              evidenceRead.model,
+                            ),
                           }
                         : item;
                     const reading = itemRowReading(
@@ -1753,6 +1764,13 @@ function RunItemsSection({
 
 /** A settled processing attempt that owes a durable Result row. */
 const RESULT_OWING_ITEM_STATUSES = new Set(["success", "partial", "failed"]);
+
+function evidenceMissingResult(evidence: RunItemEvidence): boolean {
+  return (
+    RESULT_OWING_ITEM_STATUSES.has(evidence.item.status) &&
+    evidence.results[0]?.status.toLowerCase() !== evidence.item.status
+  );
+}
 function missingResultCopy(active: boolean) {
   const subject = active ? "此文件已处理结束" : "任务流程已结束";
   return `${subject}，此文件没有正式执行结果。可查看已知阶段与日志，文件效果暂不可判断。`;
@@ -1881,16 +1899,21 @@ function fileNameOf(path: string): string {
 function itemOutcome(
   evidence: RunItemEvidence,
   status: string,
+  missingResult: boolean,
 ): {
   readonly text: string;
   readonly tone: "normal" | "warning" | "error";
 } {
   const certainty = evidence.checkpoint.effectCertainty;
   const resultOwing = RESULT_OWING_ITEM_STATUSES.has(status);
-  if (evidence.results.length === 0 && resultOwing) {
+  if (missingResult) {
     return { text: "文件结果缺失", tone: "warning" };
   }
-  if (resultOwing && effectUnconfirmed(certainty)) {
+  if (
+    resultOwing &&
+    (effectUnconfirmed(certainty) ||
+      (status === "success" && certainty !== "verified_complete"))
+  ) {
     return { text: "目标文件结果尚未确认", tone: "warning" };
   }
   if (status === "success") {
@@ -1941,7 +1964,9 @@ function itemRowReading(
     };
   }
   const certainty = item.checkpoint?.effectCertainty ?? null;
-  const unconfirmed = effectUnconfirmed(certainty);
+  const unconfirmed =
+    effectUnconfirmed(certainty) ||
+    (status === "success" && certainty === "none");
   const disposition =
     RUN_ITEM_STATUS_LABELS[status] ??
     (status === "dry_run" ? "分析完成" : status);
@@ -2203,13 +2228,14 @@ function RunEvidenceSection({
               ? recovery.checkpoint
               : null;
           const status = decisionSettlement?.status ?? item.status;
-          const outcome = itemOutcome(evidence, status);
           const processingBasisRows = planProcessingRows(evidence.planEvidence);
-          // Results are served newest-first. The newest persisted attempt is
-          // this file's current operation and effect; the remaining attempts
-          // stay in the same item's expandable history.
-          const latestResult = evidence.results[0] ?? null;
-          const priorResults = evidence.results.slice(1);
+          // Results are served newest-first. A record for a different outcome
+          // is history, not evidence of the current operation or effect.
+          const lastAttempt = evidence.results[0] ?? null;
+          const missingResult = evidenceMissingResult(evidence);
+          const outcome = itemOutcome(evidence, status, missingResult);
+          const latestResult = missingResult ? null : lastAttempt;
+          const priorResults = evidence.results.slice(missingResult ? 0 : 1);
           const noExecution =
             status === "skipped" ||
             status === "ignored" ||
@@ -2221,10 +2247,11 @@ function RunEvidenceSection({
             latestResult?.destinationPath != null
               ? latestResult.destinationStorageId
               : item.destinationStorageId;
-          const operation = noExecution
-            ? null
-            : (latestResult?.operation ??
-              evidence.planEvidence.plan?.operation);
+          const operation =
+            noExecution || missingResult
+              ? null
+              : (latestResult?.operation ??
+                evidence.planEvidence.plan?.operation);
           const certainty =
             decisionSettlement?.effectCertainty ?? checkpoint.effectCertainty;
           const operationName =
@@ -2265,9 +2292,6 @@ function RunEvidenceSection({
                   ? "原文件保留"
                   : null
               : null;
-          const missingResult =
-            latestResult === null &&
-            RESULT_OWING_ITEM_STATUSES.has(item.status);
           const failure = decisionSettlement === null ? item.failure : null;
           const failureReason =
             failure === null
@@ -2275,7 +2299,8 @@ function RunEvidenceSection({
               : (taskFailureReason(failure.category) ?? "处理未完成");
           const unconfirmedEffect =
             RESULT_OWING_ITEM_STATUSES.has(item.status) &&
-            (evidence.results.length > 0 ||
+            !missingResult &&
+            (latestResult !== null ||
               checkpoint.completedOperations.length > 0) &&
             effectUnconfirmed(checkpoint.effectCertainty);
           // The checkpoint projects the same durable failure's next action.

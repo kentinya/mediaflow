@@ -4,7 +4,7 @@
 Task ID: 59.6
 Task Type: SLICE
 Parent Slice: 59
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 71787a05f18a089753966fbc9b1469c7fb3b4877
 Difficulty: Medium
 Test Level: T4
@@ -505,3 +505,15 @@ Task Base 不变。对本 Task 已含的持久终态、计划有效性和并发�
 任务详情顶部正确不显示恢复入口；恢复文件的行内新计划可逐项复核。显式仅确认恢复文件后，
 普通兄弟没有变化，回到同一任务并重新出现顶部继续整理入口。此路径不构成第二个阻塞。
 见 `mixed-ready-sibling.log` 和配对截图。
+
+## Developer 交接 — B59.6-01
+
+沿用 Task 59.6 和既有 Base。仅修正结果读投影：以同一读快照中原 Task／文件的最新正式
+Result 汇总确定、未确认和缺失的文件结果。「已结束」与详情使用同一口径，旧列表响应只有
+状态计数时不冒称成功／失败。原状态字段、进度、执行与资格均不变；证据区仍可核对历史尝试。
+
+52 项 Operations Python 用例通过；三组 Web 定向用例初跑 171 项通过、1 项旧响应夹具缺少
+正式计数，补齐夹具后该用例通过。真实 Python Playwright 两条旅程通过：混有缺失和未知效果
+的任务，及真实执行的成功／失败混合任务。Ruff、变动文件 ESLint 与 Prettier、类型检查、
+生产构建和治理通过。日志位于 `.git/validation-evidence/2746c6db/b59-06-01-developer/`。
+待独立 B 在本修正提交上执行最终验证；此交接不是 PASS。

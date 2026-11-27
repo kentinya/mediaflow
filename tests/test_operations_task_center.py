@@ -32,7 +32,7 @@ import json
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mediaflow.application.classification_review import ClassificationReviewService
@@ -80,6 +80,7 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
     PersistentTaskItem,
+    PersistentTaskStatus,
     TaskItemStatus,
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -1231,6 +1232,89 @@ class AggregateProblemFileTests(_TaskCenterTestCase):
 
 
 class TaskCenterPopulationTests(_TaskCenterTestCase):
+    def test_ended_list_and_detail_use_the_same_latest_file_results(self) -> None:
+        task = self._task("manual_organize", scope="Movies/Mixed")
+        missing_task = self._task("manual_organize", scope="Movies/AllMissing")
+        for value in (task, missing_task):
+            self.repository.update_task(
+                replace(value, status=PersistentTaskStatus.FAILED, completed_at=NOW)
+            )
+
+        def source(owner, name, status):
+            item = self._processing_item(owner.task_id, name)
+            self.repository.upsert_item(replace(item, status=status, stage=status.value))
+            return item
+
+        def result(item, status, certainty, attempt=0):
+            self.repository.append_result(
+                PersistentResultRecord(
+                    result_id=f"{item.item_id}-{attempt}",
+                    task_id=item.task_id,
+                    item_id=item.item_id,
+                    source_storage_id=item.storage_id,
+                    source_path=item.source_path,
+                    destination_storage_id=None,
+                    destination_path=None,
+                    recognition_type=None,
+                    provider=None,
+                    provider_id=None,
+                    metadata_policy_id=None,
+                    naming_policy_id=None,
+                    classification_policy_id=None,
+                    organize_policy_id=None,
+                    operation="MOVE",
+                    status=status,
+                    created_at=NOW + timedelta(seconds=attempt),
+                    effect_certainty=certainty,
+                )
+            )
+
+        result(source(task, "complete", TaskItemStatus.SUCCESS), "SUCCESS", "verified_complete")
+        result(source(task, "partial", TaskItemStatus.PARTIAL), "PARTIAL", "verified_complete")
+        result(source(task, "refused", TaskItemStatus.FAILED), "failed", "none")
+        uncertain = source(task, "uncertain", TaskItemStatus.SUCCESS)
+        result(uncertain, "SUCCESS", "verified_complete")
+        result(uncertain, "SUCCESS", "attempted_unverified", attempt=1)
+        result(source(task, "uncertain-partial", TaskItemStatus.PARTIAL), "PARTIAL", "unknown")
+        result(
+            source(task, "uncertain-failed", TaskItemStatus.FAILED),
+            "FAILED",
+            "attempted_unverified",
+        )
+        stale = source(task, "stale", TaskItemStatus.FAILED)
+        result(stale, "FAILED", "none")
+        result(stale, "PARTIAL", "verified_complete", attempt=1)
+        source(task, "missing", TaskItemStatus.FAILED)
+        source(task, "skipped", TaskItemStatus.SKIPPED)
+        source(missing_task, "other-missing", TaskItemStatus.SUCCESS)
+
+        first = self._page("view=ended&limit=1")
+        second = self._page(f"view=ended&limit=1&cursor={first['next_cursor']}")
+        rows = {row["task_id"]: row for row in first["items"] + second["items"]}
+        for task_id, expected in (
+            (task.task_id, {"success": 1, "partial": 1, "failed": 1, "uncertain": 3, "missing": 2}),
+            (
+                missing_task.task_id,
+                {"success": 0, "partial": 0, "failed": 0, "uncertain": 0, "missing": 1},
+            ),
+        ):
+            status, detail = request(self.api, "GET", f"/api/operations/runs/{task_id}")
+            self.assertEqual(200, status)
+            self.assertEqual("failed", detail["status"])
+            self.assertEqual(expected, rows[task_id]["file_result_counts"])
+            self.assertEqual(expected, detail["file_result_counts"])
+        status, page = request(
+            self.api,
+            "GET",
+            f"/api/operations/runs/{task.task_id}/items",
+            query="status=failed_partial",
+        )
+        self.assertEqual(200, status)
+        self.assertEqual(
+            {"missing", "stale"},
+            {item["item_id"] for item in page["items"] if item["missing_result"]},
+        )
+
     def test_item_page_identifies_only_the_file_without_a_formal_result(self) -> None:
         task = self._task("manual_organize")
         verified = self._processing_item(task.task_id, "verified")

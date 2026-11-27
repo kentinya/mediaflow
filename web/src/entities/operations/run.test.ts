@@ -136,6 +136,28 @@ function lifecycleProjection(overrides: Record<string, unknown> = {}) {
 }
 
 describe("run summary normalization", () => {
+  it("decodes formal file outcomes separately from older status counters", () => {
+    const counts = {
+      success: 1,
+      partial: 0,
+      failed: 0,
+      uncertain: 0,
+      missing: 1,
+    };
+    expect(normalizeRunSummary(runDocument()).fileResultCounts).toBeNull();
+    expect(
+      normalizeRunSummary(runDocument({ file_result_counts: counts }))
+        .fileResultCounts,
+    ).toEqual(counts);
+    for (const missing of [-1, 0.5, "1", undefined]) {
+      expect(() =>
+        normalizeRunSummary(
+          runDocument({ file_result_counts: { ...counts, missing } }),
+        ),
+      ).toThrow(RunNormalizationError);
+    }
+  });
+
   it("normalizes a bounded run document", () => {
     const run = normalizeRunSummary(runDocument());
     expect(run.runId).toBe("task-1");

@@ -867,7 +867,10 @@ async function expectRunTotal(page: Page, expected: number): Promise<void> {
  * population (six items, two Results, two operational logs, one captured
  * evidence row) the Task 42.2 journey reads, then wait for its overview panel.
  */
-async function selectRichRun(page: Page): Promise<void> {
+async function selectRichRun(
+  page: Page,
+  checkFileResults = false,
+): Promise<void> {
   // The rich run is terminal. Select its exact persisted scope from the ended
   // population; no lifecycle view retains the removed command filter.
   await page
@@ -878,6 +881,14 @@ async function selectRichRun(page: Page): Promise<void> {
   await expect(page).not.toHaveURL(/command=/);
   const richRow = page.getByRole("row").filter({ hasText: RICH_RUN_SCOPE });
   await expect(richRow).toHaveCount(1);
+  if (checkFileResults) {
+    await expect(
+      richRow.getByRole("cell", {
+        name: "成功 1；有文件效果尚不清楚；有文件结果未记录",
+        exact: true,
+      }),
+    ).toBeVisible();
+  }
   await richRow.getByRole("button").first().click();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   await expect(page).toHaveURL(/run=/);
@@ -1117,7 +1128,7 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   const api = recordApiCalls(page);
   await connect(page);
   await openInventory(page);
-  await selectRichRun(page);
+  await selectRichRun(page, true);
 
   const detail = page.getByRole("dialog", { name: "运行详情" });
 

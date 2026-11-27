@@ -440,6 +440,13 @@ describe("Operations run inventory landing", () => {
             processed_items: 4,
             completed_items: 4,
             success_items: 4,
+            file_result_counts: {
+              success: 4,
+              partial: 0,
+              failed: 0,
+              uncertain: 0,
+              missing: 0,
+            },
             updated_at: "2026-08-22T12:08:00+00:00",
             current_stage: null,
           }),
@@ -3696,51 +3703,82 @@ describe("Operations run inventory landing", () => {
     );
   });
 
-  it("shows independent success, partial and failure counts for a completed mixed run", async () => {
-    const user = userEvent.setup();
-    stubInventoryJourney(
-      pageDocument({
-        items: [
-          runDocument({
-            run_id: "task-mixed-ended",
-            task_id: "task-mixed-ended",
-            source_scope: "Movies/Mixed",
-            status: "completed",
-            total_items: 10,
-            completed_items: 10,
-            processed_items: 10,
-            success_items: 7,
-            partial_items: 2,
-            // The backend compatibility count is failed+partial; the list must
-            // show the independent failure-only count (3 - 2 = 1).
-            failed_items: 3,
-            uncertain_effect_items: 1,
-            missing_result_items: 0,
-            current_stage: null,
-          }),
-        ],
-        status_counts: { completed: 1 },
-        attention_count: 0,
-        total: 1,
-        summary: summaryDocument({
+  it.each([
+    {
+      name: "mixed results",
+      counts: { success: 6, partial: 2, failed: 0, uncertain: 1, missing: 1 },
+      legacyCaveats: 1,
+      result: "成功 6，部分成功 2；有文件效果尚不清楚；有文件结果未记录",
+    },
+    {
+      name: "an older response with unresolved outcomes",
+      counts: undefined,
+      legacyCaveats: 1,
+      result: "已处理 10 / 10 项；有文件效果尚不清楚；有文件结果未记录",
+    },
+    {
+      name: "only missing results",
+      counts: { success: 0, partial: 0, failed: 0, uncertain: 0, missing: 10 },
+      result: "已处理 10 / 10 项；有文件结果未记录",
+    },
+    {
+      name: "verified results",
+      counts: { success: 10, partial: 0, failed: 0, uncertain: 0, missing: 0 },
+      result: "成功 10",
+    },
+    {
+      name: "an older response without outcome evidence",
+      counts: undefined,
+      result: "已处理 10 / 10 项",
+    },
+  ])(
+    "uses formal file counts for $name in the ended list",
+    async ({ counts, legacyCaveats, result }) => {
+      const user = userEvent.setup();
+      stubInventoryJourney(
+        pageDocument({
+          items: [
+            runDocument({
+              run_id: "task-mixed-ended",
+              task_id: "task-mixed-ended",
+              source_scope: "Movies/Mixed",
+              status: "completed",
+              total_items: 10,
+              completed_items: 10,
+              processed_items: 10,
+              success_items: 7,
+              partial_items: 2,
+              // The backend compatibility count is failed+partial; the list must
+              // show the independent failure-only count (3 - 2 = 1).
+              failed_items: 3,
+              uncertain_effect_items: legacyCaveats,
+              missing_result_items: legacyCaveats,
+              file_result_counts: counts,
+              current_stage: null,
+            }),
+          ],
+          status_counts: { completed: 1 },
+          attention_count: 0,
           total: 1,
-          running: 0,
-          attention: 0,
-          ended: 1,
+          summary: summaryDocument({
+            total: 1,
+            running: 0,
+            attention: 0,
+            ended: 1,
+          }),
         }),
-      }),
-    );
-    authStore.setToken(TOKEN);
-    renderApp("/operations");
+      );
+      authStore.setToken(TOKEN);
+      renderApp("/operations");
 
-    const views = await screen.findByRole("navigation", {
-      name: "任务中心视图",
-    });
-    await user.click(within(views).getByRole("button", { name: "已结束" }));
-    expect(await screen.findByText(/成功 7，部分成功 2，失败 1/)).toBeVisible();
-    expect(screen.getByText(/有文件效果尚不清楚/)).toBeVisible();
-    expect(screen.queryByText(/失败 3/)).toBeNull();
-  });
+      const views = await screen.findByRole("navigation", {
+        name: "任务中心视图",
+      });
+      await user.click(within(views).getByRole("button", { name: "已结束" }));
+      expect(await screen.findByRole("cell", { name: result })).toBeVisible();
+      expect(screen.queryByText(/成功 7|失败 1/)).toBeNull();
+    },
+  );
 
   it("PATCH-20261107-1 reads an ended mixed run as flow, processed range and independent file results", async () => {
     const overview = runDocument({

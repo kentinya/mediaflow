@@ -213,6 +213,14 @@ export const RUN_TASK_LIFECYCLE_STATES = [
 /** The backend-submitted status filter values (exactly the modelled set). */
 export const RUN_STATUS_FILTERS = RUN_STATUSES;
 
+export interface RunFileResultCounts {
+  readonly success: number;
+  readonly partial: number;
+  readonly failed: number;
+  readonly uncertain: number;
+  readonly missing: number;
+}
+
 export interface RunSummary {
   readonly runId: string;
   readonly runKind: string;
@@ -253,6 +261,8 @@ export interface RunSummary {
   readonly failedOnlyItems: number | null;
   readonly uncertainEffectItems: number | null;
   readonly missingResultItems: number | null;
+  /** File results (not TaskItem status totals), read with this run row. */
+  readonly fileResultCounts: RunFileResultCounts | null;
   /** Allowlisted current stage bucket; null means the backend has none. */
   readonly currentStage: RunCurrentStage | null;
   readonly attention: boolean;
@@ -614,6 +624,9 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
       : Math.max(0, failedItems - (partialItems ?? 0));
   const uncertainEffectItems = optionalCount(source, "uncertain_effect_items");
   const missingResultItems = optionalCount(source, "missing_result_items");
+  const fileResultCounts = normalizeFileResultCounts(
+    source["file_result_counts"],
+  );
   let currentStage: RunCurrentStage | null;
   try {
     currentStage =
@@ -727,6 +740,7 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     failedOnlyItems,
     uncertainEffectItems,
     missingResultItems,
+    fileResultCounts,
     currentStage,
     attention,
     problemTypes,
@@ -751,6 +765,24 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
         ? false
         : flag(source, "recovered_completion")),
   };
+}
+
+function normalizeFileResultCounts(value: unknown): RunFileResultCounts | null {
+  if (value === undefined || value === null) return null;
+  try {
+    const source = readRecord(value, "run.file_result_counts");
+    const count = (key: keyof RunFileResultCounts) =>
+      normalizeBoundedCount(source[key], `run.file_result_counts.${key}`);
+    return {
+      success: count("success"),
+      partial: count("partial"),
+      failed: count("failed"),
+      uncertain: count("uncertain"),
+      missing: count("missing"),
+    };
+  } catch {
+    return fail();
+  }
 }
 
 /**
