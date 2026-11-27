@@ -4,12 +4,12 @@
 Task ID: 59.6
 Task Type: SLICE
 Parent Slice: 59
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 71787a05f18a089753966fbc9b1469c7fb3b4877
 Difficulty: Medium
-Test Level: T3
+Test Level: T4
 Planner / Reviewer: B
-Implementation Authorization: USER-REQUESTED A59-08 / A59-09 CORRECTION
+Implementation Authorization: USER-AUTHORIZED SLICE 59 CLOSURE — IN-TASK B59.6-01 CORRECTION
 ```
 
 ## 目标与实施范围
@@ -471,3 +471,37 @@ B 独立验收待完成。
 原 B 交接为 `71787a05:TASK.md`，不覆盖后续开发。独立 B 须检查原 Task Base 到本检查点，
 特别核对持久结算、精确方案有效性和并发/权限门禁，再按 RO/AC-01–07 交接给 A。
 本段为预检记录，不是 B PASS 或 A 终审。Slice 59 保持 FIX REQUIRED。
+
+## 独立 B 复核 — c8a0c223 / FIX REQUIRED
+
+在干净的 `main`、治理通过后审查 `71787a05..c8a0c223218bd23cd7728291b8c88781d801c37f`。
+Task Base 不变。对本 Task 已含的持久终态、计划有效性和并发路径，完整候选按 T4 门禁验证；
+下面新增的修正限于读投影与现有结果呈现，不改写入或执行安全机制。
+
+- **B59.6-01（P1，RO-4/5 / AC-05/06）。** 隔离原生浏览器在任务中心「已结束」打开
+  `Movies/Harness/Failed`。原行显示「成功 2，失败 1；有文件效果尚不清楚；有文件结果未记录」，
+  同任务详情则为成功 1、失败 0：一个文件效果未验证，另一个失败状态文件没有正式 Result。
+  任务列表用了 TaskItem 原状态统计，将两种未验证事实重复计入结果。批准稿把效果未知和结果缺失
+  区分为其他结果；两处须对同一事实给出一致的成功、部分成功和失败，不受任务流程失败覆盖。
+  证据为本机 `.git/validation-evidence/c8a0c223/b-review/missing-result-inventory.log`
+  和两张 `missing-result-*.png`。此差距在 Base 已有，但与本 Slice 的验收结果真值冲突。
+
+### 同一 Task 的最小修正与验收
+
+1. 在现有有界任务读表面提供同一 SQLite 快照的可对账文件结果计数，优先复用共同投影。
+   以当前行及准确 Task/Item 的最新正式 Result/效果证据区分验证成功、部分成功、失败和
+   未确认/缺失；不把同文件旧结果或兄弟结果借给当前结果。保留原始状态兼容字段、流程、
+   进度、服务端筛选分页、导出及文件证据；不增加逐行请求、写入、权限或重放。
+2. 「已结束」结果摘要与任务详情采用同一结果口径，未知效果和缺失仍可辨别、可从原行证据核对。
+   旧响应无法证明结果时不冒称成功或失败。保持现有布局和其它场景，不改离线稿。
+3. Developer 增加定向投影、组件及真实浏览器回归：同批含已验证成功、效果未确认、
+   无正式 Result、实质失败／部分成功；同时覆盖最新尝试优先、混合与全缺失、
+   分页／筛选及列表和详情同一任务。核对普通已验证全部成功和陈旧兼容响应；
+   实跑新增、变更和直接受影响的测试，再交不可变候选。
+4. B 在修正候选独立复现本缺口并核对上述边界；基于最终源／制品执行适用的完整
+   Python、Web、默认与原生浏览器、安全和发布验证，再作 Task 决定并交 Slice 验收包。
+
+复核补验：实际 Files 两文件批次中，一项识别恢复与一项普通可确认文件并存。
+任务详情顶部正确不显示恢复入口；恢复文件的行内新计划可逐项复核。显式仅确认恢复文件后，
+普通兄弟没有变化，回到同一任务并重新出现顶部继续整理入口。此路径不构成第二个阻塞。
+见 `mixed-ready-sibling.log` 和配对截图。
