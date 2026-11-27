@@ -3756,9 +3756,11 @@ test("a committed per-run problem link keeps its exact Task, type and page", asy
   await expect(page).toHaveURL(new RegExp("item=" + secondItemId));
   const detail = page.getByRole("dialog", { name: "运行详情" });
   await expect(detail).toBeVisible();
+  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
   await expect(
-    detail.getByRole("region", { name: "条目审核与恢复" }),
+    recovery.getByRole("heading", { name: "确认作品" }),
   ).toBeVisible();
+  await expect(recovery.getByRole("radio")).toHaveCount(2);
   await detail.getByRole("button", { name: "关闭详情" }).click();
   await expect(detail).toHaveCount(0);
   await expect(page).toHaveURL(/problemRun=/);
@@ -4626,7 +4628,7 @@ test("time filter: running, ended and business views preserve their own dated po
 }) => {
   const seeded = await seedTimeFilterPopulation(request);
   // The native recovery journey above resolves its cached metadata seed.
-  // Reuse the existing read-only paging fixture whose decisions stay pending.
+  // Reuse the paging fixture, leaving its candidate decisions pending.
   const businessResponse = await request.post(
     `${BASE}/__harness__/seed-task-center-problem-page`,
   );

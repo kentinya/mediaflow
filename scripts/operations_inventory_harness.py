@@ -1041,6 +1041,29 @@ def build_managed_fixture(
             "outputRecognitionType": "A",
         }
     )
+    # Exercise real metadata review and recovery on both problem-file pages.
+    document["recognitionRules"].append(
+        {
+            "id": "paged-metadata-video",
+            "name": "Paged metadata fixture",
+            "priority": 122,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {"field": "resource_library_id", "operator": "equals", "value": "source"},
+                    {
+                        "field": "path",
+                        "operator": "contains",
+                        "value": "/TaskCenter/PagedMetadata/",
+                    },
+                    {"field": "extension", "operator": "in", "value": ["mkv"]},
+                ],
+            },
+            "outputRecognitionType": "C",
+        }
+    )
     # PATCH-20261120-1: the dedicated SeasonProbe source resolves through its
     # own RecognitionType and a two-request TV Metadata policy, so the first
     # automatic analysis can verify neither same-title candidate within the
@@ -6370,64 +6393,60 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
 
 
 def seed_task_center_problem_page(state: AppState) -> dict[str, object]:
-    """Create 21 real pending metadata decisions for the paged file journey.
+    """Admit one folder with 21 ambiguous metadata matches through Files."""
 
-    Slice46 RO-4 removed the fifth technical-failure problem type, so a
-    server-paged *problem* list must be a real business problem.  Each item
-    here is a genuine ``waiting_metadata`` TaskItem (the durable state the
-    pipeline writes when a metadata decision is required) and the Task itself
-    stays unfinished with zero Storage effects, so the paged list, its counts
-    and its per-item next step are the real four-type ones.
-    """
-
-    if state.task_center_problem_page is not None:
+    with state._manual_lock:
+        if state.task_center_problem_page is not None:
+            return dict(state.task_center_problem_page)
+        scope = "TaskCenter/PagedMetadata"
+        folder = state.managed.root / "source" / scope
+        folder.mkdir(parents=True, exist_ok=True)
+        candidates = []
+        for index in range(21):
+            title = f"Metadata{index:02d}"
+            (folder / f"{title}.mkv").write_bytes(b"synthetic paged metadata source")
+            # Equal scores require the operator to choose between two distinct works.
+            for choice in range(2):
+                candidates.append(
+                    MediaCandidate(
+                        "tmdb",
+                        str(8500 + index * 2 + choice),
+                        MediaType.MOVIE,
+                        title,
+                        year=2001 + choice,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    )
+                )
+        provider = state.managed.metadata_registry.resolve("tmdb")
+        provider._candidates = (*provider._candidates, *candidates)
+        register_manual_worker(state)
+        status, discovery = wsgi_request(
+            state.api,
+            "POST",
+            "/api/resource-libraries/source/files/discoveries",
+            body={"paths": [scope], "autoPrepare": True},
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 202 or not discovery.get("organizeTaskId"):
+            raise RuntimeError(f"paged metadata Files admission failed: {status}")
+        task_id = discovery["organizeTaskId"]
+        for _index in range(16):
+            linked = _run_discovery_step(state, task_id=task_id)
+            if linked is not None and (linked.preview_id or linked.terminal):
+                break
+        items = state.repository.list_items(task_id)
+        if len(items) != 21 or any(
+            item.status is not TaskItemStatus.WAITING_METADATA for item in items
+        ):
+            raise RuntimeError("paged metadata analysis did not produce 21 candidate decisions")
+        state.task_center_problem_page = {
+            "taskId": task_id,
+            "itemCount": len(items),
+            "firstItemId": items[0].item_id,
+            "lastItemId": items[-1].item_id,
+        }
         return dict(state.task_center_problem_page)
-    now = datetime.now(UTC)
-    snapshot = state.managed.active
-    coordinator = PersistentTaskCoordinator(state.repository, state.repository)
-    task = coordinator.create(
-        "organize",
-        execute_authorized=True,
-        scope_path="TaskCenter/PagedMetadata",
-        configuration_snapshot_id=snapshot.revision_id,
-        configuration_snapshot_digest=snapshot.digest,
-        require_configuration_snapshot=True,
-        status=PersistentTaskStatus.RUNNING,
-    )
-    item_ids: list[str] = []
-    for index in range(21):
-        item_id = f"{task.task_id}-metadata-{index:02d}"
-        source_path = f"TaskCenter/PagedMetadata/Metadata{index:02d}.mkv"
-        item_ids.append(item_id)
-        state.repository.upsert_item(
-            PersistentTaskItem(
-                item_id=item_id,
-                task_id=task.task_id,
-                storage_id="source-storage",
-                resource_library_id="source",
-                source_path=source_path,
-                source_display=source_path,
-                status=TaskItemStatus.WAITING_METADATA,
-                stage="waiting_metadata",
-                attempts=1,
-                created_at=now + timedelta(microseconds=index),
-                updated_at=now + timedelta(microseconds=index),
-            )
-        )
-    state.repository.update_task(
-        dataclasses.replace(
-            task,
-            updated_at=now,
-            total_items=len(item_ids),
-        )
-    )
-    state.task_center_problem_page = {
-        "taskId": task.task_id,
-        "itemCount": len(item_ids),
-        "firstItemId": item_ids[0],
-        "lastItemId": item_ids[-1],
-    }
-    return dict(state.task_center_problem_page)
 
 
 def run_standalone_pipeline_once(state: AppState) -> dict[str, str]:

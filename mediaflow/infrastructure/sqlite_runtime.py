@@ -7614,8 +7614,10 @@ class SQLiteTaskRepository:
         The chain-aware probes below keep the type alive across the whole
         required human journey — saved decision → linked analysis → prepared
         summary — and drop it only when the exact confirmed follow-up already
-        took over (or a legal ignore/skip ended the item).  A resolver that
-        already recorded its decision must **not** hide a remaining live blocker
+        took over (or a legal ignore/skip ended the item). Once the parent
+        Task is durably cancelled, its reviews are history, not outstanding
+        decisions. A cancellation request alone does not remove them.
+        A resolver that already recorded its decision must not hide a remaining live blocker
         on the same item: an open review of the type always wins over the
         resolved decision that preceded it.
         """
@@ -7623,7 +7625,7 @@ class SQLiteTaskRepository:
         saved = cls._saved_decision_continuation_sql("i")
         native = cls._native_pending_confirmation_sql("i", problem_type)
         if problem_type == "recognition":
-            return (
+            predicate = (
                 "("
                 "("
                 "EXISTS (SELECT 1 FROM recognition_reviews recog "
@@ -7635,11 +7637,10 @@ class SQLiteTaskRepository:
                 "WHERE open_recognition.item_id = i.item_id"
                 " AND open_recognition.status = 'pending'))"
                 f" OR ({native})"
-                ")",
-                (),
+                ")"
             )
-        if problem_type == "metadata":
-            return (
+        elif problem_type == "metadata":
+            predicate = (
                 "("
                 "i.status IN ('waiting_metadata', 'waiting_metadata_correction')"
                 " OR (EXISTS (SELECT 1 FROM metadata_reviews meta_reviews "
@@ -7658,11 +7659,10 @@ class SQLiteTaskRepository:
                 "WHERE open_correction.item_id = i.item_id"
                 " AND open_correction.status = 'pending'))"
                 f" OR ({native})"
-                ")",
-                (),
+                ")"
             )
-        if problem_type == "classification":
-            return (
+        elif problem_type == "classification":
+            predicate = (
                 "("
                 "("
                 "EXISTS (SELECT 1 FROM classification_reviews class_reviews "
@@ -7675,11 +7675,10 @@ class SQLiteTaskRepository:
                 "WHERE open_classification.item_id = i.item_id"
                 " AND open_classification.status = 'pending'))"
                 f" OR ({native})"
-                ")",
-                (),
+                ")"
             )
-        if problem_type == "conflict":
-            return (
+        elif problem_type == "conflict":
+            predicate = (
                 "("
                 "("
                 "EXISTS (SELECT 1 FROM conflict_confirmations conflict "
@@ -7691,10 +7690,15 @@ class SQLiteTaskRepository:
                 "WHERE open_conflict.item_id = i.item_id"
                 " AND open_conflict.status = 'pending'))"
                 f" OR ({native})"
-                ")",
-                (),
+                ")"
             )
-        raise ValueError("run problem item type is invalid")
+        else:
+            raise ValueError("run problem item type is invalid")
+        return (
+            f"({predicate} AND NOT EXISTS (SELECT 1 FROM tasks cancelled_task "
+            "WHERE cancelled_task.task_id = i.task_id AND cancelled_task.status = 'cancelled'))",
+            (),
+        )
 
     @classmethod
     def _summary_step_owed_sql(cls, item_alias: str) -> str:

@@ -1008,6 +1008,67 @@ class AggregateProblemFileTests(_TaskCenterTestCase):
         self.assertEqual(200, code)
         return page
 
+    def test_cancelled_task_loses_current_problems_but_keeps_history(self) -> None:
+        task = self._task(scope="Movies/Cancelled")
+        live = self._task(scope="Movies/Still waiting")
+        self._metadata_review_problem(live.task_id, "unrelated")
+        cases = {
+            "recognition": ("recognize", self._recognition_problem),
+            "metadata": ("identify", self._metadata_review_problem),
+            "classification": ("classify", self._classification_problem),
+            "conflict": ("conflict", self._conflict_problem),
+        }
+        for item_id, create_problem in cases.values():
+            create_problem(task.task_id, item_id)
+        previous_items = self.repository.list_items(task.task_id)
+        self.assertEqual(5, self._problem_files()["total"])
+
+        cancelled = self.repository.cancel_task_if_current(task.task_id, updated_at=NOW)
+        self.assertEqual("cancelled", cancelled.status.value)
+        # Current membership follows the parent status without erasing the
+        # original review/item evidence that the historical detail can read.
+        self.assertEqual(previous_items, self.repository.list_items(task.task_id))
+        for problem, (item_id, _) in cases.items():
+            with self.subTest(problem=problem):
+                self.assertFalse(self.repository.has_current_four_type_problem(item_id))
+                code, items = request(
+                    self.api,
+                    "GET",
+                    f"/api/operations/runs/{task.task_id}/problem-items",
+                    query=f"problem={problem}",
+                )
+                self.assertEqual(200, code)
+                self.assertEqual(0, items["matching_total"])
+                self.assertEqual([], items["items"])
+                code, runs = request(
+                    self.api, "GET", "/api/operations/runs", query=f"view={problem}"
+                )
+                self.assertEqual(200, code)
+                self.assertEqual(
+                    [live.task_id] if problem == "metadata" else [],
+                    [run["task_id"] for run in runs["items"]],
+                )
+        inbox = self._problem_files()
+        self.assertEqual(1, inbox["total"])
+        self.assertEqual(1, inbox["task_total"])
+        self.assertEqual(
+            {"recognition": 0, "metadata": 1, "classification": 0, "conflict": 0},
+            inbox["problem_file_counts"],
+        )
+        self.assertEqual("unrelated", inbox["items"][0]["item"]["item_id"])
+        code, ended = request(self.api, "GET", "/api/operations/runs", query="view=ended")
+        self.assertEqual(200, code)
+        self.assertEqual([task.task_id], [run["task_id"] for run in ended["items"]])
+        self.assertEqual([], ended["items"][0]["problem_types"])
+        code, history = request(
+            self.api, "GET", f"/api/operations/runs/{task.task_id}/items", query="limit=100"
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(
+            {item.item_id for item in previous_items},
+            {item["item_id"] for item in history["items"]},
+        )
+
     def test_aggregate_counts_each_task_file_once_and_each_type_membership(self) -> None:
         mixed = self._task("organize", scope="Movies/Aggregate mixed")
         # One file carries two live problems: recognition and classification.
