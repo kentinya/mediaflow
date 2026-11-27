@@ -5167,9 +5167,21 @@ class SQLiteTaskRepository:
             "AND recovery_items.source_path NOT LIKE '%.png' "
             f"AND NOT ({verified_follow_up}) "
             f"AND NOT ({verified_own_effect})) "
-            "AND EXISTS (SELECT 1 FROM manual_recovery_preparations recovered_summary "
+            "AND (EXISTS (SELECT 1 FROM manual_recovery_preparations recovered_summary "
             "WHERE recovered_summary.status = 'confirmed' "
             "AND recovered_summary.source_task_id = task_status.task_id)"
+            # Files recovery uses the Task's own linked Preview instead of a
+            # separate recovery summary row. Require a saved decision and a
+            # verified execution on the same item, not another file's result.
+            " OR EXISTS (SELECT 1 FROM media_discoveries recovered_files "
+            "JOIN manual_execution_items recovered_item "
+            "ON recovered_item.task_id = recovered_files.organize_task_id "
+            "JOIN task_items decided_item ON decided_item.item_id = recovered_item.task_item_id "
+            "AND decided_item.task_id = recovered_item.task_id "
+            "WHERE recovered_files.organize_task_id = task_status.task_id "
+            "AND recovered_item.result_id IS NOT NULL "
+            "AND recovered_item.effect_certainty = 'verified_complete' "
+            f"AND {self._native_current_decision_kind_sql('decided_item')} IS NOT NULL))"
         )
         document = f"""
             SELECT runs.*,

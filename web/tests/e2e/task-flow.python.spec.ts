@@ -157,7 +157,7 @@ test("a mixed file population completes the flow with independent file facts", a
   await detail.waitFor();
   // Processing progress reached the whole admitted population (2/2) while
   // the file-failure count stays independently readable.
-  await expect(detail.getByText(/已处理 2 \/ 2 个主条目/)).toBeVisible();
+  await expect(detail.getByText("2 / 2 个主文件")).toBeVisible();
   const fileResults = detail.getByRole("region", { name: "文件结果" });
   await expect(fileResults.getByText("成功1", { exact: true })).toBeVisible();
   await expect(fileResults.getByText("失败1", { exact: true })).toBeVisible();
@@ -211,9 +211,7 @@ test("a mixed file population completes the flow with independent file facts", a
     name: "运行详情",
   });
   await reopenedDetail.waitFor();
-  await expect(
-    reopenedDetail.getByText(/已处理 2 \/ 2 个主条目/),
-  ).toBeVisible();
+  await expect(reopenedDetail.getByText("2 / 2 个主文件")).toBeVisible();
   const reopenedResults = reopenedDetail.getByRole("region", {
     name: "文件结果",
   });
@@ -266,9 +264,14 @@ test("a saved flow failure stays authoritative beside its real file effects", as
   // The real operator recovery journey: saved decision → same-Task analysis
   // → exact summary → explicit confirmation.
   await connectOn(page, `/operations?run=${taskId}&item=${conflict!.itemId}`);
+  const recoveryFlow = page.getByRole("region", { name: "状态与流程" });
+  await expect(
+    recoveryFlow.getByRole("heading", { name: "等待处理" }),
+  ).toBeVisible();
+  await expect(recoveryFlow.getByText("1 / 2 个主文件")).toBeVisible();
   const recovery = page.getByRole("region", { name: "条目审核与恢复" });
   await expect(
-    recovery.getByRole("heading", { name: "处理目标文件冲突" }),
+    recovery.getByRole("heading", { name: "处理目标冲突" }),
   ).toBeVisible();
   await recovery.getByRole("radio", { name: "保留原目标，另存新文件" }).check();
   const continued = page.waitForResponse(
@@ -287,7 +290,6 @@ test("a saved flow failure stays authoritative beside its real file effects", as
     analysisCompleted: true,
   });
   await page.request.post("/__harness__/register-manual-worker");
-  await recovery.getByRole("button", { name: "刷新" }).click();
   const summary = page.getByRole("region", { name: "新计划摘要" });
   await expect(summary).toBeVisible();
   const confirmed = page.waitForResponse(
@@ -348,7 +350,7 @@ test("a saved flow failure stays authoritative beside its real file effects", as
     .filter({ has: page.getByText("失败", { exact: true }) });
   await expect(failedRow).toHaveCount(1);
   await expect(failedRow.getByText("失败", { exact: true })).toBeVisible();
-  await expect(page.getByText(/已完成（恢复成功）/)).toHaveCount(0);
+  await expect(failedRow.getByText(/已完成（恢复成功）/)).toHaveCount(0);
   await page.getByRole("button", { name: "已结束", exact: true }).click();
   const ended = page.getByRole("table");
   await ended.waitFor();

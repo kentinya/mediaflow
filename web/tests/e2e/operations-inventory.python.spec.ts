@@ -529,6 +529,7 @@ async function finishNativeRecovery(
   await expect(summary.or(prepare)).toBeVisible();
   if (await prepare.isVisible()) await prepare.click();
   await expect(summary).toBeVisible();
+  await expectSingleFileRecoveryFlow(page);
   await expect(summary.getByText("等待明确确认")).toBeVisible();
   await expect(
     page.getByRole("link", { name: "继续整理", exact: true }),
@@ -601,8 +602,14 @@ async function finishNativeRecovery(
   const detail = page.getByRole("dialog", { name: "运行详情" });
   const evidence = detail.getByRole("region", { name: "条目证据" });
   await expect(
-    detail.getByRole("heading", { name: /^流程已完成/ }),
+    detail.getByRole("heading", {
+      name: "流程已完成（恢复成功）",
+      exact: true,
+    }),
   ).toBeVisible();
+  await expect(detail.getByRole("region", { name: "处理进度" })).toHaveText(
+    "处理进度1 / 1 个主文件",
+  );
   await expect(
     evidence.getByText("移动已验证，目标文件可用。原位置已移除。"),
   ).toBeVisible();
@@ -630,6 +637,22 @@ async function finishNativeRecovery(
   }
 }
 
+async function expectSingleFileRecoveryFlow(page: Page): Promise<void> {
+  const flow = page
+    .getByRole("dialog", { name: "运行详情" })
+    .getByRole("region", { name: "状态与流程" });
+  await expect(flow.getByRole("heading")).toHaveText("等待处理");
+  await expect(
+    flow.getByText("在下方展开对应文件的证据，查看原因和可用操作。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(flow.getByRole("region", { name: "处理进度" })).toHaveText(
+    "处理进度0 / 1 个主文件",
+  );
+  await expect(flow.getByText("当前业务问题")).toHaveCount(0);
+}
+
 async function runNativeRecoveryJourney(
   page: Page,
   request: APIRequestContext,
@@ -647,6 +670,7 @@ async function runNativeRecoveryJourney(
     name: "条目审核与恢复",
   });
   await expect(recovery.getByRole("heading", { name: heading })).toBeVisible();
+  await expectSingleFileRecoveryFlow(page);
   // The row retains the persisted checkpoint reason. The expanded evidence
   // leads with the file's identity and the approved decision heading.
   const problemReason: Readonly<Record<NativeRecoveryKind, string>> = {
@@ -745,6 +769,8 @@ async function runNativeRecoveryJourney(
     await expect(recovery.getByText("继续此条目的安全分析")).toHaveCount(0);
     await page.setViewportSize({ width: 1280, height: 720 });
   }
+  await expect(recovery.getByText("正在重新分析")).toBeVisible();
+  await expectSingleFileRecoveryFlow(page);
   const confirmationScenario = options.confirmation ?? "normal";
   await finishNativeRecovery(
     page,
@@ -2073,7 +2099,9 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   // now waits for the operator's explicit subset confirmation.
   await page.reload();
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  await expect(detail.getByRole("heading", { name: "等待确认" })).toBeVisible();
+  await expect(
+    detail.getByRole("heading", { name: "等待处理", exact: true }),
+  ).toBeVisible();
   await expect(
     detail.getByRole("link", { name: "继续整理", exact: true }),
   ).toHaveCount(0);
@@ -2248,6 +2276,16 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   const reloadedDetail = page.getByRole("dialog", { name: "运行详情" });
   await expect(reloadedDetail).toBeVisible();
+  const recoveryFlow = reloadedDetail.getByRole("region", {
+    name: "状态与流程",
+  });
+  await expect(
+    recoveryFlow.getByRole("heading", { name: "等待处理", exact: true }),
+  ).toBeVisible();
+  await expect(
+    recoveryFlow.getByRole("region", { name: "处理进度" }),
+  ).toHaveText("处理进度1 / 2 个主文件");
+  await expect(recoveryFlow.getByText(/恢复成功/)).toHaveCount(0);
   expect(exactExecutePosts()).toHaveLength(1);
   const admissionParams = new URLSearchParams({
     itemIds: committed!.selectedItemIds.join(","),

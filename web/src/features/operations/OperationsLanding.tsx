@@ -2219,23 +2219,19 @@ function RunDetailPanel({
                 status={run.status}
                 confirmableWaiting={confirmableWaiting}
                 progressPhase={progressPhase}
-                compactConfirmation={
-                  preparationStage !== "reading" &&
-                  preparationStage !== "unreadable" &&
-                  progressPhase === "confirming" &&
-                  headline.simpleConfirmation === true
+                compactProgress={
+                  headline.compactProgress === true ||
+                  (run.status === "completed" &&
+                    run.progress?.available === true &&
+                    run.progress.kind === "organize")
                 }
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
-                statusTone={
-                  headline.title === "等待确认"
-                    ? "attention"
-                    : runStatusTone(run)
-                }
+                statusTone={headline.tone ?? runStatusTone(run)}
                 flow={
                   <>
-                    <RunFlowSummary run={run} headline={headline} />
+                    <RunFlowSummary headline={headline} />
                     <RunRetainedSubmissionNotice run={run} />
                   </>
                 }
@@ -2452,11 +2448,19 @@ function preparationHeadline(stage: RunPreparationStage): {
 }
 
 interface RunHeadline {
-  readonly simpleConfirmation?: boolean;
+  readonly compactProgress?: boolean;
   readonly title: string;
   readonly copy: string;
+  readonly tone?: RunStatusTone;
   readonly showContinue?: boolean;
 }
+
+const FILE_RECOVERY_HEADLINE: RunHeadline = {
+  title: "等待处理",
+  copy: "在下方展开对应文件的证据，查看原因和可用操作。",
+  tone: "attention",
+  compactProgress: true,
+};
 
 /** The waiting title and its exact range, never a whole-Task running guess. */
 function waitingHeadline(
@@ -2464,8 +2468,15 @@ function waitingHeadline(
   waiting: number,
   mixed: boolean,
   planCandidateCount: number | null,
+  preparationStage: RunPreparationStage | null,
   canConfirmOrganize: boolean,
 ): RunHeadline {
+  if (
+    run.progress?.available === true &&
+    run.progress.filesRecoveryConfirmationPending
+  ) {
+    return FILE_RECOVERY_HEADLINE;
+  }
   // The current plan is the exact confirmable range once it is readable. A
   // pending/failed plan read never guesses: the durable waiting count and the
   // existing continuation remain the verifiable facts.
@@ -2484,33 +2495,32 @@ function waitingHeadline(
     return {
       title: "部分文件等待处理",
       copy: `${prefix}${waiting} 个文件等待处理，其余文件正在处理或排队；已执行文件的结果保留在下方。`,
+      compactProgress: run.problemTypes.length > 0,
+      tone: "attention",
     };
   }
   if (confirmableRange > 0) {
-    const filesRecoveryConfirmationPending =
-      run.progress?.available === true &&
-      run.progress.filesRecoveryConfirmationPending;
     const showContinue =
       canConfirmOrganize &&
       run.filesPreparation?.continuable === true &&
-      run.lifecycle?.cancellationRequested !== true &&
-      !filesRecoveryConfirmationPending;
+      run.lifecycle?.cancellationRequested !== true;
     const nextStep = showContinue
       ? `点击右上角「继续整理」，核对 ${confirmableRange} 个文件的方案。`
       : "在下方展开对应文件的证据，核对方案。";
     return {
       title: "等待确认",
-      simpleConfirmation:
-        confirmed === 0 && remaining === 0 && run.problemTypes.length === 0,
+      compactProgress:
+        preparationStage === null &&
+        confirmed === 0 &&
+        remaining === 0 &&
+        run.problemTypes.length === 0,
       copy: `${prefix}${remaining > 0 ? `${confirmableRange} 个文件可确认，另有 ${remaining} 个等待处理。` : ""}${nextStep}`,
+      tone: "attention",
       showContinue,
     };
   }
   if (run.problemTypes.length > 0) {
-    return {
-      title: "等待处理",
-      copy: `${prefix}${waiting} 个文件仍处于等待。在下方展开对应文件的证据，查看原因和可用操作。`,
-    };
+    return FILE_RECOVERY_HEADLINE;
   }
   return {
     title: "等待处理",
@@ -2540,6 +2550,26 @@ function runStatusHeadline(
     preparationStage !== null &&
     preparationStage !== "reading" &&
     preparationStage !== "unreadable";
+  const progress = run.progress?.available === true ? run.progress : null;
+  const queued =
+    progress !== null &&
+    progress.dispositions.active === 0 &&
+    progress.dispositions.pending > 0;
+  const organizeQueued: RunHeadline = {
+    title: "已受理，等待执行",
+    copy: "",
+    compactProgress: true,
+  };
+  // While a saved decision is being analyzed its item can move out of the
+  // waiting disposition. The durable problem still belongs to this file,
+  // and its analysis stage is shown in the expanded evidence.
+  if (
+    !TERMINAL_RUN_STATUSES.includes(run.status) &&
+    run.problemTypes.length > 0 &&
+    (preparationStage === "analyzing" || (!knownPreparation && waiting === 0))
+  ) {
+    return FILE_RECOVERY_HEADLINE;
+  }
   switch (run.status) {
     case "completed":
       if (run.recoveredCompletion) {
@@ -2627,6 +2657,7 @@ function runStatusHeadline(
           waiting,
           active > 0,
           planCandidateCount,
+          preparationStage,
           canConfirmOrganize,
         );
       }
@@ -2635,20 +2666,19 @@ function runStatusHeadline(
       if (preparationStage !== null) {
         return preparationHeadline(preparationStage);
       }
-      if (
-        run.progress?.available === true &&
-        run.progress.dispositions.active === 0 &&
-        run.progress.dispositions.pending > 0
-      ) {
-        return {
-          title: "已受理，等待执行",
-          copy: "后台尚未开始处理这些文件；文件结果将在执行后独立记录。",
-        };
+      if (queued) {
+        return progress?.kind === "organize"
+          ? organizeQueued
+          : {
+              title: "已受理，等待执行",
+              copy: "后台尚未开始处理这些文件；文件结果将在执行后独立记录。",
+            };
       }
       if (run.currentStage === "organizing") {
         return {
-          title: "正在执行整理",
-          copy: "执行结果由后端逐文件独立记录。",
+          title: "正在整理文件",
+          copy: "",
+          compactProgress: progress?.kind === "organize",
         };
       }
       if (run.currentStage === "scanning") {
@@ -2689,11 +2719,15 @@ function runStatusHeadline(
           waiting,
           mixed,
           planCandidateCount,
+          preparationStage,
           canConfirmOrganize,
         );
       }
       if (preparationStage !== null) {
         return preparationHeadline(preparationStage);
+      }
+      if (run.status === "pending" && queued && progress?.kind === "organize") {
+        return organizeQueued;
       }
       return run.status === "waiting"
         ? {
@@ -2717,33 +2751,15 @@ function runStatusHeadline(
  * Slice59 AC-06).
  *
  * The first block answers "流程到哪一步、有什么要处理": the durable flow status
- * with its honesty annotations, the run's current title, the bounded current
- * stage and its real business problems. Progress and applicable actions are
- * rendered by `RunDetailTabs` inside this same card.
+ * and the next action. The corresponding file evidence carries its type and
+ * reasons. Progress and actions are rendered separately by `RunDetailTabs`.
  */
-function RunFlowSummary({
-  run,
-  headline,
-}: {
-  readonly run: RunSummary;
-  readonly headline: RunHeadline;
-}) {
+function RunFlowSummary({ headline }: { readonly headline: RunHeadline }) {
   return (
     <div className="mf-run-fact-flow">
       <h3 className="mf-run-status-title">{headline.title}</h3>
       {headline.copy !== "" && (
         <p className="mf-run-status-copy">{headline.copy}</p>
-      )}
-      {run.problemTypes.length > 0 && (
-        <p className="mf-run-flow-line mf-run-problem-line">
-          <span className="mf-run-flow-label">当前业务问题</span>
-          <span>
-            {run.problemTypes
-              .map((type) => RUN_PROBLEM_LABELS[type])
-              .join("、")}
-            ——在对应列表中逐项处理。
-          </span>
-        </p>
       )}
     </div>
   );

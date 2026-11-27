@@ -782,7 +782,8 @@ export interface RunDetailTabsProps {
   readonly active: boolean;
   /** The status card tone derived from this exact run's durable facts. */
   readonly statusTone?: RunDetailStatusTone;
-  readonly compactConfirmation?: boolean;
+  /** Show the settled main-file count in the offline design's compact card. */
+  readonly compactProgress?: boolean;
   /** The run's flow status/stage/problems, read before progress and results. */
   readonly flow?: ReactNode;
   /** The independent per-file outcome counts shown after the status card. */
@@ -807,7 +808,7 @@ export function RunDetailTabs({
   onStateChange,
   active,
   statusTone = "neutral",
-  compactConfirmation = false,
+  compactProgress = false,
   flow,
   results,
   facts,
@@ -987,7 +988,7 @@ export function RunDetailTabs({
       {state.tab === "detail" ? (
         <div className="mf-run-tab-panel">
           <section
-            className={`mf-run-status-card mf-run-status-card-${statusTone}${compactConfirmation ? " mf-run-status-card-confirmation" : ""}`}
+            className={`mf-run-status-card mf-run-status-card-${statusTone}${compactProgress ? " mf-run-status-card-compact" : ""}`}
             aria-label="状态与流程"
           >
             {flow}
@@ -996,7 +997,7 @@ export function RunDetailTabs({
               status={status}
               confirmableWaiting={confirmableWaiting}
               phase={progressPhase}
-              compactConfirmation={compactConfirmation}
+              compactProgress={compactProgress}
             />
           </section>
           <RunFileResultsCard
@@ -1051,12 +1052,12 @@ function ProgressCard({
   status,
   confirmableWaiting,
   phase,
-  compactConfirmation,
+  compactProgress,
 }: {
   readonly progress: RunProgress | null;
   readonly status?: RunStatus;
   readonly confirmableWaiting: number | null;
-  readonly compactConfirmation: boolean;
+  readonly compactProgress: boolean;
   readonly phase: RunProgressPhase | null;
 }) {
   if (progress === null || !progress.available) {
@@ -1075,11 +1076,14 @@ function ProgressCard({
     );
   }
   if (
-    compactConfirmation &&
+    compactProgress &&
     !progress.indeterminate &&
     progress.knownTotal !== null &&
-    progress.processed !== null
+    progress.processed !== null &&
+    (progress.scanErrors ?? 0) === 0
   ) {
+    // The published processed range includes waiting items. Only settled
+    // dispositions count toward the main-file result progress here.
     const settled = Math.max(
       0,
       progress.processed - progress.dispositions.waiting,

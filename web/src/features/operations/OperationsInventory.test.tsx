@@ -1134,7 +1134,7 @@ describe("Operations run inventory landing", () => {
     expect(within(flow).queryByText("流程状态")).toBeNull();
     expect(within(flow).queryByText("当前阶段")).toBeNull();
     const progress = within(detail).getByRole("region", { name: "处理进度" });
-    expect(within(progress).getByText("已处理 2 / 2 个主条目")).toBeVisible();
+    expect(within(progress).getByText("2 / 2 个主文件")).toBeVisible();
     const results = within(detail).getByRole("region", { name: "文件结果" });
     expect(within(results).getByText("成功")).toBeVisible();
     // The approved reading order is unchanged: heading, progress, results.
@@ -1193,7 +1193,7 @@ describe("Operations run inventory landing", () => {
         "1 个文件可确认，另有 1 个等待处理。点击右上角「继续整理」，核对 1 个文件的方案。",
       ),
     ).toBeVisible();
-    expect(within(detail).getByText("当前业务问题")).toBeVisible();
+    expect(within(detail).queryByText("当前业务问题")).toBeNull();
     expect(backend.calls.discoveryReads).toBeGreaterThan(0);
     expect(backend.calls.posts).toEqual([]);
   });
@@ -3825,7 +3825,7 @@ describe("Operations run inventory landing", () => {
     const progress = await within(detail).findByRole("region", {
       name: "处理进度",
     });
-    await within(progress).findByText(/已处理 10 \/ 10 个主条目/);
+    await within(progress).findByText("10 / 10 个主文件");
     const results = await within(detail).findByRole("region", {
       name: "文件结果",
     });

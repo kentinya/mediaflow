@@ -5224,19 +5224,19 @@ tr[aria-selected="true"] {
   background: #fffbf2;
 }
 
-.mf-run-status-card-confirmation {
+.mf-run-status-card-compact {
   gap: 10px;
 }
 
-.mf-run-status-card-confirmation .mf-run-fact-flow {
+.mf-run-status-card-compact .mf-run-fact-flow {
   gap: 4px;
 }
 
-.mf-run-status-card-confirmation .mf-run-status-title {
+.mf-run-status-card-compact .mf-run-status-title {
   margin: 0;
 }
 
-.mf-run-status-card-confirmation .mf-run-status-copy {
+.mf-run-status-card-compact .mf-run-status-copy {
   color: var(--muted);
 }
 
@@ -5325,20 +5325,11 @@ tr[aria-selected="true"] {
   gap: 4px 8px;
   min-width: 0;
 }
-.mf-run-flow-label {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-.mf-run-flow-line > span:not(.mf-run-flow-label) {
+.mf-run-flow-line > span {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 .mf-run-flow-value {
-  font-weight: 600;
-}
-.mf-run-problem-line > span:not(.mf-run-flow-label) {
-  color: #8a4b0f;
   font-weight: 600;
 }
 .mf-run-fact-continuation h4,

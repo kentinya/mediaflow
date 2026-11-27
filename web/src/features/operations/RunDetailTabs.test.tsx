@@ -2426,6 +2426,50 @@ describe("selected-run detail tabs", () => {
     ).toBeVisible();
   });
 
+  it("counts a settled sibling without counting the file waiting on recovery confirmation", async () => {
+    stubDetailJourney([], {
+      overview: overviewDocument({
+        attention: true,
+        attention_reason: "task_problem",
+        problem_types: ["metadata"],
+        success_items: 1,
+        partial_items: 0,
+        failed_items: 0,
+        uncertain_effect_items: 0,
+        missing_result_items: 0,
+        progress: progressDocument({
+          known_total: 2,
+          processed: 2,
+          dispositions: {
+            pending: 0,
+            active: 0,
+            waiting: 1,
+            success: 1,
+            skipped: 0,
+            failed_partial: 0,
+            ignored: 0,
+            cancelled: 0,
+          },
+          confirmed_success: 1,
+          uncertain_success: 0,
+          files_recovery_confirmation_pending: true,
+        }),
+      }),
+    });
+    signInForTaskDetail(true);
+    renderApp("/operations?run=task-001");
+
+    const detail = await screen.findByRole("dialog", { name: "运行详情" });
+    const flow = await within(detail).findByRole("region", {
+      name: "状态与流程",
+    });
+    expect(
+      within(flow).getByRole("heading", { name: "等待处理" }),
+    ).toBeVisible();
+    expect(within(flow).getByText("1 / 2 个主文件")).toBeVisible();
+    expect(within(detail).queryByRole("link", { name: "继续整理" })).toBeNull();
+  });
+
   it("PATCH-20261107-1 keeps flow, processed range and independent file results in reading order", async () => {
     stubDetailJourney();
     authStore.setToken(TOKEN);

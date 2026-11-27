@@ -874,7 +874,7 @@ test("PATCH-20261107-1 keeps the mixed completed run and its independent file ou
   await expect(
     detail
       .getByRole("region", { name: "处理进度" })
-      .getByText("已处理 2 / 2 个主条目"),
+      .getByText("2 / 2 个主文件"),
   ).toBeVisible();
   const results = detail.getByRole("region", { name: "文件结果" });
   await expect(results.getByText("成功1", { exact: true })).toBeVisible();
