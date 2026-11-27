@@ -86,7 +86,6 @@ import {
   fetchRenameEvidence,
   fetchResourceLibraryRemovalPreview,
   fetchTextFile,
-  fetchFilesOrganizeWork,
   removeResourceLibrary,
   saveResourceLibrary,
   fetchResourceLibraryEdit,
@@ -2664,39 +2663,8 @@ export function StorageFilesPage() {
           // re-admits the same relative scope under a different pin, so
           // navigating there would present another live source context as the
           // recovered request.  Nothing here resubmits.
-          const readback =
-            requestId === null
-              ? null
-              : await fetchFilesOrganizeWork(token, {
-                  resourceLibraryId: libraryId,
-                  requestId,
-                });
-          if (readback !== null && readback.ok) {
-            const candidate = readback.items.find(
-              (item) =>
-                item.admissionRequestId !== null &&
-                item.admissionRequestId === requestId,
-            );
-            if (candidate !== undefined) {
-              setPreviewError(null);
-              return {
-                kind: "discovery" as const,
-                id: candidate.discoveryId,
-              };
-            }
-            // A proved absence: the honest unknown state stands and the operator
-            // decides, without a promise that no work exists and without a
-            // guessed navigation.
-            throw new Error(
-              "暂时无法确认整理申请结果,也未读到本次申请创建的持久记录;" +
-                "请在任务中心查看是否已有该资源库的整理任务;" +
-                "不会自动重复提交或进入其他来源。",
-            );
-          }
-          throw new Error(
-            "暂时无法确认整理申请结果,也无法读取任务中心的已受理工作;" +
-              "请前往任务中心核查。不会自动重复提交。",
-          );
+          if (requestId === null) throw new Error(message);
+          return { kind: "unknown" as const, libraryId, paths, requestId };
         }
         throw new Error(message);
       }
@@ -2704,6 +2672,15 @@ export function StorageFilesPage() {
     },
     onSuccess: (admitted) => {
       setPreviewError(null);
+      if (admitted.kind === "unknown") {
+        setOrganizeSession({
+          phase: "submitting",
+          resourceLibraryId: admitted.libraryId,
+          paths: admitted.paths,
+          requestId: admitted.requestId,
+        });
+        return;
+      }
       // Slice53: the durable discovery opens the preparation card on this
       // same page; browsing, selection and scroll position stay untouched.
       // Its identity also enters this route's URL, so a reload or a reconnect
@@ -4499,6 +4476,9 @@ export function StorageFilesPage() {
           <ManualOrganizeDialog
             host="files"
             session={organizeSession}
+            onPreparationFound={(discoveryId) =>
+              openOrganizeDialog({ phase: "admitted", discoveryId })
+            }
             onClose={closeOrganizeDialog}
             onHandoff={handoffToTaskCenter}
           />

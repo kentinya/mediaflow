@@ -2266,7 +2266,7 @@ describe("ManualOrganizeDialog", () => {
     // A rejected decision stays on the current file; no analysis is requested
     // and no file operation happens.
     await user.click(save);
-    expect(await screen.findByText(/条目已变化/)).toBeVisible();
+    expect(await screen.findByText("决定未保存，未请求分析")).toBeVisible();
     expect(backend.calls.recoveryDecisionPosts).toHaveLength(1);
     expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
@@ -2583,8 +2583,7 @@ describe("ManualOrganizeDialog", () => {
     );
     await user.click(screen.getByRole("button", { name: "保存并重新分析" }));
 
-    const warning =
-      await screen.findByText(/已读取同一准备，本次分析明确未受理/);
+    const warning = await screen.findByText("决定已保存，分析暂未受理");
     expect(warning).toBeVisible();
     expect(backend.calls.choicePosts).toHaveLength(1);
     expect(backend.calls.analyzePosts).toHaveLength(0);
@@ -2798,7 +2797,7 @@ describe("ManualOrganizeDialog", () => {
       within(card()).queryByText(/每次复核一个主文件及其关联附件/),
     ).toBeNull();
     expect(card()).toHaveTextContent("来源资源库");
-    expect(card()).toHaveTextContent("library");
+    expect(card()).toHaveTextContent("资源库A");
     expect(card()).toHaveTextContent("受理范围");
     expect(card()).toHaveTextContent("1 个文件");
     expect(card()).toHaveTextContent("准备进度");
@@ -2920,13 +2919,15 @@ describe("ManualOrganizeDialog", () => {
     ).toBeVisible();
     expect(
       screen.getByText(
-        /部分来源读取失败；已完成检查的已知来源保留为明确复核的子集/,
+        /该文件不可纳入本批。已完成检查的其他文件仍可继续生成方案/,
       ),
     ).toBeVisible();
     expect(screen.queryByText(/本次不会执行整理/)).toBeNull();
     expect(card()).toHaveTextContent("准备进度");
     expect(card()).toHaveTextContent("此阶段无媒体变更");
-    expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
+    expect(
+      card().querySelector(".mf-organize-preparation-spinner"),
+    ).not.toBeNull();
   }, 20_000);
 
   it("presents a mixed scope, split source/target and a scan-friendly batch summary", async () => {
@@ -2958,7 +2959,7 @@ describe("ManualOrganizeDialog", () => {
     const region = await screen.findByRole("region", { name: "整批复核" });
     expect(region).toHaveTextContent(/本次确认\s*1\s*项/);
     expect(region).toHaveTextContent(/未纳入\s*0\s*项/);
-    expect(card()).toHaveTextContent("来源影响：移动成功后原位置不再保留");
+    expect(card()).toHaveTextContent("移动成功后原位置不再保留");
 
     const batchList = await screen.findByRole("region", {
       name: "来源与目标",
@@ -3209,16 +3210,16 @@ describe("ManualOrganizeDialog", () => {
       value.state.failFirstPreviewRead = true;
     });
 
-    expect(await screen.findByText("计划摘要暂时无法读取")).toBeVisible();
+    expect(await screen.findByText("暂时无法读取计划")).toBeVisible();
     expect(card()).toHaveTextContent("来源资源库");
-    expect(card()).toHaveTextContent("library");
+    expect(card()).toHaveTextContent("资源库A");
     expect(card()).toHaveTextContent("受理范围");
     expect(card()).not.toHaveTextContent(/每次复核一个主文件及其关联附件/);
     expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
     expect(screen.queryByRole("heading", { name: /第 1 \/ 10 个/ })).toBeNull();
-    expect(screen.getByText(/已保存的准备与选择保持不变/)).toBeVisible();
+    expect(screen.getByText(/已保存的范围与选择仍在/)).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "重新读取计划摘要" }));
+    await user.click(screen.getByRole("button", { name: "重新读取原计划" }));
     await enterFirstOverviewFile(user, /第 1 \/ 10 个/);
     expect(backend.calls.analyzePosts).toHaveLength(0);
     expect(backend.calls.executePosts).toHaveLength(0);
@@ -3237,14 +3238,8 @@ describe("ManualOrganizeDialog", () => {
     expect(await screen.findByText("未找到可整理的主文件")).toBeVisible();
     expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
     expect(screen.getByText(/已排除 1 个条目：非媒体扩展名 × 1/)).toBeVisible();
-    expect(
-      screen.getByText("本次没有生成整理方案，也没有整理任何文件。"),
-    ).toBeVisible();
-    expect(
-      screen.getByText(
-        "请关闭本弹窗返回原文件页，调整所选范围后重新发起整理。",
-      ),
-    ).toBeVisible();
+    expect(screen.getByText(/本次未生成方案，文件仍在原处/)).toBeVisible();
+    expect(screen.getByRole("button", { name: /^关闭$/ })).toBeEnabled();
     expect(screen.queryByText(/未受影响的已受理条目会继续准备/)).toBeNull();
     expect(
       screen.queryByRole("button", { name: "运行分析并生成计划摘要" }),
@@ -3279,14 +3274,8 @@ describe("ManualOrganizeDialog", () => {
     expect(screen.queryByText("请求已保存，请联系管理员。")).toBeNull();
     expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
     expect(screen.getByText(/已排除 1 个条目：非媒体扩展名 × 1/)).toBeVisible();
-    expect(
-      screen.getByText("本次没有生成整理方案，也没有整理任何文件。"),
-    ).toBeVisible();
-    expect(
-      screen.getByText(
-        "请关闭本弹窗返回原文件页，调整所选范围后重新发起整理。",
-      ),
-    ).toBeVisible();
+    expect(screen.getByText(/本次未生成方案，文件仍在原处/)).toBeVisible();
+    expect(screen.getByRole("button", { name: /^关闭$/ })).toBeEnabled();
     expect(
       screen.queryByRole("button", { name: "运行分析并生成计划摘要" }),
     ).toBeNull();
@@ -3387,11 +3376,13 @@ describe("ManualOrganizeDialog", () => {
       value.state.endedFlow = true;
     });
 
-    await screen.findByText("本次整理工作已结束");
+    await screen.findByText("任务已结束。以下为原计划与已记录的文件结果。");
     const history = await screen.findByRole("region", {
       name: "只读原计划摘要",
     });
-    expect(within(history).getByText(/方案 preview-1/)).toBeVisible();
+    expect(
+      within(history).getByRole("heading", { name: "原计划摘要" }),
+    ).toBeVisible();
     expect(
       within(history).getAllByText(/Movie\.01\.mkv/).length,
     ).toBeGreaterThan(0);
@@ -3636,7 +3627,9 @@ describe("ManualOrganizeDialog", () => {
     const history = await screen.findByRole("region", {
       name: "只读原计划摘要",
     });
-    expect(within(history).getByText(/方案 preview-1/)).toBeVisible();
+    expect(
+      within(history).getByRole("heading", { name: "原计划摘要" }),
+    ).toBeVisible();
     expect(
       within(history).getAllByText(/Movie\.01\.mkv/).length,
     ).toBeGreaterThan(0);
@@ -3779,7 +3772,9 @@ describe("ManualOrganizeDialog", () => {
     const history = await screen.findByRole("region", {
       name: "只读原计划摘要",
     });
-    expect(within(history).getByText(/方案 preview-1/)).toBeVisible();
+    expect(
+      within(history).getByRole("heading", { name: "原计划摘要" }),
+    ).toBeVisible();
     expect(screen.getByText("来源资源库")).toBeVisible();
     expect(screen.getByText("受理范围")).toBeVisible();
     expect(screen.getByText("准备进度")).toBeVisible();
@@ -3807,11 +3802,15 @@ describe("ManualOrganizeDialog", () => {
       value.state.endedFlowKeepsPreview = true;
     });
 
-    await screen.findByText("本次整理工作已结束");
+    await screen.findByText("任务已结束。以下为原计划与已记录的文件结果。");
     const history = await screen.findByRole("region", {
       name: "只读原计划摘要",
     });
-    expect(within(history).getByText(/方案 preview-1/)).toBeVisible();
+    expect(
+      within(history).getByRole("heading", { name: "原计划摘要" }),
+    ).toBeVisible();
+    expect(within(history).getAllByText("当前结果")[0]).toBeVisible();
+    expect(within(history).getAllByText("技术诊断")[0]).toBeVisible();
     expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
   }, 20_000);
 
@@ -3926,7 +3925,7 @@ describe("ManualOrganizeDialog", () => {
     const confirm = screen.getByRole("button", { name: "确认整理 1 项" });
     await waitFor(() => expect(confirm).toBeEnabled());
     await user.click(confirm);
-    await screen.findByText(/原整理提交暂未确认|正在自动核对原整理提交/);
+    await screen.findByText(/提交结果待核对|暂时无法核对原提交/);
     expect(backend.calls.executePosts).toHaveLength(1);
     expect(backend.calls.executePreviewIds).toEqual([PREVIEW_ID]);
     expect(backend.calls.executePosts[0]).toMatchObject({
@@ -3937,19 +3936,15 @@ describe("ManualOrganizeDialog", () => {
       allowSourceCleanup: false,
     });
 
-    // The saved original request is read automatically; there is no manual
-    // reconciliation control and no second Execute.
-    expect(screen.queryByRole("button", { name: /核对提交结果/ })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "确认整理 1 项" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "核对本次提交" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "确认整理 1 项" })).toBeNull();
 
     // The first bounded read fails. The original unknown restriction stays,
     // and no denial from another summary is invented.
     await waitFor(() =>
       expect(backend.calls.admissionRequests.length).toBeGreaterThanOrEqual(1),
     );
-    await screen.findByText(/读取暂时失败|暂未确认/);
+    await screen.findByText(/暂时无法核对原提交/);
     expect(screen.queryByText(/没有被受理/)).toBeNull();
     expect(screen.queryByText(/没有发生整理变更/)).toBeNull();
     expect(backend.calls.admissionRequests[0]?.previewId).toBe(PREVIEW_ID);
@@ -3977,18 +3972,19 @@ describe("ManualOrganizeDialog", () => {
     await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
-    // The newer summary is visible and owned by the current review.
-    await screen.findByText(/方案 preview-2/);
-
-    // Its own overwrite authorization starts fresh — the original request's
-    // dangerous authorization is not inherited by the new plan.
-    const freshOverwrite = screen.getByRole("checkbox", {
+    // Reconciliation shows the original selection and authorization, even
+    // after the sibling generated a newer summary.
+    const retainedBatch = await screen.findByRole("region", {
+      name: "来源与目标",
+    });
+    expect(retainedBatch).toHaveTextContent(filename(0));
+    expect(retainedBatch).not.toHaveTextContent(filename(1));
+    const originalOverwrite = screen.getByRole("checkbox", {
       name: "我确认允许按已审阅方案替换现有目标文件",
     });
-    expect(freshOverwrite).not.toBeChecked();
-    expect(
-      screen.getByRole("button", { name: "确认整理 1 项" }),
-    ).toBeDisabled();
+    expect(originalOverwrite).toBeChecked();
+    expect(originalOverwrite).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "确认整理 1 项" })).toBeNull();
     expect(backend.calls.executePosts).toHaveLength(1);
 
     // Restore the read surface: the automatic check now proves the original
@@ -4301,13 +4297,14 @@ describe("ManualOrganizeDialog", () => {
         .closest("div") as HTMLElement;
       return row.querySelector("dd")?.textContent ?? "";
     };
-    expect(count("需要处理")).toBe("1");
+    expect(count("需要处理")).toBe("0");
+    expect(count("已有记录")).toBe("1");
     expect(count("已选 / 可确认")).toBe("1 / 1");
 
     const failedRow = within(overview)
       .getByRole("button", { name: `查看 ${filename(0)}` })
       .closest("li") as HTMLElement;
-    expect(failedRow).toHaveTextContent("元数据服务技术失败");
+    expect(failedRow).toHaveTextContent("元数据服务查询失败");
     expect(failedRow).toHaveTextContent(/Metadata Provider/);
     expect(failedRow).toHaveTextContent(/原整理准备任务 organize-task-1/);
     expect(failedRow).not.toHaveTextContent("需要处理元数据候选");
@@ -4323,9 +4320,10 @@ describe("ManualOrganizeDialog", () => {
       }),
     );
     await screen.findByRole("heading", { name: /第 1 \/ 2 个/ });
-    const status = within(card()).getByRole("region", { name: "当前状态" });
-    expect(status).toHaveTextContent("元数据服务技术失败");
-    expect(status).toHaveTextContent(/Metadata Provider/);
+    const status = within(card()).getByRole("region", { name: "文件记录" });
+    expect(status).toHaveTextContent("元数据服务查询失败");
+    expect(status).toHaveTextContent(/该文件未进入执行/);
+    await user.click(within(status).getByText("查看处理历史"));
     expect(status).toHaveTextContent(/任务中心/);
     expect(status).not.toHaveTextContent("重新分析同一准备");
     expect(card()).not.toHaveTextContent("Storage failure");
@@ -4347,7 +4345,7 @@ describe("ManualOrganizeDialog", () => {
     const skippedRow = within(card())
       .getByRole("button", { name: `查看 ${filename(0)}` })
       .closest("li") as HTMLElement;
-    expect(skippedRow).toHaveTextContent("元数据服务技术失败");
+    expect(skippedRow).toHaveTextContent("元数据服务查询失败");
     expect(skippedRow).toHaveTextContent(/Metadata Provider/);
     expect(skippedRow).toHaveTextContent(/原整理准备任务 organize-task-1/);
     expect(skippedRow).not.toHaveTextContent("重新分析同一准备");
@@ -4369,12 +4367,11 @@ describe("ManualOrganizeDialog", () => {
       [filename(0)],
     );
 
-    await screen.findByText("本次整理工作已结束");
+    await screen.findByText("任务已结束。以下为原计划与已记录的文件结果。");
     const history = await screen.findByRole("region", {
       name: "只读原计划摘要",
     });
-    expect(history).toHaveTextContent("元数据服务技术失败");
-    expect(history).toHaveTextContent(/Metadata Provider/);
+    expect(history).toHaveTextContent("元数据服务查询失败");
     expect(history).toHaveTextContent(/重新选择该文件发起新的整理/);
     expect(history).not.toHaveTextContent("重新分析同一准备");
     expect(history).not.toHaveTextContent("Storage failure");
@@ -4475,11 +4472,11 @@ describe("ManualOrganizeDialog", () => {
     // The first same-preparation read is slow. The saved choice and the
     // current file stay in place, and the one analysis action cannot submit
     // a second request while acceptance is still being read.
-    const locked = await screen.findByRole("button", {
-      name: "正在核对分析结果…",
-    });
-    expect(locked).toBeDisabled();
-    expect(screen.getByText(/正在核对同一准备是否已受理/)).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: "正在核对分析结果" }),
+    ).toBeVisible();
+    expect(screen.getByText("已保存的决定")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "保存并重新分析" })).toBeNull();
     expect(backend.calls.analyzePosts).toHaveLength(1);
     expect(backend.calls.choicePosts).toHaveLength(1);
     releasePreparationRead();
@@ -4523,7 +4520,7 @@ describe("ManualOrganizeDialog", () => {
       name: "保存并重新分析",
     });
     await waitFor(() => expect(save).toBeEnabled());
-    expect(screen.getByText(/明确未受理/)).toBeVisible();
+    expect(screen.getByText("决定已保存，分析暂未受理")).toBeVisible();
     expect(backend.calls.choicePosts).toHaveLength(1);
 
     await user.click(save);
@@ -4658,9 +4655,7 @@ describe("ManualOrganizeDialog", () => {
     const overview = await screen.findByRole("region", {
       name: "本次整理概览",
     });
-    expect(overview).toHaveTextContent(
-      `「${filename(0)}」已重新分析，当前出现新的待处理问题：目标冲突。`,
-    );
+    expect(overview).toHaveTextContent(`需要处理新的目标冲突问题`);
     const row = within(overview)
       .getByRole("button", { name: `查看 ${filename(0)}` })
       .closest("li") as HTMLElement;
@@ -4839,7 +4834,7 @@ describe("ManualOrganizeDialog", () => {
       { name: "确认同一批（1 项）" },
       { timeout: 10_000 },
     );
-    expect(screen.getByText(/暂未确认/)).toBeVisible();
+    expect(screen.getByText("原请求尚未受理")).toBeVisible();
     expect(backend.calls.admissionRequests.length).toBeGreaterThanOrEqual(2);
     expect(executeAttempts).toBe(1);
 

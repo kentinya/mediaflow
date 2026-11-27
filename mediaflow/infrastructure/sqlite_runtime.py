@@ -112,6 +112,7 @@ from mediaflow.domain.media_discovery import (
     MediaDiscovery,
     discovery_admission_identity,
     discovery_completed_without_primary_sources,
+    discovery_material_refusal,
     discovery_primary_limit_stopped,
     discovery_scope_signature,
     reserved_refusals,
@@ -2184,7 +2185,10 @@ class SQLiteTaskRepository:
                       AND s.claim_token IS NULL
                       AND s.control_request IS NULL
                       AND s.mutation_state IS NULL
-                      AND ((d.status = 'partial_success' AND d.progress_json LIKE '%primary_limit%')
+                      AND ((d.status = 'partial_success' AND CASE WHEN json_valid(d.progress_json)
+                        THEN (json_extract(d.progress_json, '$.incompleteReason')
+                            NOT IN ('none', 'read_failure', 'cancelled')
+                          OR json_array_length(d.progress_json, '$.refusalReasons') > 0) END)
                         OR (d.status = 'completed' AND json_array_length(
                           CASE WHEN json_valid(d.sources_json) THEN d.sources_json END
                         ) = 0))
@@ -2309,7 +2313,11 @@ class SQLiteTaskRepository:
             discovery.status is DiscoveryStatus.PARTIAL_SUCCESS
             and discovery_primary_limit_stopped(discovery.progress)
         )
-        if not primary_limit and not discovery_completed_without_primary_sources(discovery):
+        material_refusal = (
+            discovery.status is DiscoveryStatus.PARTIAL_SUCCESS
+            and discovery_material_refusal(discovery.progress) is not None
+        )
+        if not material_refusal and not discovery_completed_without_primary_sources(discovery):
             return False
         state = self._scheduled_state_locked(task_id)
         if (
@@ -2351,10 +2359,18 @@ class SQLiteTaskRepository:
                 return False
         updated = replace(
             task,
-            status=PersistentTaskStatus.FAILED if primary_limit else PersistentTaskStatus.COMPLETED,
+            status=(
+                PersistentTaskStatus.FAILED if material_refusal else PersistentTaskStatus.COMPLETED
+            ),
             updated_at=now,
             completed_at=now,
-            error=PRIMARY_LIMIT_TASK_ERROR if primary_limit else task.error,
+            error=(
+                PRIMARY_LIMIT_TASK_ERROR
+                if primary_limit
+                else "preparation_scope_incomplete"
+                if material_refusal
+                else task.error
+            ),
         )
         self._require_scheduled_authority_locked(updated)
         self._connection.execute(

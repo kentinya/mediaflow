@@ -21,7 +21,7 @@ from mediaflow.domain.manual_execution import (
     ManualExecutionItemStatus,
     ManualExecutionStatus,
 )
-from mediaflow.domain.media_discovery import DiscoveryStatus
+from mediaflow.domain.media_discovery import DiscoveryBudgets, DiscoveryStatus
 from mediaflow.domain.metadata import (
     EpisodeIdentity,
     MediaCandidate,
@@ -4055,7 +4055,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             self.assertEqual(0, value.repository.count_scheduled_capacity_use())
             self.assertEqual([], value.source.mutations)
 
-    def _seed_legacy_primary_limit_preparation(self, value, task_id):
+    def _seed_legacy_truncated_preparation(self, value, task_id, reason="primary_limit"):
         """Persist the pre-change waiting shape through production services.
 
         A Worker drives the real bounded walk to its durable 101st-source
@@ -4090,12 +4090,50 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             claim_token=claim.claim_token,
         )
         self.assertIs(walked.status, DiscoveryStatus.PARTIAL_SUCCESS)
-        self.assertIn("primary_limit", [item.value for item in walked.progress.refusal_reasons])
+        self.assertIn(reason, [item.value for item in walked.progress.refusal_reasons])
         value.task_engine._wait_for_human(claim, walked)
         state = value.repository.get_task_scheduling(task_id)
         self.assertIs(state.queue_state, TaskQueueState.WAITING_HUMAN)
         self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.RUNNING)
         return walked
+
+    def test_entry_limit_settles_both_new_and_previously_stuck_preparations(self) -> None:
+        for index in range(6):
+            self.media(f"Movies/One.{index:03d}.mkv")
+        with self.journey(
+            task_scheduling=True, budgets=DiscoveryBudgets(max_visited_entries=3)
+        ) as value:
+            status, admitted = self._admit(value, ["Movies"])
+            self.assertEqual(202, status, admitted)
+            task_id = admitted["organizeTaskId"]
+            self._seed_legacy_truncated_preparation(value, task_id, "entry_limit")
+            walked = value.repository.get_media_discovery_for_task(task_id)
+            self.assertEqual(
+                (task_id,), value.repository.settle_stuck_organize_tasks(value.clock())
+            )
+            self.assertEqual((), value.repository.settle_stuck_organize_tasks(value.clock()))
+            self.assertEqual(walked, value.repository.get_media_discovery_for_task(task_id))
+            self.assertIs(value.repository.get_task(task_id).status, PersistentTaskStatus.FAILED)
+            self.assertEqual(
+                "preparation_scope_incomplete", value.repository.get_task(task_id).error
+            )
+            self.assertIs(
+                value.repository.get_task_scheduling(task_id).queue_state, TaskQueueState.SETTLED
+            )
+            status, next_admission = self._admit(
+                value, ["Movies"], request_id="22222222-2222-4222-8222-222222222222"
+            )
+            self.assertEqual(202, status, next_admission)
+            next_task_id = next_admission["organizeTaskId"]
+            self.assertNotEqual(task_id, next_task_id)
+            self._drive(value, next_task_id)
+            self.assertIs(
+                value.repository.get_task(next_task_id).status, PersistentTaskStatus.FAILED
+            )
+            self.assertIsNone(
+                value.repository.get_media_discovery_for_task(next_task_id).preview_id
+            )
+            self.assertEqual([], value.source.mutations)
 
     def test_restarted_worker_settles_a_legacy_primary_limit_preparation_once(self) -> None:
         """A pre-change stuck preparation is settled on restart without replay."""
@@ -4108,7 +4146,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             status, admitted = self._admit(value, ["Movies"])
             self.assertEqual(202, status, admitted)
             task_id = admitted["organizeTaskId"]
-            walked = self._seed_legacy_primary_limit_preparation(value, task_id)
+            walked = self._seed_legacy_truncated_preparation(value, task_id)
             # Rewrite the durable progress in the pre-refusal-list shape: only
             # ``incompleteReason`` carries the primary-limit stop.  A current
             # store may still contain exactly this older record.
@@ -4221,7 +4259,7 @@ class ManualTaskDiscoveryTests(_DiscoveryFixture):
             status, admitted = self._admit(value, ["Movies"])
             self.assertEqual(202, status, admitted)
             task_id = admitted["organizeTaskId"]
-            self._seed_legacy_primary_limit_preparation(value, task_id)
+            self._seed_legacy_truncated_preparation(value, task_id)
             status, cancelled = self.request(
                 value,
                 f"/api/tasks/{task_id}/cancel",

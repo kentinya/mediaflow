@@ -71,16 +71,20 @@ export function runItemsQueryOptions(
   context: RunDetailQueryContext & {
     readonly status: string | null;
     readonly cursor: string | null;
+    readonly limit?: 100;
   },
 ) {
   return queryOptions({
-    queryKey: runItemsPageQueryKey(context),
+    queryKey:
+      context.limit === undefined
+        ? runItemsPageQueryKey(context)
+        : [...runItemsPageQueryKey(context), context.limit],
     queryFn: (): Promise<RunItemsRead> =>
       fetchRunItems(token, {
         runId: context.runId,
         status: context.status,
         cursor: context.cursor,
-        limit: 20,
+        limit: context.limit ?? 20,
       }),
     enabled: token !== null && context.runId.length > 0,
     retry: false,

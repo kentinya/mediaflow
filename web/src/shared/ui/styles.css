@@ -5697,6 +5697,12 @@ tr[aria-selected="true"] {
   background: #f5f8fd;
 }
 
+.mf-organize-history-row,
+.mf-organize-history-row:hover {
+  background: #f8fafd;
+  cursor: default;
+}
+
 .mf-run-item-row-button:focus-visible {
   outline: 2px solid #0b63ce;
   outline-offset: -2px;
@@ -10915,6 +10921,20 @@ tr[aria-selected="true"] {
   border-bottom: 0;
 }
 
+.mf-organize-preparation-recovery {
+  gap: 12px;
+  padding-block-start: 26px;
+}
+
+.mf-organize-preparation-recovery .mf-organize-preparation-facts {
+  padding-inline: 9px;
+}
+
+.mf-organize-preparation-recovery .mf-organize-preparation-facts > div {
+  grid-template-columns: minmax(74px, 20%) minmax(0, 1fr);
+  padding-inline: 0;
+}
+
 .mf-organize-files-preparation .mf-organize-preparation-note,
 .mf-organize-files-preparation .mf-organize-preparation-action {
   width: 100%;
@@ -12092,6 +12112,13 @@ tr[aria-selected="true"] {
 .mf-organize-skipped > ul > li,
 .mf-organize-scope-details > ul > li {
   margin: 0 0 6px;
+}
+
+.mf-organize-confirm-authorization {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0;
 }
 
 .mf-organize-confirm-submit {

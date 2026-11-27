@@ -44,6 +44,7 @@ import { useBlocker } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   executeOrganizePreview,
+  fetchFilesOrganizeWork,
   fetchOrganizeDiscovery,
   requestOrganizeDiscoveryAnalysis,
   updateOrganizeChoice,
@@ -60,6 +61,7 @@ import type {
 import type { MediaLibraryListItem } from "../../entities/library/media-library-files";
 import type { SystemResourceLibrary } from "../../entities/library/system-status";
 import type { TaskItemRecoveryModel } from "../../entities/operations/task-item-recovery";
+import { RUN_ITEM_STATUS_LABELS } from "../../entities/operations/run-detail";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
@@ -126,6 +128,7 @@ export type ManualOrganizeDialogSession =
       readonly phase: "submitting";
       readonly resourceLibraryId: string;
       readonly paths: readonly string[];
+      readonly requestId?: string;
     }
   | { readonly phase: "admitted"; readonly discoveryId: string };
 
@@ -133,6 +136,7 @@ export type ManualOrganizeDialogHost = "files" | "continuation";
 
 export interface ManualOrganizeDialogProps {
   readonly session: ManualOrganizeDialogSession;
+  readonly onPreparationFound?: (discoveryId: string) => void;
   /**
    * Which existing entry hosts this shared card. Files owns the readable
    * preparation/overview detail hierarchy; Task Center in-place continuation
@@ -619,7 +623,7 @@ function technicalTaskPointer(organizeTaskId: string | null): string {
  * back to the raw generic failure message.
  */
 function metadataTechnicalFailureReason(): string {
-  return "元数据服务技术失败：Metadata Provider 没有返回可用候选，当前文件没有可保存的候选决定，也没有生成可确认方案；没有修改任何文件。";
+  return "分析阶段的元数据服务查询失败。该文件未进入执行，原文件未变更。";
 }
 
 function metadataTechnicalFailureNextStep(
@@ -785,6 +789,7 @@ function overviewStatusFor(
   if (admittedItemIds.has(item.itemId)) return "recorded";
   if (settled !== null) return "recorded";
   if (item.capabilities?.verdict === "capability_gap") return "recorded";
+  if (previewItemTechnicalStage(item) === "metadata") return "recorded";
   if (!item.current || !executableIds.includes(item.itemId)) return "pending";
   return excluded.has(item.itemId) ? "ready" : "included";
 }
@@ -823,6 +828,7 @@ function overviewPendingReason(
 
 export function ManualOrganizeDialog({
   session,
+  onPreparationFound,
   host = "continuation",
   onClose,
   onHandoff,
@@ -835,6 +841,29 @@ export function ManualOrganizeDialog({
   const principalIdentity = usePrincipalIdentity();
   const principalId =
     principalIdentity.resolved === true ? principalIdentity.principalId : null;
+  const originalRequest =
+    session.phase === "submitting" && session.requestId !== undefined
+      ? {
+          resourceLibraryId: session.resourceLibraryId,
+          requestId: session.requestId,
+        }
+      : null;
+  const originalRequestRead = useQuery({
+    queryKey: ["files-organize-original-request", token, originalRequest],
+    queryFn: () => fetchFilesOrganizeWork(token, originalRequest!),
+    enabled: token !== null && originalRequest !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const originalDiscoveryId = originalRequestRead.data?.ok
+    ? originalRequestRead.data.items.find(
+        (item) => item.admissionRequestId === originalRequest?.requestId,
+      )?.discoveryId
+    : undefined;
+  useEffect(() => {
+    if (originalDiscoveryId !== undefined)
+      onPreparationFound?.(originalDiscoveryId);
+  }, [originalDiscoveryId, onPreparationFound]);
   const discoveryId = session.phase === "admitted" ? session.discoveryId : "";
   const confirmationWork: OrganizeConfirmationWork = {
     kind: "files",
@@ -963,6 +992,11 @@ export function ManualOrganizeDialog({
   >(null);
   const [preparationHandoffAttempt, setPreparationHandoffAttempt] = useState(0);
   const previewSummaryId = preview?.previewId;
+  const preparationSourceReadIncomplete =
+    preparation !== undefined &&
+    preparation.progress.incomplete &&
+    preparation.progress.incompleteReason === "read_failure" &&
+    preparation.progress.materialRefusal === null;
   const preparationHandoffReadFailed =
     previewSummaryId !== undefined &&
     preparationHandoffFailure === previewSummaryId;
@@ -998,8 +1032,10 @@ export function ManualOrganizeDialog({
         ) {
           const started = planReadingStarted.current;
           const remaining =
-            window.matchMedia?.("(prefers-reduced-motion: no-preference)")
-              .matches && started?.id === previewId
+            (preparationSourceReadIncomplete ||
+              window.matchMedia?.("(prefers-reduced-motion: no-preference)")
+                .matches) &&
+            started?.id === previewId
               ? ORGANIZE_PLAN_READING_MS - (performance.now() - started.time)
               : 0;
           if (remaining > 0) {
@@ -1027,6 +1063,7 @@ export function ManualOrganizeDialog({
     preparationHandoffAttempt,
     preparationHandoffReadFailed,
     preparationPlanObserved,
+    preparationSourceReadIncomplete,
     previewSummaryId,
     queryClient,
     token,
@@ -1079,7 +1116,7 @@ export function ManualOrganizeDialog({
    */
   const [filesOverviewVisible, setFilesOverviewVisible] = useState(filesHost);
   const [filesOverviewNotice, setFilesOverviewNotice] = useState<{
-    readonly kind: "success" | "warning";
+    readonly kind: "success" | "warning" | "error";
     /** A specific result name; omitted falls back to the analysis read-back. */
     readonly title?: string;
     /** A newer confirmable plan was read back for this file. */
@@ -1112,7 +1149,8 @@ export function ManualOrganizeDialog({
     readonly pageLabel: string;
     readonly pagePosition: number;
     readonly pageItemIds: readonly string[];
-    readonly analysisPhase?: "starting" | "checking" | "waiting" | null;
+    readonly analysisPhase?:
+      "starting" | "checking" | "waiting" | "refused" | "unknown" | null;
     readonly savedChoice?: string;
     readonly previewId: string;
     readonly signature: string;
@@ -1230,6 +1268,9 @@ export function ManualOrganizeDialog({
     null,
   );
   const [result, setResult] = useState<string | null>(null);
+  const [confirmationRejection, setConfirmationRejection] = useState<
+    "stale" | "source" | "permission" | null
+  >(null);
   const [allowOverwrite, setAllowOverwrite] = useState(false);
   const [allowSourceCleanup, setAllowSourceCleanup] = useState(false);
   const [confirmationSelectionKey, setConfirmationSelectionKey] = useState<
@@ -1252,6 +1293,7 @@ export function ManualOrganizeDialog({
   const [ambiguousRefusal, setAmbiguousRefusal] = useState<{
     readonly key: string;
     readonly message: string;
+    readonly stale: boolean;
   } | null>(null);
   const [discardArmed, setDiscardArmed] = useState(false);
   /** Releasing the route blocker for the one deliberate task-center handoff. */
@@ -1324,7 +1366,8 @@ export function ManualOrganizeDialog({
           entry.submission,
         );
         refreshRetained();
-        setResult(ambiguousRefusal.message);
+        if (ambiguousRefusal.stale) setConfirmationRejection("stale");
+        else setResult(ambiguousRefusal.message);
         setAmbiguousRefusal(null);
       }
       return;
@@ -1345,6 +1388,18 @@ export function ManualOrganizeDialog({
   );
   const items = useMemo(() => preview?.items ?? [], [preview]);
   const filesOrganizeTaskId = preparation?.organizeTaskId ?? null;
+  const historyItems = useQuery(
+    runItemsQueryOptions(token, {
+      runId:
+        organizeFlowEnded && summaryPreviewId !== ""
+          ? (filesOrganizeTaskId ?? "")
+          : "",
+      active: false,
+      status: null,
+      cursor: null,
+      limit: 100,
+    }),
+  );
   /**
    * A plan item whose exact TaskItem is still readable is the only place the
    * overview may learn that a published problem ended (skipped or ignored) or
@@ -1674,6 +1729,10 @@ export function ManualOrganizeDialog({
   const hasCapabilityRefusal = filesOverviewRows.some(
     (row) => row.item?.capabilities?.verdict === "capability_gap",
   );
+  const hasMetadataFailure = filesOverviewRows.some(
+    (row) =>
+      row.item !== null && previewItemTechnicalStage(row.item) === "metadata",
+  );
   const filesSettledOverview =
     filesHost &&
     organizeFlowEnded &&
@@ -1682,9 +1741,14 @@ export function ManualOrganizeDialog({
     filesOverviewRows.every(
       (row) =>
         row.settled !== null ||
-        row.item?.capabilities?.verdict === "capability_gap",
+        row.item?.capabilities?.verdict === "capability_gap" ||
+        (row.item !== null &&
+          previewItemTechnicalStage(row.item) === "metadata"),
     ) &&
-    (preparationEnteredReview || hasCapabilityRefusal);
+    (preparationEnteredReview ||
+      hasCapabilityRefusal ||
+      (hasMetadataFailure && filesDecisionReturn !== null) ||
+      filesOverviewNotice?.kind === "error");
   const filesOverviewCount = (status: OrganizeOverviewStatus) =>
     filesOverviewRows.filter((row) => row.status === status).length;
   /**
@@ -1715,6 +1779,7 @@ export function ManualOrganizeDialog({
       setAllowOverwrite(false);
       setAllowSourceCleanup(false);
       setConfirmationSelectionKey(null);
+      setConfirmationRejection(null);
       // Per-file refusals stay keyed by the durable itemId because the
       // refusal is still the operator's next-step fact.  A success notice only
       // described the analysis that produced this new plan, so it must not
@@ -1857,6 +1922,7 @@ export function ManualOrganizeDialog({
             status: analyzed.status,
           },
           analysisBaseline,
+          savedChoice,
         };
       }
       return { saved: true, analyzed: true, analysisBaseline, savedChoice };
@@ -1890,7 +1956,15 @@ export function ManualOrganizeDialog({
       if (filesHost) {
         setFilesDecisionReturn((previous) =>
           previous?.itemId === variables.itemId
-            ? { ...previous, analysisPhase: value.analyzed ? "waiting" : null }
+            ? {
+                ...previous,
+                analysisPhase: value.analyzed
+                  ? "waiting"
+                  : value.analysisBaseline !== null && value.analysisFailure
+                    ? "checking"
+                    : null,
+                savedChoice: value.savedChoice ?? previous.savedChoice,
+              }
             : previous,
         );
       }
@@ -2091,6 +2165,7 @@ export function ManualOrganizeDialog({
     retry: false,
     onMutate: () => {
       setResult(null);
+      setConfirmationRejection(null);
       setAmbiguousRefusal(null);
     },
     onSuccess: (outcome, submission) => {
@@ -2136,6 +2211,7 @@ export function ManualOrganizeDialog({
         // claiming a refusal; the retained request stays locked meanwhile.
         setAmbiguousRefusal({
           key: requestKey,
+          stale: value.code === "preview_stale",
           message: `服务端拒绝了本次请求(${value.code})。原请求是否已被受理仍不确定;系统会按原摘要、版本、选择和效果设置继续只读核对,不会自动重发。`,
         });
         if (!settledRetainedRef.current.has(requestKey)) watch.retry();
@@ -2150,6 +2226,25 @@ export function ManualOrganizeDialog({
       if (principalId !== null) {
         clearOrganizeConfirmation(principalId, confirmationWork, submission);
         refreshRetained();
+      }
+      if (
+        ["source_changed", "source_missing", "source_stale"].includes(
+          value.code,
+        ) ||
+        value.status === 403
+      ) {
+        setConfirmationRejection(
+          value.status === 403 ? "permission" : "source",
+        );
+        setAllowOverwrite(false);
+        setAllowSourceCleanup(false);
+        return;
+      }
+      if (value.code === "preview_stale") {
+        setConfirmationRejection("stale");
+        setAllowOverwrite(false);
+        setAllowSourceCleanup(false);
+        return;
       }
       setResult(
         `这次执行被明确拒绝(${value.code})。拒绝发生在受理之前:没有创建执行,Storage 未被修改。请核对原因后重新确认——不会自动重试。`,
@@ -2213,6 +2308,20 @@ export function ManualOrganizeDialog({
 
   const latestRetained =
     retained.length === 0 ? null : (retained[retained.length - 1] ?? null);
+  const retainedPlanId = latestRetained?.submission.previewId ?? "";
+  const retainedPlanQuery = useQuery(
+    organizePreviewQueryOptions(
+      token,
+      retainedPlanId,
+      retainedPlanId !== "" && retainedPlanId !== summaryPreviewId,
+    ),
+  );
+  const retainedPlan =
+    retainedPlanId === preview?.previewId
+      ? preview
+      : retainedPlanQuery.data?.ok === true
+        ? retainedPlanQuery.data.model
+        : undefined;
   const latestWatchState: OrganizeAdmissionWatchState | null =
     latestRetained === null
       ? null
@@ -2516,7 +2625,7 @@ export function ManualOrganizeDialog({
 
   // ---- close protection ----------------------------------------------
   const closeLocked =
-    session.phase === "submitting" ||
+    (session.phase === "submitting" && originalRequest === null) ||
     saveMutation.isPending ||
     executeMutation.isPending ||
     openingTaskDetail;
@@ -2964,6 +3073,16 @@ export function ManualOrganizeDialog({
     setAnalysisReadback(
       outcome === "unreadable" ? { ...baseline, phase: "unreadable" } : null,
     );
+    if (filesHost) {
+      setFilesDecisionReturn((previous) =>
+        previous?.itemId === baseline.itemId
+          ? {
+              ...previous,
+              analysisPhase: outcome === "refused" ? "refused" : "unknown",
+            }
+          : previous,
+      );
+    }
     if (!filesHost && outcome === "refused") {
       // An explicit non-admission leaves no result to read back in place; the
       // next explicit action arms its own baseline.
@@ -2992,6 +3111,11 @@ export function ManualOrganizeDialog({
       preparationVersion: current.preparationVersion,
       preparationStatus: current.preparationStatus,
     };
+    setFilesDecisionReturn((previous) =>
+      previous?.itemId === prepared.itemId
+        ? { ...previous, analysisPhase: "checking" }
+        : previous,
+    );
     const outcome = await readAnalysisOutcome(prepared);
     if (outcome === "stale") return;
     applyAnalysisOutcome(prepared, outcome);
@@ -3140,7 +3264,7 @@ export function ManualOrganizeDialog({
     if (
       preparationStatusRunning ||
       preparation?.previewId !== preview.previewId ||
-      !preview.current
+      (!preview.current && !hasMetadataFailure)
     )
       return;
     if (filesDecisionReturn.draftRevision !== fileDraftRevision.current) {
@@ -3194,7 +3318,7 @@ export function ManualOrganizeDialog({
       });
       return;
     }
-    if (!item.current) {
+    if (!item.current && previewItemTechnicalStage(item) !== "metadata") {
       // A superseded item is still history. It cannot prove the result of
       // this analysis, including a same-family problem or its resolution.
       return;
@@ -3241,7 +3365,23 @@ export function ManualOrganizeDialog({
     ) {
       arriveAtOverview({
         kind: "warning",
-        text: `「${filesDecisionReturn.filename}」已重新分析，当前出现新的待处理问题：${problemKindLabel(problem)}。`,
+        title:
+          problem === "classification"
+            ? "需要处理新的分类问题"
+            : `需要处理新的${problemKindLabel(problem)}问题`,
+        text:
+          problem === "classification" &&
+          filesDecisionReturn.problem === "recognition"
+            ? "识别决定已保存。新的分析发现分类目标需要确认，可从本行继续。"
+            : `原决定已保存。新的分析发现「${filesDecisionReturn.filename}」需要继续处理，可从本行打开。`,
+      });
+      return;
+    }
+    if (previewItemTechnicalStage(item) === "metadata") {
+      arriveAtOverview({
+        kind: "error",
+        title: "元数据服务查询失败",
+        text: "原决定和失败记录已保存。文件未进入执行，可展开该项查看原因。",
       });
       return;
     }
@@ -3287,6 +3427,7 @@ export function ManualOrganizeDialog({
     filesDecisionReturn,
     filesDecisionReturnItem,
     filesDecisionReturnSignature,
+    hasMetadataFailure,
     analysisReadback,
     filesHost,
     filesOverviewVisible,
@@ -3518,7 +3659,9 @@ export function ManualOrganizeDialog({
       return parts.length === 0 ? "没有已受理条目" : parts.join("、");
     }
     if (session.phase === "submitting") {
-      return `${submittingPaths.length} 项待受理`;
+      return originalRequest !== null
+        ? `${submittingPaths.length} 个所选条目`
+        : `${submittingPaths.length} 项待受理`;
     }
     return "—";
   })();
@@ -3532,11 +3675,6 @@ export function ManualOrganizeDialog({
     preparation?.progress.primarySources ?? 0;
   const preparationWorkerUnavailable =
     preparation !== undefined && preparation.worker.ready !== true;
-  const preparationSourceReadIncomplete =
-    preparation !== undefined &&
-    preparation.progress.incomplete &&
-    preparation.progress.incompleteReason === "read_failure" &&
-    preparation.progress.materialRefusal === null;
   const preparationExcludedCount =
     preparation?.progress.reasons.reduce(
       (total, item) => total + item.count,
@@ -3577,7 +3715,7 @@ export function ManualOrganizeDialog({
       return "未能完整检查所选目录";
     }
     if (preparation.status === "failed") return "准备失败";
-    if (preparationSummaryReadFailed) return "计划摘要暂时无法读取";
+    if (preparationSummaryReadFailed) return "暂时无法读取计划";
     if (preparationNoPrimarySources) {
       return preparation.progress.incomplete
         ? "准备未完成"
@@ -3625,15 +3763,12 @@ export function ManualOrganizeDialog({
    * zero or percentage.
    */
   const preparationStep = (() => {
-    if (!preparationTwoStep) return null;
+    if (!preparationTwoStep || originalRequest !== null) return null;
     if (
       preparationWorkerBlocking ||
       preparationStoppedTitle !== null ||
       preparationSummaryReadFailed ||
-      (preparationSourceReadIncomplete &&
-        preparation?.previewId === null &&
-        !preparation.frozen &&
-        preparation.status !== "analyzing")
+      preparationSourceReadIncomplete
     ) {
       return null;
     }
@@ -3677,7 +3812,7 @@ export function ManualOrganizeDialog({
           ? "检查已在主文件数量上限处停止；正在结束关联任务，结束后请缩小选择范围重新发起。"
           : "找到第 101 个主文件后已停止检查，整批未进入执行。任务已结束，可以缩小原选择后重新发起。"
         : preparationSummaryReadFailed
-          ? "计划已经生成，已保存的范围与选择仍在；重新读取原计划即可继续核对。"
+          ? "计划已经生成，已保存的范围与选择仍在。重新读取原计划即可继续核对。"
           : preparationManualAnalysisAvailable
             ? "后台当前没有继续生成方案；无需重新提交，可重新运行同一零变更分析。"
             : preparationNoPrimarySources
@@ -3703,6 +3838,14 @@ export function ManualOrganizeDialog({
         icon: preparation?.status === "cancelled" ? "■" : "!",
       };
     }
+    if (originalRequest !== null) {
+      return {
+        title: "正在核对原整理请求",
+        copy: "系统正在读取原提交的受理结果。核对期间保留原选择。",
+        tone: "amber" as const,
+        busy: true,
+      };
+    }
     if (session.phase === "submitting") {
       return {
         title: "正在提交整理申请",
@@ -3719,12 +3862,7 @@ export function ManualOrganizeDialog({
         busy: true,
       };
     }
-    if (
-      preparationSourceReadIncomplete &&
-      preparation.previewId === null &&
-      !preparation.frozen &&
-      preparation.status !== "analyzing"
-    ) {
+    if (preparationSourceReadIncomplete) {
       return {
         title:
           preparation.progress.errorEntries === 1
@@ -3732,8 +3870,7 @@ export function ManualOrganizeDialog({
             : "部分来源暂时无法读取",
         copy: "该文件不可纳入本批。已完成检查的其他文件仍可继续生成方案。",
         tone: "amber" as const,
-        busy: false,
-        icon: "!",
+        busy: true,
       };
     }
     switch (preparation.status) {
@@ -3793,7 +3930,11 @@ export function ManualOrganizeDialog({
   })();
   const preparationProgressText = (() => {
     if (preparation === undefined) {
-      return session.phase === "submitting" ? "等待受理结果" : "正在读取";
+      return originalRequest !== null
+        ? "原请求结果待核对"
+        : session.phase === "submitting"
+          ? "等待受理结果"
+          : "正在读取";
     }
     if (preparationStoppedTitle !== null) {
       return primaryLimitStopped
@@ -3801,7 +3942,7 @@ export function ManualOrganizeDialog({
         : preparation?.status === "cancelled"
           ? "在准备阶段停止"
           : preparationSummaryReadFailed
-            ? "计划已生成 · 摘要读取失败"
+            ? "原计划已生成"
             : preparationNoPrimarySources
               ? "找到 0 个主文件"
               : preparation?.progress.materialRefusal !== null
@@ -3821,11 +3962,7 @@ export function ManualOrganizeDialog({
         ? ` · ${preparation.progress.errorEntries} 个读取失败`
         : "";
     const counts = `${found}${unstable}${readFailures}`;
-    if (
-      preparationSourceReadIncomplete &&
-      preparation.previewId === null &&
-      !preparation.frozen
-    ) {
+    if (preparationSourceReadIncomplete) {
       return `${preparationPrimarySourceCount} 个主文件检查完成${readFailures}`;
     }
     if (preparation.previewId !== null)
@@ -3877,48 +4014,156 @@ export function ManualOrganizeDialog({
         </div>
       );
     }
+    const recordedItems =
+      historyItems.data?.ok === true &&
+      historyItems.data.model.taskId === filesOrganizeTaskId
+        ? historyItems.data.model.items
+        : [];
+    const resultsBySource = new Map(
+      recordedItems.map((record) => [
+        filesSourceIdentity(record.storageId, record.sourcePath),
+        record,
+      ]),
+    );
     return (
-      <section aria-label="只读原计划摘要">
-        <h3>只读原计划摘要</h3>
+      <section className="mf-organize-section" aria-label="只读原计划摘要">
+        <h3>原计划摘要</h3>
         <p className="mf-dashboard-meta">
-          方案 {preview.previewId}
-          {preview.intentVersion !== null
-            ? ` · 版本 ${preview.intentVersion}`
-            : ""}{" "}
-          · 零变更历史,不可重新分析、不可确认、不可执行。
+          任务已结束。以下为原计划与已记录的文件结果。
         </p>
         {preview.items.length === 0 ? (
           <p className="mf-dashboard-meta">原摘要没有可读条目。</p>
         ) : (
-          <ul className="mf-organize-review-list">
-            {preview.items.map((item) => (
-              <li key={`terminal-history-${item.itemId}`}>
-                {item.sourceFilename ?? item.itemId} ·{" "}
-                {operationLabel(item.operation)} →{" "}
-                <span className="mf-exact-identity">
-                  {item.targetStorageId ?? "—"}:
-                  {item.targetPath ??
-                    item.destination?.storageRelativePath ??
-                    "—"}
-                </span>
-                {item.attachments.length > 0
-                  ? ` · 附件 ${item.attachments.length} 个`
-                  : ""}
-                {item.current ? "" : " · 已被后续方案取代"}
-                {filesHost && previewItemTechnicalStage(item) === "metadata" ? (
-                  <span role="status">
-                    {" "}
-                    —{" "}
-                    {metadataTechnicalFailureSummary(
-                      preparation?.organizeTaskId ?? null,
-                      true,
-                    )}
-                  </span>
-                ) : item.failure !== null ? (
-                  <span role="status"> — {item.failure.message}</span>
-                ) : null}
-              </li>
-            ))}
+          <ul className="mf-run-item-list" aria-label="原计划条目">
+            {preview.items.map((item) => {
+              const record = resultsBySource.get(
+                filesSourceIdentity(item.sourceStorageId, item.sourcePath),
+              );
+              const technical = previewItemTechnicalStage(item) === "metadata";
+              const certainty = record?.checkpoint?.effectCertainty;
+              const verified =
+                record?.status === "success" &&
+                certainty === "verified_complete";
+              const unconfirmed =
+                !technical &&
+                (certainty === "attempted_unverified" ||
+                  certainty === "unknown");
+              const status = verified
+                ? "已验证成功"
+                : unconfirmed
+                  ? "效果未确认"
+                  : record
+                    ? label(RUN_ITEM_STATUS_LABELS, record.status)
+                    : technical
+                      ? "失败"
+                      : "原计划";
+              const result = verified
+                ? "文件操作已验证，目标文件可用。"
+                : unconfirmed
+                  ? "目标文件结果尚未确认。"
+                  : technical
+                    ? metadataTechnicalFailureSummary(filesOrganizeTaskId, true)
+                    : (record?.failure?.message ??
+                      item.failure?.message ??
+                      status);
+              const source = filesSourceLocation(
+                item,
+                filesSystemStatusQuery.data?.resourceLibraries ?? [],
+              ).text.replace(/^来源 /, "");
+              const tone = verified
+                ? "normal"
+                : unconfirmed
+                  ? "warning"
+                  : technical || record?.status === "failed"
+                    ? "error"
+                    : "muted";
+              return (
+                <li key={item.itemId} className="mf-run-item-row">
+                  <div className="mf-run-item-row-button mf-organize-history-row">
+                    <span className="mf-run-item-tile" aria-hidden="true">
+                      ▷
+                    </span>
+                    <span className="mf-run-item-copy">
+                      <span className="mf-run-item-name">
+                        {item.sourceFilename ?? item.sourcePath}
+                      </span>
+                      <span className="mf-run-item-summary mf-exact-identity">
+                        {source}
+                      </span>
+                    </span>
+                    <span
+                      className={`mf-run-item-status mf-run-outcome-${tone}`}
+                    >
+                      {status}
+                    </span>
+                  </div>
+                  <div className="mf-run-item-evidence">
+                    <section className="mf-run-evidence">
+                      <dl className="mf-run-evidence-facts">
+                        <div>
+                          <dt>当前结果</dt>
+                          <dd>
+                            <span
+                              className={`mf-run-outcome mf-run-outcome-${tone}`}
+                            >
+                              {result}
+                            </span>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>来源</dt>
+                          <dd className="mf-exact-identity">{source}</dd>
+                        </div>
+                        {record?.destinationPath != null && (
+                          <div>
+                            <dt>目标</dt>
+                            <dd className="mf-exact-identity">
+                              {record.destinationStorageId
+                                ? `${record.destinationStorageId}:${record.destinationPath}`
+                                : record.destinationPath}
+                            </dd>
+                          </div>
+                        )}
+                        {item.operation !== null && (
+                          <div>
+                            <dt>操作与影响</dt>
+                            <dd>
+                              原计划：{operationLabel(item.operation)}
+                              {operationImpactLabel(item.operation) !== null &&
+                                ` · ${operationImpactLabel(item.operation)}`}
+                            </dd>
+                          </div>
+                        )}
+                      </dl>
+                      {item.targetPath !== null && (
+                        <details className="mf-run-evidence-fold">
+                          <summary>处理依据</summary>
+                          <dl className="mf-run-evidence-facts">
+                            <div>
+                              <dt>原计划目标</dt>
+                              <dd className="mf-exact-identity">
+                                {item.targetStorageId
+                                  ? `${item.targetStorageId}:${item.targetPath}`
+                                  : item.targetPath}
+                              </dd>
+                            </div>
+                          </dl>
+                        </details>
+                      )}
+                      <details className="mf-run-evidence-fold">
+                        <summary>技术诊断</summary>
+                        <ItemFindings item={item} />
+                        {!technical && record?.failure && (
+                          <p className="mf-dashboard-meta">
+                            {record.failure.nextAction}
+                          </p>
+                        )}
+                      </details>
+                    </section>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
         {preview.truncated ? (
@@ -3938,8 +4183,20 @@ export function ManualOrganizeDialog({
       preparationStoppedTitle === null &&
       (!preparationWorkerUnavailable || preparation?.previewId != null);
     const statusView = preparationStatusView;
+    const parityPreparation =
+      originalRequest !== null ||
+      preparationSummaryReadFailed ||
+      preparationSourceReadIncomplete ||
+      primaryLimitStopped ||
+      preparation?.status === "cancelled" ||
+      preparation?.progress.materialRefusal != null;
     return (
-      <div className="mf-organize-preparation mf-organize-files-preparation">
+      <div
+        className={
+          "mf-organize-preparation mf-organize-files-preparation" +
+          (parityPreparation ? " mf-organize-preparation-recovery" : "")
+        }
+      >
         {statusView !== null ? (
           <div
             className={[
@@ -3981,10 +4238,16 @@ export function ManualOrganizeDialog({
         <dl className="mf-organize-preparation-facts">
           <div>
             <dt>来源资源库</dt>
-            <dd>{preparationResourceLibraryId ?? "—"}</dd>
+            <dd>
+              {filesSystemStatusQuery.data?.resourceLibraries.find(
+                (library) => library.id === preparationResourceLibraryId,
+              )?.name ??
+                preparationResourceLibraryId ??
+                "—"}
+            </dd>
           </div>
           <div>
-            <dt>受理范围</dt>
+            <dt>{originalRequest !== null ? "所选范围" : "受理范围"}</dt>
             <dd>
               <span>{preparationScopeSummary}</span>
               {preparation !== undefined &&
@@ -3997,7 +4260,11 @@ export function ManualOrganizeDialog({
               {preparationScopeDetailCount > 0 ? (
                 <details className="mf-organize-scope-details">
                   <summary>
-                    查看确切路径（{preparationScopeDetailCount} 项）
+                    {originalRequest !== null
+                      ? "查看原选择"
+                      : parityPreparation
+                        ? "查看受理范围"
+                        : `查看确切路径（${preparationScopeDetailCount} 项）`}
                   </summary>
                   <ul>
                     {preparation === undefined ? (
@@ -4075,75 +4342,9 @@ export function ManualOrganizeDialog({
         {preparationTerminalFirstScreen
           ? renderTerminalPreparationSummary()
           : null}
-        {primaryLimitStopped ||
-        preparation?.status ===
-          "cancelled" ? null : preparationSourceReadIncomplete ? (
-          <div className="mf-organize-preparation-note" role="status">
-            <p>
-              部分来源读取失败；已完成检查的已知来源保留为明确复核的子集，
-              不会被推断为未读范围的完整结果。
-            </p>
-            <p>没有修改任何文件；方案可读的项仍可照常复核。</p>
-          </div>
-        ) : preparation !== undefined && preparation.progress.incomplete ? (
-          <div className="mf-organize-preparation-note" role="status">
-            <p>
-              未完整遍历：
-              {label(
-                REASON_LABELS,
-                preparation.progress.materialRefusal ??
-                  preparation.progress.incompleteReason ??
-                  "",
-              )}
-              。
-            </p>
-            <p>
-              本次不会执行整理；请关闭本弹窗返回原文件页，缩小选择范围后重新发起。
-            </p>
-          </div>
-        ) : null}
-        {preparation !== undefined && preparation.failure !== null ? (
-          <div className="mf-organize-preparation-note" role="status">
-            <p>{preparation.failure}</p>
-            <p>
-              没有修改任何文件；请重新读取本准备，或关闭后从文件页重新发起。
-            </p>
-          </div>
-        ) : preparation !== undefined && preparation.status === "failed" ? (
-          <div className="mf-organize-preparation-note" role="status">
-            <p>
-              没有修改任何文件；请重新读取本准备，或关闭后从文件页重新发起。
-            </p>
-          </div>
-        ) : null}
-        {preparationSummaryReadFailed ? (
-          <div className="mf-organize-preparation-note" role="status">
-            <p>
-              准备已产生精确计划摘要,但摘要暂时无法读取;没有创建执行、没有修改文件。
-            </p>
-            <p>已保存的准备与选择保持不变;重新读取同一份摘要即可继续核对。</p>
-            <div className="mf-actions">
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={previewQuery.isFetching}
-                onClick={() => void previewQuery.refetch()}
-              >
-                {previewQuery.isFetching
-                  ? "正在重新读取..."
-                  : "重新读取计划摘要"}
-              </Button>
-            </div>
-          </div>
-        ) : preparationNoPrimarySources ? (
-          <div className="mf-organize-preparation-note" role="status">
-            <p>本次没有生成整理方案，也没有整理任何文件。</p>
-            {preparation.progress.incomplete ? null : (
-              <p>请关闭本弹窗返回原文件页，调整所选范围后重新发起整理。</p>
-            )}
-          </div>
-        ) : null}
         {preparation !== undefined &&
+        !preparationSourceReadIncomplete &&
+        (preparationStoppedTitle === null || preparationNoPrimarySources) &&
         preparation.progress.reasons.length > 0 ? (
           <div className="mf-organize-preparation-note" role="status">
             <p>
@@ -4234,43 +4435,15 @@ export function ManualOrganizeDialog({
     if (organizeFlowEnded && !preparationTerminalFirstScreen) {
       return (
         <>
-          <StatusBanner variant="warning" title="本次整理工作已结束">
-            {primaryLimitStopped ? (
-              <>
-                <p role="status">
+          {summaryPreviewId === "" ? (
+            primaryLimitStopped ? (
+              <StatusBanner variant="warning" title="本次整理工作已结束">
+                <p>
                   本次未执行整理。最多支持 100
                   个主文件，请缩小选择范围后重新发起。
                 </p>
-                <p role="status">
-                  准备阶段在检查到第 101 个合格主文件时停止
-                  {summaryPreviewId === ""
-                    ? "；本次没有生成整理方案，也没有受理执行"
-                    : "；已保存的原计划摘要保留为只读历史，本次没有受理执行"}
-                  。已记录的扫描范围、配置与诊断仍可核对。
-                </p>
-                <p>
-                  请关闭本弹窗返回原文件页，缩小选择的目录或文件范围后重新发起整理。
-                </p>
-              </>
-            ) : (
-              <>
-                <p role="status">
-                  关联的整理流程(任务状态:
-                  {preparation.organizeFlow?.status ?? "unknown"})已结束;
-                  不再运行分析,也不再提供选择、修正、重新分析或确认。
-                </p>
-                {preparation.failure !== null ? (
-                  <p role="status">{preparation.failure}</p>
-                ) : null}
-                <p>
-                  原计划摘要保留为只读历史,可在下方核对当时的条目与方案;
-                  需要再次整理时,请关闭后从资源库文件页重新选择发起。
-                </p>
-              </>
-            )}
-          </StatusBanner>
-          {summaryPreviewId === "" ? (
-            primaryLimitStopped ? null : historyPlanPending ? (
+              </StatusBanner>
+            ) : historyPlanPending ? (
               <div
                 className="mf-modal-card-status"
                 role="status"
@@ -4329,56 +4502,7 @@ export function ManualOrganizeDialog({
               <p>正在读取原计划摘要作为只读历史…</p>
             </div>
           ) : (
-            <section aria-label="只读原计划摘要">
-              <h3>只读原计划摘要</h3>
-              <p className="mf-dashboard-meta">
-                方案 {preview.previewId}
-                {preview.intentVersion !== null
-                  ? ` · 版本 ${preview.intentVersion}`
-                  : ""}{" "}
-                · 零变更历史,不可重新分析、不可确认、不可执行。
-              </p>
-              {preview.items.length === 0 ? (
-                <p className="mf-dashboard-meta">原摘要没有可读条目。</p>
-              ) : (
-                <ul className="mf-organize-review-list">
-                  {preview.items.map((item) => (
-                    <li key={`history-${item.itemId}`}>
-                      {item.sourceFilename ?? item.itemId} ·{" "}
-                      {operationLabel(item.operation)} →{" "}
-                      <span className="mf-exact-identity">
-                        {item.targetStorageId ?? "—"}:
-                        {item.targetPath ??
-                          item.destination?.storageRelativePath ??
-                          "—"}
-                      </span>
-                      {item.attachments.length > 0
-                        ? ` · 附件 ${item.attachments.length} 个`
-                        : ""}
-                      {item.current ? "" : " · 已被后续方案取代"}
-                      {filesHost &&
-                      previewItemTechnicalStage(item) === "metadata" ? (
-                        <span role="status">
-                          {" "}
-                          —{" "}
-                          {metadataTechnicalFailureSummary(
-                            preparation?.organizeTaskId ?? null,
-                            true,
-                          )}
-                        </span>
-                      ) : item.failure !== null ? (
-                        <span role="status"> — {item.failure.message}</span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {preview.truncated ? (
-                <p className="mf-dashboard-meta" role="status">
-                  该历史摘要曾被截断,只保留了部分条目。
-                </p>
-              ) : null}
-            </section>
+            renderTerminalPreparationSummary()
           )}
         </>
       );
@@ -4465,7 +4589,8 @@ export function ManualOrganizeDialog({
             ? `${filesProblemBadge(problem)} · 待处理`
             : item !== null
               ? status === "pending" ||
-                item.capabilities?.verdict === "capability_gap"
+                item.capabilities?.verdict === "capability_gap" ||
+                previewItemTechnicalStage(item) === "metadata"
                 ? overviewPendingReason(
                     item,
                     filesOrganizeTaskId,
@@ -4595,9 +4720,7 @@ export function ManualOrganizeDialog({
         {filesOverviewNotice !== null &&
         filesOverviewNotice.planUpdated !== true ? (
           <StatusBanner
-            variant={
-              filesOverviewNotice.kind === "success" ? "success" : "warning"
-            }
+            variant={filesOverviewNotice.kind}
             title={
               filesOverviewNotice.title ??
               (filesOverviewNotice.kind === "success"
@@ -5013,6 +5136,54 @@ export function ManualOrganizeDialog({
         </>
       );
     }
+    if (
+      filesHost &&
+      (item.capabilities?.verdict === "capability_gap" ||
+        metadataTechnicalFailure)
+    ) {
+      return (
+        <>
+          {reviewHeader()}
+          <section
+            className="mf-organize-section mf-organize-files-plan"
+            aria-label="文件记录"
+          >
+            <span className="mf-organize-overview-status mf-organize-overview-status-recorded">
+              失败
+            </span>
+            <div className="mf-organize-section-head">
+              <h4>文件记录</h4>
+            </div>
+            <dl className="mf-organize-facts">
+              <div>
+                <dt>来源</dt>
+                <dd className="mf-exact-identity">
+                  {filesSourceLocation(
+                    item,
+                    filesSystemStatusQuery.data?.resourceLibraries ?? [],
+                  ).text.replace(/^来源 /, "")}
+                </dd>
+              </div>
+              <div>
+                <dt>原因与效果</dt>
+                <dd>
+                  {metadataTechnicalFailure
+                    ? metadataTechnicalFailureReason()
+                    : "存储不支持计划操作。该文件未进入执行，原文件未变更。"}
+                </dd>
+              </div>
+            </dl>
+            <details className="mf-organize-diagnostics">
+              <summary>查看处理历史</summary>
+              {metadataTechnicalFailure && (
+                <p>{metadataTechnicalFailureNextStep(organizeTaskId, false)}</p>
+              )}
+              <ItemFindings item={item} />
+            </details>
+          </section>
+        </>
+      );
+    }
     const correctionControl =
       !organizeFlowEnded &&
       !hasNativeProblem &&
@@ -5233,7 +5404,7 @@ export function ManualOrganizeDialog({
                 </p>
               </>
             ) : metadataTechnicalFailure ? (
-              <StatusBanner variant="warning" title="元数据服务技术失败">
+              <StatusBanner variant="warning" title="元数据服务查询失败">
                 <p role="status">{metadataTechnicalFailureReason()}</p>
                 <p className="mf-dashboard-meta">
                   已知影响：当前文件未生成可确认方案，不能纳入本次整理；其他文件仍按各自事实独立核对。
@@ -5578,7 +5749,9 @@ export function ManualOrganizeDialog({
                 title={
                   visibleNotice.kind === "success"
                     ? "已保存"
-                    : "保存/分析未完成"
+                    : visibleNotice.text.startsWith("选择未保存")
+                      ? "决定未保存，未请求分析"
+                      : "保存/分析未完成"
                 }
               >
                 <p role="status">{visibleNotice.text}</p>
@@ -5765,16 +5938,66 @@ export function ManualOrganizeDialog({
 
   const renderConfirm = () => {
     if (preview === undefined) return null;
-    const selectedItems = items.filter((item) =>
-      activeSelection.includes(item.itemId),
+    const selection = latestRetained?.submission.itemIds ?? activeSelection;
+    const displayItems =
+      latestRetained === null ? items : (retainedPlan?.items ?? []);
+    const selectedItems = displayItems.filter((item) =>
+      selection.includes(item.itemId),
     );
+    const rejected = confirmationRejection !== null;
+    const checksLocked = latestRetained !== null || rejected;
+    const overwriteCount = selectedItems.filter(
+      (item) => item.destructiveImplications?.overwriteRequired === true,
+    ).length;
+    const showCleanup = selectedItems.some(
+      (item) => item.destructiveImplications?.sourceCleanupRequired === true,
+    );
+    const confirmationNotice =
+      latestRetained !== null
+        ? canResubmitRetained
+          ? {
+              title: "原请求尚未受理",
+              copy: `原方案仍有效，确认同一批即可提交。这次只提交下列 ${selection.length} 项。`,
+            }
+          : latestWatchState?.phase === "failed"
+            ? {
+                title: "暂时无法核对原提交",
+                copy: "这次读取失败。原批次和选项仍保留，重新读取同一任务后再继续。",
+              }
+            : {
+                title: "提交结果待核对",
+                copy:
+                  latestWatchState?.phase === "not_equivalent"
+                    ? retainedStatusText
+                    : "正在核对原批次是否已受理。当前保持同一批次，不会自动重发。",
+              }
+        : confirmationRejection === "stale"
+          ? {
+              title: "当前计划已失效",
+              copy: "提交未获受理，文件未变更。重新分析当前范围，再核对新计划。",
+            }
+          : confirmationRejection === "source"
+            ? {
+                title: "来源文件已变化",
+                copy: "原方案以旧文件版本为准，本次未执行。回到资源库按现有来源重新选择并生成方案。",
+              }
+            : confirmationRejection === "permission"
+              ? {
+                  title: "当前没有执行权限",
+                  copy: "本次执行未获受理，原选择和方案仍保留。恢复权限后读取同一任务。",
+                }
+              : null;
     const filesResourceLibraries =
       filesSystemStatusQuery.data?.resourceLibraries ?? [];
     const filesMediaLibraries = filesMediaLibraryListQuery.data?.items ?? [];
     const omittedRows = filesOverviewRows.filter(
-      (row) => row.item === null || !activeSelection.includes(row.item.itemId),
+      (row) => row.item === null || !selection.includes(row.item.itemId),
     );
-    const omittedCount = omittedRows.length;
+    const omittedCount =
+      latestRetained !== null && retainedPlan !== undefined
+        ? retainedPlan.items.filter((item) => !selection.includes(item.itemId))
+            .length
+        : omittedRows.length;
     const attachmentCount = selectedItems.reduce(
       (total, item) => total + item.attachments.length,
       0,
@@ -5836,17 +6059,21 @@ export function ManualOrganizeDialog({
         <section aria-label="整批复核" className="mf-organize-batch-review">
           <FilesStatusCard
             tag={
-              summaryConfirmationBlocker !== null
+              summaryConfirmationBlocker !== null && confirmationNotice === null
                 ? "暂不能确认"
                 : "等待明确确认"
             }
             title="整批复核"
             copy={
-              summaryConfirmationBlocker !== null
+              summaryConfirmationBlocker !== null && confirmationNotice === null
                 ? `${summaryConfirmationBlocker.reason} ${summaryConfirmationBlocker.nextAction}`
                 : "确认后只提交下列已选文件。目标路径、操作和对来源的影响以本页所示方案为准。"
             }
-            tone={summaryConfirmationBlocker !== null ? "amber" : "blue"}
+            tone={
+              summaryConfirmationBlocker !== null && confirmationNotice === null
+                ? "amber"
+                : "blue"
+            }
             icon="≡"
           />
           <dl
@@ -5855,7 +6082,7 @@ export function ManualOrganizeDialog({
           >
             <div>
               <dt>本次确认</dt>
-              <dd>{activeSelection.length} 项</dd>
+              <dd>{selection.length} 项</dd>
             </div>
             <div>
               <dt>未纳入</dt>
@@ -5868,13 +6095,26 @@ export function ManualOrganizeDialog({
           </dl>
         </section>
 
+        {renderSourceReadFindings("计划之外 · 来源读取失败")}
+        {confirmationNotice !== null && (
+          <StatusBanner
+            variant={
+              confirmationRejection === "permission" ? "error" : "warning"
+            }
+            title={confirmationNotice.title}
+          >
+            <p>{confirmationNotice.copy}</p>
+          </StatusBanner>
+        )}
         <section
           className="mf-organize-section mf-organize-batch-list-section mf-organize-files-batch-section"
           aria-label="来源与目标"
         >
           <div className="mf-organize-section-head">
             <h4>来源与目标</h4>
-            <span className="mf-organize-section-note">按当前方案</span>
+            <span className="mf-organize-section-note">
+              {latestRetained === null ? "按当前方案" : "按原批次方案"}
+            </span>
           </div>
           <ul className="mf-organize-review-list mf-organize-batch-list mf-organize-files-batch-list">
             {selectedItems.map((item) => {
@@ -5913,7 +6153,6 @@ export function ManualOrganizeDialog({
                       {targetLocation.text}
                     </span>
                     <span className="mf-organize-batch-effect">
-                      来源影响：
                       {operationImpactLabel(item.operation) ??
                         "按当前操作核对，尚未生成"}
                       {attachmentSummary !== null
@@ -5929,9 +6168,14 @@ export function ManualOrganizeDialog({
               );
             })}
           </ul>
+          {latestRetained !== null && retainedPlan === undefined && (
+            <p role="status">
+              原方案暂不可读，已保留本次提交的文件范围与授权选项。
+            </p>
+          )}
         </section>
 
-        {omittedCount > 0 ? (
+        {omittedCount > 0 && latestRetained === null ? (
           <details className="mf-organize-skipped mf-organize-overview-group">
             <summary>未纳入本次确认的文件 · {omittedCount} 项</summary>
             <ul className="mf-organize-overview-list">
@@ -5940,7 +6184,6 @@ export function ManualOrganizeDialog({
           </details>
         ) : null}
 
-        {renderSourceReadFindings("计划之外 · 来源读取失败")}
         {preparation !== undefined &&
         preparation.selection.refused.length > 0 ? (
           <details>
@@ -5958,10 +6201,12 @@ export function ManualOrganizeDialog({
           </details>
         ) : null}
 
-        {filesReanalysisAction()}
-        {summaryConfirmationBlocker !== null && planDiagnostics}
+        {confirmationNotice === null && filesReanalysisAction()}
+        {summaryConfirmationBlocker !== null &&
+          confirmationNotice === null &&
+          planDiagnostics}
 
-        {!preview.current ? (
+        {!preview.current && confirmationNotice === null ? (
           <StatusBanner
             variant="warning"
             title={
@@ -5997,12 +6242,13 @@ export function ManualOrganizeDialog({
             )}
           </StatusBanner>
         ) : null}
-        {preview.truncated ? (
+        {preview.truncated && confirmationNotice === null ? (
           <StatusBanner variant="warning" title="摘要被截断">
             <p>本次计划摘要不完整,不能作为执行依据;请缩小范围后重新准备。</p>
           </StatusBanner>
         ) : null}
-        {preview.executeAction.available !== true ? (
+        {preview.executeAction.available !== true &&
+        confirmationNotice === null ? (
           <StatusBanner variant="warning" title="暂不能确认整理">
             <p>
               {preview.executeAction.reason ?? "后端未提供执行操作。"}
@@ -6012,7 +6258,7 @@ export function ManualOrganizeDialog({
             </p>
           </StatusBanner>
         ) : null}
-        {selectionOverlapsAdmitted ? (
+        {selectionOverlapsAdmitted && confirmationNotice === null ? (
           <StatusBanner variant="warning" title="所选范围包含已受理条目">
             <p>
               已受理项不会重复执行。请取消选择已受理项(或在逐项复核中将其标为暂不纳入)
@@ -6020,7 +6266,7 @@ export function ManualOrganizeDialog({
             </p>
           </StatusBanner>
         ) : null}
-        {activeSelection.length === 0 ? (
+        {selection.length === 0 ? (
           <p className="mf-dashboard-meta" role="status">
             当前没有选中任何就绪文件;请返回逐项复核并至少纳入一个文件。
           </p>
@@ -6030,58 +6276,58 @@ export function ManualOrganizeDialog({
             <p>已结束的流程只读,不再提供确认。</p>
           </StatusBanner>
         ) : null}
-        {requiresOverwrite ? (
-          <label>
+        {overwriteCount > 0 ||
+        latestRetained?.submission.allowOverwrite === true ? (
+          <label className="mf-organize-confirm-authorization">
             <input
               type="checkbox"
               aria-label="我确认允许按已审阅方案替换现有目标文件"
-              checked={effectiveAllowOverwrite}
+              disabled={checksLocked}
+              checked={
+                latestRetained?.submission.allowOverwrite ??
+                effectiveAllowOverwrite
+              }
               onChange={(event) => {
                 setAllowOverwrite(event.target.checked);
                 setConfirmationSelectionKey(selectionKey);
               }}
             />{" "}
-            我确认允许按已审阅方案替换现有目标文件
+            {overwriteCount > 0
+              ? `按已审阅的方案替换 ${overwriteCount} 个已有目标`
+              : "按已审阅的方案替换原批次的已有目标"}
           </label>
         ) : null}
-        {requiresCleanup ? (
-          <label>
+        {showCleanup ||
+        latestRetained?.submission.allowSourceCleanup === true ? (
+          <label className="mf-organize-confirm-authorization">
             <input
               type="checkbox"
               aria-label="我确认允许删除整理后为空的来源目录"
-              checked={effectiveAllowSourceCleanup}
+              disabled={checksLocked}
+              checked={
+                latestRetained?.submission.allowSourceCleanup ??
+                effectiveAllowSourceCleanup
+              }
               onChange={(event) => {
                 setAllowSourceCleanup(event.target.checked);
                 setConfirmationSelectionKey(selectionKey);
               }}
             />{" "}
-            我确认允许删除整理后为空的来源目录
+            允许清理整理后为空的来源目录
           </label>
         ) : null}
+        {!checksLocked &&
+          ((requiresOverwrite && !effectiveAllowOverwrite) ||
+            (requiresCleanup && !effectiveAllowSourceCleanup)) && (
+            <p className="mf-dashboard-meta">
+              勾选上方对应的授权后，才能提交这份方案。
+            </p>
+          )}
 
         {result !== null ? (
           <StatusBanner variant="warning" title="提交未完成">
             <p role="status">{result}</p>
           </StatusBanner>
-        ) : null}
-        {retainedStatusText !== null ? (
-          <div className="mf-organize-retained-status">
-            <p className="mf-dashboard-meta" role="status">
-              {retainedStatusText}
-            </p>
-            {canResubmitRetained && latestRetained !== null ? (
-              <div className="mf-actions">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={executeMutation.isPending}
-                  onClick={resubmitRetained}
-                >
-                  确认同一批（{latestRetained.submission.itemIds.length} 项）
-                </Button>
-              </div>
-            ) : null}
-          </div>
         ) : null}
       </>
     );
@@ -6090,13 +6336,12 @@ export function ManualOrganizeDialog({
   // Once the choice is saved, one snapshot owns the visible analysis stage.
   // The request session lives outside the paged form, so it can finish or
   // reconcile a refusal even while only this analysis card is mounted.
-  const analysisReadbackFile =
-    preparation === undefined || organizeFlowEnded
-      ? null
-      : (filesAnalysisArrivalView?.decision ??
-        (filesReturningToSameFile && filesDecisionReturn?.analysisPhase
-          ? filesDecisionReturn
-          : filesSummaryReadback));
+  const analysisReadbackFile = organizeFlowEnded
+    ? null
+    : (filesAnalysisArrivalView?.decision ??
+      (filesReturningToSameFile && filesDecisionReturn?.analysisPhase
+        ? filesDecisionReturn
+        : filesSummaryReadback));
   const analysisPagePosition = analysisReadbackFile?.pagePosition ?? pageInfo;
   const analysisPageItemIds =
     analysisReadbackFile?.pageItemIds ?? items.map((item) => item.itemId);
@@ -6104,7 +6349,7 @@ export function ManualOrganizeDialog({
   const handoffPending = executeMutation.isPending || openingTaskDetail;
   const stageTransitionKey = handoffPending
     ? "handoff"
-    : firstPlanPreparationView
+    : firstPlanPreparationView && analysisReadbackFile === null
       ? `preparation:${preparationStep ?? preparationStatusView?.title ?? "loading"}`
       : organizeFlowEnded && !filesSettledOverview
         ? "history"
@@ -6142,9 +6387,9 @@ export function ManualOrganizeDialog({
   }, [stageTransitionKey]);
 
   const renderBody = () =>
-    session.phase === "submitting" || preparationUnavailable ? (
-      renderPreparationContent()
-    ) : preparation === undefined ? (
+    session.phase === "submitting" ||
+    (analysisReadbackFile === null &&
+      (preparationUnavailable || preparation === undefined)) ? (
       renderPreparationContent()
     ) : filesSettledOverview ? (
       filesRecordDetail !== null ? (
@@ -6179,6 +6424,12 @@ export function ManualOrganizeDialog({
         ) : (
           <OrganizeReanalysis
             phase={analysisReadbackFile.analysisPhase ?? "waiting"}
+            detail={
+              analysisReadbackFile.analysisPhase === "unknown" &&
+              analysisReadback?.phase === "unreadable"
+                ? "这次读取失败。原决定保留，分析是否受理仍待核对。"
+                : undefined
+            }
             savedChoice={
               analysisReadbackFile.savedChoice ??
               filesCorrectionStarting?.savedChoice ??
@@ -6250,6 +6501,14 @@ export function ManualOrganizeDialog({
     setStep("confirm");
     setFilesOverviewVisible(false);
   };
+  const retainedHasEditableSibling =
+    latestRetained !== null &&
+    items.some(
+      (item) =>
+        !latestRetained.submission.itemIds.includes(item.itemId) &&
+        !admittedItemIds.has(item.itemId) &&
+        filesSettledDecisionFor(item) === null,
+    );
   const currentNativeProblem =
     currentItem !== undefined &&
     currentItem.problemTaskItemId !== null &&
@@ -6305,9 +6564,9 @@ export function ManualOrganizeDialog({
     </>
   ) : organizeFlowEnded || preparationOnlyFooter ? (
     <>
-      {organizeFlowEnded ? null : (
-        <span className="mf-dashboard-meta">此阶段无媒体变更</span>
-      )}
+      <span className="mf-dashboard-meta">
+        {organizeFlowEnded ? "只读历史" : "此阶段无媒体变更"}
+      </span>
       <span className="mf-modal-footer-spacer" />
       <Button
         type="button"
@@ -6332,10 +6591,16 @@ export function ManualOrganizeDialog({
       </Button>
       <Button
         type="button"
-        disabled={activeSelection.length === 0 && preview?.current === true}
+        disabled={
+          latestRetained === null &&
+          activeSelection.length === 0 &&
+          preview?.current === true
+        }
         onClick={openBatchReview}
       >
-        整批复核 · {activeSelection.length} 项
+        {latestRetained === null
+          ? `整批复核 · ${activeSelection.length} 项`
+          : "整批复核 · 核对原批次"}
       </Button>
     </>
   ) : filesRecordDetail !== null ? (
@@ -6391,7 +6656,24 @@ export function ManualOrganizeDialog({
         </Button>
       </span>
       <div id={FILES_REVIEW_ACTION_ID} className="mf-organize-footer-action">
-        {filesReviewCorrectionAction && currentItemId !== null ? (
+        {analysisReadbackFile?.analysisPhase === "unknown" ? (
+          <Button type="button" onClick={() => void retryAnalysisReadback()}>
+            重新读取条目
+          </Button>
+        ) : analysisReadbackFile?.analysisPhase === "refused" ? (
+          <Button
+            type="button"
+            disabled={saveMutation.isPending || preparationStatusRunning}
+            onClick={() =>
+              saveMutation.mutate({
+                itemId: analysisReadbackFile.itemId,
+                onlyAnalysis: true,
+              })
+            }
+          >
+            保存并重新分析
+          </Button>
+        ) : filesReviewCorrectionAction && currentItemId !== null ? (
           <div className="mf-actions">
             <Button
               type="button"
@@ -6465,6 +6747,46 @@ export function ManualOrganizeDialog({
         </Button>
       </div>
     </>
+  ) : step === "confirm" && latestRetained !== null ? (
+    <>
+      {retainedHasEditableSibling ? (
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => {
+            if (filesHost) returnToFilesOverview();
+            else setStep("review");
+          }}
+        >
+          {filesHost ? "返回整理概览" : "返回逐项复核"}
+        </Button>
+      ) : (
+        <span className="mf-dashboard-meta">原批次已保留</span>
+      )}
+      <span className="mf-modal-footer-spacer" />
+      {canResubmitRetained ? (
+        <Button type="button" onClick={resubmitRetained}>
+          确认同一批（{latestRetained.submission.itemIds.length} 项）
+        </Button>
+      ) : (
+        <>
+          <Button type="button" variant="secondary" onClick={attemptClose}>
+            关闭
+          </Button>
+          <Button type="button" onClick={() => watch.retry()}>
+            核对本次提交
+          </Button>
+        </>
+      )}
+    </>
+  ) : step === "confirm" && confirmationRejection === "source" ? (
+    <>
+      <span className="mf-dashboard-meta">原方案已失效</span>
+      <span className="mf-modal-footer-spacer" />
+      <Button type="button" onClick={attemptClose}>
+        返回文件页重新选择
+      </Button>
+    </>
   ) : (
     <>
       <Button
@@ -6487,7 +6809,7 @@ export function ManualOrganizeDialog({
             : ""
         }`}
       >
-        {confirmationBlocker !== null ? (
+        {confirmationBlocker !== null && confirmationRejection === null ? (
           <span className="mf-organize-confirm-blocker" role="status">
             暂不能确认：{confirmationBlocker.reason}
             {confirmationBlocker.nextAction === ""
@@ -6495,78 +6817,147 @@ export function ManualOrganizeDialog({
               : ` ${confirmationBlocker.nextAction}`}
           </span>
         ) : null}
-        <Button
-          type="button"
-          disabled={executeDisabled || confirmationBlocker !== null}
-          aria-busy={executeMutation.isPending}
-          onClick={() => {
-            if (preview === undefined) return;
-            if (preview.intentVersion === null) {
-              setResult(
-                "当前方案缺少可核对的版本，本次确认没有提交；没有修改任何文件。请重新读取摘要后再确认。",
+        {confirmationRejection === "stale" ? (
+          preparation?.actions.prepare.available === true ? (
+            <Button
+              type="button"
+              disabled={saveMutation.isPending}
+              onClick={() =>
+                saveMutation.mutate({ itemId: "", onlyAnalysis: true })
+              }
+            >
+              重新分析当前范围
+            </Button>
+          ) : (
+            <Button type="button" onClick={() => void previewQuery.refetch()}>
+              重新读取原计划
+            </Button>
+          )
+        ) : confirmationRejection === "permission" ? (
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={previewQuery.isFetching}
+            onClick={() => {
+              void previewQuery.refetch().then((read) => {
+                if (read.data?.ok && read.data.model.executeAction.available) {
+                  setConfirmationRejection(null);
+                }
+              });
+            }}
+          >
+            重新读取权限
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            disabled={executeDisabled || confirmationBlocker !== null}
+            aria-busy={executeMutation.isPending}
+            onClick={() => {
+              if (preview === undefined) return;
+              if (preview.intentVersion === null) {
+                setResult(
+                  "当前方案缺少可核对的版本，本次确认没有提交；没有修改任何文件。请重新读取摘要后再确认。",
+                );
+                return;
+              }
+              if (principalId === null) {
+                setResult(
+                  "当前账号身份尚未读取完成，本次确认没有提交；也没有修改任何文件。身份读取完成后再确认，响应丢失时才能核对原请求。",
+                );
+                return;
+              }
+              // One identity captured here serves both the request and any later
+              // reconciliation of this exact confirmation.
+              const submission: OrganizeSubmissionIdentity = {
+                previewId: preview.previewId,
+                itemIds: [...activeSelection],
+                expectedIntentVersion: preview.intentVersion,
+                allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
+                allowSourceCleanup:
+                  requiresCleanup && effectiveAllowSourceCleanup,
+              };
+              const retention = beginOrganizeConfirmationRetention(
+                principalId,
+                confirmationWork,
+                submission,
               );
-              return;
-            }
-            if (principalId === null) {
-              setResult(
-                "当前账号身份尚未读取完成，本次确认没有提交；也没有修改任何文件。身份读取完成后再确认，响应丢失时才能核对原请求。",
-              );
-              return;
-            }
-            // One identity captured here serves both the request and any later
-            // reconciliation of this exact confirmation.
-            const submission: OrganizeSubmissionIdentity = {
-              previewId: preview.previewId,
-              itemIds: [...activeSelection],
-              expectedIntentVersion: preview.intentVersion,
-              allowOverwrite: requiresOverwrite && effectiveAllowOverwrite,
-              allowSourceCleanup:
-                requiresCleanup && effectiveAllowSourceCleanup,
-            };
-            const retention = beginOrganizeConfirmationRetention(
-              principalId,
-              confirmationWork,
-              submission,
-            );
-            if (!retention.ok) {
-              setResult(
-                "本次确认无法保存可核对的请求身份，已取消提交；没有发出整理请求，也没有修改任何文件。请重新打开本次整理后再试。",
-              );
-              return;
-            }
-            refreshRetained();
-            executeMutation.mutate(submission);
-          }}
-        >
-          {executeMutation.isPending
-            ? "正在提交..."
-            : `确认整理 ${activeSelection.length} 项`}
-        </Button>
+              if (!retention.ok) {
+                setResult(
+                  "本次确认无法保存可核对的请求身份，已取消提交；没有发出整理请求，也没有修改任何文件。请重新打开本次整理后再试。",
+                );
+                return;
+              }
+              refreshRetained();
+              executeMutation.mutate(submission);
+            }}
+          >
+            {executeMutation.isPending
+              ? "正在提交..."
+              : `确认整理 ${activeSelection.length} 项`}
+          </Button>
+        )}
       </div>
     </>
   );
-  const footer = preparationTerminalFirstScreenFooter ? (
-    <>
-      <span className="mf-dashboard-meta">此阶段无媒体变更</span>
-      <span className="mf-modal-footer-spacer" />
-      {filesHost ? (
-        <Button type="button" disabled={closeLocked} onClick={attemptClose}>
-          返回文件页
-        </Button>
-      ) : (
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={closeLocked}
-          onClick={attemptClose}
-        >
+  const footer =
+    originalRequest !== null ||
+    (preparationSummaryReadFailed &&
+      firstPlanPreparationView &&
+      !organizeFlowEnded) ? (
+      <>
+        <span className="mf-dashboard-meta">
+          {originalRequest !== null ? "正在核对原请求" : "此阶段无媒体变更"}
+        </span>
+        <span className="mf-modal-footer-spacer" />
+        <Button type="button" variant="secondary" onClick={attemptClose}>
           关闭
         </Button>
-      )}
-    </>
-  ) : (
-    defaultFooter
-  );
+        <Button
+          type="button"
+          disabled={
+            originalRequest !== null
+              ? originalRequestRead.isFetching
+              : previewQuery.isFetching
+          }
+          onClick={() => {
+            if (originalRequest !== null) void originalRequestRead.refetch();
+            else void previewQuery.refetch();
+          }}
+        >
+          {originalRequest !== null ? "核对原请求" : "重新读取原计划"}
+        </Button>
+      </>
+    ) : preparationTerminalFirstScreenFooter ? (
+      <>
+        <span className="mf-dashboard-meta">此阶段无媒体变更</span>
+        <span className="mf-modal-footer-spacer" />
+        {filesHost ? (
+          <Button type="button" disabled={closeLocked} onClick={attemptClose}>
+            返回文件页
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={closeLocked}
+            onClick={attemptClose}
+          >
+            关闭
+          </Button>
+        )}
+      </>
+    ) : organizeFlowEnded && !filesSettledOverview ? (
+      <>
+        <span className="mf-dashboard-meta">只读历史</span>
+        <span className="mf-modal-footer-spacer" />
+        <Button type="button" variant="secondary" onClick={attemptClose}>
+          关闭
+        </Button>
+      </>
+    ) : (
+      defaultFooter
+    );
 
   return (
     <ModalCardShell
@@ -6575,11 +6966,7 @@ export function ManualOrganizeDialog({
       busy={closeLocked}
       title={pageTitle}
       titleId={titleId}
-      description={
-        firstPlanPreparationView || handoffPending
-          ? null
-          : "每次复核一个主文件及其关联附件;分析与翻页零媒体变更,只有最后的确认才会提交执行并在任务中心查看结果。"
-      }
+      description={null}
       closeLabel="关闭整理弹窗"
       closeDisabled={closeLocked}
       onRequestClose={attemptClose}

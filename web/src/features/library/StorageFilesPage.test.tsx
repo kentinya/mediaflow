@@ -4108,12 +4108,10 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // The admission is never replayed, and the page never navigates to the
     // other binding's discovery. Instead it explains the unresolved state.
     await waitFor(() => expect(discoveryPosts).toHaveLength(1));
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(/任务中心/),
-    );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      /不会自动重复提交或进入其他来源/,
-    );
+    expect(await screen.findByText("正在核对原整理请求")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "核对原请求" }));
+    expect(screen.getByText("正在核对原整理请求")).toBeVisible();
+    expect(discoveryPosts).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "整理发现" })).toBeNull();
   });
 
@@ -4220,12 +4218,10 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.click(screen.getByRole("button", { name: "批量整理" }));
 
     await waitFor(() => expect(discoveryPosts).toHaveLength(1));
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(/任务中心/),
-    );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      /不会自动重复提交或进入其他来源/,
-    );
+    expect(await screen.findByText("正在核对原整理请求")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "核对原请求" }));
+    expect(screen.getByText("正在核对原整理请求")).toBeVisible();
+    expect(discoveryPosts).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "整理发现" })).toBeNull();
   });
 
@@ -4262,13 +4258,9 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.click(screen.getByRole("button", { name: "批量整理" }));
 
     await waitFor(() => expect(discoveryPosts).toHaveLength(1));
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(
-        /无法读取任务中心的已受理工作/,
-      ),
-    );
-    expect(screen.getByRole("status")).toHaveTextContent(/请前往任务中心核查/);
-    expect(screen.getByRole("status")).not.toHaveTextContent(/整理记录/);
+    expect(await screen.findByText("正在核对原整理请求")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "核对原请求" }));
+    expect(screen.getByText("正在核对原整理请求")).toBeVisible();
     expect(discoveryPosts).toHaveLength(1);
   });
 

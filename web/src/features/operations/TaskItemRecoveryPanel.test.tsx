@@ -1056,7 +1056,9 @@ describe("TaskItemRecoveryPanel", () => {
       within(panel).getByRole("button", { name: "保存并重新分析" }),
     );
 
-    expect(await within(panel).findByText(/条目已变化/)).toBeVisible();
+    expect(
+      await within(panel).findByText("决定未保存，未请求分析"),
+    ).toBeVisible();
     expect(
       calls.filter((call) => call.method === "POST").map((call) => call.path),
     ).toEqual(["/api/tasks/task-1/items/item-1/recovery/decision"]);
@@ -2856,7 +2858,7 @@ describe("TaskItemRecoveryPanel", () => {
       }),
     );
     expect(
-      await within(panel).findByText(/本次分析请求未获受理，决定仍然保存/),
+      await within(panel).findByText(/未受理这次分析。原决定仍保留/),
     ).toBeVisible();
     const retry = within(panel).getByRole("button", {
       name: "保存并重新分析",

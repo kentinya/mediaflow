@@ -4,6 +4,7 @@ import {
   normalizeManualPreview,
   normalizeManualPreviewItem,
   normalizeManualPreviewListPage,
+  normalizeManualPreviewPlan,
 } from "./preview";
 
 type Json = Record<string, unknown>;
@@ -246,6 +247,34 @@ describe("normalizeManualPreview", () => {
       previewPayload({ items: [{ ...item, plan: { ...plan } }] }),
     );
     expect(withoutCleanup.items[0]?.cleanupProjection).toBeNull();
+  });
+
+  it("reads blocked cleanup evidence for a file at the Storage root", () => {
+    const plan = firstItem(previewPayload())["plan"] as Json;
+    const cleanup = {
+      parent: null,
+      mode: "empty",
+      ignorePatterns: [],
+      maxParentDirectories: 1,
+      maxEntries: 100,
+      matchedFiles: [],
+      blockingEntries: [],
+      expectedDirectoryOutcome: "blocked_boundary",
+      permanentDelete: false,
+    };
+    expect(
+      normalizeManualPreviewPlan({ ...plan, cleanupProjection: cleanup })
+        ?.cleanupProjection,
+    ).toEqual(cleanup);
+    expect(() =>
+      normalizeManualPreviewPlan({
+        ...plan,
+        cleanupProjection: {
+          ...cleanup,
+          expectedDirectoryOutcome: "directory_would_be_removed",
+        },
+      }),
+    ).toThrow();
   });
 
   it("never carries a hostile historical record into the model", () => {

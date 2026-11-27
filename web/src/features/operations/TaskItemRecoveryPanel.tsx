@@ -1133,7 +1133,14 @@ export function TaskItemRecoveryPanel({
         },
       );
       if (!result.ok) {
-        await reportUnknown(result.code, result.status);
+        if (isUnknown(result.status, result.code)) {
+          await reportUnknown(result.code, result.status);
+        } else {
+          updateRecoverySession({
+            repeatLocked: false,
+            message: "决定未保存，未请求分析",
+          });
+        }
         refreshLinkedReads();
         return;
       }
@@ -1490,7 +1497,7 @@ export function TaskItemRecoveryPanel({
     const result = await query.refetch();
     if (result.data?.ok !== true) {
       updateRecoverySession({
-        message: "条目状态仍无法读取。保持提交锁定；恢复读取后再检查。 ",
+        message: "这次读取失败。原决定保留，分析是否受理仍待核对。",
       });
       return;
     }
@@ -1580,8 +1587,7 @@ export function TaskItemRecoveryPanel({
           checkpointVersion: analysisObservation.checkpointVersion,
           code: analysisObservation.code,
         },
-        message:
-          "已读取同一 Task 的持久状态：本次分析请求未获受理，决定仍然保存。再次使用“保存并重新分析”只补做零变更分析，不会重复保存，也不会执行整理。 ",
+        message: "未受理这次分析。原决定仍保留，同一操作只补做分析。",
       });
       return;
     }
@@ -1925,6 +1931,7 @@ export function TaskItemRecoveryPanel({
             </StatusBanner>
           )}
         {message &&
+          message !== "决定未保存，未请求分析" &&
           submittedConfirmation === null &&
           !savedDecisionAnalysisVisible && (
             <StatusBanner
@@ -2017,6 +2024,11 @@ export function TaskItemRecoveryPanel({
             presentation={filesDecision ? "files" : "dialog"}
             actionsTarget={actionBarTarget}
           />
+        )}
+        {message === "决定未保存，未请求分析" && (
+          <StatusBanner variant="warning" title={message}>
+            <p>输入和当前文件位置已保留。</p>
+          </StatusBanner>
         )}
         {owesRecoveryAction &&
           decision === null &&

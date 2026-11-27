@@ -1004,6 +1004,7 @@ export function RunDetailTabs({
             results={results}
             progress={progress}
             active={active}
+            taskFailed={status === "failed"}
             revealInPlace={evidenceItem !== null}
           />
           <RunItemsSection
@@ -1244,11 +1245,13 @@ function RunFileResultsCard({
   results,
   progress,
   active,
+  taskFailed,
   revealInPlace,
 }: {
   readonly results: RunFileResults | null | undefined;
   readonly progress: RunProgress | null;
   readonly active: boolean;
+  readonly taskFailed: boolean;
   readonly revealInPlace: boolean;
 }) {
   // A published progress read splits success into confirmed and uncertain
@@ -1326,24 +1329,18 @@ function RunFileResultsCard({
           )}
         </ul>
       )}
-      {extras.length > 0 && (
+      {!taskFailed && extras.length > 0 && (
         <p className="mf-run-result-note">
-          其他结果 {extras.reduce((sum, entry) => sum + entry.count, 0)} 项（
-          {extras
-            .map(
-              ({ disposition, count }) =>
-                `${RUN_DISPOSITION_LABELS[disposition]} ${count}`,
-            )
-            .join("、")}
-          ），可在对应文件中核对。
+          其他结果 {extras.reduce((sum, entry) => sum + entry.count, 0)}{" "}
+          项，可在对应文件中核对。
         </p>
       )}
-      {uncertain > 0 && (
+      {!taskFailed && uncertain > 0 && (
         <p className="mf-run-outcome mf-run-outcome-warning">
           目标文件结果尚未确认 {uncertain} 个
         </p>
       )}
-      {missingResult > 0 && (
+      {!taskFailed && missingResult > 0 && (
         <p className="mf-run-outcome mf-run-outcome-warning">
           文件处理已结束，结果未记录 {missingResult} 个
         </p>

@@ -600,7 +600,7 @@ async function expectReadableBatch(
   await expect(sourceAndTarget).toBeVisible();
   await expect(
     sourceAndTarget.locator(".mf-organize-batch-list > li").first(),
-  ).toContainText("来源影响：");
+  ).toContainText(/移动成功后原位置不再保留|原位置保留/);
   // The batch review leads with its confirmation-status card and three
   // scope counts. In a short window the one body scroller brings the summary
   // into view; no second scrolling region may appear.
@@ -1137,9 +1137,9 @@ test("Task59.1 a Task reopened after a lost Execute reconciles its original acce
     },
   );
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(
-    card.getByText(/原整理提交暂未确认|正在自动核对原整理提交/),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByText(/提交结果待核对|暂时无法核对原提交/)).toBeVisible(
+    { timeout: 30_000 },
+  );
   const executePosts = () =>
     commands.filter(
       (command) =>
@@ -3007,7 +3007,7 @@ test("Task59.1 keeps the same preparation and re-reads its exact summary after a
   // The plan exists durably, but its read failed: the card keeps the same
   // compact preparation facts and the retry entry for that exact summary
   // instead of showing an empty review or a new admission.
-  await expect(card.getByText("计划摘要暂时无法读取")).toBeVisible({
+  await expect(card.getByText("暂时无法读取计划")).toBeVisible({
     timeout: 15_000,
   });
   await expect(card.getByText("来源资源库", { exact: true })).toBeVisible();
@@ -3025,7 +3025,7 @@ test("Task59.1 keeps the same preparation and re-reads its exact summary after a
     ),
   ).toHaveLength(1);
 
-  await card.getByRole("button", { name: "重新读取计划摘要" }).click();
+  await card.getByRole("button", { name: "重新读取原计划" }).click();
   await openOverviewFile(card);
   await expect(card.getByText(retryFile).first()).toBeVisible();
   expect(
@@ -3586,11 +3586,13 @@ test("Task59.1 a lost direct analysis response stays locked until the same prepa
 
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await preparationReadStarted;
-  const lockedSave = card.getByRole("button", {
-    name: "正在核对分析结果…",
-  });
-  await expect(lockedSave).toBeDisabled();
-  await expect(card.getByText(/正在核对同一准备是否已受理/)).toBeVisible();
+  await expect(
+    card.getByRole("heading", { name: "正在核对分析结果" }),
+  ).toBeVisible();
+  await expect(card.getByText("已保存的决定")).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "保存并重新分析" }),
+  ).toHaveCount(0);
   // The slow first read cannot open a second analysis command, and no media
   // effect happened before the eventual explicit confirmation.
   expect(analyzePosts()).toHaveLength(1);
@@ -3801,9 +3803,9 @@ test("Task59.1 an unknown original submission is reconciled under a newer siblin
     },
   );
   await card.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(
-    card.getByText(/原整理提交暂未确认|正在自动核对原整理提交/),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByText(/提交结果待核对|暂时无法核对原提交/)).toBeVisible(
+    { timeout: 30_000 },
+  );
   await expect(card.getByRole("button", { name: /核对提交结果/ })).toHaveCount(
     0,
   );
@@ -3900,16 +3902,14 @@ test("Task59.1 an unknown original submission is reconciled under a newer siblin
   expect(newerPreviewId).toBeTruthy();
   expect(newerPreviewId).not.toBe(executePreviewId);
 
-  // The newer summary is visible for the current review and the original
-  // request is still unknown: no second Execute exists.
+  // The sibling has a newer plan, but only the original batch is shown
+  // for reconciliation and it cannot submit another Execute.
   await openBatchReview(card);
-  const planDiagnostics = card.locator("details.mf-organize-plan-diagnostics");
-  await planDiagnostics.getByText("方案标识与诊断", { exact: true }).click();
-  await expect(planDiagnostics.getByText(`方案 ${newerPreviewId}`)).toBeVisible(
-    { timeout: 30_000 },
-  );
+  const retainedBatch = card.getByRole("region", { name: "来源与目标" });
+  await expect(retainedBatch).toContainText(runFile);
+  await expect(retainedBatch).not.toContainText(siblingFile);
   await expect(
-    card.getByText(/原整理提交暂未确认|读取暂时失败|正在自动核对/),
+    card.getByText(/提交结果待核对|暂时无法核对原提交/),
   ).toBeVisible();
   expect(executePosts()).toHaveLength(1);
 
@@ -4178,8 +4178,8 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
   const failedRow = overview
     .getByRole("button", { name: `查看 ${failedFile}` })
     .locator("xpath=ancestor::li[1]");
-  await expect(failedRow).toContainText("待处理");
-  await expect(failedRow).toContainText("元数据服务技术失败");
+  await expect(failedRow).toContainText("已有记录");
+  await expect(failedRow).toContainText("元数据服务查询失败");
   await expect(failedRow).toContainText("Metadata Provider");
   await expect(failedRow).toContainText(/原整理准备任务/);
   await expect(failedRow).not.toContainText("需要处理元数据候选");
@@ -4193,8 +4193,9 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
   await expect(card.getByRole("heading", { name: /第 1 \/ 2 个/ })).toBeVisible(
     { timeout: 30_000 },
   );
-  const status = card.getByRole("region", { name: "当前状态" });
-  await expect(status).toContainText("元数据服务技术失败");
+  const status = card.getByRole("region", { name: "文件记录" });
+  await expect(status).toContainText("元数据服务查询失败");
+  await status.getByText("查看处理历史").click();
   await expect(status).toContainText(/Metadata Provider/);
   await expect(status).toContainText(/任务中心/);
   await expect(card.getByText("Storage failure")).toHaveCount(0);
@@ -4210,7 +4211,7 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
     ),
   ).toHaveLength(0);
 
-  await card.getByRole("button", { name: "返回整理概览", exact: true }).click();
+  await card.getByRole("button", { name: /^‹?\s*返回整理概览$/ }).click();
   await expect(overview).toBeVisible();
   await card.getByRole("button", { name: /整批复核/ }).click();
   const listed = card.getByRole("region", { name: "来源与目标" });
@@ -4224,7 +4225,7 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
   const skippedRow = skipped
     .getByRole("button", { name: `查看 ${failedFile}` })
     .locator("xpath=ancestor::li[1]");
-  await expect(skippedRow).toContainText("元数据服务技术失败");
+  await expect(skippedRow).toContainText("元数据服务查询失败");
   await expect(skippedRow).toContainText("Metadata Provider");
   await expect(skippedRow).toContainText(/原整理准备任务/);
   await expect(skippedRow).not.toContainText("重新分析同一准备");
@@ -4254,14 +4255,15 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
   );
   expect(endedDiscoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, endedDiscoveryId as string);
-  await expect(endedCard.getByText("本次整理工作已结束")).toBeVisible({
+  await expect(
+    endedCard.getByText("任务已结束。以下为原计划与已记录的文件结果。"),
+  ).toBeVisible({
     timeout: 30_000,
   });
   const history = endedCard.getByRole("region", {
     name: "只读原计划摘要",
   });
-  await expect(history).toContainText("元数据服务技术失败");
-  await expect(history).toContainText("Metadata Provider");
+  await expect(history).toContainText("元数据服务查询失败");
   await expect(history).toContainText(/原整理准备任务/);
   await expect(history).toContainText(/重新选择该文件发起新的整理/);
   await expect(history).not.toContainText("重新分析同一准备");

@@ -37,6 +37,7 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { readAutomationReturnContext } from "../../shared/navigation/automation-return";
 import { TaskRefreshControl as RefreshControl } from "./TaskRefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { Button } from "../../shared/ui/Button";
 import { useReadReveal } from "../../shared/ui/read-reveal";
 import {
   ModalCardShell,
@@ -2119,6 +2120,18 @@ function RunDetailPanel({
     }
   };
 
+  const renderRunReadUnavailable = (retry: () => void, retrying: boolean) => (
+    <>
+      <StatusBanner variant="warning" title="运行详情暂不可用">
+        <p>原任务身份已保留。重新读取此任务可核对进度与结果。</p>
+      </StatusBanner>
+      <div className="mf-actions">
+        <Button type="button" onClick={retry} disabled={retrying}>
+          {retrying ? "正在重新读取…" : "重新读取任务"}
+        </Button>
+      </div>
+    </>
+  );
   return (
     <ModalCardShell
       layerRef={modal.layerRef}
@@ -2143,8 +2156,12 @@ function RunDetailPanel({
       {/* The overview read shares the shell's read boundary, so 401/403/
           unavailable/malformed overview failures stay distinct and actionable
           instead of leaving the card stuck on its loading state. */}
-      <AuthorizedReadBoundary query={query} unavailableTitle="运行详情暂不可用">
-        {({ data }) => {
+      <AuthorizedReadBoundary
+        query={query}
+        unavailableTitle="运行详情暂不可用"
+        renderUnavailable={renderRunReadUnavailable}
+      >
+        {({ data, refresh, isFetching }) => {
           if (data === undefined) {
             return (
               <StatusBanner variant="info" title="正在加载运行详情">
@@ -2153,6 +2170,8 @@ function RunDetailPanel({
             );
           }
           if (!data.ok) {
+            if (data.failure.kind === "unavailable")
+              return renderRunReadUnavailable(refresh, isFetching);
             return (
               <StatusBanner variant="warning" title={data.failure.title}>
                 <p>{data.failure.nextAction}</p>

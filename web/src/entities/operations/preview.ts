@@ -98,7 +98,7 @@ export interface ManualPreviewAttachmentModel {
  * every blocking entry.  Explanatory evidence only — never a Delete token.
  */
 export interface ManualPreviewCleanupModel {
-  readonly parent: string;
+  readonly parent: string | null;
   readonly mode: string;
   readonly ignorePatterns: readonly string[];
   readonly maxParentDirectories: number;
@@ -546,8 +546,17 @@ function normalizeCleanupProjection(
   ) {
     fail();
   }
+  const expectedDirectoryOutcome = text(source, "expectedDirectoryOutcome");
+  // An item at the Storage root has no deletable parent. The durable plan
+  // serializes that empty path as null, with the blocked/non-applicable outcome.
+  const parent =
+    source["parent"] === null &&
+    (expectedDirectoryOutcome === "blocked_boundary" ||
+      expectedDirectoryOutcome === "not_applicable")
+      ? null
+      : text(source, "parent");
   return {
-    parent: text(source, "parent"),
+    parent,
     mode,
     ignorePatterns: patterns.map((item, index) =>
       normalizeBoundedText(
@@ -572,7 +581,7 @@ function normalizeCleanupProjection(
         `plan.cleanupProjection.blockingEntries[${index}]`,
       ),
     ),
-    expectedDirectoryOutcome: text(source, "expectedDirectoryOutcome"),
+    expectedDirectoryOutcome,
     permanentDelete: flag(source, "permanentDelete"),
   };
 }

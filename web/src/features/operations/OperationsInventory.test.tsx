@@ -5199,11 +5199,17 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     renderApp("/operations?run=task-001&dialog=organize");
 
     const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
-    expect(await within(dialog).findByText(/本次整理工作已结束/)).toBeVisible();
+    expect(
+      await within(dialog).findByText(
+        /任务已结束。以下为原计划与已记录的文件结果。/,
+      ),
+    ).toBeVisible();
     const history = await within(dialog).findByRole("region", {
       name: "只读原计划摘要",
     });
-    expect(within(history).getByText(/方案 preview-1/)).toBeVisible();
+    expect(
+      within(history).getByRole("heading", { name: "原计划摘要" }),
+    ).toBeVisible();
     expect(
       within(dialog).queryByRole("button", { name: /确认整理/ }),
     ).toBeNull();
@@ -5414,7 +5420,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     await user.click(
       await within(dialog).findByRole("button", { name: "确认整理 1 项" }),
     );
-    await screen.findByText(/原整理提交暂未确认|正在自动核对原整理提交/);
+    await screen.findByText(/提交结果待核对|暂时无法核对原提交/);
     expect(backend.calls.posts).toHaveLength(1);
     const submittedPreview = backend.calls.posts[0];
     expect(submittedPreview).toContain("/previews/preview-1/execute");
@@ -5426,11 +5432,11 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     // The retained command identity is not cleared by the unrelated background
     // read failure; the dialog keeps its automatic reconciliation.
     expect(
-      within(dialog).getByText(/原整理提交暂未确认|正在自动核对/),
+      within(dialog).getByText(/提交结果待核对|暂时无法核对原提交/),
     ).toBeVisible();
     expect(
-      within(dialog).getByRole("button", { name: "确认整理 1 项" }),
-    ).toBeDisabled();
+      within(dialog).queryByRole("button", { name: "确认整理 1 项" }),
+    ).toBeNull();
     expect(backend.calls.posts).toHaveLength(1);
 
     backend.state.overviewUnavailable = false;

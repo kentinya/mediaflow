@@ -31,6 +31,10 @@ export interface AuthorizedReadBoundaryProps<T> {
    * generic "Service unavailable"; Dashboard overrides with its own label.
    */
   readonly unavailableTitle?: string;
+  readonly renderUnavailable?: (
+    retry: () => void,
+    retrying: boolean,
+  ) => ReactNode;
   readonly children: (view: AuthorizedReadView<T>) => ReactNode;
 }
 
@@ -139,6 +143,7 @@ export function useRejectedAuthorityEntry(): () => void {
 export function AuthorizedReadBoundary<T>({
   query,
   unavailableTitle = "Service unavailable",
+  renderUnavailable,
   children,
 }: AuthorizedReadBoundaryProps<T>) {
   const token = useAuthToken();
@@ -190,6 +195,9 @@ export function AuthorizedReadBoundary<T>({
           message="The Web session was rejected. Sign in again to continue."
         />
       );
+    }
+    if (renderUnavailable !== undefined && category !== "rejected") {
+      return renderUnavailable(() => void query.refetch(), query.isFetching);
     }
     const description =
       query.error instanceof ApiReadError
