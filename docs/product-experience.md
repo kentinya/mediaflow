@@ -1034,21 +1034,12 @@ An old in-place continuation address for ended work opens the same Task detail a
 organizer marker. An old Files preparation address can point to the linked Task results. The
 current Files card still reports its own preparation outcome, including cancellation and limits.
 
-Only an exact preparation association with backend continuation eligibility shows 文件整理准备,
-the sentence 查看整理摘要，确认后执行。 and 继续整理. The action opens the shared organizer above the
-same task center background: the list stays mounted and positioned, the detail keeps its state, and
-only the topmost card handles Tab/Escape. If a background Task-detail read fails after the card
-has opened, the same card retains unsaved per-file choices and any unknown Execute reconciliation.
-Use `重新读取任务` there to reread the same Task; the read does not submit or replay work.
-Missing associations or ineligible work show no empty section, guess no preparation and create
-no work. Failure stages, per-file results and known effects remain independently readable. The
-shared Files and continuation organizer keeps horizontal space between status text and its
-colored border.
-The [in-place continuation B acceptance](https://github.com/kentinya/mediaflow/blob/b199b2dd4ba76a5f804cea0d2280b2707f54d357/TASK.md#patch-20261113-3--b-pass)
-records the current journey and background-read recovery. The earlier
-[entry/padding acceptance](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)
-retains its original result. See the
-[current Task Center presentation](task-center-page-spec.md#手动受理与确认) for the displayed copy.
+The top-level `继续整理` action requires an exact backend-continuable preparation and ordinary
+batch confirmation. Four-type recovery confirms its new plan inside the same file evidence instead.
+The action opens the shared organizer above the same Task Center list/detail, retaining the original
+position and keeping focus and Escape with the topmost card. If a background detail read fails after
+opening, the same card retains drafts and the original submission for `重新读取任务`. No association or
+eligibility means no entry or guessed work. See the [Task Center specification](task-center-page-spec.md#手动受理与确认).
 
 A failed file can be selected again in Files without cancelling a failed Task or clearing records.
 For A failed and B/C still waiting in a legitimate flow, A is read-only and unselectable in the old
@@ -1065,7 +1056,7 @@ requires a choice for that request.
 For a file such as `黑袍纠察队.2024.S04E01.mkv`, automatic title search checks which work contains
 the requested season and episode, including works that premiered before 2024. When a season is
 unavailable or a requested episode is missing, the affected file can return to **修正作品搜索** with
-the mismatch reason. Open the file in the organize dialog or under **任务中心 → 元数据恢复 → 查看问题文件**.
+the mismatch reason. Open the file in the organize dialog or under **任务中心 → 需要处理 → 元数据**.
 Both entries show the same file's current search inputs. Choose a work that contains the required
 episodes, save and re-analyze, then review the new summary before confirming. Provider connectivity,
 authentication and rate-limit failures keep their technical failure reasons.
@@ -1143,8 +1134,8 @@ preparation context, with no global discovery block.
 
 ## CURRENT — Manual organize dialog (Slice53 PASS / CLOSED)
 
-Accepted `V2-OPS-018/019` under [Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) supplies the current Files review and
-post-confirmation handoff. Existing early Task admission, exact confirmation, independent effects
+Accepted `V2-OPS-018/019` under [Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) established the Files review and
+exact-task handoff. The Slice 59 journey below supersedes its screen sequence and handoff host. Existing early Task admission, exact confirmation, independent effects
 and the Tasks/recovery journey below remain.
 
 1. **Entry/state:** clicking ResourceLibrary Files single/batch/folder Organize immediately opens
@@ -1186,8 +1177,8 @@ and the Tasks/recovery journey below remain.
    selected; unready items are explained,
    never silently ignored. Existing explicit overwrite/cleanup authority remains required.
 5. **Submission/success:** the button reads 正在提交… and cannot duplicate submission. Once backend
-   evidence proves execution admission, close the organizer and navigate to Task Center, opening
-   that exact returned Task with the existing detail UI. Queued/running admission does not mean
+   evidence proves execution admission, close the organizer and open the exact returned Task.
+   Slice 59 retains the originating Files directory or Task Center context behind the detail. Queued/running admission does not mean
    files succeeded. Existing Task detail owns progress, independent results and later recovery.
 6. **Failure and recovery.** If discovery finds a 101st primary file, preparation stops for the whole
    batch without producing a plan or changing any files. After the Task settles, the dialog tells
@@ -1228,6 +1219,34 @@ content immediately; interaction and commands do not wait for animation.
 The later independent preparation-entry correction follows the Manual organize journey above; it
 does not redesign progress/results/recovery.
 
+## CURRENT — Files organize overview and Task Center (Slice59 PASS / CLOSED)
+
+[Slice 59](../SLICE.md#a-final-review--pass--closed) and `V2-OPS-020–022` define the current Web
+journey. Files retains its original entry and shell. The organizer shows actual scope checking
+and plan generation, or just the actual current step if only reading or generating is needed.
+The first available plan opens the overview: selected / confirmable, needs attention and recorded
+outcomes stay distinct. Opening a file shows its current decision or plan. A durable new plan,
+skip, ignore or new blocker returns to the overview if the operator is still at that file without
+new edits. An unresolved decision or failed check stays actionable in place. Late reads do not
+move the operator or replace another draft.
+
+Batch review confirms only the current eligible selection, including any separately authorized
+overwrite and cleanup. The original submission remains pinned during response-loss checks; if
+the first check cannot establish admission, use `核对本次提交` rather than resending. Files opens
+the exact returned Task over the same directory and selection. The ordinary same-task continuation
+opens over the original Task Center detail; after partial confirmation, previously unselected
+eligible files are unselected by default and reviewed on the current zero-change plan. Already
+admitted siblings are not replayed. Ended plans have no history/reopen view; the exact original
+Task and its file evidence remain readable.
+
+Task detail shows flow and actual progress first, followed by independent file results and
+expandable file rows. The ended list and detail count confirmed, partial and failed file outcomes
+from the same formal-result basis; uncertain effects and missing records are not successes or
+failures. Task flow cannot erase verified file effects or imply recovery success. In `需要处理`,
+select a problem type or all files, then open the file directly under its original Task. Save
+and reanalyze in place, inspect its new zero-change plan and explicitly confirm that file.
+Closing returns to the previous type, date, page, position and available focus target.
+
 ## Tasks, results and per-item recovery
 
 整理结果沿用现有任务详情及逐文件证据；独立“整理执行情况”页面与“查看关联执行结果”
@@ -1235,7 +1254,7 @@ does not redesign progress/results/recovery.
 原先前往该页的入口改为打开准确关联的任务详情。旧执行页地址使用普通未找到／认证
 边界，不提供兼容跳转；后台执行记录、核对及历史读取保持。
 
-Use All/Running/Attention/Ended plus Recognition/Metadata/Classification/Conflict over the same
+Use All/Running/Attention/Ended, with four problem filters under Attention, over the same
 backend-authorized organizing population, before counts/paging/options/detail. Ordinary-file,
 notification and separate analysis-only work stay outside; no center new-task picker/global Worker/
 discovery/manual-operation blocks or their exclusive landing reads remain. Normal manual initial
@@ -1528,9 +1547,9 @@ The summary's routine population/pagination/deduplication explanation is omitted
 label and 时区说明 control/content. Local-calendar filtering, full end-day inclusion, explicit
 list/detail time offsets and authoritative statistics/deduplication retain their existing behavior.
 Filters and table align, and controls wrap without clipped text or page overflow when narrow or
-when the selected detail reduces available space. Manual refresh shows 刷新 / 刷新中… without layout
-jumps; background polling updates quietly. Normal same-query refresh preserves
-visible lists/details and valid context; real changes and read/permission failures remain visible.
+when the selected detail reduces available space. Bounded background polling updates healthy
+reads quietly, with no routine refresh button. A failed detail read waits for `重新读取任务` rather
+than polling through its error; permission failures remain visible.
 Management-API consumers outside that control keep their existing filter semantics.
 Long names/scopes retain readable status/progress columns and complete mouse/keyboard-accessible
 identity. Using the shared Files sidebar entry opens ordinary ResourceLibrary browsing without a

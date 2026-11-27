@@ -44,18 +44,16 @@ only in [the development workflow](development-workflow.md).
 | 56 — Canonical Web and API Routes | Serve the operator Web at the root and the current API at `/api/*`, retire the old prefixes, and keep existing Tasks accessible at the new addresses | PASS / CLOSED | Accepted Slice55 and current baseline `33c70735e0a8f45426dde614587ea3d43af94e9b` |
 | 57 — Single Web Administrator and Scoped API Tokens | Start from an empty database, set up one Web administrator, keep login across navigation, issue scoped API tokens for integrations, and retire configuration-owned credentials | PASS / CLOSED | Accepted Slice56, direct configuration publication and baseline `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab` |
 | 58 — Complete Retirement of the General CLI | Remove the general CLI and configuration schema 11 support. Keep four service launches, first administrator setup, password recovery and offline SQLite backup and restore | PASS / CLOSED | Accepted Slice57 and baseline `5b2e0de4ac1c9d79e3618cef82d420ae302401e7` |
-| 59 — Files Manual Organize Journey and Task Center | Follow the approved design for preparation, Files review and confirmation, and Task Center list and detail. Show preparation steps from actual state and open grouped problem files for direct same-task recovery | ACTIVE | Accepted Slice 58 and baseline `212acdef5d97c14a01353b22c103d44b911d6147` |
+| 59 — Files Manual Organize Journey and Task Center | Follow the approved design for preparation, Files review and confirmation, and Task Center list and detail. Show preparation steps from actual state and open grouped problem files for direct same-task recovery | PASS / CLOSED | Accepted Slice 58 and baseline `212acdef5d97c14a01353b22c103d44b911d6147`; independent A Final Review on 2026-11-28 through `608f7e37f5fadcae9afd83e045b1b336bdb426b8` |
 
 ## Current boundary
 
-[Slice 59](../SLICE.md) is **FIX REQUIRED** pending review of the corrections after A Final Review.
-The Roadmap row stays ACTIVE. [Task 59.6](../TASK.md) is ready for independent B review and
-updated Slice validation; the user's acceptance of the latest interface is not a closure decision.
-Slice 58 remains the latest accepted Slice.
+[Slice 59](../SLICE.md) is **PASS / CLOSED**. No active implementation Task.
+A selects the next large Slice separately.
 
 ## Accepted boundary references
 
-Latest acceptance is recorded in the [Slice 58 closure ledger entry](progress.md#latest-accepted-closure--slice-58).
+Latest acceptance is recorded in the [Slice 59 closure ledger entry](progress.md#latest-accepted-closure--slice-59).
 [Progress](progress.md#closure-ledger) keeps every recorded original Base, accepted implementation
 Head, delivery and deferral; its [fixed report references](progress.md#prior-acceptance-references)
 retain prior closure, B packets, failures and validation limits. [Release](release.md) owns release

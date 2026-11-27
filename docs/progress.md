@@ -8,9 +8,14 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-[Slice 59](../SLICE.md) remains **FIX REQUIRED** pending the independent review of
-[Task 59.6](../TASK.md) and updated Slice validation. Prior review decisions remain in Git.
-Slice 58 remains the latest accepted closure.
+[Slice 59](../SLICE.md) is **PASS / CLOSED**. No active implementation Task; A selects the next Slice separately.
+
+## Latest accepted closure — Slice 59
+
+Files keeps the original directory through exact confirmation and result handoff. Task Center unifies
+four-type recovery under Attention and opens inline evidence for the original file. The ended list and
+detail agree on verified, partial, failed, uncertain and missing file outcomes.
+[Independent A Final Review](../SLICE.md#a-final-review--pass--closed).
 
 ## Latest accepted closure — Slice 58
 
@@ -96,6 +101,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 59 — Files Manual Organize Journey and Task Center | PASS / CLOSED | `212acdef5d97c14a01353b22c103d44b911d6147` | `608f7e37f5fadcae9afd83e045b1b336bdb426b8` | Independent A Final Review on 2026-11-28 | Real two-step preparation and same-dialog review, aligned Task Center/details, direct same-Task recovery and consistent formal file results | Unrelated library/Automation/settings pages, generic recovery, engine redesign, production rollout |
 | 58 — Complete Retirement of the General CLI | PASS / CLOSED | `5b2e0de4ac1c9d79e3618cef82d420ae302401e7` | `5415534a38bb8e23ea64a7fd2929c9e6a59a2cad` | Independent A Final Review on 2026-11-24 | Fixed four-service startup, host account codes, offline SQLite recovery with usable Active and pins, CLI and schema 11 switch retired, current work and audit retained | Media backup, cross-version migration and restore, Web backup management, new authentication and production deployment. A and B reports record evidence limits. |
 | 57 — Single Web Administrator and Scoped API Tokens | PASS / CLOSED | `ad7f29a1cc6d73ce17106b513f4b763cfd0c22ab` | `5d2f215fb7afaceeae677877fdb4990fc6815077` | Independent A Final Review on 2026-11-22 | Empty-store setup, Web login and recovery, scoped integration tokens, same-version restart and scheduled stop with existing effects retained | Web multi-user management, external identity, Passkey/MFA, cross-version upgrade and production rollout. Validation limits are recorded in the A and B reports. |
 | 56 — Canonical Web and API Routes | PASS / CLOSED | `33c70735e0a8f45426dde614587ea3d43af94e9b` | `472759665a42a73d24910464e903382adeb37e56` | Independent A Final Review on 2026-11-19 | Web at root and API at `/api/*`, old prefixes retired, deep-link continuation, Base Tasks and audit preserved, exact read-only submission reconciliation and existing per-item recovery | Production deployment, external caller inventory and changeover, general historic version migration and V1. Seven optional tests remain skipped. |

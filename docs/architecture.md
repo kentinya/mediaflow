@@ -1670,9 +1670,38 @@ deduplicates a racing request. Task detail displays progress and durable file re
 related admission check as a status line.
 
 Both normal execution admission and reconciliation-proven admission use the returned exact taskId
-with the existing Task Center selected-run/detail route, closing the organizer. Missing association
-or failed detail reads retain known exact identities for reread, never fall back to a guessed Task
-or another execution submission. Existing historical execution addresses stay readable.
+and shared Task detail, closing the organizer. Slice 59 leaves Files on its original directory;
+Task Center continues to host the same Task detail over its list. Missing or failed reads retain
+known exact identities and never fall back to a guessed Task or another execution submission.
+Ended work has no original-plan history view, but the exact linked Task evidence remains readable.
+
+### CURRENT — Files organizer and Task Center projection (Slice59 PASS / CLOSED)
+
+[`V2-OPS-020–022`](v2-requirements.md#current--slice-59-files-manual-organize-and-task-center-pass--closed)
+reuse the hosted organizer, Task detail and same-Task native recovery. The Web review stages track
+real preparation and current file/summary identities; a proved readback updates the exact row,
+and the Files host preserves the original route context through the exact Task handoff.
+Typed links and query cursors preserve original view/type, date, page and file identity. The
+Attention problem-file projection combines the existing four authorized predicates, groups by
+original Task and deduplicates its aggregate by Task/item. Visible file evidence moves with the
+same item without changing authority or draft ownership.
+
+The SQLite run inventory and overview read the same formal file-result projection as part of
+their existing read transactions. Success requires a verified current Result; partial and
+failure remain distinct from uncertain or missing evidence. The latest Result is chosen from
+the exact Task/item, and an incompatible status is not evidence of the current outcome. Older
+status counters stay compatible and do not supply unsupported ended-list claims. Flow status,
+progress dispositions, current-result counts, attachment evidence and history remain independent.
+These are read changes, with no added schema, command, authority or replay rule.
+
+A preparation that provably contains no work or a terminal incomplete/over-limit scope settles
+under the existing Worker fence without a confirmable prefix. The bounded legacy cleanup only
+settles matching stranded shapes after checking the original task, discovery and execution
+boundaries. For mixed batches, the current blocked row's own review evolution does not invalidate
+an eligible sibling's plan; source, choice, pin, foreign review/version and effect-authorization
+checks remain required. The original submitted plan and exact selected effects are reconciled
+independently of the current editable plan. A single initial confirmation read never resubmits;
+if admission cannot be proved, the review offers a deliberate reread.
 
 Slice53 preserved Task Center task-detail layout/content/progress/results/recovery UI. The later
 independent entry correction follows the current preparation-section contract above; shared recovery
