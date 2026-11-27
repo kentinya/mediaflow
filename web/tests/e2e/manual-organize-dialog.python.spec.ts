@@ -45,8 +45,6 @@ const READABILITY_UNMATCHED = 10;
 const READABILITY_OUTPUT = "test-results/manual-organize-readability";
 // Developer handoff evidence for the five Files decision footers.
 const DECISION_FOOTER_OUTPUT = "test-results/manual-organize-decision-footers";
-const PRIMARY_LIMIT_MESSAGE =
-  "本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。";
 const PRIMARY_LIMIT_SETTLED =
   "找到第 101 个主文件后已停止检查，整批未进入执行。任务已结束，可以缩小原选择后重新发起。";
 const PRIMARY_LIMIT_PROGRESS = "上限 100 个 · 找到至少 101 个";
@@ -708,8 +706,8 @@ async function expectFilesConfirmFirstScreen(
         headingRect.bottom <= bodyRect.bottom + 1,
       returnInViewport: inViewport(returnRect),
       confirmInViewport: inViewport(confirmRect),
-      returnTop: returnRect?.top,
-      confirmTop: confirmRect?.top,
+      returnCenter: returnRect && returnRect.top + returnRect.height / 2,
+      confirmCenter: confirmRect && confirmRect.top + confirmRect.height / 2,
       returnLeft: returnRect?.left,
       confirmLeft: confirmRect?.left,
     };
@@ -718,7 +716,7 @@ async function expectFilesConfirmFirstScreen(
   expect(metrics.returnInViewport, JSON.stringify(metrics)).toBe(true);
   expect(metrics.confirmInViewport, JSON.stringify(metrics)).toBe(true);
   expect(
-    Math.abs((metrics.returnTop ?? 0) - (metrics.confirmTop ?? 0)),
+    Math.abs((metrics.returnCenter ?? 0) - (metrics.confirmCenter ?? 0)),
     JSON.stringify(metrics),
   ).toBeLessThanOrEqual(1);
   expect(
@@ -1591,7 +1589,7 @@ test("Task59.1 manual organize readability: a pending owned file beside a new si
   const summary = card.locator(".mf-organize-batch-summary");
   await expect(
     summary.locator("> div").filter({ hasText: "未纳入" }).locator("dd"),
-  ).toHaveText("0 项");
+  ).toHaveText("0");
   const batch = card.getByRole("region", { name: "来源与目标" });
   await expect(batch).toContainText(siblingFile);
   await expect(batch).not.toContainText(ownedFile);
@@ -2201,17 +2199,35 @@ test("Task59.1 A59-01 a lost decision response returns from the durable same-ite
   await page.getByRole("button", { name: "批量整理" }).click();
   let card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible();
-  await driveDiscovery(request, true);
+  await expect(page).toHaveURL(/organizeDiscovery=/);
+  const copyDiscoveryId =
+    new URL(page.url()).searchParams.get("organizeDiscovery") ?? "";
+  expect(copyDiscoveryId).not.toBe("");
+  const originalPreview = await driveDiscoveryFor(
+    page,
+    request,
+    copyDiscoveryId,
+  );
   await openOverviewFile(card);
   await openFilesCorrection(card);
   await card
     .getByLabel(`识别类型 ${conflictFile}`)
     .selectOption({ label: "Copy fixture" });
+  const analysis = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith(
+        `/discoveries/${copyDiscoveryId}/analyze`,
+      ),
+  );
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
     card.getByRole("heading", { name: "正在重新分析", exact: true }),
   ).toBeVisible({ timeout: 30_000 });
-  await driveDiscovery(request, true);
+  expect((await analysis).ok()).toBe(true);
+  expect(await driveDiscoveryFor(page, request, copyDiscoveryId)).not.toBe(
+    originalPreview,
+  );
   const copiedOverview = card.getByRole("region", { name: "本次整理概览" });
   await expect(copiedOverview).toBeVisible({ timeout: 30_000 });
   await copiedOverview
@@ -3201,10 +3217,9 @@ test("ends the first-plan preparation when the selected folder has no primary fi
     card.getByText(/已排除 1 个条目：非媒体扩展名 × 1/),
   ).toBeVisible();
   await expect(
-    card.getByText("本次没有生成整理方案，也没有整理任何文件。"),
-  ).toBeVisible();
-  await expect(
-    card.getByText("请关闭本弹窗返回原文件页，调整所选范围后重新发起整理。"),
+    card.getByText(
+      "检查完成，所选范围内没有可整理的主文件。本次未生成方案，文件仍在原处。",
+    ),
   ).toBeVisible();
   expect(
     commands.filter(
@@ -3808,7 +3823,8 @@ test("Task59.1 keeps the exact admitted preparation across a cancelled browser B
   await expect(card.getByText("确认作品")).toBeVisible({
     timeout: 30_000,
   });
-  await card.getByRole("radio", { name: /候选 2/ }).check();
+  const chosen = card.getByRole("radio", { name: /TMDB #708$/ });
+  await chosen.check();
   expect(admissions()).toHaveLength(1);
   expect(decisions()).toHaveLength(0);
   expect(executions()).toHaveLength(0);
@@ -3824,7 +3840,7 @@ test("Task59.1 keeps the exact admitted preparation across a cancelled browser B
   await prompt.getByRole("button", { name: "继续编辑" }).click();
   await expect(card.getByRole("alertdialog")).toHaveCount(0);
   await expect(page).toHaveURL(new RegExp(`organizeDiscovery=${discoveryId}`));
-  await expect(card.getByRole("radio", { name: /候选 2/ })).toBeChecked();
+  await expect(chosen).toBeChecked();
   await expect(card).toBeVisible();
   expect(admissions()).toHaveLength(1);
   expect(decisions()).toHaveLength(0);
@@ -3851,9 +3867,9 @@ test("Task59.1 keeps the exact admitted preparation across a cancelled browser B
   await expect(card.getByText("确认作品")).toBeVisible({
     timeout: 30_000,
   });
-  await expect(card.getByRole("radio", { name: /候选 1/ })).toBeVisible();
-  await expect(card.getByRole("radio", { name: /候选 2/ })).toBeVisible();
-  await expect(card.getByRole("radio", { name: /候选 2/ })).not.toBeChecked();
+  await expect(card.getByRole("radio", { name: /TMDB #707$/ })).toBeVisible();
+  await expect(chosen).toBeVisible();
+  await expect(chosen).not.toBeChecked();
   expect(admissions()).toHaveLength(1);
   expect(decisions()).toHaveLength(0);
   expect(continuations()).toHaveLength(0);
@@ -4266,11 +4282,11 @@ test("Task59.1 manual organize readability: one file separates source and target
   await expect(source.locator("dt")).toHaveText("来源");
   await expect(target.locator("dt")).toHaveText("目标");
   await expect(source.locator("dd")).toContainText(
-    `source-storage:${READABILITY_ONE_DIRECTORY}/${READABILITY_ONE_FILE}`,
+    `Unified media source：${READABILITY_ONE_DIRECTORY}/${READABILITY_ONE_FILE}`,
   );
   await expect(source.locator("dd")).not.toContainText("target:");
   await expect(target.locator("dd")).toContainText(
-    `${plannedTarget.storageId}:${plannedTarget.storageRelativePath}`,
+    `${targetLibrary!.name}：${plannedTarget.relativePath}`,
   );
 
   await openBatchReview(card);
@@ -4527,7 +4543,7 @@ test("Task59.1 manual organize readability: ten files keep an aligned batch summ
       (row) =>
         row.file &&
         row.fileTag === "SPAN" &&
-        row.icon === "▤" &&
+        row.icon === "▷" &&
         row.operation === "移动",
     ),
   ).toBe(true);
@@ -4646,7 +4662,7 @@ test("Task59.1 A59-02 manual organize readability: a 100-file batch shows 90 sel
     .locator(".mf-organize-batch-summary > div")
     .filter({ hasText: "关联附件" });
   await expect(attachments.locator("dt")).toHaveText("关联附件");
-  await expect(attachments.locator("dd")).toHaveText("0 个");
+  await expect(attachments.locator("dd")).toHaveText("0");
   const confirm = card.getByRole("button", {
     name: `确认整理 ${READABILITY_READY} 项`,
   });
@@ -4904,7 +4920,7 @@ test("Task59.4 a 101-file directory whose first read is already settled keeps th
     card.getByText(PRIMARY_LIMIT_PROGRESS, { exact: true }),
   ).toBeVisible();
   const firstReadScope = card.locator("details.mf-organize-scope-details");
-  await firstReadScope.getByText(/查看确切路径（1 项）/).click();
+  await firstReadScope.getByText("查看受理范围", { exact: true }).click();
   await expect(
     firstReadScope.getByText(PRIMARY_LIMIT_DIRECTORY, { exact: true }),
   ).toBeVisible();
@@ -5034,7 +5050,7 @@ test("Task59.1 a 101-file directory settles as a failed preparation and the same
     card.getByText(PRIMARY_LIMIT_PROGRESS, { exact: true }),
   ).toBeVisible();
   const limitScope = card.locator("details.mf-organize-scope-details");
-  await limitScope.getByText(/查看确切路径（1 项）/).click();
+  await limitScope.getByText("查看受理范围", { exact: true }).click();
   await expect(
     limitScope.getByText(PRIMARY_LIMIT_DIRECTORY, { exact: true }),
   ).toBeVisible();
@@ -5121,18 +5137,25 @@ test("Task59.1 a 101-file directory settles as a failed preparation and the same
   ).toHaveCount(0);
   await expect(detail.getByRole("link", { name: "继续整理" })).toHaveCount(0);
 
-  // The old hosted preparation address now opens only the read-only ended
-  // facts; it neither claims a saved summary nor offers any command.
+  // The retired hosted address drops only the organizer marker and keeps
+  // the exact ended Task's factual detail, without reading a historical plan.
+  const commandsBeforeOldAddress = commands.length;
   await page.goto(`${BASE}/operations?run=${taskId}&dialog=organize`);
   await submitSignIn(page, accountForToken(ADMIN_TOKEN));
-  const historical = page.getByRole("dialog", { name: "整理所选文件" });
-  await expect(historical).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(new RegExp(`/operations\\?run=${taskId}$`));
+  await expect(detail).toBeVisible({ timeout: 30_000 });
   await expect(
-    historical.getByText(PRIMARY_LIMIT_MESSAGE, { exact: true }),
+    detail.getByRole("heading", { name: "准备阶段超限，本次未执行整理" }),
   ).toBeVisible();
-  await expect(
-    historical.getByRole("button", { name: /确认整理/ }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "整理所选文件" })).toHaveCount(
+    0,
+  );
+  await expect(detail.getByRole("link", { name: "继续整理" })).toHaveCount(0);
+  expect(
+    commands
+      .slice(commandsBeforeOldAddress)
+      .filter((entry) => entry.path.startsWith("/api/operations/organize/")),
+  ).toHaveLength(0);
 
   const stateFor = async (name: string) => {
     const response = await request.get(
@@ -5251,8 +5274,7 @@ test("Task59.4 a preparation cancelled from another tab keeps the shared Files f
   await expect(card.getByText("2 个文件", { exact: true })).toBeVisible();
   await expect(card.getByText("在准备阶段停止", { exact: true })).toBeVisible();
   const scope = card.locator("details.mf-organize-scope-details");
-  await expect(scope.getByText(/查看确切路径（2 项）/)).toBeVisible();
-  await scope.getByText(/查看确切路径（2 项）/).click();
+  await scope.getByText("查看受理范围", { exact: true }).click();
   await expect(scope.getByText("Dialog01.2011.mkv")).toBeVisible();
   await expect(scope.getByText("Dialog02.2011.mkv")).toBeVisible();
   await expect(card.locator(".mf-organize-preparation-spinner")).toHaveCount(0);
@@ -5949,12 +5971,15 @@ test("Task59.3 a running detail re-reads the visited success filter and second p
   // The exact item evidence carries the real target created by this Worker.
   await settledSecondRow.getByRole("button", { name: "查看证据" }).click();
   const evidence = detail.getByRole("region", { name: "条目证据" });
-  const sourceAndTarget = evidence.getByRole("region", {
-    name: "来源与目标",
+  const facts = evidence.locator(".mf-run-evidence-facts");
+  const source = facts.locator("> div").filter({
+    has: page.getByText("来源", { exact: true }),
   });
-  await expect(sourceAndTarget).toContainText(secondPageName);
-  await expect(sourceAndTarget.getByText("没有已记录的目标文件")).toHaveCount(
-    0,
+  const target = facts.locator("> div").filter({
+    has: page.getByText("目标", { exact: true }),
+  });
+  await expect(source.locator("dd")).toHaveText(
+    `source-storage:${READABILITY_DIRECTORY}/${secondPageName}`,
   );
-  await expect(sourceAndTarget).toContainText("Movies/");
+  await expect(target.locator("dd")).toContainText("Movies/");
 });

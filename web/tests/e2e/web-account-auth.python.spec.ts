@@ -486,11 +486,16 @@ test("a same-browser account switch reconciles the other tab before its next rea
   // Returning to tab A confirms the server session before the next protected
   // read.  The task-center path is preserved, but the page re-reads it as the
   // current account rather than keeping the administrator identity/cache.
+  const nextRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname === "/api/operations/runs",
+  );
   await page.bringToFront();
   await expect(accountButton).toContainText("readonly");
   await expect(accountButton).not.toContainText("admin");
   await expect(page.getByRole("heading", { name: "任务中心" })).toBeVisible();
-  await page.getByRole("button", { name: "刷新" }).first().click();
+  expect((await nextRead).ok()).toBe(true);
   await expect(accountButton).toContainText("readonly");
   const session = await page.request.get(`${BASE}/api/auth/session`);
   expect(session.status()).toBe(200);

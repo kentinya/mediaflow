@@ -4488,7 +4488,14 @@ const ACCOUNT_IDENTITIES = {
     principalId: "account-viewer",
     username: "viewer",
     roles: ["admin"],
-    permissions: ["read", "manage_configuration", "cancel_job"],
+    // This fixture is the Files operator (see MANAGE_TOKENS), not readonly.
+    permissions: [
+      "read",
+      "manage_configuration",
+      "cancel_job",
+      "submit_dry_run",
+      "execute_manual_organize",
+    ],
   },
   readonly: {
     token: "e2e-readonly-token",
@@ -12576,10 +12583,17 @@ const server = createServer(async (req, res) => {
     const uncertainSuccess = runUncertainSuccess(task.task_id);
     const results = runSortedResults(task.task_id);
     const effectCounts = {};
+    const missingResultStatuses = {};
     const latestResults = runLatestResultByItem(task.task_id);
     for (const item of items) {
       const result = latestResults.get(item.item_id);
-      if (result === undefined) continue;
+      if (result === undefined) {
+        if (["success", "partial", "failed"].includes(item.status)) {
+          missingResultStatuses[item.status] =
+            (missingResultStatuses[item.status] ?? 0) + 1;
+        }
+        continue;
+      }
       const certainty = String(result.effect_certainty ?? "unknown");
       effectCounts[certainty] = (effectCounts[certainty] ?? 0) + 1;
     }
@@ -12597,8 +12611,12 @@ const server = createServer(async (req, res) => {
       indeterminate,
       processed,
       dispositions,
-      confirmed_success: dispositions.success - uncertainSuccess,
+      confirmed_success:
+        dispositions.success -
+        uncertainSuccess -
+        (missingResultStatuses.success ?? 0),
       uncertain_success: uncertainSuccess,
+      missing_result_statuses: missingResultStatuses,
       // Scan-level error/attachment counters stay separate from the primary
       // partition; this fake fixtures no scan-error rows.
       scan_errors: scanKind ? 0 : null,

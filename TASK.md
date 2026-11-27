@@ -25,12 +25,18 @@ Implementation Authorization: USER-REQUESTED A59-08 / A59-09 CORRECTION
 
 ## 验收与测试
 
-Developer 在 `web/` 运行 `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx
+[测试分工与门禁](docs/development-workflow.md#6-test-levels)。
+
+### Developer — 新增／修改与直接受影响测试
+
+在 `web/` 运行 `npm run test -- run src/features/operations/ManualOrganizeDialog.test.tsx
 src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/RunDetailTabs.test.tsx`、
 类型检查、变动文件的静态检查和生产构建。以本机独立测试库从两入口真实保存，暂停再恢复 Worker，
 对照批准稿的桌面和 390 px 等待画面，核对完成回落、队列拒绝及未知读回。
 
-B 独立检查 Task Base 到候选差异、浏览器关键旅程与相应 T3 安全门禁，提交 Slice 终验包。
+### B — independent acceptance / full regression
+
+独立检查 Task Base 到候选差异、浏览器关键旅程与相应 T3 安全门禁，完成 Slice 最终回归并提交验收包。
 原交接保存在 `71787a05:TASK.md`。
 
 ## 本轮修正 A59-09
@@ -441,3 +447,27 @@ Prettier、生产构建及治理通过；测试站资产与构建逐字节一致
 ESLint / Prettier / Ruff、构建及治理通过。截图、请求及状态记录见
 `.git/validation-evidence/d173e287/subset/`。仅留一个本机 4233 实例，离线稿响应与原文件逐字节一致。
 B 独立验收待完成。
+
+## 收尾预检 — 交独立 B 复核
+
+产品候选为 `b91dcfd452617600c3e8c2f3a987f92266301e3b`，本检查点相对它只改管理文档和
+浏览器测试，不改运行代码、构建输入、依赖、Python 测试或测试站。修正测试使用当前入口、状态和
+自动读回，模拟只读权限及缺失 Result 与正式接口保持一致。真实 Worker 用原准备身份和已受理
+响应推进；不改变确认范围、效果、不重放及权限断言。
+
+- Python 全量 2341 项（7 跳过，0 失败）；Vitest 1731 项、默认 Playwright 290 项通过。
+  治理、差异、Ruff、编译、依赖、示例配置、Web 类型／Lint／格式及生产构建通过。
+  wheel 与安装冒烟通过；用冻结产品源构建的 Docker 镜像通过发布安全与四服务重启／故障验证。
+- 81 项真实浏览器定向用例在隔离数据库分组中有通过记录，覆盖 Files 准备和混合四类、100／101 上限、跳过和取消、
+  新阻塞、同一 Task 部分确认续作、未知原提交与兄弟重分析、任务中心筛选分页与精确文件、
+  任务证据四类恢复、覆盖许可、Unicode 账号、OpenList 和自动化运行一次。同名作品修正还验证
+  显式搜索、保留新搜索条件及 Worker 独立重分析。组合初跑的旧断言失败、共享夹具干扰和
+  被截断项与后续复验分别记录，不把中断组合当通过。
+- 本机 4233 的复测稿摘要未变。隔离场景实际返回的 JS/CSS 与本地生产构建逐字节一致。
+  桌面及 390 px 的部分确认和缺失结果对照沿用 `.git/validation-evidence/d173e287/subset/`。
+
+命令、退出码、制品摘要、测试结果及失败 trace 位于本机
+`.git/validation-evidence/b91dcfd4/closure-preflight/`（索引 `status.txt`）。
+原 B 交接为 `71787a05:TASK.md`，不覆盖后续开发。独立 B 须检查原 Task Base 到本检查点，
+特别核对持久结算、精确方案有效性和并发/权限门禁，再按 RO/AC-01–07 交接给 A。
+本段为预检记录，不是 B PASS 或 A 终审。Slice 59 保持 FIX REQUIRED。

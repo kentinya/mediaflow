@@ -94,6 +94,10 @@ async function openFiles(page: Page): Promise<void> {
 test("OpenList metadata-only stat completes a native move and rename with fs/get 405", async ({
   page,
 }) => {
+  const registered = await page.request.post(
+    "/__harness__/register-manual-worker",
+  );
+  expect(registered.ok()).toBe(true);
   await openFiles(page);
   const initial = await providerState(page);
   const initialEntries = new Map(
@@ -115,6 +119,7 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
     const response = await page.request.post(
       "/__harness__/run-discovery-worker",
     );
+    expect(response.ok()).toBe(true);
     const advanced = (await response.json()) as DiscoveryAdvance;
     if (advanced.advanced && advanced.previewId != null) {
       previewId = advanced.previewId;
@@ -146,7 +151,6 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
     }
   }
 
-  await page.request.post("/__harness__/register-manual-worker");
   // The batch review opens from the same overview after leaving this file.
   await card.getByRole("button", { name: "返回整理概览" }).click();
   await expect(
@@ -154,7 +158,7 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
   ).toBeVisible();
   await page.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: /^确认整理 2 项$/ }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
 
   let worker: ManualWorkerResult | null = null;
@@ -169,6 +173,7 @@ test("OpenList metadata-only stat completes a native move and rename with fs/get
   }
   expect(worker?.completed).toBe(true);
   expect(worker?.taskId).toBeTruthy();
+  expect(new URL(page.url()).searchParams.get("run")).toBe(worker?.taskId);
 
   const after = await providerState(page);
   for (const path of SOURCE_PATHS) {

@@ -416,7 +416,7 @@ for (const viewport of [
   { width: 1536, height: 1024 },
   { width: 390, height: 844 },
 ]) {
-  test(`four date-only views and stable manual refresh at ${viewport.width}px`, async ({
+  test(`four date-only views stay stable during automatic polling at ${viewport.width}px`, async ({
     page,
   }, testInfo) => {
     await page.setViewportSize(viewport);
@@ -444,35 +444,43 @@ for (const viewport of [
       expect(await pageHorizontalOverflow(page)).toBe(0);
     }
     await views.getByRole("button", { name: "全部任务", exact: true }).click();
-    await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
+    const table = page.getByRole("table", { name: "运行清单" });
+    await expect(table).toBeVisible();
+    const focus = page.getByLabel("开始日期");
+    await focus.focus();
+    await expect(focus).toBeFocused();
+    await expect(
+      page
+        .locator(".mf-operations-inventory > header")
+        .getByRole("button", { name: "刷新", exact: true }),
+    ).toHaveCount(0);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await page.route(/\/api\/operations\/runs\?/, async (route) => {
+    const inventory = /\/api\/operations\/runs(?:\?|$)/;
+    const polled = page.waitForRequest(inventory);
+    await page.route(inventory, async (route) => {
       await gate;
       await route.continue();
     });
-    const refresh = page
-      .locator(".mf-operations-inventory > header")
-      .getByRole("button", { name: "刷新", exact: true });
-    await refresh.focus();
-    await expect(refresh).toBeFocused();
-    const before = await refresh.boundingBox();
-    await refresh.click();
-    const busy = page
-      .locator(".mf-operations-inventory > header")
-      .getByRole("button", { name: "刷新中…", exact: true });
-    await expect(busy).toBeDisabled();
-    await expect(page.getByRole("table", { name: "运行清单" })).toBeVisible();
-    const during = await busy.boundingBox();
-    expect(during?.width).toBe(before?.width);
-    expect(during?.x).toBe(before?.x);
-    await page.screenshot({
-      path: testInfo.outputPath(`manual-refresh-${viewport.width}.png`),
-    });
-    release();
-    await expect(refresh).toBeEnabled();
+    const before = await table.boundingBox();
+    const response = page.waitForResponse(inventory);
+    try {
+      expect((await polled).method()).toBe("GET");
+      await expect(table).toBeVisible();
+      await expect(focus).toBeFocused();
+      const during = await table.boundingBox();
+      expect(during?.width).toBe(before?.width);
+      expect(during?.x).toBe(before?.x);
+      await page.screenshot({
+        path: testInfo.outputPath(`automatic-read-${viewport.width}.png`),
+      });
+    } finally {
+      release();
+    }
+    expect((await response).ok()).toBe(true);
+    await expect(focus).toBeFocused();
     expect(await pageHorizontalOverflow(page)).toBe(0);
   });
 }
@@ -549,16 +557,18 @@ for (const viewport of [
       .first();
     await firstRun.click();
     await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+    const detail = page.getByRole("dialog", { name: "运行详情" });
     await expect(
-      page
-        .getByRole("dialog", { name: "运行详情" })
-        .getByText("目标范围", { exact: true }),
+      detail.getByRole("region", { name: "状态与流程" }),
     ).toBeVisible();
     if (viewport.width >= 1280) await checkLayout(false);
     expect(await pageHorizontalOverflow(page)).toBeLessThanOrEqual(1);
     await page.screenshot({
       path: testInfo.outputPath(`compact-detail-${viewport.width}.png`),
     });
+    await detail.getByRole("button", { name: "操作记录" }).click();
+    await detail.getByText("任务信息与技术诊断", { exact: true }).click();
+    await expect(detail.getByText("目标范围", { exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog", { name: "运行详情" })).toHaveCount(0);
     await clear.click();

@@ -583,7 +583,7 @@ for (const technicalSibling of [false, true]) {
     );
     const recovery = page.getByRole("region", { name: "条目审核与恢复" });
     await expect(
-      recovery.getByRole("heading", { name: "处理目标文件冲突" }),
+      recovery.getByRole("heading", { name: "处理目标冲突" }),
     ).toBeVisible();
     await recovery
       .getByRole("radio", { name: "保留原目标，另存新文件" })
@@ -610,9 +610,12 @@ for (const technicalSibling of [false, true]) {
     expect(afterAnalysis.handling.resolvedItems).toBe(0);
     expect(afterAnalysis.handling.state).not.toBe("resolved");
     await page.request.post("/__harness__/register-manual-worker");
-    await recovery.getByRole("button", { name: "刷新" }).click();
-    const summary = page.getByRole("region", { name: "新计划摘要" });
+    const summary = recovery.getByRole("region", { name: "新计划摘要" });
     await expect(summary).toBeVisible();
+    const detail = page.getByRole("dialog", { name: "运行详情" });
+    await expect(
+      detail.getByRole("link", { name: "继续整理", exact: true }),
+    ).toHaveCount(0);
     const confirmed = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&

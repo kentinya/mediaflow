@@ -667,15 +667,15 @@ test("the selected run detail reads flow, processed range and independent file r
   await expect(flow.getByRole("heading", { name: /流程已完成/ })).toBeVisible();
   const progress = detail.getByRole("region", { name: "处理进度" });
   await expect(progress.getByRole("progressbar")).toHaveCount(0);
-  await expect(progress.getByText(/已处理 \d+ \/ \d+ 个主条目/)).toBeVisible();
+  await expect(progress.getByText("2 / 2 个主文件")).toBeVisible();
 
   // The independent file outcomes follow, including the settled attempt with
   // no recorded result. The removed accounting/tutorial copy stays gone.
   const results = detail.getByRole("region", { name: "文件结果" });
   await expect(results.getByText("成功1", { exact: true })).toBeVisible();
-  await expect(results.getByText("失败1", { exact: true })).toBeVisible();
+  await expect(results.getByText("失败0", { exact: true })).toBeVisible();
   await expect(
-    results.getByText(/文件处理已结束，结果未记录 1 个/),
+    results.getByText("其他结果 1 项，可在对应文件中核对。"),
   ).toBeVisible();
   await expect(detail.getByText(/口径:/)).toHaveCount(0);
   await expect(detail.getByText(/成功含义:/)).toHaveCount(0);
@@ -878,9 +878,9 @@ test("PATCH-20261107-1 keeps the mixed completed run and its independent file ou
   ).toBeVisible();
   const results = detail.getByRole("region", { name: "文件结果" });
   await expect(results.getByText("成功1", { exact: true })).toBeVisible();
-  await expect(results.getByText("失败1", { exact: true })).toBeVisible();
+  await expect(results.getByText("失败0", { exact: true })).toBeVisible();
   await expect(
-    results.getByText(/文件处理已结束，结果未记录 1 个/),
+    results.getByText("其他结果 1 项，可在对应文件中核对。"),
   ).toBeVisible();
   // The removed self-link and standing explanation are gone.
   await expect(detail.getByText("更详细证据")).toHaveCount(0);
@@ -918,7 +918,9 @@ test("PATCH-20261107-1 keeps the mixed completed run and its independent file ou
       name: "文件证据：Inception (2010).mkv",
     }),
   ).toBeVisible();
-  await expect(evidence.getByText("文件处理已结束，结果未记录")).toBeVisible();
+  await expect(
+    evidence.getByText("文件结果缺失", { exact: true }),
+  ).toBeVisible();
 });
 
 test("PATCH-20261107-1 states an unconfirmed target result instead of a confirmed success", async ({

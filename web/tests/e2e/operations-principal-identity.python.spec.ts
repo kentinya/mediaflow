@@ -63,7 +63,10 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   const card = page.getByRole("dialog", { name: "整理所选文件" });
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(/organizeDiscovery=/);
-  await driveDiscoveryWorker(request);
+  const discoveryId =
+    new URL(page.url()).searchParams.get("organizeDiscovery") ?? "";
+  expect(discoveryId).not.toBe("");
+  const original = await driveDiscoveryWorker(request, discoveryId);
   // The current Files landing is the overview; the per-file review is its
   // own explicit entry for the exact selected file.
   const overview = card.getByRole("region", { name: "本次整理概览" });
@@ -72,22 +75,24 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   await expect(card.getByRole("heading", { name: /第 1 \/ 1 个/ })).toBeVisible(
     { timeout: 30_000 },
   );
-  const recognition = card.locator('select[aria-label^="识别类型 "]');
-  if (
-    !(await recognition
-      .first()
-      .isVisible()
-      .catch(() => false))
-  ) {
-    await card.getByText("修正识别或作品", { exact: true }).click();
-  }
-  await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
-  await recognition.first().selectOption("C");
+  await card.getByText("规则与方案证据", { exact: true }).click();
+  await card.getByText("修正识别或作品", { exact: true }).click();
+  const recognition = card.getByLabel("识别类型 Three.2003.mkv");
+  await expect(recognition).toBeVisible();
+  await recognition.selectOption("C");
+  const analysis = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith(
+        `/discoveries/${discoveryId}/analyze`,
+      ),
+  );
   await card.getByRole("button", { name: "保存并重新分析" }).click();
   await expect(
-    card.getByText(/选择已保存,正在按固定配置重新分析/),
+    card.getByRole("heading", { name: "正在重新分析", exact: true }),
   ).toBeVisible();
-  await driveDiscoveryWorker(request);
+  expect((await analysis).ok()).toBe(true);
+  expect(await driveDiscoveryWorker(request, discoveryId)).not.toBe(original);
   // A saved correction re-analyzes and returns to the same overview; the
   // exact file is opened again before its inclusion is confirmed.
   await expect(overview).toBeVisible({ timeout: 30_000 });
@@ -126,11 +131,11 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
       await route.abort("connectionreset");
     },
   );
-  await card.getByRole("button", { name: "整批复核(已选 1 项)" }).click();
+  await card.getByRole("button", { name: "整批复核 · 1 项" }).click();
   await card.getByRole("button", { name: "确认整理 1 项" }).click();
   // The retained request is reconciled automatically under the same
   // backend-authenticated principal; there is no manual query button.
-  await expect(page).toHaveURL(/\/operations\?.*run=/, {
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/, {
     timeout: 30_000,
   });
   const runId = new URL(page.url()).searchParams.get("run");
@@ -191,10 +196,9 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
     itemCount: 1,
   });
   const detail = page.getByRole("dialog", { name: "运行详情" });
-  await detail
-    .getByRole("button", { name: "刷新", exact: true })
-    .first()
-    .click();
+  await expect(
+    detail.getByRole("heading", { name: "流程已完成" }),
+  ).toBeVisible();
   const items = detail.getByRole("region", { name: "主条目" });
   await expect(items.getByText("Three.2003.mkv")).toBeVisible();
   const evidenceResponse = page.waitForResponse(
@@ -234,16 +238,20 @@ test("a Unicode principal reconciles a lost organize admission and reads back th
   expect(executePosts()).toHaveLength(1);
 });
 
-async function driveDiscoveryWorker(request: APIRequestContext): Promise<void> {
+async function driveDiscoveryWorker(
+  request: APIRequestContext,
+  discoveryId: string,
+): Promise<string> {
   for (let step = 0; step < 20; step += 1) {
     const advanced = await request.post(
-      `${BASE}/__harness__/run-discovery-worker`,
+      `${BASE}/__harness__/run-discovery-worker?discoveryId=${encodeURIComponent(discoveryId)}`,
     );
+    expect(advanced.ok()).toBe(true);
     const body = (await advanced.json()) as {
       readonly advanced: boolean;
       readonly previewId?: string | null;
     };
-    if (body.advanced && body.previewId != null) return;
+    if (body.advanced && body.previewId != null) return body.previewId;
   }
   throw new Error("bounded discovery Worker did not link its Preview");
 }

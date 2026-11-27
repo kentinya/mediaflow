@@ -1131,20 +1131,19 @@ test("the selected run detail reads progress, filtered items, evidence and recor
       .getByRole("heading", { name: "任务流程失败" }),
   ).toBeVisible();
   const progress = detail.getByRole("region", { name: "处理进度" });
-  await expect(progress.getByText("已处理 5 / 6 个主条目")).toBeVisible();
+  // The two waiting/pending items are not processed files, even though the
+  // enclosing Task flow failed.
+  await expect(progress.getByText("4 / 6 个主文件")).toBeVisible();
   const fileResults = detail.getByRole("region", { name: "文件结果" });
-  // The success cell is the progress read model's confirmed split, not the
-  // recorded success status count: one verified file beside one unconfirmed
-  // success, one failure and one normal skip.
+  // The Task failure does not become a file failure. The missing Result,
+  // unconfirmed effect and ordinary skip remain visible on their exact rows.
   await expect(fileResults.getByText("成功1", { exact: true })).toBeVisible();
-  await expect(fileResults.getByText("失败1", { exact: true })).toBeVisible();
-  await expect(fileResults.getByText(/其他结果 1 项（跳过 1）/)).toBeVisible();
+  await expect(fileResults.getByText("失败0", { exact: true })).toBeVisible();
   await expect(
-    fileResults.getByText(/目标文件结果尚未确认 1 个/),
-  ).toBeVisible();
-  await expect(
-    fileResults.getByText(/文件处理已结束，结果未记录 1 个/),
-  ).toBeVisible();
+    fileResults.getByText(
+      /其他结果|目标文件结果尚未确认|文件处理已结束，结果未记录/,
+    ),
+  ).toHaveCount(0);
   await expect(detail.getByText(/口径:整理计数/)).toHaveCount(0);
   await expect(detail.getByText(/效果确定性\(基于已读结果\)/)).toHaveCount(0);
   await expect(detail.getByText(/成功含义/)).toHaveCount(0);
@@ -1169,6 +1168,12 @@ test("the selected run detail reads progress, filtered items, evidence and recor
   const skippedRow = items
     .locator(".mf-run-item-row")
     .filter({ hasText: "Sample.2020.WEB-DL.mkv" });
+  const missingRow = items
+    .locator(".mf-run-item-row")
+    .filter({ hasText: "Dune.2021.2160p.mkv" });
+  await expect(
+    missingRow.getByText("文件结果缺失", { exact: true }),
+  ).toBeVisible();
   await expect(arrivalRow.getByText("已验证成功")).toBeVisible();
   await expect(uncertainRow.getByText("效果未确认")).toBeVisible();
   await expect(

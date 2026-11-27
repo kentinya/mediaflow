@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { accountForToken, submitSignIn } from "./auth";
 
 const VIEWER_TOKEN = "e2e-viewer-token";
+const READ_ONLY_TOKEN = "e2e-readonly-token";
 const LIMITED_TOKEN = "e2e-limited-token";
 
 function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
@@ -335,6 +336,38 @@ test("Files success state presents the reference composition with live Storage r
   ).toBe(true);
 });
 
+test("read-only Files allows selecting and browsing without write commands", async ({
+  page,
+}) => {
+  const apiRequests = apiRequestsOf(page);
+  await openFiles(page, READ_ONLY_TOKEN);
+  const row = page.getByRole("row", { name: "文件条目 sample.mkv" });
+  await row.getByRole("checkbox").check();
+  await expect(row.getByRole("checkbox")).toBeChecked();
+  await expect(
+    page.getByText("已选择 1 个文件（1.5 GB）", { exact: true }),
+  ).toBeVisible();
+  for (const name of [
+    "新建文件夹",
+    "新建文本文件",
+    "批量整理",
+    "复制",
+    "移动",
+    "删除",
+  ]) {
+    await expect(
+      page.getByRole("button", { name, exact: true }),
+    ).toBeDisabled();
+  }
+  await row.click({ button: "right", position: { x: 40, y: 20 } });
+  await expect(page.getByRole("menuitem", { name: "整理" })).toHaveCount(0);
+  await openDirectory(page, "Movies");
+  await expect(
+    page.getByText("已选择 0 个文件", { exact: true }),
+  ).toBeVisible();
+  expect(apiRequests.every(({ method }) => method === "GET")).toBe(true);
+});
+
 test("directory navigation, breadcrumb return, refresh and selection reset", async ({
   page,
 }) => {
@@ -529,7 +562,7 @@ test("a folder selection starts the bounded discovery journey instead of a direc
     timeout: 30_000,
   });
   // Zero mutation is advertised truthfully in the card's own wording.
-  await expect(card.getByText(/零媒体变更/)).toBeVisible();
+  await expect(card.getByText(/分析与翻页不会修改文件/)).toBeVisible();
   await expect(card.getByRole("button", { name: /整批复核/ })).toBeVisible();
 });
 
@@ -617,10 +650,10 @@ test("the same-page preparation links the summary and confirms one exact subset"
   ).toHaveText("本次确认");
   await expect(
     batchSummary.locator("> div").filter({ hasText: "本次确认" }).locator("dd"),
-  ).toHaveText("1 项");
+  ).toHaveText("1");
   await expect(
     card.getByText(
-      "提交前不修改任何文件；确认后只提交下列已选文件。目标路径、操作和对来源的影响以本页所示方案为准。",
+      "确认后只提交下列已选文件。目标路径、操作和对来源的影响以本页所示方案为准。",
       { exact: true },
     ),
   ).toBeVisible();
@@ -629,11 +662,16 @@ test("the same-page preparation links the summary and confirms one exact subset"
   ).toBeVisible();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
 
-  // Slice53 RO-3: the proved admission closes the preparation card and hands
-  // the exact durable task to the existing task-center selection, whose
-  // existing detail opens — never a second execution-results surface.
-  await expect(page).toHaveURL(/\/operations\?.*run=organize-task-e2e-001/);
+  // The proved admission closes the preparation card and opens the shared
+  // detail for the exact Task over the original Files directory.
+  await expect(page).toHaveURL(
+    /\/resourcelib\/files\?.*run=organize-task-e2e-001/,
+  );
+  await expect(card).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "文件", exact: true }),
+  ).toBeVisible();
 });
 
 test("the Files URL preparation identity reconnects the same card with no duplicate admission", async ({
@@ -719,13 +757,13 @@ test("a budget-limited preparation refuses to freeze and offers the narrowing re
   // The honest incomplete outcome: the truncated prefix is never offered as
   // an executable subset, and the same preparation states the reason and the
   // only legal next action.
-  await expect(page.getByText("准备未完成", { exact: true })).toBeVisible();
   await expect(
-    page.getByText("未完整遍历：超出安全深度上限。", { exact: true }),
+    page.getByRole("heading", { name: "未能完整检查所选目录", exact: true }),
   ).toBeVisible();
+  await expect(page.getByText("发现范围不完整", { exact: true })).toBeVisible();
   await expect(
     page.getByText(
-      "本次不会执行整理；请关闭本弹窗返回原文件页，缩小选择范围后重新发起。",
+      "遍历达到范围限制，本次未产生可确认方案，也未变更媒体。回到文件页缩小范围。",
       { exact: true },
     ),
   ).toBeVisible();

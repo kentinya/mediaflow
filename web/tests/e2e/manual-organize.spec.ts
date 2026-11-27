@@ -555,13 +555,12 @@ test.describe("manual organize journey", () => {
     ).toHaveLength(0);
   });
 
-  test("a terminal failed Task states its durable failure in the task center", async ({
+  test("a completed Task with a missing file Result preserves its last known evidence", async ({
     page,
   }) => {
-    // A terminal failure is durable, truthful evidence, never a malformed
-    // read: the same run detail that owns the task presents the failed file's
-    // bounded finding and the explicit next step, and the read never replays
-    // or submits the uncertain work.
+    // This fixture has a completed flow and an item with a last failed stage
+    // but no formal Result. The exact finding and legal next action stay
+    // readable, without turning it into a documented media effect.
     await page.goto("/operations?run=task-001");
     await connect(page, VIEWER_TOKEN);
 
@@ -581,7 +580,7 @@ test.describe("manual organize journey", () => {
     await expect(
       evidence
         .locator(".mf-run-evidence-facts")
-        .getByText("文件处理已结束，结果未记录"),
+        .getByText("文件结果缺失", { exact: true }),
     ).toBeVisible();
     await expect(evidence.getByText(/元数据服务未完成查询/)).toBeVisible();
     await expect(evidence.getByText("最后已知状态")).toBeVisible();

@@ -230,8 +230,8 @@ test("the Task Center recovery search submits the current year to the Provider",
   await expect(recovery).toBeVisible();
 
   // The correction form starts from the saved original query and year.
-  const title = recovery.getByLabel("搜索标题");
-  const year = recovery.getByLabel("年份（可留空）");
+  const title = recovery.getByRole("textbox", { name: "标题", exact: true });
+  const year = recovery.getByRole("spinbutton", { name: "年份", exact: true });
   await expect(title).toHaveValue("YearRecovery");
   await expect(year).toHaveValue("2025");
 
@@ -245,7 +245,7 @@ test("the Task Center recovery search submits the current year to the Provider",
       new URL(response.url()).pathname ===
         `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
   );
-  await recovery.getByRole("button", { name: "搜索作品" }).click();
+  await recovery.getByRole("button", { name: "搜索元数据" }).click();
   expect((await rejectedSearch).status()).toBe(400);
   await expect(recovery.getByText(/本次搜索没有完成/)).toBeVisible();
   await expect(recovery.getByText(/1870–2100/)).toBeVisible();
@@ -269,9 +269,11 @@ test("the Task Center recovery search submits the current year to the Provider",
       new URL(response.url()).pathname ===
         `/api/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
   );
-  await recovery.getByRole("button", { name: "搜索作品" }).click();
+  await recovery.getByRole("button", { name: "搜索元数据" }).click();
   expect((await firstSearch).status()).toBe(200);
-  await expect(recovery.getByRole("radio", { name: /ID 733/ })).toBeVisible();
+  await expect(
+    recovery.getByRole("radio", { name: /TMDB #733/ }),
+  ).toBeVisible();
   expect(await probeCalls(request)).toContainEqual({
     mediaType: "movie",
     title: "YearRecovery",
@@ -282,9 +284,13 @@ test("the Task Center recovery search submits the current year to the Provider",
   // the explicit null reaches the Provider instead of the original 2025 (whose
   // search really returns nothing).
   await year.fill("");
-  await recovery.getByRole("button", { name: "搜索作品" }).click();
-  await expect(recovery.getByRole("radio", { name: /ID 733/ })).toHaveCount(0);
-  await expect(recovery.getByRole("radio", { name: /ID 734/ })).toBeVisible();
+  await recovery.getByRole("button", { name: "搜索元数据" }).click();
+  await expect(recovery.getByRole("radio", { name: /TMDB #733/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    recovery.getByRole("radio", { name: /TMDB #734/ }),
+  ).toBeVisible();
   expect(await probeCalls(request)).toContainEqual({
     mediaType: "movie",
     title: "YearRecovery",
@@ -292,7 +298,7 @@ test("the Task Center recovery search submits the current year to the Provider",
   });
 
   // Saving the cleared-year candidate re-analyzes through the same Provider.
-  await recovery.getByRole("radio", { name: /ID 734/ }).check();
+  await recovery.getByRole("radio", { name: /TMDB #734/ }).check();
   const decision = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -452,8 +458,11 @@ test("the Files dialog search submits the current year and completes the correct
   // The resolved file returns to the same overview with its exact read-back.
   await expect(overview).toBeVisible({ timeout: 30_000 });
   await expect(
-    card.getByText(`「${PROBE_FILE}」已可确认。整理方案已更新，整理尚未提交。`),
+    overview.getByRole("heading", { name: "整理方案已更新" }),
   ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    overview.getByRole("button", { name: `查看 ${PROBE_FILE}` }),
+  ).toContainText("可确认");
   expect(
     commands.filter(
       (command) =>
@@ -513,7 +522,9 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
 
   // The operator deliberately picks the 2024 identity; its re-analysis proves
   // the work has no Season 4 and keeps the same file editable for correction.
-  await card.getByRole("radio", { name: /黑袍纠察队 \(2024\)/ }).check();
+  await card
+    .getByRole("radio", { name: /黑袍纠察队 · 2024.*TMDB #831/ })
+    .check();
   await saveDialogDecision(page, card);
   await driveDiscoveryFor(page, request, discoveryId as string);
   await expect(card.getByText("修正作品搜索")).toBeVisible({ timeout: 30_000 });
@@ -548,15 +559,23 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
   // The Task Center's first render reads the decision the Files dialog
   // already loaded for this exact item: saved title, year, TV type and the
   // failure reason — never an empty movie form.
-  await expect(recovery.getByLabel("搜索标题")).toHaveValue(SEASON_PROBE_TITLE);
-  await expect(recovery.getByLabel("年份（可留空）")).toHaveValue("2024");
+  await expect(
+    recovery.getByRole("textbox", { name: "标题", exact: true }),
+  ).toHaveValue(SEASON_PROBE_TITLE);
+  await expect(
+    recovery.getByRole("spinbutton", { name: "年份", exact: true }),
+  ).toHaveValue("2024");
   await expect(recovery.getByLabel("作品类型")).toHaveValue("tv");
   await expect(
-    recovery.getByText(/上次修正未通过验证：Season 4 is not available/),
+    recovery.getByText("Season 4 is not available for '黑袍纠察队' (2024)", {
+      exact: true,
+    }),
   ).toBeVisible();
-  await expect(
-    recovery.getByRole("button", { name: "保存并重新分析" }),
-  ).toBeEnabled();
+  const saveCorrection = recovery.getByRole("button", {
+    name: "保存并重新分析",
+  });
+  // A rejected candidate is evidence, not an already selected correction.
+  await expect(saveCorrection).toBeDisabled();
 
   // Resolve this exact TaskItem for the durable engine passes below. The
   // opened detail address names the exact run and item, and the same Task's
@@ -585,9 +604,16 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
 
   // Only the year is cleared; the saved title and TV type stay. The save and
   // its zero-mutation re-analysis stay on the same Task with no file effect.
-  await clearProbeCalls(request);
-  const yearInput = recovery.getByLabel("年份（可留空）");
+  const yearInput = recovery.getByRole("spinbutton", {
+    name: "年份",
+    exact: true,
+  });
   await yearInput.fill("");
+  await recovery.getByRole("button", { name: "搜索元数据" }).click();
+  await recovery.getByRole("radio", { name: /保留当前搜索条件/ }).check();
+  await expect(saveCorrection).toBeEnabled();
+  // Assert the Worker search separately from the explicit form search.
+  await clearProbeCalls(request);
   const decision = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -598,7 +624,7 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
       response.request().method() === "POST" &&
       /\/recovery\/continue$/.test(new URL(response.url()).pathname),
   );
-  await recovery.getByRole("button", { name: "保存并重新分析" }).click();
+  await saveCorrection.click();
   const decisionBody = (await decision).request().postDataJSON() as Record<
     string,
     unknown
@@ -609,18 +635,21 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
     year: null,
     mediaType: "tv",
   });
+  expect(decisionBody).not.toHaveProperty("providerId");
   expect((await continuation).status()).toBe(202);
 
   // The unbounded re-search reaches the Provider without the filename year.
   await advanceRecoveryItem(request, itemId);
-  await expect(
-    recovery.getByRole("radio", { name: /候选 1 黑袍纠察队 \(2024\)/ }),
-  ).toBeVisible({
+  const wrongIdentity = recovery.getByRole("radio", {
+    name: /黑袍纠察队 · 2024.*TMDB #831/,
+  });
+  const correctIdentity = recovery.getByRole("radio", {
+    name: /黑袍纠察队 · 2019.*TMDB #832/,
+  });
+  await expect(wrongIdentity).toBeVisible({
     timeout: 60_000,
   });
-  await expect(
-    recovery.getByRole("radio", { name: /候选 2 黑袍纠察队 \(2019\)/ }),
-  ).toBeVisible();
+  await expect(correctIdentity).toBeVisible();
   expect(await probeCalls(request)).toContainEqual({
     mediaType: "tv",
     title: SEASON_PROBE_TITLE,
@@ -629,13 +658,16 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
 
   // The 2019 identity owns Season 4 E01: choosing it prepares the real
   // summary on the same Task.
-  await recovery
-    .getByRole("radio", { name: /候选 2 黑袍纠察队 \(2019\)/ })
-    .check();
+  await correctIdentity.check();
   const secondDecision = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
       /\/recovery\/decision$/.test(new URL(response.url()).pathname),
+  );
+  const secondContinuation = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/continue$/.test(new URL(response.url()).pathname),
   );
   await recovery.getByRole("button", { name: "保存并重新分析" }).click();
   const secondBody = (await secondDecision).request().postDataJSON() as Record<
@@ -643,6 +675,7 @@ test("a wrong same-name candidate reaches the Task Center with its saved correct
     unknown
   >;
   expect(secondBody).toMatchObject({ kind: "metadata", candidateRank: 2 });
+  expect((await secondContinuation).status()).toBe(202);
   await advanceRecoveryItem(request, itemId);
 
   // The pending summary is readable in the same Task Center panel. The search,

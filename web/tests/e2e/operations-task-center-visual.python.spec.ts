@@ -429,7 +429,7 @@ test("capture the in-context creation summary and confirmation journey", async (
   await expect(
     card.getByRole("heading", { name: "整批复核", exact: true }),
   ).toBeVisible();
-  await expect(card.getByText("提交前不修改任何文件").first()).toBeVisible();
+  await expect(card.getByText(/确认后只提交下列已选文件/)).toBeVisible();
   const confirmation = page.getByRole("button", { name: /确认整理 \d+ 项/ });
   await expect(confirmation).toBeVisible();
   await page.waitForTimeout(250);
