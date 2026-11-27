@@ -406,7 +406,10 @@ export interface TaskItemRecoveryPanelProps {
    * accepted response, an explicit refusal and a lost response all keep the
    * same pre-request read-back baseline.
    */
-  readonly onAnalysisStarted?: (savedChoice?: string) => void;
+  readonly onAnalysisStarted?: (
+    savedChoice?: string,
+    kind?: TaskItemDecisionKind,
+  ) => void;
   /** Called after this exact item's analysis continuation was accepted. */
   readonly onAnalysisRequested?: () => void;
   /** The response was rejected or unknown; expose the existing recovery action. */
@@ -1013,6 +1016,7 @@ export function TaskItemRecoveryPanel({
     expectedCheckpointVersion: string,
     manageBusy = true,
     savedChoice?: string,
+    savedKind?: TaskItemDecisionKind,
   ) => {
     if (manageBusy) {
       if (busy || repeatLocked) return false;
@@ -1022,11 +1026,13 @@ export function TaskItemRecoveryPanel({
       // follow-up is part of the same operator action, not a second command.
       updateRecoverySession({ pendingAction: "continue" });
     }
+    const receipt =
+      decisionReceipt?.checkpointVersion === expectedCheckpointVersion
+        ? decisionReceipt
+        : null;
     onAnalysisStarted?.(
-      savedChoice ??
-        (decisionReceipt?.checkpointVersion === expectedCheckpointVersion
-          ? decisionReceipt.label
-          : undefined),
+      savedChoice ?? receipt?.label,
+      savedKind ?? receipt?.kind,
     );
     updateRecoverySession({
       analysis: {
@@ -1103,9 +1109,7 @@ export function TaskItemRecoveryPanel({
         : String(value.rank) === draft.selectedChoice,
     );
     if (kind === "classification" && choice !== undefined) {
-      return [choice.mediaLibraryId, choice.relativePath || "根目录"]
-        .filter(Boolean)
-        .join(" / ");
+      return classificationChoiceLabel(choice, filesDecision);
     }
     return choice?.name ?? "";
   };
@@ -1173,7 +1177,12 @@ export function TaskItemRecoveryPanel({
         ),
       );
       if (updated.checkpoint.permittedActionIds.includes("retry")) {
-        await continueAt(updated.checkpoint.checkpointVersion, false, label);
+        await continueAt(
+          updated.checkpoint.checkpointVersion,
+          false,
+          label,
+          kind,
+        );
       } else {
         // A skip/ignore decision ends this exact item; there is no analysis to
         // wait for. The response's own checkpoint is the durable result.
@@ -1933,6 +1942,11 @@ export function TaskItemRecoveryPanel({
         {message &&
           message !== "决定未保存，未请求分析" &&
           submittedConfirmation === null &&
+          !(
+            filesDecision &&
+            decision !== null &&
+            message.startsWith("选择已保存")
+          ) &&
           !savedDecisionAnalysisVisible && (
             <StatusBanner
               variant={repeatLocked ? "warning" : "info"}
@@ -2396,6 +2410,13 @@ export function TaskItemRecoveryPanel({
       )}
     </section>
   );
+}
+
+function classificationChoiceLabel(
+  choice: TaskItemDecision["choices"][number],
+  files: boolean,
+): string {
+  return `${(files ? choice.name : choice.mediaLibraryId) || "媒体库"} / ${choice.relativePath || "根目录"}`;
 }
 
 function DecisionForm(props: {
@@ -2913,7 +2934,7 @@ function DecisionForm(props: {
               () => props.onSelectChoice(String(choice.rank)),
               approvedRows ? null : `目标 ${choice.rank}`,
               approvedRows
-                ? `${(files ? choice.name : choice.mediaLibraryId) || "媒体库"} / ${choice.relativePath || "根目录"}`
+                ? classificationChoiceLabel(choice, files)
                 : choice.name,
               approvedRows
                 ? [

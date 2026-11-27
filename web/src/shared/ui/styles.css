@@ -10516,6 +10516,25 @@ tr[aria-selected="true"] {
   gap: 12px;
 }
 
+.mf-organize-overview-warning {
+  border: 1px solid #f3dfbc;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff7e9;
+  color: #744005;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.mf-organize-overview-warning p {
+  margin: 2px 0 0;
+}
+
+.mf-organize-overview-scope {
+  margin-inline-end: auto;
+}
+
 .mf-organize-overview-head {
   display: flex;
   align-items: flex-start;

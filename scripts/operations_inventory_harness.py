@@ -792,6 +792,8 @@ def build_managed_fixture(
     (dialog_root / "DialogRecognize.2043.mkv").write_bytes(
         b"slice59 recognition decision synthetic media"
     )
+    next_problem = dialog_root / "DialogNextBlocker.2053.mkv"
+    next_problem.write_bytes(b"slice59 recognition then classification synthetic media")
     (dialog_root / "DialogCandidate.2044.mkv").write_bytes(
         b"slice59 metadata candidate synthetic media"
     )
@@ -833,6 +835,7 @@ def build_managed_fixture(
     os.utime(dialog_root / "DialogSkip.2041.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogMixed.2042.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogRecognize.2043.mkv", (conflict_time, conflict_time))
+    os.utime(next_problem, (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogCandidate.2044.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogSkipSibling.2045.mkv", (conflict_time, conflict_time))
     os.utime(dialog_root / "DialogLostResponse.2046.mkv", (conflict_time, conflict_time))
@@ -1940,6 +1943,15 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "DialogRecognize",
                         year=2043,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "753",
+                        MediaType.MOVIE,
+                        "DialogNextBlocker",
+                        year=2053,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -5000,6 +5012,7 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Dialog/Dialog01.2011.mkv",
         "Dialog/DialogMixed.2042.mkv",
         "Dialog/DialogRecognize.2043.mkv",
+        "Dialog/DialogNextBlocker.2053.mkv",
         "Dialog/DialogCandidate.2044.mkv",
         "Dialog/DialogSkipSibling.2045.mkv",
         "Dialog/DialogLostResponse.2046.mkv",

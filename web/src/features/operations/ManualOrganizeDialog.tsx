@@ -60,7 +60,10 @@ import type {
 } from "../../entities/operations/preview";
 import type { MediaLibraryListItem } from "../../entities/library/media-library-files";
 import type { SystemResourceLibrary } from "../../entities/library/system-status";
-import type { TaskItemRecoveryModel } from "../../entities/operations/task-item-recovery";
+import type {
+  TaskItemDecisionKind,
+  TaskItemRecoveryModel,
+} from "../../entities/operations/task-item-recovery";
 import { RUN_ITEM_STATUS_LABELS } from "../../entities/operations/run-detail";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -2908,6 +2911,7 @@ export function ManualOrganizeDialog({
   const decisionBaselineFor = (
     item: ManualPreviewItemModel,
     savedChoice?: string,
+    savedKind?: TaskItemDecisionKind,
   ): DecisionReturn | null => {
     if (preview === undefined) return null;
     return {
@@ -2925,15 +2929,21 @@ export function ManualOrganizeDialog({
       savedChoice,
       previewId: preview.previewId,
       signature: previewItemResultSignature(item),
-      problem: previewItemProblemKind(item, !filesHost),
-      displayProblem: previewItemProblemKind(item),
+      problem: savedKind ?? previewItemProblemKind(item, !filesHost),
+      displayProblem: savedKind ?? previewItemProblemKind(item),
       draftRevision: fileDraftRevision.current,
     };
   };
-  const beginFilesDecisionReturn = (itemId: string, savedChoice?: string) => {
+  const beginFilesDecisionReturn = (
+    itemId: string,
+    savedChoice?: string,
+    savedKind?: TaskItemDecisionKind,
+  ) => {
     const item = items.find((value) => value.itemId === itemId);
     const baseline =
-      item === undefined ? null : decisionBaselineFor(item, savedChoice);
+      item === undefined
+        ? null
+        : decisionBaselineFor(item, savedChoice, savedKind);
     if (baseline !== null)
       setFilesDecisionReturn({ ...baseline, analysisPhase: "starting" });
   };
@@ -4665,9 +4675,7 @@ export function ManualOrganizeDialog({
       : staleSummary
         ? `${blocker.reason} ${blocker.nextAction}`
         : pendingCount > 0
-          ? filesConfirmableCount > 0
-            ? "可先处理下列文件，也可以只确认已就绪且已纳入的文件。"
-            : "打开下列文件处理问题。方案更新后，可以核对并确认已就绪的文件。"
+          ? "可先处理下列文件，也可以只确认已就绪且已纳入的文件。"
           : filesConfirmableCount > 0
             ? readyCopy
             : "本次没有可确认的文件，仍可查看每项的当前状态。";
@@ -4717,8 +4725,13 @@ export function ManualOrganizeDialog({
           headingId="mf-organize-overview-title"
           headingRef={overviewHeadingRef}
         />
-        {filesOverviewNotice !== null &&
-        filesOverviewNotice.planUpdated !== true ? (
+        {filesOverviewNotice?.kind === "warning" ? (
+          <div className="mf-organize-overview-warning" role="status">
+            <strong>{filesOverviewNotice.title ?? "出现新的待处理问题"}</strong>
+            <p>{filesOverviewNotice.text}</p>
+          </div>
+        ) : filesOverviewNotice !== null &&
+          filesOverviewNotice.planUpdated !== true ? (
           <StatusBanner
             variant={filesOverviewNotice.kind}
             title={
@@ -5431,13 +5444,13 @@ export function ManualOrganizeDialog({
                 actionBarTargetId={
                   filesHost ? FILES_REVIEW_ACTION_ID : undefined
                 }
-                onAnalysisStarted={(savedChoice) => {
+                onAnalysisStarted={(savedChoice, savedKind) => {
                   // The baseline reads the edit revision captured at the
                   // operator's action, never during this render. Only the
                   // Files host returns to its overview from this native form;
                   // the in-place host keeps the panel's own status handling.
                   if (!filesHost) return;
-                  beginFilesDecisionReturn(item.itemId, savedChoice);
+                  beginFilesDecisionReturn(item.itemId, savedChoice, savedKind);
                 }}
                 onAnalysisRequested={decisionAnalysisRequested}
                 onAnalysisFailed={(unknown) => {
@@ -6579,7 +6592,9 @@ export function ManualOrganizeDialog({
     </>
   ) : filesOverviewFooter ? (
     <>
-      <span className="mf-dashboard-meta">{preparationScopeSummary}</span>
+      <span className="mf-dashboard-meta mf-organize-overview-scope">
+        {preparationScopeSummary}
+      </span>
       <span className="mf-modal-footer-spacer" />
       <Button
         type="button"
@@ -6635,26 +6650,26 @@ export function ManualOrganizeDialog({
         </Button>
       </span>
       <span className="mf-modal-footer-spacer" />
-      <span className="mf-organize-footer-paging">
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={
-            analysisPagePosition <= 0 || analysisPageItemIds.length === 0
-          }
-          onClick={() => goTo(analysisPagePosition - 1, analysisPageItemIds)}
-        >
-          上一项
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={analysisPagePosition >= analysisPageItemIds.length - 1}
-          onClick={() => goTo(analysisPagePosition + 1, analysisPageItemIds)}
-        >
-          下一项
-        </Button>
-      </span>
+      {analysisPageItemIds.length > 1 ? (
+        <span className="mf-organize-footer-paging">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={analysisPagePosition <= 0}
+            onClick={() => goTo(analysisPagePosition - 1, analysisPageItemIds)}
+          >
+            上一项
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={analysisPagePosition >= analysisPageItemIds.length - 1}
+            onClick={() => goTo(analysisPagePosition + 1, analysisPageItemIds)}
+          >
+            下一项
+          </Button>
+        </span>
+      ) : null}
       <div id={FILES_REVIEW_ACTION_ID} className="mf-organize-footer-action">
         {analysisReadbackFile?.analysisPhase === "unknown" ? (
           <Button type="button" onClick={() => void retryAnalysisReadback()}>
@@ -6966,7 +6981,14 @@ export function ManualOrganizeDialog({
       busy={closeLocked}
       title={pageTitle}
       titleId={titleId}
-      description={null}
+      description={
+        filesHost &&
+        !organizeFlowEnded &&
+        (!firstPlanPreparationView || analysisReadbackFile !== null) &&
+        !handoffPending
+          ? "每次复核一个主文件及其关联附件。分析与翻页不会修改文件。确认后可在任务中心查看结果。"
+          : null
+      }
       closeLabel="关闭整理弹窗"
       closeDisabled={closeLocked}
       onRequestClose={attemptClose}

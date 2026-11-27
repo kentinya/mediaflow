@@ -3495,6 +3495,128 @@ test("Task59.1 a missing metadata candidate is corrected on the current file and
   expect(finalTargets[0]).toContain("DialogRename (2024)");
 });
 
+test("Files analysis reveals a classification problem after recognition and confirms only the final plan", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(90_000);
+  const filename = "DialogNextBlocker.2053.mkv";
+  const fileState = async () => {
+    const response = await request.get(
+      `${BASE}/__harness__/manual-file-state?file=${encodeURIComponent(`Dialog/${filename}`)}`,
+    );
+    expect(response.ok()).toBe(true);
+    return response.json();
+  };
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page);
+  const commands = recordCommands(page);
+  const executePosts = () =>
+    commands.filter(
+      ({ method, path }) =>
+        method === "POST" && /\/previews\/[^/]+\/execute$/.test(path),
+    );
+  await openDialogDirectory(page, filename);
+  await selectFiles(page, [filename]);
+  const admission = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/files/discoveries"),
+  );
+  await page.getByRole("button", { name: "批量整理" }).click();
+  const admitted = await admission;
+  expect(admitted.ok()).toBe(true);
+  const { discoveryId, organizeTaskId } = (await admitted.json()) as {
+    discoveryId: string;
+    organizeTaskId: string;
+  };
+  expect(organizeTaskId).toBeTruthy();
+
+  const card = page.getByRole("dialog", { name: "整理所选文件" });
+  const overview = card.getByRole("region", { name: "本次整理概览" });
+  const file = overview.getByRole("button", { name: `查看 ${filename}` });
+  const waitForAnalysis = async (savedChoice: string) => {
+    await saveNativeDecision(page, card);
+    await expect(card.getByText("正在重新分析", { exact: true })).toBeVisible();
+    await expect(card.getByText("已保存的决定", { exact: true })).toBeVisible();
+    await expect(card.getByText(savedChoice, { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "下一项" })).toHaveCount(0);
+    expect(executePosts()).toHaveLength(0);
+  };
+
+  const firstPlan = await driveDiscoveryFor(page, request, discoveryId);
+  await file.click();
+  await expect(
+    card.getByRole("heading", { name: "选择识别类型" }),
+  ).toBeVisible();
+  await card.getByRole("radio", { name: "Classification probe" }).check();
+  await waitForAnalysis("Classification probe");
+
+  const classificationPlan = await driveDiscoveryFor(
+    page,
+    request,
+    discoveryId,
+  );
+  expect(classificationPlan).not.toBe(firstPlan);
+  await expect(overview.getByText("需要处理新的分类问题")).toBeVisible();
+  await expect(overview).toContainText(
+    "识别决定已保存。新的分析发现分类目标需要确认，可从本行继续。",
+  );
+  await expect(file).toContainText("分类恢复 · 待处理");
+  await expect(
+    card.getByRole("button", { name: "整批复核 · 0 项" }),
+  ).toBeDisabled();
+  await file.click();
+  await expect(
+    card.getByRole("heading", { name: "选择分类目标" }),
+  ).toBeVisible();
+  await expect(card.getByText("决定与重新分析状态")).toHaveCount(0);
+  const classification = card.getByRole("radio", {
+    name: "Probe documentary library / Movies/Probe",
+  });
+  await classification.check();
+  await waitForAnalysis("Probe documentary library / Movies/Probe");
+
+  const finalPlan = await driveDiscoveryFor(page, request, discoveryId);
+  expect(finalPlan).not.toBe(classificationPlan);
+  await expect(
+    overview.getByRole("heading", { name: "整理方案已更新" }),
+  ).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "整批复核 · 1 项" }),
+  ).toBeEnabled();
+  await card.getByRole("button", { name: "整批复核 · 1 项" }).click();
+  await expect(card.getByRole("region", { name: "来源与目标" })).toContainText(
+    "Movies/Probe",
+  );
+  expect(await fileState()).toEqual({
+    sourceExists: true,
+    destinationTargets: [],
+  });
+  expect(executePosts()).toHaveLength(0);
+
+  await card.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(page).toHaveURL(`/operations?run=${organizeTaskId}`);
+  expect(executePosts()).toHaveLength(1);
+  expect(executePosts()[0]?.path).toContain(`/previews/${finalPlan}/execute`);
+  const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(await worker.json()).toMatchObject({
+    completed: true,
+    taskId: organizeTaskId,
+  });
+  const detail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(
+    detail.getByRole("heading", { name: /流程已完成/ }),
+  ).toBeVisible();
+  await expect(detail.getByRole("region", { name: "文件结果" })).toContainText(
+    /成功\s*1/,
+  );
+  expect(await fileState()).toMatchObject({
+    sourceExists: false,
+    destinationTargets: [expect.stringContaining("Movies/Probe")],
+  });
+});
+
 test("Task59.1 a lost direct analysis response stays locked until the same preparation is read back", async ({
   page,
   request,
