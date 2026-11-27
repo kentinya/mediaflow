@@ -33,6 +33,7 @@ import {
   ManualOrganizeDialog,
   type ManualOrganizeDialogSession,
 } from "../operations/ManualOrganizeDialog";
+import { TaskItemRecoverySessionProvider } from "../operations/task-item-recovery-session";
 import type {
   StorageFilesEntry,
   StorageFilesModel,
@@ -4494,12 +4495,14 @@ export function StorageFilesPage() {
         />
       )}
       {organizeSession !== null && (
-        <ManualOrganizeDialog
-          host="files"
-          session={organizeSession}
-          onClose={closeOrganizeDialog}
-          onHandoff={handoffToTaskCenter}
-        />
+        <TaskItemRecoverySessionProvider key={token ?? "disconnected"}>
+          <ManualOrganizeDialog
+            host="files"
+            session={organizeSession}
+            onClose={closeOrganizeDialog}
+            onHandoff={handoffToTaskCenter}
+          />
+        </TaskItemRecoverySessionProvider>
       )}
     </div>
   );

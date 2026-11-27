@@ -1110,10 +1110,14 @@ export function ManualOrganizeDialog({
     readonly filename: string;
     readonly source: string;
     readonly pageLabel: string;
+    readonly pagePosition: number;
+    readonly pageItemIds: readonly string[];
+    readonly analysisPhase?: "starting" | "checking" | "waiting" | null;
     readonly savedChoice?: string;
     readonly previewId: string;
     readonly signature: string;
     readonly problem: string | null;
+    readonly displayProblem: string | null;
     readonly draftRevision: number;
   }
   const [filesDecisionReturn, setFilesDecisionReturn] =
@@ -1829,6 +1833,15 @@ export function ManualOrganizeDialog({
       }
       if (filesHost && options.itemId !== "") {
         setFilesCorrectionRequest({ itemId: options.itemId, savedChoice });
+        setFilesDecisionReturn((previous) =>
+          previous?.itemId === options.itemId
+            ? {
+                ...previous,
+                analysisPhase: "starting",
+                savedChoice: savedChoice ?? previous.savedChoice,
+              }
+            : previous,
+        );
       }
       const analyzed = await requestOrganizeDiscoveryAnalysis(token, {
         discoveryId: preparation.discoveryId,
@@ -1874,6 +1887,13 @@ export function ManualOrganizeDialog({
     },
     onSuccess: async (value, variables) => {
       setFilesCorrectionRequest(null);
+      if (filesHost) {
+        setFilesDecisionReturn((previous) =>
+          previous?.itemId === variables.itemId
+            ? { ...previous, analysisPhase: value.analyzed ? "waiting" : null }
+            : previous,
+        );
+      }
       if (variables.onlyAnalysis && variables.itemId === "") {
         if (value.analyzed) {
           setPreparationNotice({
@@ -2157,8 +2177,8 @@ export function ManualOrganizeDialog({
     )
       return;
     handoffDoneRef.current = true;
+    setOpeningTaskDetail(true);
     if (filesHost) {
-      setOpeningTaskDetail(true);
       // Discard exact pre-admission reads. The destination can mount while its
       // data is loading, and shares the same in-flight read with this prefetch.
       const overview = runOverviewQueryOptions(token, taskId);
@@ -2666,15 +2686,18 @@ export function ManualOrganizeDialog({
     }
   }
   /** One browse-only page move: it saves nothing and runs no analysis. */
-  const goTo = (position: number) => {
+  const goTo = (
+    position: number,
+    itemIds: readonly string[] = items.map((item) => item.itemId),
+  ) => {
     clearAnalysisReadback();
     setFilesDecisionReturn(null);
     const clamped = Math.max(
       0,
-      Math.min(position, Math.max(items.length - 1, 0)),
+      Math.min(position, Math.max(itemIds.length - 1, 0)),
     );
     setIndex(clamped);
-    setAnchorItemId(items[clamped]?.itemId ?? null);
+    setAnchorItemId(itemIds[clamped] ?? null);
   };
   const currentItem = items[pageInfo];
   const currentItemId = currentItem?.itemId ?? null;
@@ -2788,10 +2811,13 @@ export function ManualOrganizeDialog({
           ).text.replace(/^来源 /, "")
         : `${item.sourceStorageId ?? "—"}:${item.sourcePath ?? "—"}`,
       pageLabel: `第 ${pageInfo + 1} / ${items.length} 个文件`,
+      pagePosition: pageInfo,
+      pageItemIds: items.map((value) => value.itemId),
       savedChoice,
       previewId: preview.previewId,
       signature: previewItemResultSignature(item),
       problem: previewItemProblemKind(item, !filesHost),
+      displayProblem: previewItemProblemKind(item),
       draftRevision: fileDraftRevision.current,
     };
   };
@@ -2799,7 +2825,8 @@ export function ManualOrganizeDialog({
     const item = items.find((value) => value.itemId === itemId);
     const baseline =
       item === undefined ? null : decisionBaselineFor(item, savedChoice);
-    if (baseline !== null) setFilesDecisionReturn(baseline);
+    if (baseline !== null)
+      setFilesDecisionReturn({ ...baseline, analysisPhase: "starting" });
   };
   /**
    * Capture the exact visible file and edit position before this item's
@@ -2913,6 +2940,13 @@ export function ManualOrganizeDialog({
         // The in-place result for this exact baseline is already stated; the
         // late admission proof must not replace it with a wait.
         return;
+      }
+      if (filesHost) {
+        setFilesDecisionReturn((previous) =>
+          previous?.itemId === baseline.itemId
+            ? { ...previous, analysisPhase: "waiting" }
+            : previous,
+        );
       }
       setAnalysisReadback({ ...baseline, phase: "awaiting" });
       setNotices((previous) => ({
@@ -3103,7 +3137,12 @@ export function ManualOrganizeDialog({
       clearAnalysisReadback();
       return;
     }
-    if (preview.previewId === filesDecisionReturn.previewId) return;
+    if (
+      preparationStatusRunning ||
+      preparation?.previewId !== preview.previewId ||
+      !preview.current
+    )
+      return;
     if (filesDecisionReturn.draftRevision !== fileDraftRevision.current) {
       // A newer edit belongs to the operator, not to the old response.
       setFilesDecisionReturn(null);
@@ -3111,6 +3150,21 @@ export function ManualOrganizeDialog({
       return;
     }
     if (filesAnalysisArrivalView !== null) return;
+    const item = filesDecisionReturnItem;
+    if (preview.previewId === filesDecisionReturn.previewId) {
+      // Some plan projections enrich a previously blocked item in-place.
+      // Show those readable facts once analysis is accepted, but a same-id
+      // read cannot prove arrival of a newly generated overview.
+      if (
+        filesDecisionReturn.analysisPhase === "waiting" &&
+        item?.current &&
+        executableIds.includes(item.itemId) &&
+        filesDecisionReturnSignature !== filesDecisionReturn.signature
+      ) {
+        setFilesDecisionReturn({ ...filesDecisionReturn, analysisPhase: null });
+      }
+      return;
+    }
     const arriveAtOverview = (
       notice: NonNullable<typeof filesOverviewNotice>,
     ) => {
@@ -3130,7 +3184,6 @@ export function ManualOrganizeDialog({
       setFilesOverviewFocus({ kind: "heading" });
       setFilesOverviewVisible(true);
     };
-    const item = filesDecisionReturnItem;
     if (item === undefined) {
       // The exact item is absent from the newly linked exact summary. That is
       // this item's own read-back result (for example an explicit ignore),
@@ -3141,7 +3194,15 @@ export function ManualOrganizeDialog({
       });
       return;
     }
+    if (!item.current) {
+      // A superseded item is still history. It cannot prove the result of
+      // this analysis, including a same-family problem or its resolution.
+      return;
+    }
     if (filesDecisionReturnSignature === filesDecisionReturn.signature) {
+      if (filesDecisionReturn.analysisPhase) {
+        setFilesDecisionReturn({ ...filesDecisionReturn, analysisPhase: null });
+      }
       // A newer summary was published for other files. This item's own
       // readable facts did not change, so its analysis result is not proven.
       // If the same-preparation read already proved this analysis and the
@@ -3196,14 +3257,11 @@ export function ManualOrganizeDialog({
           retryAnalysis: false,
         },
       }));
+      if (filesDecisionReturn.analysisPhase) {
+        setFilesDecisionReturn({ ...filesDecisionReturn, analysisPhase: null });
+      }
       // A later exact summary may still publish this item's resolved plan.
       // Keep the same-file wait armed until the operator edits or leaves.
-      return;
-    }
-    if (!item.current) {
-      // A superseded summary can stay readable while the Worker re-plans.
-      // Its item no longer carries this analysis's current result, so the
-      // absence of a problem proves nothing and must not end the wait.
       return;
     }
     // A technical, terminal or otherwise non-decision result is shown where
@@ -3233,6 +3291,8 @@ export function ManualOrganizeDialog({
     filesHost,
     filesOverviewVisible,
     filesReturningToSameFile,
+    preparation?.previewId,
+    preparationStatusRunning,
     preview,
     step,
   ]);
@@ -4833,6 +4893,14 @@ export function ManualOrganizeDialog({
       item.warnings.length > 0 ||
       hasNativeProblem;
     const decisionAnalysisRequested = () => {
+      if (filesHost) {
+        setFilesDecisionReturn((previous) =>
+          previous?.itemId === item.itemId &&
+          previous.analysisPhase === "starting"
+            ? { ...previous, analysisPhase: "waiting" }
+            : previous,
+        );
+      }
       setNotices((previous) => ({
         ...previous,
         [item.itemId]: {
@@ -5201,6 +5269,44 @@ export function ManualOrganizeDialog({
                   beginFilesDecisionReturn(item.itemId, savedChoice);
                 }}
                 onAnalysisRequested={decisionAnalysisRequested}
+                onAnalysisFailed={(unknown) => {
+                  if (!filesHost) return;
+                  const updatePhase = (
+                    phase: DecisionReturn["analysisPhase"],
+                  ) => {
+                    setFilesDecisionReturn((previous) =>
+                      previous?.itemId === item.itemId &&
+                      (previous.analysisPhase === "starting" ||
+                        previous.analysisPhase === "checking")
+                        ? { ...previous, analysisPhase: phase }
+                        : previous,
+                    );
+                  };
+                  if (!unknown) {
+                    updatePhase(null);
+                    return;
+                  }
+                  // A lost response can still have reached the Worker. Keep
+                  // the saved file while the same preparation is read once.
+                  // The recovery session retains its unknown-request lock
+                  // if this read cannot prove that analysis is underway.
+                  updatePhase("checking");
+                  void preparationQuery
+                    .refetch({ cancelRefetch: false })
+                    .then((read) => {
+                      const latest = read.data?.ok ? read.data.model : null;
+                      const analysisObserved =
+                        latest !== null &&
+                        ([
+                          "queued",
+                          "running",
+                          "waiting_stability",
+                          "analyzing",
+                        ].includes(latest.status) ||
+                          latest.previewId !== preparation?.previewId);
+                      updatePhase(analysisObserved ? "waiting" : null);
+                    });
+                }}
                 onDecisionStarted={() => {
                   // The Files host records the exact file and edit position
                   // before this command, so a late terminal result can
@@ -5981,12 +6087,22 @@ export function ManualOrganizeDialog({
     );
   };
 
+  // Once the choice is saved, one snapshot owns the visible analysis stage.
+  // The request session lives outside the paged form, so it can finish or
+  // reconcile a refusal even while only this analysis card is mounted.
   const analysisReadbackFile =
-    filesAnalysisArrivalView?.decision ?? filesSummaryReadback;
+    preparation === undefined || organizeFlowEnded
+      ? null
+      : (filesAnalysisArrivalView?.decision ??
+        (filesReturningToSameFile && filesDecisionReturn?.analysisPhase
+          ? filesDecisionReturn
+          : filesSummaryReadback));
+  const analysisPagePosition = analysisReadbackFile?.pagePosition ?? pageInfo;
+  const analysisPageItemIds =
+    analysisReadbackFile?.pageItemIds ?? items.map((item) => item.itemId);
   const reviewFile = analysisReadbackFile?.itemId ?? currentItemId ?? "";
-  const filesHandoffPending =
-    filesHost && (executeMutation.isPending || openingTaskDetail);
-  const stageTransitionKey = filesHandoffPending
+  const handoffPending = executeMutation.isPending || openingTaskDetail;
+  const stageTransitionKey = handoffPending
     ? "handoff"
     : firstPlanPreparationView
       ? `preparation:${preparationStep ?? preparationStatusView?.title ?? "loading"}`
@@ -6044,7 +6160,10 @@ export function ManualOrganizeDialog({
       renderFilesRecordDetail()
     ) : analysisReadbackFile !== null ? (
       <>
-        {renderFilesReviewHeader(analysisReadbackFile)}
+        {renderFilesReviewHeader({
+          ...analysisReadbackFile,
+          problem: analysisReadbackFile.displayProblem,
+        })}
         {preparationSummaryReadFailed ? (
           <StatusBanner variant="warning" title="新方案暂时无法读取">
             <p>当前文件的新方案尚未读回，整理尚未提交。</p>
@@ -6059,7 +6178,7 @@ export function ManualOrganizeDialog({
           </StatusBanner>
         ) : (
           <OrganizeReanalysis
-            phase={filesCorrectionStarting === null ? "waiting" : "starting"}
+            phase={analysisReadbackFile.analysisPhase ?? "waiting"}
             savedChoice={
               analysisReadbackFile.savedChoice ??
               filesCorrectionStarting?.savedChoice ??
@@ -6148,6 +6267,7 @@ export function ManualOrganizeDialog({
     currentItem !== undefined &&
     !organizeFlowEnded &&
     !currentNativeProblem &&
+    analysisReadbackFile === null &&
     !filesCorrectionWaiting &&
     previewItemTechnicalStage(currentItem) !== "metadata" &&
     filesSettledDecisionFor(currentItem) === null &&
@@ -6254,16 +6374,18 @@ export function ManualOrganizeDialog({
         <Button
           type="button"
           variant="secondary"
-          disabled={pageInfo <= 0 || items.length === 0}
-          onClick={() => goTo(pageInfo - 1)}
+          disabled={
+            analysisPagePosition <= 0 || analysisPageItemIds.length === 0
+          }
+          onClick={() => goTo(analysisPagePosition - 1, analysisPageItemIds)}
         >
           上一项
         </Button>
         <Button
           type="button"
           variant="secondary"
-          disabled={pageInfo >= items.length - 1}
-          onClick={() => goTo(pageInfo + 1)}
+          disabled={analysisPagePosition >= analysisPageItemIds.length - 1}
+          onClick={() => goTo(analysisPagePosition + 1, analysisPageItemIds)}
         >
           下一项
         </Button>
@@ -6454,7 +6576,7 @@ export function ManualOrganizeDialog({
       title={pageTitle}
       titleId={titleId}
       description={
-        firstPlanPreparationView || filesHandoffPending
+        firstPlanPreparationView || handoffPending
           ? null
           : "每次复核一个主文件及其关联附件;分析与翻页零媒体变更,只有最后的确认才会提交执行并在任务中心查看结果。"
       }
@@ -6464,15 +6586,15 @@ export function ManualOrganizeDialog({
       size="detail"
       bodyClassName="mf-modal-body-scroll mf-organize-dialog-body"
       cardClassName="mf-organize-dialog"
-      footer={filesHandoffPending ? undefined : footer}
+      footer={handoffPending ? undefined : footer}
       footerClassName={
         filesDecisionFooter
           ? "mf-organize-files-decision-footer mf-organize-reanalysis-footer"
           : undefined
       }
     >
-      {!filesHandoffPending && taskReadNotice}
-      {!filesHandoffPending && discardPromptOpen ? (
+      {!handoffPending && taskReadNotice}
+      {!handoffPending && discardPromptOpen ? (
         <div
           className="mf-organize-discard"
           role="alertdialog"
@@ -6510,7 +6632,7 @@ export function ManualOrganizeDialog({
         aria-label="整理内容"
         tabIndex={-1}
       >
-        {filesHandoffPending ? (
+        {handoffPending ? (
           <p className="mf-organize-handoff mf-dashboard-meta" role="status">
             <span className="mf-organize-busy-dot" aria-hidden="true" />
             {openingTaskDetail ? "正在打开任务详情…" : "正在提交整理…"}

@@ -813,13 +813,27 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
         function sample() {
           if (!stage.isConnected) return;
           const waiting = stage.querySelector(".mf-organize-reanalysis");
+          if (stage.querySelector(".mf-organize-overview") !== null) return;
           if (waiting !== null) {
             stage.setAttribute("data-reanalysis-frame", "seen");
             const footer = stage
               .closest(".mf-organize-dialog")
               ?.querySelector(".mf-modal-footer");
+            const snapshot = JSON.stringify({
+              header: stage.querySelector(".mf-organize-files-file-head")
+                ?.textContent,
+              choice: waiting.querySelector(".mf-organize-reanalysis-facts")
+                ?.textContent,
+              actions: Array.from(footer?.querySelectorAll("button") ?? []).map(
+                (button) => [button.textContent, button.disabled],
+              ),
+            });
+            const previous = stage.getAttribute("data-reanalysis-snapshot");
             if (
+              !waiting.querySelector(".mf-organize-reanalysis-facts") ||
+              (previous !== null && previous !== snapshot) ||
               stage.querySelector('input[type="radio"]') !== null ||
+              stage.querySelectorAll("h4").length !== 1 ||
               Array.from(footer?.querySelectorAll("button") ?? []).some(
                 (button) =>
                   /保存并重新分析|忽略此文件/.test(button.textContent),
@@ -827,9 +841,11 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
             ) {
               stage.setAttribute("data-reanalysis-residue", "seen");
             }
+            stage.setAttribute("data-reanalysis-snapshot", snapshot);
+          } else if (stage.hasAttribute("data-reanalysis-frame")) {
+            stage.setAttribute("data-reanalysis-residue", "seen");
           }
-          if (stage.querySelector(".mf-organize-overview") === null)
-            requestAnimationFrame(sample);
+          requestAnimationFrame(sample);
         }
         requestAnimationFrame(sample);
       });
@@ -857,6 +873,9 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
     const overview = card.getByRole("region", { name: "本次整理概览" });
     await expect(overview).toBeVisible({ timeout: 30_000 });
     if (index === 1) {
+      await expect(card.locator(".mf-organize-stage")).not.toHaveAttribute(
+        "data-reanalysis-residue",
+      );
       await expect(
         overview.getByRole("heading", { name: "整理方案已更新" }),
       ).toBeVisible();
@@ -2456,7 +2475,7 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
     draft: true,
     limits: { rows: 1, height: 80 },
   });
-  await saveNativeDecision(page, card);
+  await saveNativeDecision(page, card, true);
   await driveDiscoveryFor(page, request, mixedDiscoveryId as string);
   await expect(overview).toBeVisible({ timeout: 30_000 });
   // The updated overview title is the sole successful analysis notice.
@@ -2497,7 +2516,7 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
     draft: true,
     limits: { rows: 1, height: 80 },
   });
-  await saveNativeDecision(page, card);
+  await saveNativeDecision(page, card, true);
   await driveDiscoveryFor(page, request, mixedDiscoveryId as string);
   await expect(overview).toBeVisible({ timeout: 30_000 });
 
@@ -2544,7 +2563,7 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
   await card.getByRole("button", { name: "搜索元数据" }).click();
   await expect(card.getByText(/搜索结果/)).toBeVisible({ timeout: 30_000 });
   await card.getByRole("radio", { name: /CorrectedSearch/ }).check();
-  await saveNativeDecision(page, card);
+  await saveNativeDecision(page, card, true);
   await driveDiscoveryFor(page, request, mixedDiscoveryId as string);
   await expect(overview).toBeVisible({ timeout: 30_000 });
   const selectedBefore = await readOverviewCount(overview, "已选 / 可确认");
@@ -2598,7 +2617,7 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
   await expect(
     card.getByRole("radio", { name: /Probe documentary library/ }),
   ).toBeChecked();
-  await saveNativeDecision(page, card);
+  await saveNativeDecision(page, card, true);
   await driveDiscoveryFor(page, request, mixedDiscoveryId as string);
   await expect(overview).toBeVisible({ timeout: 30_000 });
 

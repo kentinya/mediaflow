@@ -909,8 +909,9 @@ export function OperationsLanding() {
   /**
    * One proved execution admission selects the exact returned Task in place.
    * The hosted marker is cleared in the same navigation, and the necessary
-   * overview/items/records reads are explicitly invalidated: navigating to the
-   * same path does not unmount anything, so it cannot be relied on to refresh.
+   * overview/items/records reads discard their pre-admission snapshots before
+   * revealing the detail. Same-route navigation preserves the reading address
+   * but must not reveal the previous waiting-confirmation state.
    */
   const handoffOrganizeContinuation = (taskId: string) => {
     const search = listSearch();
@@ -924,26 +925,26 @@ export function OperationsLanding() {
         Object.assign(search, runDetailStateSearch(detailState));
       }
     }
+    if (target !== "") {
+      // Reset only this Task's pre-admission reads. The detail's own read
+      // boundary presents loading or a read failure until fresh facts arrive.
+      void queryClient.resetQueries({
+        queryKey: [runItemsQueryKey, target],
+      });
+      void queryClient.resetQueries({
+        queryKey: [runRecordsQueryKey, target],
+      });
+      void queryClient.resetQueries({
+        queryKey: [runOverviewQueryKey, target],
+        exact: true,
+      });
+    }
     void navigate({
       to: "/operations",
       search,
       replace: true,
       resetScroll: false,
     });
-    if (target !== "") {
-      void queryClient.invalidateQueries({
-        queryKey: [runOverviewQueryKey],
-        refetchType: "active",
-      });
-      void queryClient.invalidateQueries({
-        queryKey: [runItemsQueryKey],
-        refetchType: "active",
-      });
-      void queryClient.invalidateQueries({
-        queryKey: [runRecordsQueryKey],
-        refetchType: "active",
-      });
-    }
   };
 
   const page: RunInventoryPage | null =

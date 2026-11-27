@@ -409,6 +409,8 @@ export interface TaskItemRecoveryPanelProps {
   readonly onAnalysisStarted?: (savedChoice?: string) => void;
   /** Called after this exact item's analysis continuation was accepted. */
   readonly onAnalysisRequested?: () => void;
+  /** The response was rejected or unknown; expose the existing recovery action. */
+  readonly onAnalysisFailed?: (unknown: boolean) => void;
   /**
    * Called before this exact item's decision or ignore command is sent. The
    * Files host captures the visible file and edit position here so a late
@@ -505,6 +507,7 @@ export function TaskItemRecoveryPanel({
   actionBarTargetId,
   onAnalysisStarted,
   onAnalysisRequested,
+  onAnalysisFailed,
   onDecisionStarted,
   onDecisionSettled,
   decisionDraft,
@@ -1070,6 +1073,7 @@ export function TaskItemRecoveryPanel({
         message: outcomeMessage(result.code, result.status),
       });
       refreshLinkedReads();
+      onAnalysisFailed?.(unknown);
       return false;
     } finally {
       if (manageBusy) finishAction();

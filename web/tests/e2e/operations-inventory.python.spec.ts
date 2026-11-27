@@ -6413,16 +6413,47 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
     .click();
   const confirm = page.getByRole("button", { name: "确认整理 1 项" });
   await expect(confirm).toBeEnabled();
-  await confirm.click();
-  expect((await executeResponse).ok()).toBeTruthy();
+  const executePath = /\/api\/operations\/organize\/previews\/[^/]+\/execute$/;
+  let releaseExecute = () => {};
+  let releaseDetail = () => {};
+  const executeGate = new Promise<void>((resolve) => {
+    releaseExecute = resolve;
+  });
+  const detailGate = new Promise<void>((resolve) => {
+    releaseDetail = resolve;
+  });
+  await page.route(executePath, async (route) => {
+    await executeGate;
+    await route.continue();
+  });
+  await page.route(overviewRoute, async (route) => {
+    await detailGate;
+    await route.continue();
+  });
+  try {
+    await confirm.click();
+    await expect(reviewDialog.getByText("正在提交整理…")).toBeVisible();
+    await expect(
+      reviewDialog.getByRole("region", { name: "整批复核" }),
+    ).toHaveCount(0);
+    releaseExecute();
+    expect((await executeResponse).ok()).toBeTruthy();
+    await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
+    await expect(reviewDialog).toHaveCount(0);
+    await expect(detail.getByText("正在加载运行详情")).toBeVisible();
+    await expect(
+      detail.getByRole("heading", { name: "等待确认", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    releaseExecute();
+    releaseDetail();
+    await page.unroute(executePath);
+    await page.unroute(overviewRoute);
+  }
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
-  await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "整理所选文件" })).toHaveCount(
-    0,
-  );
+  await expect(detail).toBeVisible();
   expect(new URL(page.url()).searchParams.get("dialog")).toBeNull();
   expect(executePosts()).toHaveLength(1);
 
