@@ -1405,7 +1405,13 @@ export function ManualOrganizeDialog({
   const filesTaskItemFacts = new Map<string, TaskItemRecoveryModel>();
   filesProblemItems.forEach((value, index) => {
     const read = filesProblemReads[index]?.data;
-    if (read?.ok === true) filesTaskItemFacts.set(value.itemId, read.model);
+    if (
+      read?.ok === true &&
+      read.model.taskId === filesOrganizeTaskId &&
+      read.model.itemId === value.taskItemId
+    ) {
+      filesTaskItemFacts.set(value.itemId, read.model);
+    }
   });
   /**
    * The same Task's durable skipped and ignored items for either review host.
@@ -1537,7 +1543,7 @@ export function ManualOrganizeDialog({
     .sort()
     .join("|");
   const filesDurableSettlementsSeen = useRef<Set<string>>(new Set());
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!filesHost || filesDurableSettlementKey === "") return;
     const fresh: {
       readonly itemId: string;
@@ -3159,7 +3165,9 @@ export function ManualOrganizeDialog({
       filesDecisionAction.current = null;
     }
   }, [filesHost, filesOverviewVisible, step, currentItemId]);
-  useEffect(() => {
+  // The terminal item replaces the form. Return to the overview in the same
+  // paint instead of briefly showing its read-only file record and footer.
+  useLayoutEffect(() => {
     if (!filesHost || filesSettledDecision === null) return;
     const settled = filesSettledDecision;
     const action = filesDecisionAction.current;
@@ -6258,8 +6266,22 @@ export function ManualOrganizeDialog({
     intent !== undefined;
   const preparationTerminalFirstScreenFooter =
     organizeFlowEnded && preparationTerminalFirstScreen;
+  // The sole file's durable result can be visible before the Task-level read
+  // catches up. Its results are already readable; don't offer a 0-item review
+  // while waiting. Retained submissions and recoverable plans keep their
+  // existing review action.
+  const singleFileDecisionResult =
+    filesOverviewFooter &&
+    preparation?.primarySourceCount === 1 &&
+    preview?.truncated === false &&
+    filesOverviewRows.length === 1 &&
+    filesOverviewRows[0]?.settled != null &&
+    !preparationStatusRunning &&
+    !filesReanalysisEligible &&
+    latestRetained === null;
   const filesSettlementFooter =
-    filesSettledOverview && (filesOverviewVisible || step !== "review");
+    singleFileDecisionResult ||
+    (filesSettledOverview && (filesOverviewVisible || step !== "review"));
   const defaultFooter = filesSettlementFooter ? (
     <>
       {!filesOverviewVisible && (

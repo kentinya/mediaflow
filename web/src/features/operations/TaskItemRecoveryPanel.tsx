@@ -1903,6 +1903,13 @@ export function TaskItemRecoveryPanel({
     // The organizer already owns the "当前状态" section heading. The native
     // decision form is that section's content, not a second nested card with
     // its own header and refresh toolbar.
+    const settlingWithoutAnalysis =
+      filesDecision &&
+      busy &&
+      (pendingAction === "ignore" ||
+        (pendingAction === "decision" &&
+          decision?.kind === "conflict" &&
+          effectiveDecisionDraft.conflictStrategy === "skip"));
     return (
       <section
         className="mf-organize-decision-host"
@@ -1931,6 +1938,7 @@ export function TaskItemRecoveryPanel({
         {busy &&
           pendingAction !== null &&
           !savedDecisionAnalysisVisible &&
+          !settlingWithoutAnalysis &&
           !(filesDecision && pendingAction === "decision") && (
             <StatusBanner variant="info" title="操作请求仍在进行">
               <p>
@@ -1939,9 +1947,17 @@ export function TaskItemRecoveryPanel({
               </p>
             </StatusBanner>
           )}
+        {settlingWithoutAnalysis && (
+          <p className="mf-sr-only" role="status">
+            {pendingAction === "ignore"
+              ? "正在保存忽略决定…"
+              : "正在保存跳过决定…"}
+          </p>
+        )}
         {message &&
           message !== "决定未保存，未请求分析" &&
           submittedConfirmation === null &&
+          !settlingWithoutAnalysis &&
           !(
             filesDecision &&
             decision !== null &&
@@ -2035,6 +2051,7 @@ export function TaskItemRecoveryPanel({
             canIgnore={permitted.has("ignore")}
             permitted={permitted}
             busy={busy}
+            keepSaveLabel={settlingWithoutAnalysis}
             presentation={filesDecision ? "files" : "dialog"}
             actionsTarget={actionBarTarget}
           />
@@ -2449,6 +2466,7 @@ function DecisionForm(props: {
   readonly canIgnore: boolean;
   readonly permitted: ReadonlySet<string>;
   readonly busy: boolean;
+  readonly keepSaveLabel?: boolean;
   /**
    * `dialog` uses the current-file wording; `recovery` reuses that approved
    * row-and-field layout inside the Task Center's exact file evidence.
@@ -2481,7 +2499,9 @@ function DecisionForm(props: {
       disabled={props.disabled || !canSave || !props.permitted.has(actionId)}
       onClick={props.onSave}
     >
-      {props.busy ? "正在保存并重新分析…" : "保存并重新分析"}
+      {props.busy && !props.keepSaveLabel
+        ? "正在保存并重新分析…"
+        : "保存并重新分析"}
     </button>
   );
   const ignoreButton =

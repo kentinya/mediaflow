@@ -136,6 +136,7 @@ function makeBackend() {
     }[],
     // A user-ignored review whose durable checkpoint is the terminal result.
     ignoredProblem: false as boolean,
+    holdRecoverySettlement: null as Promise<void> | null,
     // Hold the bounded settled-record reads to prove a late read never moves
     // the operator or discards the current file's draft.
     holdSettledReads: false as boolean,
@@ -890,6 +891,14 @@ function makeBackend() {
       }
     }
     const execute = (value["actions"] as Json)["execute"] as Json;
+    if (
+      execute["available"] === true &&
+      (value["executionCandidateItemIds"] as string[]).length === 0
+    ) {
+      execute["available"] = false;
+      execute["reason"] = "no current executable candidate";
+      execute["nextAction"] = "review the current file's decision";
+    }
     execute["path"] = `/api/operations/organize/previews/${previewId}/execute`;
     return value;
   };
@@ -1369,6 +1378,9 @@ function makeBackend() {
         if (body["actionId"] !== "ignore") {
           return jsonResponse({ error: { code: "invalid_action" } }, 409);
         }
+        if (state.holdRecoverySettlement !== null) {
+          await state.holdRecoverySettlement;
+        }
         state.ignoredProblem = true;
         return jsonResponse({
           task_id: "organize-task-1",
@@ -1441,6 +1453,9 @@ function makeBackend() {
         }
         state.recoveryAnalysisQueued = false;
         if (state.conflictProblem) {
+          if (state.holdRecoverySettlement !== null) {
+            await state.holdRecoverySettlement;
+          }
           state.conflictResolved = true;
           if (state.loseConflictDecisionResponse) {
             throw new TypeError("response lost after the durable skip");
@@ -4925,6 +4940,79 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.recoveryDecisionPosts).toHaveLength(1);
     expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
   }, 30_000);
+
+  it.each(["skip", "ignore"] as const)(
+    "keeps the sole file's decision actions steady while %s settles",
+    async (action) => {
+      const skip = action === "skip";
+      const user = userEvent.setup();
+      const backend = await openDialog(
+        user,
+        (value) => {
+          value.state.conflictProblem = skip;
+          value.state.metadataCandidateProblem = !skip;
+        },
+        [filename(0)],
+      );
+      const save = await within(card()).findByRole("button", {
+        name: "保存并重新分析",
+      });
+      const footer = save.closest(".mf-modal-footer") as HTMLElement;
+      const buttons = () => within(footer).getAllByRole("button");
+      const ignore = skip
+        ? null
+        : within(footer).getByRole("button", { name: "忽略此文件" });
+      if (skip) {
+        await user.click(screen.getByRole("radio", { name: /跳过此文件/ }));
+      } else {
+        await user.click(
+          within(card()).getByRole("radio", { name: /TMDB #501/ }),
+        );
+      }
+      expect(save).toBeEnabled();
+      const before = buttons();
+      let release!: () => void;
+      backend.state.holdRecoverySettlement = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const analysisRequestsBefore = backend.calls.analyzePosts.length;
+      try {
+        await user.click(ignore ?? save);
+        expect(
+          within(footer).getByRole("button", { name: "保存并重新分析" }),
+        ).toBeDisabled();
+        if (ignore !== null) expect(ignore).toBeDisabled();
+        expect(buttons()).toEqual(before);
+        expect(within(card()).queryByText("操作请求仍在进行")).toBeNull();
+        expect(
+          within(card()).getByText(
+            skip ? "正在保存跳过决定…" : "正在保存忽略决定…",
+          ),
+        ).toHaveAttribute("role", "status");
+      } finally {
+        release();
+      }
+      const overview = await screen.findByRole("region", {
+        name: "本次整理概览",
+      });
+      expect(
+        within(overview).getByText(skip ? "已记录跳过决定" : "文件已忽略"),
+      ).toBeVisible();
+      // The fixture keeps the linked flow running: the exact decision alone
+      // is enough to offer a read-only link to its results, not a 0-item review.
+      expect(backend.state.endedFlow).toBe(false);
+      expect(
+        within(card()).getByRole("button", { name: "查看任务结果" }),
+      ).toBeEnabled();
+      expect(
+        within(card()).queryByRole("button", { name: /整批复核/ }),
+      ).toBeNull();
+      expect(backend.calls.analyzePosts).toHaveLength(analysisRequestsBefore);
+      expect(backend.calls.recoveryContinuePosts).toHaveLength(0);
+      expect(backend.calls.executePosts).toHaveLength(0);
+    },
+    30_000,
+  );
 
   it("A59-01 keeps a settled skip on a stale plan and offers its preparation re-analysis", async () => {
     const user = userEvent.setup();
