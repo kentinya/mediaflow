@@ -1795,9 +1795,13 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
 
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
-  // The preceding journey's one admitted execution Task (its analysis-only
-  // preparation is not a separate organizing row).
-  await expectRunTotal(page, seededRunTotal + 1);
+  // Read the durable inventory rather than relying on another test to have
+  // admitted a task in this process.
+  const initialPopulation = await request.get(`${BASE}/api/operations/runs`, {
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+  });
+  expect(initialPopulation.ok()).toBeTruthy();
+  await expectRunTotal(page, (await initialPopulation.json()).total);
   // Ordinary sidebar Files navigation has no implicit Task Center return.
   // The admitted execution offers its own exact linked-task entry below.
   // Task46.3 RO-2: the organizing journey starts from ResourceLibrary Files,
@@ -1834,6 +1838,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();
   const recognition = card.locator('select[aria-label^="识别类型 "]');
+  await card.getByText("规则与方案证据", { exact: true }).click();
   await card.getByText("修正识别或作品", { exact: true }).click();
   await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
   await recognition.first().selectOption("C");
@@ -1855,9 +1860,9 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     name: "本次整理概览",
   });
   await expect(reanalyzedOverview).toBeVisible({ timeout: 30_000 });
-  await expect(reanalyzedOverview).toContainText(
-    "已重新分析，现在可以纳入本次整理",
-  );
+  await expect(
+    reanalyzedOverview.getByRole("button", { name: "查看 Three.2003.mkv" }),
+  ).toContainText("可确认");
 
   const beforePreview = await request.get(
     `${BASE}/__harness__/manual-file-state`,
@@ -1890,7 +1895,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   // The retained original request is read automatically and hands off the
   // exact Task; no manual reconciliation button exists.
-  await expect(page).toHaveURL(/\/operations\?.*run=/, {
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/, {
     timeout: 30_000,
   });
   const runId = new URL(page.url()).searchParams.get("run");
@@ -1918,7 +1923,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   ).toEqual({ sourceExists: true, destinationTargets: [] });
 
   // An auth continuation after a full reload returns to the same bounded
-  // Operations context and exact selected run without replaying Execute.
+  // Files context and exact selected run without replaying Execute.
   await page.reload();
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(page).toHaveURL(new RegExp(`run=${runId}`));
@@ -2431,9 +2436,9 @@ test("a selected execution never blocks the unselected sibling's correction and 
       .locator("> div")
       .filter({ hasText: "本次确认" })
       .locator("dd"),
-  ).toHaveText("1 项");
+  ).toHaveText("1");
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect(worker.ok()).toBeTruthy();
@@ -2621,7 +2626,7 @@ test("a brand-new ambiguous source can be corrected and executed on the same pag
 
   await card.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
   const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect(worker.ok()).toBeTruthy();
@@ -2902,6 +2907,7 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
     card.getByRole("heading", { name: /第 1 \/ 1 个/ }),
   ).toBeVisible();
   const recognition = card.locator('select[aria-label^="识别类型 "]');
+  await card.getByText("规则与方案证据", { exact: true }).click();
   await card.getByText("修正识别或作品", { exact: true }).click();
   await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
   // The correction re-enters the durable analysis stage; the resident Worker
@@ -2925,14 +2931,14 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
     name: "本次整理概览",
   });
   await expect(reanalyzedOverview).toBeVisible({ timeout: 30_000 });
-  await expect(reanalyzedOverview).toContainText(
-    "已重新分析，现在可以纳入本次整理",
-  );
+  await expect(
+    reanalyzedOverview.getByRole("button", { name: "查看 Four.2004.mkv" }),
+  ).toContainText("可确认");
 
   // The card hands the proved admission to the existing exact run selection.
   await card.getByRole("button", { name: /整批复核/ }).click();
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   const runId = new URL(page.url()).searchParams.get("run");
   expect(runId).toBeTruthy();
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible();
@@ -3037,8 +3043,7 @@ test("ordinary Files navigation opens the exact linked run through auth and rest
   await expect(
     restored
       .getByRole("region", { name: "主条目" })
-      .locator(".mf-run-item-row")
-      .getByText("Four.2004.mkv"),
+      .getByRole("button", { name: /^Four\.2004\.mkv，/ }),
   ).toBeVisible();
 
   // Privacy and bounded reads: no raw token or temp path appears, and the
@@ -4174,7 +4179,7 @@ test("unknown routes and fresh organization retain real elapsed stability and ex
       .counts,
   ).toEqual(unchanged.counts);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   const executed = await (
     await request.post(BASE + "/__harness__/run-manual-worker")
   ).json();

@@ -940,6 +940,11 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
 
   await openBatchReview(card);
   await expectBatchSelected(card, 10);
+  const filesBackground = page.locator(".mf-files-page");
+  await filesBackground.evaluate((node) =>
+    node.setAttribute("data-e2e-stable", "true"),
+  );
+  const directoryBefore = new URL(page.url()).searchParams.get("path");
   await page.evaluate(() => {
     function sampleEntrance() {
       const card = document.querySelector(".mf-run-detail-card");
@@ -973,7 +978,9 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
   });
   try {
     await page.getByRole("button", { name: "确认整理 10 项" }).click();
-    await expect(page).toHaveURL(/\/operations\?.*run=/);
+    await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
+    expect(new URL(page.url()).searchParams.get("path")).toBe(directoryBefore);
+    await expect(filesBackground).toHaveAttribute("data-e2e-stable", "true");
     await expect(
       detail.getByRole("heading", { name: "正在加载运行详情" }),
     ).toBeVisible();
@@ -1015,6 +1022,12 @@ test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task 
   await expect(detail.getByRole("region", { name: "条目证据" })).toBeVisible();
   await expect(detail.locator("..")).toHaveClass(/mf-modal-layer-handoff/);
   await expect(row).toBeFocused();
+  await detail.getByRole("button", { name: "关闭详情" }).click();
+  await expect(detail).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.get("run")).toBeNull();
+  expect(new URL(page.url()).searchParams.get("path")).toBe(directoryBefore);
+  await expect(filesBackground).toHaveAttribute("data-e2e-stable", "true");
+  expect(executePosts()).toHaveLength(1);
 });
 
 test("Task59.1 an unknown Execute response is reconciled into the exact Task without a replay", async ({
@@ -1056,7 +1069,7 @@ test("Task59.1 an unknown Execute response is reconciled into the exact Task wit
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   // The saved original request is read automatically and hands off the exact
   // Task; there is no manual reconciliation button.
-  await expect(page).toHaveURL(/\/operations\?.*run=/, {
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/, {
     timeout: 30_000,
   });
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
@@ -1312,7 +1325,7 @@ test("Task59.1 a second confirmation on the same Task is reconciled from its own
   );
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   expect((await firstExecute).status()).toBe(202);
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   const taskId = new URL(page.url()).searchParams.get("run");
   expect(taskId).toBeTruthy();
   expect(executePosts()).toHaveLength(1);
@@ -1382,7 +1395,7 @@ test("Task59.1 a second confirmation on the same Task is reconciled from its own
   await reopened.getByRole("button", { name: /整批复核/ }).click();
   await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/, {
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/, {
     timeout: 30_000,
   });
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
@@ -1654,7 +1667,7 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
     },
   );
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -1840,7 +1853,7 @@ test("Task59.1 a real destination conflict is decided, re-analyzed and confirmed
   await openBatchReview(card);
   await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -1937,7 +1950,7 @@ test("Task59.1 A59-01 a real conflict skip returns to the overview with the dura
   await openBatchReview(card);
   await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -2196,7 +2209,7 @@ test("Task59.1 A59-01 a lost decision response returns from the durable same-ite
   await openBatchReview(card);
   await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -2360,7 +2373,7 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
   await openBatchReview(card);
   await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -2721,7 +2734,7 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
     card.getByRole("region", { name: "来源与目标" }),
   ).not.toContainText(conflictFile);
   await page.getByRole("button", { name: "确认整理 4 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -3482,7 +3495,7 @@ test("Task59.1 a missing metadata candidate is corrected on the current file and
   await openBatchReview(card);
   await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/);
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/);
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
     timeout: 30_000,
   });
@@ -3606,7 +3619,9 @@ test("Files analysis reveals a classification problem after recognition and conf
   expect(executePosts()).toHaveLength(0);
 
   await card.getByRole("button", { name: "确认整理 1 项" }).click();
-  await expect(page).toHaveURL(`/operations?run=${organizeTaskId}`);
+  await expect(page).toHaveURL(
+    new RegExp(`/resourcelib/files\\?.*run=${organizeTaskId}`),
+  );
   expect(executePosts()).toHaveLength(1);
   expect(executePosts()[0]?.path).toContain(`/previews/${finalPlan}/execute`);
   const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
@@ -4058,7 +4073,7 @@ test("Task59.1 an unknown original submission is reconciled under a newer siblin
     card.getByText("暂时无法核对原提交", { exact: true }),
   ).toBeVisible();
   await card.getByRole("button", { name: "核对本次提交", exact: true }).click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/, {
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/, {
     timeout: 30_000,
   });
   await expect(page.getByRole("dialog", { name: "运行详情" })).toBeVisible({
@@ -5789,7 +5804,9 @@ test("Task59.3 a running detail re-reads the visited success filter and second p
   const confirm = card.getByRole("button", { name: "确认整理 21 项" });
   await expect(confirm).toBeEnabled();
   await confirm.click();
-  await expect(page).toHaveURL(/\/operations\?.*run=/, { timeout: 30_000 });
+  await expect(page).toHaveURL(/\/resourcelib\/files\?.*run=/, {
+    timeout: 30_000,
+  });
   const taskId = new URL(page.url()).searchParams.get("run");
   expect(taskId).toBeTruthy();
   const detail = page.getByRole("dialog", { name: "运行详情" });

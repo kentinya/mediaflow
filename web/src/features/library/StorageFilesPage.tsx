@@ -34,6 +34,18 @@ import {
   type ManualOrganizeDialogSession,
 } from "../operations/ManualOrganizeDialog";
 import { TaskItemRecoverySessionProvider } from "../operations/task-item-recovery-session";
+import {
+  EMPTY_RUN_CONTROL_SESSION,
+  RunDetailPanel,
+  type RunControlSession,
+} from "../operations/OperationsLanding";
+import {
+  readRunDetailState,
+  RUN_DETAIL_SEARCH_KEYS,
+  runDetailStateSearch,
+  type RunDetailState,
+} from "../operations/run-detail-state";
+import { runOverviewQueryOptions } from "../operations/run-query";
 import type {
   StorageFilesEntry,
   StorageFilesModel,
@@ -532,6 +544,42 @@ function updateOrganizeRouteState(discoveryId: string | null): void {
   replaceFilesRouteSearch((search) => {
     if (discoveryId === null) search.delete("organizeDiscovery");
     else search.set("organizeDiscovery", discoveryId);
+  });
+}
+
+function readFilesRun() {
+  if (typeof window === "undefined") return null;
+  const search = new URLSearchParams(window.location.search);
+  // A deep link only opens one Files card. Existing preparation and local
+  // file-operation links own their explicit selection.
+  if (
+    readOrganizeSessionSearch() !== null ||
+    readOperationTaskHint(search.get("operationTaskId")) !== null
+  ) {
+    return null;
+  }
+  const id = readOperationTaskHint(search.get("run"));
+  return id === null
+    ? null
+    : {
+        id,
+        detail: readRunDetailState(Object.fromEntries(search)),
+        handoff: false,
+      };
+}
+
+function updateFilesRunRoute(id: string | null, detail?: RunDetailState) {
+  replaceFilesRouteSearch((search) => {
+    search.delete("organizeDiscovery");
+    search.delete("operationTaskId");
+    for (const key of RUN_DETAIL_SEARCH_KEYS) search.delete(key);
+    if (id === null) search.delete("run");
+    else search.set("run", id);
+    if (id !== null && detail !== undefined) {
+      for (const [key, value] of Object.entries(runDetailStateSearch(detail))) {
+        search.set(key, value);
+      }
+    }
   });
 }
 
@@ -1649,7 +1697,9 @@ function FilesHeader({
   return (
     <header className="mf-files-header">
       <div className="mf-files-title">
-        <h2>文件</h2>
+        <h2 id="mf-files-title" tabIndex={-1}>
+          文件
+        </h2>
         <p className="mf-dashboard-meta">
           浏览资源库中的文件，选择需要整理的文件。
         </p>
@@ -2584,6 +2634,16 @@ export function StorageFilesPage() {
    */
   const [organizeSession, setOrganizeSession] =
     useState<ManualOrganizeDialogSession | null>(readOrganizeSessionSearch);
+  const [organizeRun, setOrganizeRun] = useState(readFilesRun);
+  const [runControls, setRunControls] = useState<
+    ReadonlyMap<string, RunControlSession>
+  >(new Map());
+  const organizeRunQuery = useQuery(
+    runOverviewQueryOptions(
+      token,
+      organizeSession === null ? (organizeRun?.id ?? "") : "",
+    ),
+  );
   const openOrganizeDialog = (session: ManualOrganizeDialogSession) => {
     setOrganizeSession(session);
     if (session.phase === "admitted") {
@@ -2596,16 +2656,20 @@ export function StorageFilesPage() {
     // from re-opening the card, so a refresh cannot resurrect a discarded one.
     updateOrganizeRouteState(null);
   };
-  /** One proved admission hands its exact durable task to the existing task-center selection (RO-3). */
-  const handoffToTaskCenter = (taskId: string) => {
-    // Retire the reread URL, but keep the outgoing card visible until the
-    // router commits the destination.
-    updateOrganizeRouteState(null);
-    void navigate({
-      to: "/operations",
-      search: operationsLandingSearch(operationsReturn, taskId),
-      state: { organizeHandoffRunId: taskId },
+  /** Swap the card, not the Files route or the mounted directory. */
+  const showOrganizeRun = (taskId: string) => {
+    updateFilesRunRoute(taskId);
+    setOrganizeRun({
+      id: taskId,
+      detail: readRunDetailState({}),
+      handoff: true,
     });
+    setOrganizeSession(null);
+  };
+  const closeOrganizeRun = () => {
+    updateFilesRunRoute(null);
+    setOrganizeRun(null);
+    void filesQuery.refetch();
   };
 
   const organizeMutation = useMutation({
@@ -4471,17 +4535,50 @@ export function StorageFilesPage() {
           }}
         />
       )}
-      {organizeSession !== null && (
+      {(organizeSession !== null || organizeRun !== null) && (
         <TaskItemRecoverySessionProvider key={token ?? "disconnected"}>
-          <ManualOrganizeDialog
-            host="files"
-            session={organizeSession}
-            onPreparationFound={(discoveryId) =>
-              openOrganizeDialog({ phase: "admitted", discoveryId })
-            }
-            onClose={closeOrganizeDialog}
-            onHandoff={handoffToTaskCenter}
-          />
+          {organizeSession !== null ? (
+            <ManualOrganizeDialog
+              host="files"
+              session={organizeSession}
+              onPreparationFound={(discoveryId) =>
+                openOrganizeDialog({ phase: "admitted", discoveryId })
+              }
+              onClose={closeOrganizeDialog}
+              onHandoff={showOrganizeRun}
+            />
+          ) : organizeRun !== null ? (
+            <RunDetailPanel
+              key={organizeRun.id}
+              query={organizeRunQuery}
+              fromOrganizeHandoff={organizeRun.handoff}
+              onClose={closeOrganizeRun}
+              detailState={organizeRun.detail}
+              onDetailStateChange={(patch) => {
+                const detail = { ...organizeRun.detail, ...patch };
+                updateFilesRunRoute(organizeRun.id, detail);
+                setOrganizeRun({ ...organizeRun, detail });
+              }}
+              controlSession={
+                runControls.get(organizeRun.id) ?? EMPTY_RUN_CONTROL_SESSION
+              }
+              onControlSession={(patch) =>
+                setRunControls((previous) =>
+                  new Map(previous).set(organizeRun.id, {
+                    ...(previous.get(organizeRun.id) ??
+                      EMPTY_RUN_CONTROL_SESSION),
+                    ...patch,
+                  }),
+                )
+              }
+              preparationLinkSearch={{
+                ...operationsLandingSearch(operationsReturn, organizeRun.id),
+                dialog: "organize",
+              }}
+              fallbackFocusId="mf-files-title"
+              suspended={false}
+            />
+          ) : null}
         </TaskItemRecoverySessionProvider>
       )}
     </div>

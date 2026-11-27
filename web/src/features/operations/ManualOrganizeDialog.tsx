@@ -15,8 +15,8 @@
  * - one compact batch review of the exact ready subset, then one explicit
  *   `确认整理 N 项` execution confirmation;
  * - success (and a proved unknown-response reconciliation) hands the exact
- *   durable `taskId` to the task center through its existing selection
- *   mechanism; the card closes, it never shows a second result center.
+ *   durable `taskId` to the host's shared task detail; the organizer closes,
+ *   it never shows a second result center.
  *
  * The card reuses the shared modal shell (backdrop, inert background, scroll
  * lock, focus trap, exit motion) and the existing typed API/query boundary.
@@ -43,6 +43,7 @@ import {
 import { useBlocker } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { fetchAuthStatus } from "../../shared/api/auth-api";
+import type { OrganizeDiscoveryModel } from "../../entities/operations/discovery";
 import {
   executeOrganizePreview,
   fetchFilesOrganizeWork,
@@ -152,7 +153,7 @@ export interface ManualOrganizeDialogProps {
    */
   readonly host?: ManualOrganizeDialogHost;
   readonly onClose: () => void;
-  /** Hand the exact durable task to the task center's existing selection mechanism. */
+  /** Hand the exact durable Task to the host's task detail. */
   readonly onHandoff: (taskId: string) => void;
   /**
    * Focus target when the invoking control no longer exists. The Files host
@@ -834,6 +835,21 @@ function overviewPendingReason(
   return item.nextAction ?? "该文件当前未就绪；核对当前事实后重新分析。";
 }
 
+function waitsForUnavailableWorker(preparation: OrganizeDiscoveryModel) {
+  return (
+    preparation.worker.ready !== true &&
+    preparation.previewId === null &&
+    preparation.organizeFlow?.continuable !== false &&
+    preparation.progress.materialRefusal === null &&
+    (["queued", "running", "waiting_stability", "analyzing"].includes(
+      preparation.status,
+    ) ||
+      (["completed", "partial_success"].includes(preparation.status) &&
+        preparation.primarySourceCount > 0 &&
+        (preparation.autoPrepare || preparation.frozen)))
+  );
+}
+
 export function ManualOrganizeDialog({
   session,
   onPreparationFound,
@@ -862,6 +878,7 @@ export function ManualOrganizeDialog({
     enabled: token !== null && originalRequest !== null,
     retry: false,
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const originalDiscoveryId = originalRequestRead.data?.ok
     ? originalRequestRead.data.items.find(
@@ -882,10 +899,48 @@ export function ManualOrganizeDialog({
   const preparationQuery = useQuery(
     organizeDiscoveryQueryOptions(token, discoveryId, discoveryId !== ""),
   );
-  const preparation =
+  const readPreparation =
     preparationQuery.data?.ok === true
       ? preparationQuery.data.model
       : undefined;
+  const [blockedPreparation, setBlockedPreparation] =
+    useState<typeof readPreparation>(undefined);
+  if (
+    readPreparation !== undefined &&
+    readPreparation.discoveryId === discoveryId &&
+    waitsForUnavailableWorker(readPreparation) &&
+    blockedPreparation?.discoveryId !== discoveryId
+  ) {
+    // A Worker outage belongs to this exact preparation. Even another
+    // observer reading a recovered Worker must not advance this screen.
+    setBlockedPreparation(readPreparation);
+  }
+  const workerCheckRequired = blockedPreparation?.discoveryId === discoveryId;
+  const preparation = workerCheckRequired
+    ? blockedPreparation
+    : readPreparation;
+  const [workerReadFailed, setWorkerReadFailed] = useState(false);
+  const workerRead = useMutation({
+    mutationFn: () => fetchOrganizeDiscovery(token, discoveryId),
+    retry: false,
+    onSuccess: (read) => {
+      if (!read.ok || read.model.discoveryId !== discoveryId) {
+        setWorkerReadFailed(true);
+        return;
+      }
+      setWorkerReadFailed(false);
+      queryClient.setQueryData(
+        organizeDiscoveryQueryOptions(token, discoveryId).queryKey,
+        read,
+      );
+      // The current durable result can advance without a Worker if it
+      // has already linked its plan or ended.
+      if (!waitsForUnavailableWorker(read.model)) {
+        setBlockedPreparation(undefined);
+      }
+    },
+    onError: () => setWorkerReadFailed(true),
+  });
   /**
    * A preparation that was observed during its bounded walk is one full
    * two-step journey. A preparation reopened only for generation or a summary
@@ -1070,6 +1125,7 @@ export function ManualOrganizeDialog({
   ]);
   const preparationUnavailable =
     session.phase === "admitted" &&
+    !workerCheckRequired &&
     (preparationQuery.isError || preparationQuery.data?.ok === false) &&
     !preparationHandoffReadFailed &&
     !preparationPlanObserved;
@@ -2817,6 +2873,7 @@ export function ManualOrganizeDialog({
     !preparationHandoffReadFailed;
   const preparationPolling =
     preparationStatus !== undefined &&
+    !workerCheckRequired &&
     !organizeFlowEnded &&
     ((preparation?.previewId == null &&
       !["failed", "cancelled", "paused"].includes(preparationStatus) &&
@@ -2826,6 +2883,7 @@ export function ManualOrganizeDialog({
         preparationPlanExpected ||
         primaryLimitAwaitingSettlement)) ||
       preparationAwaitingPlanHandoff);
+  const refetchPreparation = preparationQuery.refetch;
   useEffect(() => {
     if (!preparationPolling) return;
     // An interval, not a self-rescheduling timeout: a poll whose response is
@@ -2833,10 +2891,10 @@ export function ManualOrganizeDialog({
     // render, so a timeout would never be armed again.  The read stays bounded
     // and only observes the durable preparation.
     const timer = window.setInterval(() => {
-      void preparationQuery.refetch();
+      void refetchPreparation({ cancelRefetch: false });
     }, 1_500);
     return () => window.clearInterval(timer);
-  }, [preparationPolling, preparationQuery]);
+  }, [preparationPolling, refetchPreparation]);
 
   // ---- helpers --------------------------------------------------------
   // The page derives from the durable item anchor whenever the item is still
@@ -3848,10 +3906,7 @@ export function ManualOrganizeDialog({
    * reporting that result while its plan summary is read, even if the Worker
    * stopped or its heartbeat expired after the result was published.
    */
-  const preparationWorkerBlocking =
-    preparationWorkerUnavailable &&
-    preparationStoppedTitle === null &&
-    (preparation?.previewId ?? null) === null;
+  const preparationWorkerBlocking = workerCheckRequired;
   /**
    * The one preparation status region shared by the Files and Task Center
    * hosts. Both read the same admission, walk, plan association and summary
@@ -3897,7 +3952,9 @@ export function ManualOrganizeDialog({
     if (preparationWorkerBlocking) {
       return {
         title: "后台暂不可用",
-        copy: "原请求已保存，当前没有可用的后台。联系管理员恢复后，可以继续读取这次准备。",
+        copy: workerReadFailed
+          ? "暂时无法读取原请求。已保存的范围保持不变，请再次核对。"
+          : "原请求已保存，当前没有可用的后台。联系管理员恢复后，可以继续读取这次准备。",
         tone: "amber" as const,
         busy: false,
         icon: "!",
@@ -6851,16 +6908,17 @@ export function ManualOrganizeDialog({
         </Button>
         <Button
           type="button"
+          aria-busy={preparationWorkerBlocking && workerRead.isPending}
           disabled={
             originalRequest !== null
               ? originalRequestRead.isFetching
               : preparationWorkerBlocking
-                ? preparationQuery.isFetching
+                ? workerRead.isPending
                 : previewQuery.isFetching
           }
           onClick={() => {
             if (originalRequest !== null) void originalRequestRead.refetch();
-            else if (preparationWorkerBlocking) void preparationQuery.refetch();
+            else if (preparationWorkerBlocking) workerRead.mutate();
             else void previewQuery.refetch();
           }}
         >

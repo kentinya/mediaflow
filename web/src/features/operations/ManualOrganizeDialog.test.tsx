@@ -91,7 +91,7 @@ function makeBackend() {
     // has not started.
     queuedReads: 0 as number,
     // Leading reads that report the saved request while no Worker advertises
-    // the discovery capability; a later read proves automatic recovery.
+    // the discovery capability; a later explicit read proves recovery.
     workerUnavailableReads: 0 as number,
     // The real Worker publishes the completed walk before it freezes and enters
     // analysis.  These two counts stage exactly that gap: an unfrozen completed
@@ -2094,18 +2094,18 @@ describe("ManualOrganizeDialog", () => {
 
     backend.releaseExecute();
 
-    // Success hands the exact durable task to the task center's existing
-    // selection mechanism: the route carries only `run=<taskId>`, never a
-    // guess or a separate execution-results page.
+    // Success replaces the card with the exact Task on the mounted Files
+    // page, not on an intermediate list or separate execution-results page.
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
     );
-    await waitFor(() =>
-      expect(backend.router.state.location.pathname).toBe("/operations"),
+    expect(
+      await screen.findByRole("dialog", { name: "运行详情" }),
+    ).toBeVisible();
+    expect(backend.router.state.location.pathname).toBe("/resourcelib/files");
+    expect(new URLSearchParams(window.location.search).get("run")).toBe(
+      "task-handoff-1",
     );
-    expect(backend.router.state.location.search).toMatchObject({
-      run: "task-handoff-1",
-    });
   }, 30_000);
 
   it("lets the current file correct a missing metadata candidate and keeps unsaved correction inputs across paging", async () => {
@@ -2726,13 +2726,14 @@ describe("ManualOrganizeDialog", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull(),
     );
-    // The proved-off admission follows the same exact task-center handoff.
-    await waitFor(() =>
-      expect(backend.router.state.location.pathname).toBe("/operations"),
+    // Proved admission follows the same exact Files-hosted task handoff.
+    expect(
+      await screen.findByRole("dialog", { name: "运行详情" }),
+    ).toBeVisible();
+    expect(backend.router.state.location.pathname).toBe("/resourcelib/files");
+    expect(new URLSearchParams(window.location.search).get("run")).toBe(
+      "task-handoff-1",
     );
-    expect(backend.router.state.location.search).toMatchObject({
-      run: "task-handoff-1",
-    });
     expect(backend.calls.executePosts).toHaveLength(1);
     expect(backend.calls.admissionReads).toBeGreaterThanOrEqual(1);
   }, 30_000);
@@ -3327,7 +3328,7 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.discoveryPosts).toHaveLength(1);
   }, 20_000);
 
-  it("replaces the spinner with the saved-request Worker notice and recovers by polling the same preparation", async () => {
+  it("keeps the unavailable Worker notice until an explicit check of the same preparation", async () => {
     const user = userEvent.setup();
     const backend = await openPreparationDialog(user, (value) => {
       value.state.workerUnavailableReads = 1;
@@ -3342,6 +3343,14 @@ describe("ManualOrganizeDialog", () => {
     expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
     expect(card().querySelector(".mf-organize-stage-copy")).toBeNull();
     expect(screen.getByText("当前等待后台恢复")).toBeVisible();
+    // The next read would return a healthy Worker. Polling, focus and
+    // reconnection must not take over the operator's explicit action.
+    const reads = backend.state.discoveryReads;
+    window.dispatchEvent(new Event("online"));
+    window.dispatchEvent(new Event("focus"));
+    await new Promise((resolve) => setTimeout(resolve, 1700));
+    expect(backend.state.discoveryReads).toBe(reads);
+    expect(screen.getByText("后台暂不可用")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "核对原请求" }));
     expect(screen.queryByText(/处理 Worker 暂不可用/)).toBeNull();
     expect(screen.queryByText(/准备诊断/)).toBeNull();
@@ -3430,10 +3439,12 @@ describe("ManualOrganizeDialog", () => {
         ),
       ).toBe(false);
       await user.click(screen.getByRole("button", { name: "查看任务结果" }));
-      await waitFor(() =>
-        expect(backend.router.state.location.search).toMatchObject({
-          run: "organize-task-1",
-        }),
+      expect(
+        await screen.findByRole("dialog", { name: "运行详情" }),
+      ).toBeVisible();
+      expect(backend.router.state.location.pathname).toBe("/resourcelib/files");
+      expect(new URLSearchParams(window.location.search).get("run")).toBe(
+        "organize-task-1",
       );
       expect(backend.calls.discoveryPosts).toHaveLength(0);
       expect(backend.calls.executePosts).toHaveLength(0);
@@ -4004,12 +4015,13 @@ describe("ManualOrganizeDialog", () => {
         ).toBeNull(),
       { timeout: 15_000 },
     );
-    await waitFor(() =>
-      expect(backend.router.state.location.pathname).toBe("/operations"),
+    expect(
+      await screen.findByRole("dialog", { name: "运行详情" }),
+    ).toBeVisible();
+    expect(backend.router.state.location.pathname).toBe("/resourcelib/files");
+    expect(new URLSearchParams(window.location.search).get("run")).toBe(
+      "task-handoff-1",
     );
-    expect(backend.router.state.location.search).toMatchObject({
-      run: "task-handoff-1",
-    });
 
     // Exactly one Execute; every automatic reconciliation request carries
     // exactly the original identity, item by item, and never the newer
@@ -4769,12 +4781,13 @@ describe("ManualOrganizeDialog", () => {
         ).toBeNull(),
       { timeout: 15_000 },
     );
-    await waitFor(() =>
-      expect(backend.router.state.location.pathname).toBe("/operations"),
+    expect(
+      await screen.findByRole("dialog", { name: "运行详情" }),
+    ).toBeVisible();
+    expect(backend.router.state.location.pathname).toBe("/resourcelib/files");
+    expect(new URLSearchParams(window.location.search).get("run")).toBe(
+      "task-handoff-1",
     );
-    expect(backend.router.state.location.search).toMatchObject({
-      run: "task-handoff-1",
-    });
     expect(executeAttempts).toBe(1);
     expect(backend.calls.admissionRequests[0]?.previewId).toBe(PREVIEW_ID);
   }, 30_000);
@@ -4840,9 +4853,13 @@ describe("ManualOrganizeDialog", () => {
     });
     // The durable admission is still one exact batch; the first request never
     // reached the server.
-    expect(backend.router.state.location.search).toMatchObject({
-      run: "task-handoff-1",
-    });
+    expect(
+      await screen.findByRole("dialog", { name: "运行详情" }),
+    ).toBeVisible();
+    expect(backend.router.state.location.pathname).toBe("/resourcelib/files");
+    expect(new URLSearchParams(window.location.search).get("run")).toBe(
+      "task-handoff-1",
+    );
   }, 30_000);
 
   it("does not send a confirmation when its exact identity cannot be retained", async () => {

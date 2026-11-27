@@ -16,13 +16,6 @@
  * or authority material can enter an Operations URL through this module.
  */
 
-declare module "@tanstack/react-router" {
-  interface HistoryState {
-    /** Presentation-only marker for a Files confirmation handing off to its Task. */
-    organizeHandoffRunId?: string;
-  }
-}
-
 export const OPERATIONS_RETURN_KEY = "returnOps" as const;
 
 /** The exact keys one task-center list context may carry. */

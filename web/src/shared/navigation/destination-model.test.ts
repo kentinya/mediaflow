@@ -639,6 +639,32 @@ describe("destination model", () => {
       ).toBe(
         "resourceLibraryId=resources&organizeDiscovery=organize-discovery-1",
       );
+      expect(
+        allowlistedDestinationSearch(
+          "/resourcelib/files",
+          "resourceLibraryId=resources&path=shows&run=original-task&tab=records&dialog=organize",
+        ),
+      ).toBe(
+        "resourceLibraryId=resources&path=shows&run=original-task&tab=records",
+      );
+      expect(
+        allowlistedDestinationSearch(
+          "/resourcelib/files",
+          "run=..%2Fother&item=other&tab=records",
+        ),
+      ).toBeNull();
+      expect(
+        allowlistedDestinationSearch(
+          "/resourcelib/files",
+          "organizeDiscovery=original-preparation&run=other-task&tab=records",
+        ),
+      ).toBe("organizeDiscovery=original-preparation");
+      expect(
+        allowlistedDestinationSearch(
+          "/resourcelib/files",
+          "operationTaskId=file-transfer&run=other-task&tab=records",
+        ),
+      ).toBe("operationTaskId=file-transfer");
       // Only the literal marker survives; a foreign `organize` value drops it.
       expect(
         allowlistedDestinationSearch("/resourcelib/files", "organize=execute"),

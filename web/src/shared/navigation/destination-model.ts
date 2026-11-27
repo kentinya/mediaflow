@@ -782,6 +782,10 @@ export function allowlistedDestinationSearch(
       current.get("operationTaskId"),
       OPERATION_TASK_TOKEN,
     );
+    if (!allowed.has("organizeDiscovery") && !allowed.has("operationTaskId")) {
+      setFilterToken(allowed, "run", current.get("run"), OPERATION_TASK_TOKEN);
+      if (allowed.has("run")) setRunDetailTokens(allowed, current);
+    }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (path === "/medialib/files") {

@@ -19,12 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-  useLocation,
-  useNavigate,
-  useSearch,
-  Link,
-} from "@tanstack/react-router";
+import { useNavigate, useSearch, Link } from "@tanstack/react-router";
 import { useAuthAccount, useAuthToken } from "../../shared/api/auth-context";
 import {
   mutateLifecycle,
@@ -147,7 +142,7 @@ export interface RunControlSession {
   readonly locked: boolean;
 }
 
-const EMPTY_RUN_CONTROL_SESSION: RunControlSession = {
+export const EMPTY_RUN_CONTROL_SESSION: RunControlSession = {
   pendingAction: null,
   result: null,
   locked: false,
@@ -492,9 +487,6 @@ export function OperationsLanding() {
   const view = readView(searchParams);
   const filters = readFilters(searchParams);
   const selectedId = readSafeSearchValue(searchParams, "run");
-  const handoffRunId = useLocation({
-    select: (location) => location.state.organizeHandoffRunId,
-  });
   // The one closed hosted-card marker. It names no preparation: the exact
   // discovery is read from the selected Task's own backend association below.
   const organizeDialogRequested =
@@ -1237,7 +1229,7 @@ export function OperationsLanding() {
                   // controls; the durable session store keeps each run's own
                   // unknown outcomes and confirmations isolated by run id.
                   key={selectedId}
-                  fromOrganizeHandoff={handoffRunId === selectedId}
+                  fromOrganizeHandoff={false}
                   query={overviewQuery}
                   onClose={closeRun}
                   detailState={detailState}
@@ -1934,7 +1926,7 @@ function RunTable({
  * selecting row button — so keyboard and screen-reader users keep the list
  * context they came from.
  */
-function RunDetailPanel({
+export function RunDetailPanel({
   fromOrganizeHandoff,
   query,
   onClose,
@@ -2006,7 +1998,12 @@ function RunDetailPanel({
     ),
     refetchInterval: (query) => {
       const read = query.state.data;
-      if (read === undefined || !read.ok || read.model.previewId !== null) {
+      if (
+        suspended ||
+        read === undefined ||
+        !read.ok ||
+        read.model.previewId !== null
+      ) {
         return false;
       }
       return RUN_REFETCH_INTERVAL;
