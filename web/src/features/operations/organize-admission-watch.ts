@@ -8,11 +8,9 @@
  * effect authority is durably admitted. It never calls Execute, mints
  * authority or replays a mutation.
  *
- * Checks are bounded with backoff. A check that finds no record yet keeps
- * watching, because the original POST may still be in flight; a proved
- * admission or a non-equivalent durable conflict settles the entry. Every
- * in-flight check is deduplicated by principal and exact submission, so two
- * mounted surfaces never issue the same read concurrently.
+ * Checks use bounded backoff or pause for explicit recovery on batch review.
+ * A proved admission or a non-equivalent durable conflict settles the entry.
+ * In-flight checks are deduplicated by principal and exact submission.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -42,6 +40,7 @@ export type OrganizeAdmissionWatchPhase =
 export interface OrganizeAdmissionWatchState {
   readonly phase: OrganizeAdmissionWatchPhase;
   readonly attempt: number;
+  readonly reading: boolean;
   /** No further automatic check is scheduled in this mount. */
   readonly exhausted: boolean;
   readonly model: OrganizeAdmissionOutcomeModel | null;
@@ -53,6 +52,10 @@ export interface UseOrganizeAdmissionWatchGroupOptions {
   readonly token: string | null;
   readonly principalId: string | null;
   readonly entries: readonly OrganizeAdmissionWatchEntry[];
+  /** Stop automatic reads after a failure or a twice-verified absence. */
+  readonly explicitReviewRecovery?: boolean;
+  /** A no-record response unlocks reconfirmation only after an operator read. */
+  readonly confirmAbsenceManually?: boolean;
   /**
    * Called for every completed read. The caller owns retention cleanup and
    * user-visible messaging; this hook only schedules and deduplicates reads.
@@ -66,7 +69,7 @@ export interface UseOrganizeAdmissionWatchGroupOptions {
 
 export interface OrganizeAdmissionWatchGroup {
   readonly states: ReadonlyMap<string, OrganizeAdmissionWatchState>;
-  /** Reset the bounded attempt window and check every unsettled entry now. */
+  /** Explicitly check every unsettled entry now. */
   readonly retry: () => void;
 }
 
@@ -162,8 +165,7 @@ function sameEntries(
  * The effect owns one independent backoff per entry but only one timer per
  * entry, and the module-level check map prevents two mounted surfaces from
  * issuing the same read at the same time. Reconnection and a returning visible
- * page reset the attempt window because those are exactly the moments when an
- * offline check or an in-flight original POST may become readable.
+ * page can wake automatic checks, but not entries paused for explicit recovery.
  */
 export function useOrganizeAdmissionWatchGroup(
   options: UseOrganizeAdmissionWatchGroupOptions,
@@ -171,7 +173,7 @@ export function useOrganizeAdmissionWatchGroup(
   const [states, setStates] = useState<
     ReadonlyMap<string, OrganizeAdmissionWatchState>
   >(new Map());
-  const [nudge, setNudge] = useState(0);
+  const retryRef = useRef<(() => void) | null>(null);
   const onOutcomeRef = useRef(options.onOutcome);
   useEffect(() => {
     onOutcomeRef.current = options.onOutcome;
@@ -196,11 +198,14 @@ export function useOrganizeAdmissionWatchGroup(
     const attempts = new Map<string, number>();
     const inFlight = new Set<string>();
     const settled = new Set<string>();
+    const stopped = new Set<string>();
+    const latest = new Map<string, OrganizeAdmissionWatchState>();
     const principalId = current.principalId;
     const token = current.token;
 
     const publish = (key: string, next: OrganizeAdmissionWatchState) => {
       if (cancelled) return;
+      latest.set(key, next);
       setStates((previous) => {
         const map = new Map(previous);
         map.set(key, next);
@@ -224,10 +229,19 @@ export function useOrganizeAdmissionWatchGroup(
         : "failed";
       const settledNow = phase === "known" || phase === "not_equivalent";
       if (settledNow) settled.add(entry.key);
-      const exhausted = !settledNow && attempt >= MAX_ATTEMPTS;
+      const exhausted =
+        !settledNow &&
+        (attempt >= MAX_ATTEMPTS ||
+          (current.explicitReviewRecovery === true &&
+            (phase === "failed" ||
+              (phase === "not_admitted" &&
+                (attempt >= 2 || current.confirmAbsenceManually === true)))));
+      if (exhausted && current.explicitReviewRecovery === true)
+        stopped.add(entry.key);
       publish(entry.key, {
         phase,
         attempt,
+        reading: false,
         exhausted,
         model,
         failureKind,
@@ -257,10 +271,15 @@ export function useOrganizeAdmissionWatchGroup(
       inFlight.add(entry.key);
       const attempt = (attempts.get(entry.key) ?? 0) + 1;
       attempts.set(entry.key, attempt);
-      const previous = states.get(entry.key);
+      const previous = latest.get(entry.key);
       publish(entry.key, {
-        phase: "checking",
+        phase:
+          current.explicitReviewRecovery === true &&
+          (previous?.phase === "failed" || previous?.phase === "not_admitted")
+            ? previous.phase
+            : "checking",
         attempt,
+        reading: true,
         exhausted: false,
         model: previous?.model ?? null,
         failureKind: previous?.failureKind ?? null,
@@ -282,40 +301,66 @@ export function useOrganizeAdmissionWatchGroup(
       void run(entry);
     }
 
-    const wake = () => {
+    const wake = (explicit = false) => {
       if (cancelled) return;
       for (const entry of current.entries) {
-        if (settled.has(entry.key) || inFlight.has(entry.key)) continue;
+        if (
+          settled.has(entry.key) ||
+          (!explicit && stopped.has(entry.key)) ||
+          inFlight.has(entry.key)
+        )
+          continue;
         const timer = timers.get(entry.key);
         if (timer !== undefined) {
           clearTimeout(timer);
           timers.delete(entry.key);
         }
-        attempts.set(entry.key, 0);
+        const previous = latest.get(entry.key);
+        if (explicit) stopped.delete(entry.key);
+        // The explicit second no-record read can complete the proof. A
+        // failed previous read, in contrast, is not evidence of absence.
+        attempts.set(
+          entry.key,
+          explicit &&
+            current.confirmAbsenceManually === true &&
+            previous?.phase === "not_admitted"
+            ? 1
+            : 0,
+        );
         void run(entry);
       }
     };
+    retryRef.current = () => wake(true);
+    const onOnline = () => wake();
     const onVisibility = () => {
       if (document.visibilityState === "visible") wake();
     };
-    window.addEventListener("online", wake);
+    window.addEventListener("online", onOnline);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
       for (const timer of timers.values()) clearTimeout(timer);
       timers.clear();
-      window.removeEventListener("online", wake);
+      retryRef.current = null;
+      window.removeEventListener("online", onOnline);
       document.removeEventListener("visibilitychange", onVisibility);
     };
     // `entriesKey` is the exact set of watched request identities. Its members
     // are immutable retained records, so no other dependency can change the
     // scheduler's input.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options.enabled, options.token, options.principalId, entriesKey, nudge]);
+  }, [
+    options.enabled,
+    options.token,
+    options.principalId,
+    options.explicitReviewRecovery,
+    options.confirmAbsenceManually,
+    entriesKey,
+  ]);
 
   return {
     states,
-    retry: () => setNudge((value) => value + 1),
+    retry: () => retryRef.current?.(),
   };
 }
 

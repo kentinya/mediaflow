@@ -5349,8 +5349,8 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     await screen.findByText("任务详情暂时无法读取", undefined, {
       timeout: 9_000,
     });
-    // The retained command identity is not cleared by the unrelated background
-    // read failure; the dialog keeps its automatic reconciliation.
+    // The unrelated background failure does not clear the retained identity
+    // or start a second reconciliation from the underlying task detail.
     expect(
       within(dialog).getByText(/提交结果待核对|暂时无法核对原提交/),
     ).toBeVisible();
@@ -5367,10 +5367,14 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
       expect(within(dialog).queryByText("任务详情暂时无法读取")).toBeNull(),
     );
 
-    // Once the read surface recovers, the exact original request is checked
-    // automatically and hands off; no manual reconciliation or second Execute
-    // exists.
+    // Recovering the overview does not read the original admission. Only the
+    // operator's separate check opens the exact Task without a second Execute.
     backend.state.admissionUnavailable = false;
+    expect(backend.calls.admissionReads).toBe(1);
+    expect(within(dialog).getByText("暂时无法核对原提交")).toBeVisible();
+    await user.click(
+      within(dialog).getByRole("button", { name: "核对本次提交" }),
+    );
     await waitFor(
       () =>
         expect(
@@ -5386,7 +5390,7 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
       new URLSearchParams(router.history.location.search).get("dialog"),
     ).toBeNull();
     expect(backend.calls.posts).toEqual([submittedPreview]);
-    expect(backend.calls.admissionReads).toBeGreaterThanOrEqual(1);
+    expect(backend.calls.admissionReads).toBe(2);
   }, 20_000);
 
   it("Task59.1 reads a lost in-place analysis back into the same continuation file", async () => {

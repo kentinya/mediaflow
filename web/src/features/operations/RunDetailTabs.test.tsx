@@ -2464,7 +2464,7 @@ describe("selected-run detail tabs", () => {
       name: "状态与流程",
     });
     expect(
-      within(flow).getByRole("heading", { name: "等待处理" }),
+      within(flow).getByRole("heading", { name: "等待确认" }),
     ).toBeVisible();
     expect(within(flow).getByText("1 / 2 个主文件")).toBeVisible();
     expect(within(detail).queryByRole("link", { name: "继续整理" })).toBeNull();

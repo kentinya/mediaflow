@@ -1,12 +1,9 @@
 /**
  * TanStack Query options for the unified Operations run inventory.
  *
- * One shared bounded polling policy drives both the inventory page and the
- * selected run overview: each read polls only while it is visible and while
- * something it reports is still active (non-terminal), backs off after a
- * failure and settles once everything it reports reached a terminal state.
- * Reads are side-effect-free, so a poll never replays a command — it repeats
- * only the same bounded read.
+ * The inventory polls while visible, with backoff after a temporary failure.
+ * An overview polls only while healthy and non-terminal; a failed overview
+ * waits for explicit recovery. These reads never replay a command.
  */
 
 import { queryOptions } from "@tanstack/react-query";
@@ -124,10 +121,12 @@ export function runOverviewQueryOptions(token: string | null, runId: string) {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     staleTime: 10_000,
-    // The selected run follows the same shared policy as the list: it polls
-    // only while its own state is still non-terminal.
+    // An open detail polls only healthy active work. Once it offers
+    // “重新读取任务”, the next read belongs to that action, not the list poll.
     refetchInterval: (query) =>
-      runRefetchInterval(query.state.data, query.state.status === "error"),
+      query.state.data?.ok === true
+        ? runRefetchInterval(query.state.data, query.state.status === "error")
+        : false,
     refetchIntervalInBackground: false,
   });
 }

@@ -3937,7 +3937,11 @@ describe("ManualOrganizeDialog", () => {
       allowSourceCleanup: false,
     });
 
-    expect(screen.getByRole("button", { name: "核对本次提交" })).toBeEnabled();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "核对本次提交" }),
+      ).toBeEnabled(),
+    );
     expect(screen.queryByRole("button", { name: "确认整理 1 项" })).toBeNull();
 
     // The first bounded read fails. The original unknown restriction stays,
@@ -3988,9 +3992,11 @@ describe("ManualOrganizeDialog", () => {
     expect(screen.queryByRole("button", { name: "确认整理 1 项" })).toBeNull();
     expect(backend.calls.executePosts).toHaveLength(1);
 
-    // Restore the read surface: the automatic check now proves the original
-    // request and hands off the exact original Task without any manual click.
+    // Restoring the service does not dismiss a read-failure card. An explicit
+    // read proves the original request and opens only its exact Task.
+    expect(backend.calls.admissionRequests).toHaveLength(1);
     backend.state.failAdmissionReads = 0;
+    await user.click(screen.getByRole("button", { name: "核对本次提交" }));
     await waitFor(
       () =>
         expect(
@@ -4714,7 +4720,7 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
 
-  it("shows one pending line before the original POST commits, then converges automatically", async () => {
+  it("shows one pending line during the POST, then checks the exact lost response automatically", async () => {
     const user = userEvent.setup();
     const backend = await openDialog(user, undefined, [filename(0)]);
     await screen.findByRole("heading", { name: /第 1 \/ 1 个/ });
@@ -4745,17 +4751,15 @@ describe("ManualOrganizeDialog", () => {
     });
 
     await user.click(screen.getByRole("button", { name: "确认整理 1 项" }));
-    // The first bounded read runs while the original POST is still in flight
-    // and honestly reports no durable record yet.
-    await waitFor(() =>
-      expect(backend.calls.admissionReads).toBeGreaterThanOrEqual(1),
-    );
+    // Read-only reconciliation starts after a transport outcome, not while
+    // an ordinary POST is still in flight and absence would be premature.
     expect(await screen.findByText("正在提交整理…")).toBeVisible();
+    expect(backend.calls.admissionReads).toBe(0);
     expect(screen.queryByRole("region", { name: "整批复核" })).toBeNull();
     expect(screen.queryByRole("button", { name: /核对提交结果/ })).toBeNull();
     expect(executeAttempts).toBe(1);
 
-    // The delayed original request now commits. The next automatic read finds
+    // The delayed original request now commits. The automatic read finds
     // the same durable admission and hands off the exact Task.
     releaseExecute.current?.();
     await waitFor(
@@ -4802,6 +4806,13 @@ describe("ManualOrganizeDialog", () => {
     });
 
     await user.click(screen.getByRole("button", { name: "确认整理 1 项" }));
+    const check = await screen.findByRole("button", { name: "核对本次提交" });
+    await waitFor(() => expect(check).toBeEnabled());
+    expect(backend.calls.admissionRequests).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: "确认同一批（1 项）" }),
+    ).toBeNull();
+    await user.click(check);
     const retry = await screen.findByRole(
       "button",
       { name: "确认同一批（1 项）" },

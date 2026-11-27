@@ -3902,8 +3902,8 @@ test("Task59.1 an unknown original submission is reconciled under a newer siblin
 
   // Let the production API commit its durable admission, then drop only the
   // browser-visible response. Admission reads stay blocked until the newer
-  // sibling summary exists, so the automatic check exercises the original
-  // retained identity across a plan change.
+  // sibling summary exists. The first unavailable read waits for the
+  // operator to recheck the original retained identity across the plan change.
   let dropped = false;
   let blockAdmission = true;
   let admittedTaskId = "";
@@ -4045,10 +4045,19 @@ test("Task59.1 an unknown original submission is reconciled under a newer siblin
   ).toBeVisible();
   expect(executePosts()).toHaveLength(1);
 
-  // Restore the read surface. The automatic check proves the original
-  // request and opens the exact original Task; the newer summary is never the
-  // lookup target.
+  // There was one failed automatic read. Restoring the service keeps that
+  // error until the operator explicitly checks the original selection.
+  const admissionReadCount = () =>
+    commands.filter(
+      (command) =>
+        command.method === "GET" && /\/admission$/.test(command.path),
+    ).length;
+  expect(admissionReadCount()).toBe(1);
   blockAdmission = false;
+  await expect(
+    card.getByText("暂时无法核对原提交", { exact: true }),
+  ).toBeVisible();
+  await card.getByRole("button", { name: "核对本次提交", exact: true }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/, {
     timeout: 30_000,
   });
@@ -4370,10 +4379,37 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
     ),
   ).toHaveLength(0);
 
-  // With no executable sibling the Task settles. Its file evidence
-  // keeps the failure after the organizer closes.
-  await card.getByRole("button", { name: "关闭整理弹窗", exact: true }).click();
-  await expect(card).toBeHidden();
+  // Confirm only the healthy sibling. Before the Worker runs, the other
+  // file's failure must already count as one ended attempt; a contradictory
+  // aggregate used to make the entire Task Center unavailable on handoff.
+  await card.getByRole("button", { name: "确认整理 1 项" }).click();
+  const mixedDetail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(
+    mixedDetail.getByRole("region", { name: "处理进度" }),
+  ).toBeVisible();
+  await expect(
+    mixedDetail.getByRole("button", { name: new RegExp(failedFile) }),
+  ).toBeVisible();
+  await expect(
+    mixedDetail.getByRole("button", { name: new RegExp(readyFile) }),
+  ).toBeVisible();
+  const handoffTaskId = new URL(page.url()).searchParams.get("run");
+  expect(handoffTaskId).toBeTruthy();
+  const mixedRun = await request.get(
+    `${BASE}/api/operations/runs/${handoffTaskId}`,
+    {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    },
+  );
+  expect(mixedRun.ok()).toBe(true);
+  expect(await mixedRun.json()).toMatchObject({
+    total_items: 2,
+    completed_items: 1,
+    failed_items: 1,
+  });
+  await mixedDetail.getByRole("button", { name: "关闭详情" }).click();
+
+  // With no executable sibling the Task settles; its evidence keeps the failure.
   await openReadabilityDirectory(page, "ProviderFailure", endedFile);
   await selectFiles(page, [endedFile]);
   await page.getByRole("button", { name: "批量整理" }).click();
@@ -4413,7 +4449,7 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
         command.method === "POST" &&
         /\/operations\/organize\/previews\/[^/]+\/execute$/.test(command.path),
     ),
-  ).toHaveLength(0);
+  ).toHaveLength(1);
 });
 
 test("Task59.1 manual organize readability: ten files keep an aligned batch summary", async ({

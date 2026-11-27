@@ -182,7 +182,6 @@ describe("run refetch interval", () => {
     expect(overview.retry).toBe(false);
     expect(overview.staleTime).toBe(10_000);
     expect(overview.refetchIntervalInBackground).toBe(false);
-    // The same shared policy drives both options objects.
     expect(inventory.refetchInterval).toBeTypeOf("function");
     expect(overview.refetchInterval).toBeTypeOf("function");
     const inventoryPoll = inventory.refetchInterval as (
@@ -195,6 +194,9 @@ describe("run refetch interval", () => {
       state: { data: inventoryRead(["completed"]), status: "error" },
     };
     expect(inventoryPoll(staleSuccessfulRead)).toBe(false);
+    const unavailable = { state: { data: FAILED_READ, status: "success" } };
+    expect(inventoryPoll(unavailable)).toBe(10_000);
+    expect(overviewPoll(unavailable)).toBe(false);
     expect(
       overviewPoll({
         state: { data: overviewRead("running"), status: "error" },

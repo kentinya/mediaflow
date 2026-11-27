@@ -2283,7 +2283,7 @@ function RunDetailPanel({
                 flow={
                   <>
                     <RunFlowSummary headline={headline} />
-                    <RunRetainedSubmissionNotice run={run} />
+                    {!suspended && <RunRetainedSubmissionNotice run={run} />}
                   </>
                 }
                 results={{
@@ -2526,7 +2526,12 @@ function waitingHeadline(
     run.progress?.available === true &&
     run.progress.filesRecoveryConfirmationPending
   ) {
-    return FILE_RECOVERY_HEADLINE;
+    return {
+      title: mixed ? "部分文件等待确认" : "等待确认",
+      copy: "在下方展开对应文件的证据，核对新方案并确认继续整理。",
+      tone: "attention",
+      compactProgress: true,
+    };
   }
   // The current plan is the exact confirmable range once it is readable. A
   // pending/failed plan read never guesses: the durable waiting count and the

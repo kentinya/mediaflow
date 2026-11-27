@@ -1,6 +1,10 @@
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { checkOrganizeAdmission } from "./organize-admission-watch";
+import {
+  checkOrganizeAdmission,
+  useOrganizeAdmissionWatchGroup,
+} from "./organize-admission-watch";
 
 const SUBMISSION = {
   previewId: "preview-1",
@@ -29,6 +33,7 @@ function knownResponse(): Response {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -80,5 +85,62 @@ describe("organize admission watch", () => {
       allowSourceCleanup: false,
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("leaves the failed batch read visible until an explicit read completes", async () => {
+    vi.useFakeTimers();
+    let resolveRetry!: (response: Response) => void;
+    const retry = new Promise<Response>((resolve) => {
+      resolveRetry = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: "unavailable" } }), {
+          status: 503,
+        }),
+      )
+      .mockReturnValueOnce(retry);
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() =>
+      useOrganizeAdmissionWatchGroup({
+        enabled: true,
+        token: "token",
+        principalId: "operator-review",
+        entries: [{ key: "original", submission: SUBMISSION, workId: "work" }],
+        explicitReviewRecovery: true,
+        confirmAbsenceManually: true,
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.states.get("original")).toMatchObject({
+      phase: "failed",
+      reading: false,
+    });
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.retry());
+    expect(result.current.states.get("original")).toMatchObject({
+      phase: "failed",
+      reading: true,
+    });
+    act(() => result.current.retry());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => resolveRetry(knownResponse()));
+    expect(result.current.states.get("original")).toMatchObject({
+      phase: "known",
+      reading: false,
+    });
+    expect(
+      fetchMock.mock.calls.every(([, options]) => options.method === "GET"),
+    ).toBe(true);
   });
 });

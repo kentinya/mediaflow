@@ -532,7 +532,11 @@ async function finishNativeRecovery(
   await expect(summary.or(prepare)).toBeVisible();
   if (await prepare.isVisible()) await prepare.click();
   await expect(summary).toBeVisible();
-  await expectSingleFileRecoveryFlow(page);
+  await expect(
+    page
+      .getByRole("region", { name: "状态与流程" })
+      .getByRole("heading", { name: "等待确认", exact: true }),
+  ).toBeVisible();
   await expect(summary.getByText("等待明确确认")).toBeVisible();
   await expect(
     page.getByRole("link", { name: "继续整理", exact: true }),
@@ -2098,12 +2102,12 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   await saveRecognition();
   await driveDiscovery();
 
-  // Both zero-mutation analyses are complete; the opened file's own summary
-  // now waits for the operator's explicit subset confirmation.
+  // Both zero-mutation analyses are complete; the exact new summaries now
+  // wait for confirmation in evidence, not the top-level Files continuation.
   await page.reload();
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
   await expect(
-    detail.getByRole("heading", { name: "等待处理", exact: true }),
+    detail.getByRole("heading", { name: "等待确认", exact: true }),
   ).toBeVisible();
   await expect(
     detail.getByRole("link", { name: "继续整理", exact: true }),
@@ -2283,7 +2287,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
     name: "状态与流程",
   });
   await expect(
-    recoveryFlow.getByRole("heading", { name: "等待处理", exact: true }),
+    recoveryFlow.getByRole("heading", { name: "等待确认", exact: true }),
   ).toBeVisible();
   await expect(
     recoveryFlow.getByRole("region", { name: "处理进度" }),
@@ -2322,6 +2326,7 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   await expect(
     reopenedCard.getByText("Fifteenth.2015.mkv", { exact: true }),
   ).toBeVisible();
+  await reopenedCard.getByText("规则与方案证据", { exact: true }).click();
   await reopenedCard.getByText("修正识别或作品", { exact: true }).click();
   const reopenedSelect = reopenedCard.locator(
     'select[aria-label^="识别类型 "]',
@@ -2346,12 +2351,17 @@ test("the opened item reconciles the exact sibling subset admission it did not s
   ).toBeVisible({
     timeout: 30_000,
   });
+  const updatedOverview = reopenedCard.getByRole("region", {
+    name: "本次整理概览",
+  });
   await expect(
-    reopenedCard
-      .getByRole("region", { name: "本次整理概览" })
-      .getByText(
-        /「Fifteenth\.2015\.mkv」已重新分析，当前出现新的待处理问题：作品搜索修正/,
-      ),
+    updatedOverview.getByText("需要处理新的作品搜索修正问题", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    updatedOverview.getByText(
+      "原决定已保存。新的分析发现「Fifteenth.2015.mkv」需要继续处理，可从本行打开。",
+      { exact: true },
+    ),
   ).toBeVisible();
   expect(exactExecutePosts()).toHaveLength(1);
   const admissionAfterRework = await request.get(

@@ -629,7 +629,8 @@ class OperationsRunProgress:
     #: the basis for distinguishing analysis completion from organize
     #: success.  Read together with the counts in the same snapshot.
     execute_authorized: bool = False
-    #: A Files plan has a waiting source with its own saved four-type decision.
+    #: An exact Files or inline recovery plan waits on its saved four-type
+    #: decision's separate execution confirmation. Wire name kept for clients.
     files_recovery_confirmation_pending: bool = False
 
 

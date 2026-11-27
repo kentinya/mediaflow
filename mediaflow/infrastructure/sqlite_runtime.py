@@ -194,7 +194,6 @@ from mediaflow.domain.source_evidence import (
 )
 from mediaflow.domain.source_reviews import FileReviewLink
 from mediaflow.domain.task_persistence import (
-    COMPLETED_ITEM_STATUSES,
     EXCLUDING_HISTORY_OUTCOME_STATUSES,
     FAILED_ITEM_STATUSES,
     HISTORY_EXCLUDED_ITEM_STAGE,
@@ -6919,11 +6918,23 @@ class SQLiteTaskRepository:
             and status_counts.get(TaskItemStatus.WAITING_CONFIRM.value, 0) > 0
             and self._connection.execute(
                 f"""SELECT 1
-                FROM media_discoveries discovery
-                JOIN task_items i ON i.task_id = discovery.organize_task_id
-                WHERE discovery.organize_task_id = ?
-                  AND discovery.preview_id IS NOT NULL
+                FROM task_items i
+                WHERE i.task_id = ?
                   AND i.status = 'waiting_confirm'
+                  AND (
+                      EXISTS (
+                          SELECT 1 FROM media_discoveries discovery
+                          WHERE discovery.organize_task_id = i.task_id
+                            AND discovery.preview_id IS NOT NULL
+                      )
+                      OR EXISTS (
+                          SELECT 1 FROM manual_recovery_preparations preparation
+                          WHERE preparation.source_task_id = i.task_id
+                            AND preparation.source_item_id = i.item_id
+                            AND preparation.status = 'prepared'
+                            AND preparation.current = 1
+                      )
+                  )
                   AND NOT EXISTS (
                       SELECT 1 FROM conflict_confirmations conflict
                       WHERE conflict.item_id = i.item_id AND conflict.status = 'pending'
@@ -18010,11 +18021,11 @@ class SQLiteTaskRepository:
 
         A Task may own several explicitly confirmed subsets, so its published
         aggregate is the whole TaskItem population rather than the execution that
-        happens to be confirming right now.  A cancelled/failed/partial/ignored
-        source keeps its own honest outcome and is never counted as completed.
+        happens to be confirming right now. As in task_item_counts, processing
+        progress counts every ended attempt, independently of its outcome.
         """
 
-        completed = tuple(sorted(value.value for value in COMPLETED_ITEM_STATUSES))
+        completed = tuple(sorted(value.value for value in SETTLED_ITEM_STATUSES))
         failed = tuple(sorted(value.value for value in FAILED_ITEM_STATUSES))
         completed_marks = ", ".join("?" for _ in completed)
         failed_marks = ", ".join("?" for _ in failed)

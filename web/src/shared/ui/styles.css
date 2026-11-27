@@ -10556,8 +10556,19 @@ tr[aria-selected="true"] {
   overflow-wrap: anywhere;
 }
 
-.mf-organize-overview-warning p {
+.mf-organize-overview-warning p,
+.mf-organize-range-analysis p {
   margin: 2px 0 0;
+}
+
+.mf-organize-range-analysis {
+  border: 1px solid #dbe4ff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #eef3ff;
+  color: #0f4ca8;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .mf-organize-overview-scope {
@@ -10775,7 +10786,8 @@ tr[aria-selected="true"] {
   color: #7a4b00;
 }
 
-.mf-organize-overview-status-ready {
+.mf-organize-overview-status-ready,
+.mf-organize-overview-status-analyzing {
   border-color: #bcd3f7;
   background: #f3f7ff;
   color: #0f4ca8;
