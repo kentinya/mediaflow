@@ -765,6 +765,39 @@ export type RunDetailStatusTone =
  */
 export type RunProgressPhase = "preparing" | "confirming";
 
+export function RunDetailToolbar({
+  tab,
+  onTabChange,
+  detailTabRef,
+  actions,
+}: {
+  readonly tab: RunDetailTab;
+  readonly onTabChange: (tab: RunDetailTab) => void;
+  readonly detailTabRef?: React.Ref<HTMLButtonElement>;
+  readonly actions: ReactNode;
+}) {
+  return (
+    <nav className="mf-run-tabs" aria-label="运行详情与操作记录">
+      <button
+        ref={detailTabRef}
+        type="button"
+        aria-current={tab === "detail" ? "page" : undefined}
+        onClick={() => onTabChange("detail")}
+      >
+        任务详情
+      </button>
+      <button
+        type="button"
+        aria-current={tab === "records" ? "page" : undefined}
+        onClick={() => onTabChange("records")}
+      >
+        操作记录
+      </button>
+      <div className="mf-run-tab-actions">{actions}</div>
+    </nav>
+  );
+}
+
 export interface RunDetailTabsProps {
   /** The exact canonical run identity from the overview read. */
   readonly runId: string;
@@ -962,29 +995,17 @@ export function RunDetailTabs({
 
   return (
     <section className="mf-run-detail-tabs" aria-label="任务详情与操作记录">
-      <nav className="mf-run-tabs" aria-label="运行详情与操作记录">
-        <button
-          ref={detailTabRef}
-          type="button"
-          aria-current={state.tab === "detail" ? "page" : undefined}
-          onClick={() => changeTab("detail")}
-        >
-          任务详情
-        </button>
-        <button
-          type="button"
-          aria-current={state.tab === "records" ? "page" : undefined}
-          onClick={() => changeTab("records")}
-        >
-          操作记录
-        </button>
-        {/* One shared action area for both tabs: the exact task operations
-            first, then the bounded export. */}
-        <div className="mf-run-tab-actions">
-          {taskActions}
-          <RunExportAction runId={runId} progress={progress} />
-        </div>
-      </nav>
+      <RunDetailToolbar
+        tab={state.tab}
+        onTabChange={changeTab}
+        detailTabRef={detailTabRef}
+        actions={
+          <>
+            {taskActions}
+            <RunExportAction runId={runId} progress={progress} />
+          </>
+        }
+      />
       {state.tab === "detail" ? (
         <div className="mf-run-tab-panel">
           <section

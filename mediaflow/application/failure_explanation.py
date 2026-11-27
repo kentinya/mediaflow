@@ -299,10 +299,12 @@ def _category_from_text(text: str) -> str | None:
         or "read-only" in text
     ):
         return "denied_capability"
-    if "storage" in text or text.startswith("os error") or "connection" in text:
+    if "storage" in text or text.startswith("os error"):
         return "storage_failure"
-    if "provider" in text or "metadata provider" in text or "rate limited" in text:
+    if "provider" in text or "rate limited" in text:
         return "provider_failure"
+    if "connection" in text:
+        return "storage_failure"
     if "recognition type" in text or "recognition" in text:
         return "recognition_failure"
     if "metadata" in text:

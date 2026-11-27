@@ -2040,7 +2040,11 @@ export function TaskItemRecoveryPanel({
           />
         )}
         {message === "决定未保存，未请求分析" && (
-          <StatusBanner variant="warning" title={message}>
+          <StatusBanner
+            variant="warning"
+            title={message}
+            className="mf-operations-inline-notice"
+          >
             <p>输入和当前文件位置已保留。</p>
           </StatusBanner>
         )}

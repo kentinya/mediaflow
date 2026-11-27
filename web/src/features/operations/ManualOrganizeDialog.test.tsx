@@ -310,7 +310,7 @@ function makeBackend() {
         message: "the exact zero-mutation plan summary is ready",
       },
       primarySourceCount: previewItemIndices().length,
-      organizeTaskId: state.endedFlow ? null : "organize-task-1",
+      organizeTaskId: "organize-task-1",
       organizeFlow: {
         taskId: "organize-task-1",
         status: state.endedFlow
@@ -2055,7 +2055,7 @@ describe("ManualOrganizeDialog", () => {
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     expect(screen.getByRole("region", { name: "整批复核" })).toHaveTextContent(
-      /本次确认\s*10\s*项/,
+      /本次确认\s*10\s*未纳入/,
     );
 
     const confirm = screen.getByRole("button", { name: "确认整理 10 项" });
@@ -2712,7 +2712,7 @@ describe("ManualOrganizeDialog", () => {
     await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const region = await screen.findByRole("region", { name: "整批复核" });
-    expect(region).toHaveTextContent(/本次确认\s*10\s*项/);
+    expect(region).toHaveTextContent(/本次确认\s*10\s*未纳入/);
 
     // Browse-only steps are still zero-execute even on the confirm step.
     await user.click(screen.getByRole("button", { name: "返回整理概览" }));
@@ -2957,8 +2957,8 @@ describe("ManualOrganizeDialog", () => {
     await screen.findByRole("region", { name: "本次整理概览" });
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const region = await screen.findByRole("region", { name: "整批复核" });
-    expect(region).toHaveTextContent(/本次确认\s*1\s*项/);
-    expect(region).toHaveTextContent(/未纳入\s*0\s*项/);
+    expect(region).toHaveTextContent(/本次确认\s*1\s*未纳入/);
+    expect(region).toHaveTextContent(/未纳入\s*0\s*关联附件/);
     expect(card()).toHaveTextContent("移动成功后原位置不再保留");
 
     const batchList = await screen.findByRole("region", {
@@ -3067,8 +3067,8 @@ describe("ManualOrganizeDialog", () => {
       within(summary)
         .getByText(term, { selector: "dt" })
         .closest("div") as HTMLElement;
-    expect(fact("本次确认")).toHaveTextContent("1 项");
-    expect(fact("未纳入")).toHaveTextContent("0 项");
+    expect(within(fact("本次确认")).getByText("1")).toBeVisible();
+    expect(within(fact("未纳入")).getByText("0")).toBeVisible();
     expect(within(card()).getByText("未受理的所选条目(1 项)")).toBeVisible();
     expect(backend.calls.executePosts).toHaveLength(0);
     expect(backend.calls.analyzePosts).toHaveLength(0);
@@ -3304,6 +3304,8 @@ describe("ManualOrganizeDialog", () => {
     ).toBeVisible();
     expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
     expect(card().querySelector(".mf-organize-stage-copy")).toBeNull();
+    expect(screen.getByText("当前等待后台恢复")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "核对原请求" }));
     expect(screen.queryByText(/处理 Worker 暂不可用/)).toBeNull();
     expect(screen.queryByText(/准备诊断/)).toBeNull();
     expect(backend.calls.discoveryPosts).toHaveLength(1);
@@ -3370,30 +3372,38 @@ describe("ManualOrganizeDialog", () => {
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 20_000);
 
-  it("keeps an ended flow as a read-only original summary with no confirmation", async () => {
-    const user = userEvent.setup();
-    const backend = await openPreparationDialog(user, (value) => {
-      value.state.endedFlow = true;
-    });
-
-    await screen.findByText("任务已结束。以下为原计划与已记录的文件结果。");
-    const history = await screen.findByRole("region", {
-      name: "只读原计划摘要",
-    });
-    expect(
-      within(history).getByRole("heading", { name: "原计划摘要" }),
-    ).toBeVisible();
-    expect(
-      within(history).getAllByText(/Movie\.01\.mkv/).length,
-    ).toBeGreaterThan(0);
-    expect(
-      within(history).getAllByText(/Movie\.10\.mkv/).length,
-    ).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "保存并重新分析" })).toBeNull();
-    expect(backend.calls.executePosts).toHaveLength(0);
-    expect(backend.calls.analyzePosts).toHaveLength(0);
-  }, 30_000);
+  it.each([true, false])(
+    "opens the exact Task result without reading any plan on an ended Files address (linked: %s)",
+    async (keepsPreview) => {
+      const user = userEvent.setup();
+      const backend = await openAdmittedPreparation((value) => {
+        value.state.endedFlow = true;
+        value.state.endedFlowKeepsPreview = keepsPreview;
+      });
+      await screen.findByText("本次整理工作已结束");
+      expect(
+        screen.queryByRole("region", { name: "只读原计划摘要" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /确认整理|保存并重新分析/ }),
+      ).toBeNull();
+      expect(
+        backend.fetchMock.mock.calls.some(([input]) =>
+          /\/organize\/(previews|intents)\//.test(String(input)),
+        ),
+      ).toBe(false);
+      await user.click(screen.getByRole("button", { name: "查看任务结果" }));
+      await waitFor(() =>
+        expect(backend.router.state.location.search).toMatchObject({
+          run: "organize-task-1",
+        }),
+      );
+      expect(backend.calls.discoveryPosts).toHaveLength(0);
+      expect(backend.calls.executePosts).toHaveLength(0);
+      expect(backend.calls.analyzePosts).toHaveLength(0);
+    },
+    20_000,
+  );
 
   it("keeps a settled first preparation on the shared Files first screen", async () => {
     const user = userEvent.setup();
@@ -3438,24 +3448,19 @@ describe("ManualOrganizeDialog", () => {
     );
   }, 30_000);
 
-  it("keeps a bounded-address reopen of an ended limit preparation as read-only history", async () => {
-    await openAdmittedPreparation((value) => {
+  it("keeps the exact size refusal available from an ended Files preparation address", async () => {
+    const backend = await openAdmittedPreparation((value) => {
       value.state.endedFlow = true;
       value.state.primaryLimit = true;
     });
-
-    await screen.findByText("本次整理工作已结束");
-    expect(
-      await screen.findByText(
-        "本次未执行整理。最多支持 100 个主文件，请缩小选择范围后重新发起。",
-      ),
-    ).toBeVisible();
-    expect(screen.queryByText(/原计划摘要保留为只读历史/)).toBeNull();
-    expect(screen.queryByText(/本次整理从未生成过计划摘要/)).toBeNull();
+    expect(await screen.findByText("超出主文件上限")).toBeVisible();
+    expect(screen.getByRole("button", { name: "返回文件页" })).toBeVisible();
     expect(screen.queryByRole("region", { name: "只读原计划摘要" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "保存并重新分析" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "返回文件页" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /确认整理|保存并重新分析/ }),
+    ).toBeNull();
+    expect(backend.calls.executePosts).toHaveLength(0);
+    expect(backend.calls.analyzePosts).toHaveLength(0);
   }, 20_000);
 
   it("settles a first preparation cancelled before the first read as the shared first screen", async () => {
@@ -3603,10 +3608,9 @@ describe("ManualOrganizeDialog", () => {
     // terminal state instead of waiting for the summary to decide the screen.
     await screen.findByText("整理准备已取消", {}, { timeout: 10_000 });
     expect(
-      screen.getByText(
-        "后台已停止检查。本次不再提供确认；已生成的原计划摘要保留为只读历史，原文件仍在。",
-        { exact: true },
-      ),
+      screen.getByText("后台已停止检查，原文件仍在。可在任务详情查看结果。", {
+        exact: true,
+      }),
     ).toBeVisible();
     expect(screen.getByText("在准备阶段停止")).toBeVisible();
     expect(screen.getByText("来源资源库")).toBeVisible();
@@ -3616,25 +3620,10 @@ describe("ManualOrganizeDialog", () => {
     expect(card().querySelector(".mf-organize-preparation-spinner")).toBeNull();
     expect(screen.queryByText("本次整理工作已结束")).toBeNull();
     expect(screen.getByRole("button", { name: "返回文件页" })).toBeVisible();
-    // The linked summary stays a separate read-only history section; the
-    // cancellation copy does not claim that no summary was ever generated.
-    expect(
-      await screen.findByText(/正在读取原计划摘要作为只读历史/),
-    ).toBeVisible();
     expect(screen.queryByRole("region", { name: "本次整理概览" })).toBeNull();
     expect(screen.queryByRole("button", { name: /整批复核/ })).toBeNull();
     backend.releasePreviewRead();
-    const history = await screen.findByRole("region", {
-      name: "只读原计划摘要",
-    });
-    expect(
-      within(history).getByRole("heading", { name: "原计划摘要" }),
-    ).toBeVisible();
-    expect(
-      within(history).getAllByText(/Movie\.01\.mkv/).length,
-    ).toBeGreaterThan(0);
-    // The late summary joins the same terminal first screen as read-only
-    // content; it never changes the page into a confirmable overview.
+    expect(screen.queryByRole("region", { name: "只读原计划摘要" })).toBeNull();
     expect(screen.getByText("整理准备已取消")).toBeVisible();
     expect(screen.getByText("来源资源库")).toBeVisible();
     expect(screen.getByText("受理范围")).toBeVisible();
@@ -3764,17 +3753,11 @@ describe("ManualOrganizeDialog", () => {
       await screen.findByText("整理准备已取消", {}, { timeout: 10_000 }),
     ).toBeVisible();
     expect(
-      screen.getByText(
-        "后台已停止检查。本次不再提供确认；已生成的原计划摘要保留为只读历史，原文件仍在。",
-        { exact: true },
-      ),
+      screen.getByText("后台已停止检查，原文件仍在。可在任务详情查看结果。", {
+        exact: true,
+      }),
     ).toBeVisible();
-    const history = await screen.findByRole("region", {
-      name: "只读原计划摘要",
-    });
-    expect(
-      within(history).getByRole("heading", { name: "原计划摘要" }),
-    ).toBeVisible();
+    expect(screen.queryByRole("region", { name: "只读原计划摘要" })).toBeNull();
     expect(screen.getByText("来源资源库")).toBeVisible();
     expect(screen.getByText("受理范围")).toBeVisible();
     expect(screen.getByText("准备进度")).toBeVisible();
@@ -3794,25 +3777,6 @@ describe("ManualOrganizeDialog", () => {
       ),
     );
   }, 30_000);
-
-  it("renders the linked plan as read-only history when an ended flow kept it", async () => {
-    const user = userEvent.setup();
-    await openPreparationDialog(user, (value) => {
-      value.state.endedFlow = true;
-      value.state.endedFlowKeepsPreview = true;
-    });
-
-    await screen.findByText("任务已结束。以下为原计划与已记录的文件结果。");
-    const history = await screen.findByRole("region", {
-      name: "只读原计划摘要",
-    });
-    expect(
-      within(history).getByRole("heading", { name: "原计划摘要" }),
-    ).toBeVisible();
-    expect(within(history).getAllByText("当前结果")[0]).toBeVisible();
-    expect(within(history).getAllByText("技术诊断")[0]).toBeVisible();
-    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
-  }, 20_000);
 
   it("keeps the router-owned Files history entry when the admitted card enters and leaves the address", async () => {
     // A real Files entry carries the router's own history index/key.  The
@@ -3897,7 +3861,7 @@ describe("ManualOrganizeDialog", () => {
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     await screen.findByRole("region", { name: "整批复核" });
     expect(screen.getByRole("region", { name: "整批复核" })).toHaveTextContent(
-      /本次确认\s*1\s*项/,
+      /本次确认\s*1\s*未纳入/,
     );
     const overwrite = screen.getByRole("checkbox", {
       name: "我确认允许按已审阅方案替换现有目标文件",
@@ -4272,7 +4236,7 @@ describe("ManualOrganizeDialog", () => {
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const batch = await screen.findByRole("region", { name: "整批复核" });
     const summary = within(batch).getByText("本次确认").closest("div");
-    expect(summary?.querySelector("dd")?.textContent).toBe("1 项");
+    expect(summary?.querySelector("dd")?.textContent).toBe("1");
     expect(screen.getByRole("button", { name: "确认整理 1 项" })).toBeEnabled();
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
@@ -4353,34 +4317,6 @@ describe("ManualOrganizeDialog", () => {
     expect(screen.getByRole("button", { name: "确认整理 1 项" })).toBeEnabled();
     expect(backend.calls.executePosts).toHaveLength(0);
   }, 30_000);
-
-  it("Task59.1 keeps the same metadata technical failure in the ended read-only summary", async () => {
-    const user = userEvent.setup();
-    const backend = await openPreparationDialog(
-      user,
-      (value) => {
-        value.state.metadataProviderFailure = true;
-        value.state.previewItemPaths = [`Movies/${filename(0)}`];
-        value.state.endedFlow = true;
-        value.state.endedFlowKeepsPreview = true;
-      },
-      [filename(0)],
-    );
-
-    await screen.findByText("任务已结束。以下为原计划与已记录的文件结果。");
-    const history = await screen.findByRole("region", {
-      name: "只读原计划摘要",
-    });
-    expect(history).toHaveTextContent("元数据服务查询失败");
-    expect(history).toHaveTextContent(/重新选择该文件发起新的整理/);
-    expect(history).not.toHaveTextContent("重新分析同一准备");
-    expect(history).not.toHaveTextContent("Storage failure");
-    expect(
-      within(history).queryByRole("button", { name: /确认整理/ }),
-    ).toBeNull();
-    expect(screen.getByRole("button", { name: "关闭" })).toBeEnabled();
-    expect(backend.calls.executePosts).toHaveLength(0);
-  }, 20_000);
 
   it("Task59.1 returns to the overview only after this item's new ready plan is read back", async () => {
     const user = userEvent.setup();
@@ -5535,7 +5471,7 @@ describe("ManualOrganizeDialog", () => {
     // The batch still spans only the nine current legal files.
     await user.click(screen.getByRole("button", { name: /整批复核/ }));
     const summary = card().querySelector(".mf-organize-batch-summary");
-    expect(summary).toHaveTextContent(/本次确认\s*9 项/);
+    expect(summary).toHaveTextContent(/本次确认\s*9\s*未纳入/);
     expect(
       within(card()).getByRole("region", { name: "来源与目标" }),
     ).not.toHaveTextContent("Movie.01.mkv");

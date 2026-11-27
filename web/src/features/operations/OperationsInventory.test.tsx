@@ -5175,126 +5175,46 @@ describe("PATCH-20261113-3 task-center hosted preparation", () => {
     expect(backend.calls.posts).toEqual([]);
   });
 
-  it("reopens ended work as read-only history from the canonical address", async () => {
-    const backend = stubOrganizeHost({
-      overview: {
-        status: "completed",
-        current_stage: null,
-        filesPreparation: {
-          discoveryId: HOST_DISCOVERY_ID,
-          resourceLibraryId: "source",
-          continuable: false,
+  it.each(["completed", "failed", "cancelled"])(
+    "keeps exact Task detail when an old organizer address targets %s work",
+    async (status) => {
+      const backend = stubOrganizeHost({
+        overview: {
+          status,
+          current_stage: null,
+          filesPreparation: {
+            discoveryId: HOST_DISCOVERY_ID,
+            resourceLibraryId: "source",
+            continuable: false,
+          },
         },
-      },
-      discovery: {
-        status: "completed",
-        organizeFlow: {
-          taskId: "task-001",
-          status: "completed",
-          continuable: false,
-        },
-      },
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/operations?run=task-001&dialog=organize");
+      });
+      authStore.setToken(TOKEN);
+      const { router } = renderApp(
+        "/operations?view=ended&run=task-001&tab=records&dialog=organize",
+      );
 
-    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
-    expect(
-      await within(dialog).findByText(
-        /任务已结束。以下为原计划与已记录的文件结果。/,
-      ),
-    ).toBeVisible();
-    const history = await within(dialog).findByRole("region", {
-      name: "只读原计划摘要",
-    });
-    expect(
-      within(history).getByRole("heading", { name: "原计划摘要" }),
-    ).toBeVisible();
-    expect(
-      within(dialog).queryByRole("button", { name: /确认整理/ }),
-    ).toBeNull();
-    expect(
-      within(dialog).queryByRole("button", { name: /保存并重新分析/ }),
-    ).toBeNull();
-    expect(backend.calls.posts).toEqual([]);
-  });
-
-  it("distinguishes a failed original-summary read and retries it in place", async () => {
-    const user = userEvent.setup();
-    const backend = stubOrganizeHost({
-      intentUnavailable: true,
-      overview: {
-        status: "failed",
-        current_stage: null,
-        filesPreparation: {
-          discoveryId: HOST_DISCOVERY_ID,
-          resourceLibraryId: "source",
-          continuable: false,
-        },
-      },
-      discovery: {
-        status: "failed",
-        prepared: false,
-        previewId: null,
-        intentId: HOST_INTENT_ID,
-        organizeFlow: {
-          taskId: "task-001",
-          status: "failed",
-          continuable: false,
-        },
-      },
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/operations?run=task-001&dialog=organize");
-
-    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
-    expect(
-      await within(dialog).findByText(/原计划摘要暂时无法读取/),
-    ).toBeVisible();
-    expect(within(dialog).queryByText(/从未生成过计划摘要/)).toBeNull();
-
-    backend.state.intentUnavailable = false;
-    await user.click(
-      within(dialog).getByRole("button", { name: "重新读取原计划摘要" }),
-    );
-    expect(
-      await within(dialog).findByRole("region", { name: "只读原计划摘要" }),
-    ).toBeVisible();
-    expect(backend.calls.posts).toEqual([]);
-  });
-
-  it("states plainly when ended work never generated a summary", async () => {
-    stubOrganizeHost({
-      overview: {
-        status: "failed",
-        current_stage: null,
-        filesPreparation: {
-          discoveryId: HOST_DISCOVERY_ID,
-          resourceLibraryId: "source",
-          continuable: false,
-        },
-      },
-      discovery: {
-        status: "failed",
-        prepared: false,
-        previewId: null,
-        intentId: null,
-        organizeFlow: {
-          taskId: "task-001",
-          status: "failed",
-          continuable: false,
-        },
-      },
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/operations?run=task-001&dialog=organize");
-
-    const dialog = await screen.findByRole("dialog", { name: "整理所选文件" });
-    expect(await within(dialog).findByText(/从未生成过计划摘要/)).toBeVisible();
-    expect(
-      within(dialog).queryByRole("region", { name: "只读原计划摘要" }),
-    ).toBeNull();
-  });
+      const detail = await screen.findByRole("dialog", { name: "运行详情" });
+      expect(
+        await within(detail).findByRole("button", { name: "操作记录" }),
+      ).toHaveAttribute("aria-current", "page");
+      await waitFor(() =>
+        expect(router.state.location.search).not.toHaveProperty("dialog"),
+      );
+      expect(router.state.location.search).toMatchObject({
+        view: "ended",
+        run: "task-001",
+        tab: "records",
+      });
+      expect(screen.queryByRole("dialog", { name: "整理所选文件" })).toBeNull();
+      expect(
+        within(detail).queryByRole("link", { name: "继续整理" }),
+      ).toBeNull();
+      expect(backend.calls.discoveryReads).toBe(0);
+      expect(backend.calls.intentReads).toBe(0);
+      expect(backend.calls.posts).toEqual([]);
+    },
+  );
 
   it("never carries A's preparation into another selected Task", async () => {
     const backend = stubOrganizeHost();

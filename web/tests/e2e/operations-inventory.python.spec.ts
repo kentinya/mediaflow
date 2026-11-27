@@ -6307,7 +6307,7 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
   await expect(inPlaceBatch).toBeVisible();
   await expect(inPlaceBatch).toContainText(inPlaceFile);
   await expect(inPlaceBatch).toContainText("复制");
-  await expect(inPlaceBatch).toContainText("来源影响：来源文件保留");
+  await expect(inPlaceBatch).toContainText("来源文件保留");
   await expect(inPlaceBatch).toContainText("Two (2002)");
   expect(analyzePosts()).toHaveLength(1);
   expect(
@@ -6546,104 +6546,41 @@ test("PATCH-20261113-3 initial manual preparation remains reachable in place fro
     animations: "disabled",
   });
 
-  // The removed entries were duplicate presentation, not the stable route:
-  // the exact canonical in-place address still reopens this same ended
-  // preparation through the real auth-recovery boundary and stays read-only.
+  // The old organizer address keeps the same Task and removes its marker.
+  const endedReads: string[] = [];
+  const recordEndedReads = (request: import("@playwright/test").Request) => {
+    const path = new URL(request.url()).pathname;
+    if (
+      request.method() === "GET" &&
+      /\/organize\/(discoveries|intents|previews)\//.test(path)
+    ) {
+      endedReads.push(path);
+    }
+  };
+  page.on("request", recordEndedReads);
   await page.goto(preparationAddress);
   await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  // Re-authentication restored the same task center, exact Task and hosted
-  // marker instead of leaving for the retired receiving page.
-  expect(new URL(page.url()).pathname).toBe("/operations");
-  expect(new URL(page.url()).searchParams.get("run")).toBe(taskId);
-  expect(new URL(page.url()).searchParams.get("dialog")).toBe("organize");
-  const historyDialog = page.getByRole("dialog", { name: "整理所选文件" });
-  await expect(historyDialog).toBeVisible({ timeout: 30_000 });
-  // The same dialog opens the ended work's original summary as read-only
-  // history: the ended fact replaces any live-stage prompt, the plan stays
-  // readable, and neither a confirmation nor a batch-review affordance exists.
-  await expect(
-    historyDialog.getByText(/本次整理工作已结束/).first(),
-  ).toBeVisible({ timeout: 30_000 });
-  const history = historyDialog.getByRole("region", {
-    name: "只读原计划摘要",
-  });
-  await expect(history).toBeVisible({ timeout: 30_000 });
-  await expect(history.getByText(/Two\.2002\.mkv/).first()).toBeVisible();
-  await expect(
-    historyDialog.getByRole("button", { name: /确认整理/ }),
-  ).toHaveCount(0);
-  await expect(
-    historyDialog.getByRole("button", { name: /整批复核/ }),
-  ).toHaveCount(0);
-  await expect(
-    historyDialog.getByRole("button", { name: /保存并重新分析/ }),
-  ).toHaveCount(0);
-
-  const endedStatus = historyDialog.locator(".mf-status").first();
-  const statusPadding = await endedStatus.evaluate((element) => {
-    const style = getComputedStyle(element);
-    const rect = element.getBoundingClientRect();
-    return {
-      left: Number.parseFloat(style.paddingLeft),
-      right: Number.parseFloat(style.paddingRight),
-      width: rect.width,
-      clientWidth: element.clientWidth,
-      scrollWidth: element.scrollWidth,
-    };
-  });
-  expect(statusPadding.left).toBeGreaterThanOrEqual(16);
-  expect(statusPadding.right).toBeGreaterThanOrEqual(16);
-  expect(statusPadding.scrollWidth).toBeLessThanOrEqual(
-    statusPadding.clientWidth + 1,
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/operations" &&
+      url.searchParams.get("run") === taskId &&
+      !url.searchParams.has("dialog"),
   );
-  await page.screenshot({
-    path: "test-results/PATCH-20261113-3/ended-history-1536.png",
-    animations: "disabled",
-  });
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(endedStatus).toBeVisible();
-  const narrowStatus = await endedStatus.evaluate((element) => ({
-    left: Number.parseFloat(getComputedStyle(element).paddingLeft),
-    right: Number.parseFloat(getComputedStyle(element).paddingRight),
-    clientWidth: element.clientWidth,
-    scrollWidth: element.scrollWidth,
-  }));
-  expect(narrowStatus.left).toBeGreaterThanOrEqual(16);
-  expect(narrowStatus.right).toBeGreaterThanOrEqual(16);
-  expect(narrowStatus.scrollWidth).toBeLessThanOrEqual(
-    narrowStatus.clientWidth + 1,
+  await expect(page.getByRole("dialog", { name: "整理所选文件" })).toHaveCount(
+    0,
   );
-  expect(
-    await page.evaluate(
-      () =>
-        document.documentElement.scrollWidth -
-        document.documentElement.clientWidth,
-    ),
-  ).toBeLessThanOrEqual(1);
-  await page.screenshot({
-    path: "test-results/PATCH-20261113-3/ended-history-390.png",
-    animations: "disabled",
-  });
-
-  await page.setViewportSize({ width: 1536, height: 600 });
-  await expect(endedStatus).toBeVisible();
-  const shortStatus = await endedStatus.evaluate((element) => ({
-    left: Number.parseFloat(getComputedStyle(element).paddingLeft),
-    right: Number.parseFloat(getComputedStyle(element).paddingRight),
-    clientWidth: element.clientWidth,
-    scrollWidth: element.scrollWidth,
-  }));
-  expect(shortStatus.left).toBeGreaterThanOrEqual(16);
-  expect(shortStatus.right).toBeGreaterThanOrEqual(16);
-  expect(shortStatus.scrollWidth).toBeLessThanOrEqual(
-    shortStatus.clientWidth + 1,
-  );
-  await page.screenshot({
-    path: "test-results/PATCH-20261113-3/ended-history-short.png",
-    animations: "disabled",
-  });
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(
+    completedDetail.getByRole("button", { name: "操作记录" }),
+  ).toHaveAttribute("aria-current", "page");
+  await completedDetail.getByRole("button", { name: "任务详情" }).click();
+  await expect(
+    completedDetail.getByRole("heading", { name: "流程已完成", exact: true }),
+  ).toBeVisible();
+  await expect(
+    completedDetail.getByRole("button", { name: /Two\.2002\.mkv/ }).first(),
+  ).toBeVisible();
+  expect(endedReads).toEqual([]);
+  page.off("request", recordEndedReads);
   // Reopening and viewing the admitted result submitted nothing.
   expect(executePosts()).toHaveLength(1);
 });

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.operations_lifecycle import bounded_failure_document
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.library import FileStabilityPolicy, MediaLibrary, ResourceLibrary
@@ -394,6 +395,15 @@ class ManualPreviewTests(unittest.TestCase):
             self.assertNotEqual(value.record.occurrence_id, reviewed.occurrence_id)
             self.assertNotEqual(value.record.fingerprint, reviewed.fingerprint)
             self.assertEqual(target.stat().st_size, reviewed.size)
+
+    def test_task_failure_projection_distinguishes_provider_and_storage_connections(self):
+        for error, category in (
+            ("connection refused by the local test provider", "provider_failure"),
+            ("connection refused by Storage", "storage_failure"),
+            ("connection refused", "storage_failure"),
+        ):
+            with self.subTest(error=error):
+                self.assertEqual(category, bounded_failure_document(error)["category"])
 
     def test_provider_failure_is_persisted_per_item_redacted_and_creates_no_review_backlog(self):
         with self.fixture() as value, SQLiteTaskRepository(value.database) as repository:

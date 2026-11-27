@@ -67,7 +67,11 @@ import {
   runOverviewQueryOptions,
   runProblemFilesQueryOptions,
 } from "./run-query";
-import { RunDetailTabs, type RunProgressPhase } from "./RunDetailTabs";
+import {
+  RunDetailTabs,
+  RunDetailToolbar,
+  type RunProgressPhase,
+} from "./RunDetailTabs";
 import { RUN_ITEM_STATUS_LABELS } from "../../entities/operations/run-detail";
 import { organizeDiscoveryQueryOptions } from "./discovery-query";
 import type { OrganizeDiscoveryModel } from "../../entities/operations/discovery";
@@ -339,7 +343,7 @@ function resolveOrganizeContinuation(
   requested: boolean,
   selectedId: string,
   query: UseQueryResult<RunOverviewRead, Error>,
-): OrganizeContinuationState | null {
+): OrganizeContinuationState | { readonly kind: "ended" } | null {
   if (!requested) return null;
   if (selectedId === "") return { kind: "missing-run" };
   if (query.isPending) return null;
@@ -381,6 +385,7 @@ function resolveOrganizeContinuation(
   }
   const preparation = read.model.filesPreparation;
   if (preparation === null) return { kind: "no-association" };
+  if (!preparation.continuable) return { kind: "ended" };
   return { kind: "ready", discoveryId: preparation.discoveryId };
 }
 
@@ -967,6 +972,15 @@ export function OperationsLanding() {
     overviewQuery,
   );
   const resolvedOrganizeKind = resolvedOrganizeContinuation?.kind ?? null;
+  useEffect(() => {
+    if (resolvedOrganizeKind !== "ended") return;
+    void navigate({
+      to: "/operations",
+      search: withoutOperationsDialog(searchParams),
+      replace: true,
+      resetScroll: false,
+    });
+  }, [navigate, resolvedOrganizeKind, searchParams]);
   const resolvedOrganizeDiscoveryId =
     resolvedOrganizeContinuation?.kind === "ready"
       ? resolvedOrganizeContinuation.discoveryId
@@ -998,6 +1012,7 @@ export function OperationsLanding() {
       selectedId === "" ||
       resolvedOrganizeKind === "no-association" ||
       resolvedOrganizeKind === "missing-run" ||
+      resolvedOrganizeKind === "ended" ||
       resolvedOrganizeCanRetain === false)
   ) {
     setOpenedOrganizeAssociation(null);
@@ -1032,7 +1047,9 @@ export function OperationsLanding() {
           kind: "ready",
           discoveryId: retainedOrganizeAssociation.discoveryId,
         }
-      : resolvedOrganizeContinuation;
+      : resolvedOrganizeContinuation?.kind === "ended"
+        ? null
+        : resolvedOrganizeContinuation;
   const organizeLayerOpen = organizeContinuation !== null;
   const organizeFallbackFocusId =
     selectedId === "" ? "mf-operations-heading" : "mf-run-detail-close";
@@ -2121,16 +2138,31 @@ function RunDetailPanel({
   };
 
   const renderRunReadUnavailable = (retry: () => void, retrying: boolean) => (
-    <>
-      <StatusBanner variant="warning" title="运行详情暂不可用">
-        <p>原任务身份已保留。重新读取此任务可核对进度与结果。</p>
-      </StatusBanner>
-      <div className="mf-actions">
-        <Button type="button" onClick={retry} disabled={retrying}>
-          {retrying ? "正在重新读取…" : "重新读取任务"}
-        </Button>
+    <section className="mf-run-detail-tabs" aria-label="任务详情与操作记录">
+      <RunDetailToolbar
+        tab={detailState.tab}
+        onTabChange={(tab) => onDetailStateChange({ tab })}
+        actions={
+          <Button type="button" variant="secondary" disabled>
+            导出结果 JSON
+          </Button>
+        }
+      />
+      <div className="mf-run-tab-panel">
+        <StatusBanner
+          variant="warning"
+          className="mf-operations-inline-notice"
+          title="运行详情暂不可用"
+        >
+          <p>原任务身份已保留。重新读取此任务可核对进度与结果。</p>
+        </StatusBanner>
+        <div className="mf-actions mf-run-read-retry">
+          <Button type="button" onClick={retry} disabled={retrying}>
+            {retrying ? "正在重新读取…" : "重新读取任务"}
+          </Button>
+        </div>
       </div>
-    </>
+    </section>
   );
   return (
     <ModalCardShell
@@ -2240,7 +2272,7 @@ function RunDetailPanel({
                 progressPhase={progressPhase}
                 compactProgress={
                   headline.compactProgress === true ||
-                  (run.status === "completed" &&
+                  (TERMINAL_RUN_STATUSES.includes(run.status) &&
                     run.progress?.available === true &&
                     run.progress.kind === "organize")
                 }

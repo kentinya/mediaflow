@@ -64,7 +64,6 @@ import type {
   TaskItemDecisionKind,
   TaskItemRecoveryModel,
 } from "../../entities/operations/task-item-recovery";
-import { RUN_ITEM_STATUS_LABELS } from "../../entities/operations/run-detail";
 import { Button } from "../../shared/ui/Button";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
@@ -143,7 +142,7 @@ export interface ManualOrganizeDialogProps {
   /**
    * Which existing entry hosts this shared card. Files owns the readable
    * preparation/overview detail hierarchy; Task Center in-place continuation
-   * and historical addresses keep their Slice53 presentation unchanged.
+   * uses the same preparation and batch review.
    */
   readonly host?: ManualOrganizeDialogHost;
   readonly onClose: () => void;
@@ -899,16 +898,31 @@ export function ManualOrganizeDialog({
     preparationEntryStatus === "queued" ||
     preparationEntryStatus === "running" ||
     preparationEntryStatus === "waiting_stability";
+  const organizeFlowEnded = preparation?.organizeFlow?.continuable === false;
+  const [preparationObservedLive, setPreparationObservedLive] = useState(false);
+  if (
+    preparation !== undefined &&
+    !organizeFlowEnded &&
+    !preparationObservedLive
+  ) {
+    setPreparationObservedLive(true);
+  }
+  // A Files card that saw this work live can still show its own final
+  // skip/ignore or capability result. A reopened ended address reads only
+  // the current preparation and exact Task identity, not the old plan.
+  const showLiveFileSettlement =
+    filesHost &&
+    (preparationStartedFull || preparationObservedLive) &&
+    preparation?.organizeFlow?.status === "completed";
   const intentQuery = useQuery(
     organizeIntentQueryOptions(
       token,
       preparation?.intentId ?? "",
-      preparation?.intentId != null,
+      !organizeFlowEnded && preparation?.intentId != null,
     ),
   );
   const intent =
     intentQuery.data?.ok === true ? intentQuery.data.model : undefined;
-  const organizeFlowEnded = preparation?.organizeFlow?.continuable === false;
   const primaryLimitStopped =
     preparation !== undefined &&
     (preparation.progress.incompleteReason === "primary_limit" ||
@@ -920,34 +934,19 @@ export function ManualOrganizeDialog({
   // end instead of stopping on a truncated intermediate state.
   const primaryLimitAwaitingSettlement =
     primaryLimitStopped && preparation?.organizeFlow?.continuable === true;
-  // An ended preparation whose linked Preview was cleared (for example a
-  // failed re-analysis) reads its original saved plan through the intent's
-  // durable association.  The read itself may still be pending or may have
-  // failed; neither state may be misreported as "this work never generated a
-  // summary".
-  const intentReadFailed =
-    intent === undefined &&
-    !intentQuery.isFetching &&
-    (intentQuery.isError || intentQuery.data?.ok === false);
-  const historyPlanPending =
-    organizeFlowEnded &&
-    preparation?.previewId == null &&
-    preparation?.intentId != null &&
-    intentQuery.isEnabled &&
-    intent === undefined &&
-    !intentReadFailed;
-  const intentReadFailure =
-    intentQuery.data?.ok === false ? intentQuery.data.failure : null;
   // A re-analysis temporarily clears the linked Preview while the resident
   // Worker plans again.  The intent's own latest saved plan stays readable as
   // the superseded review during that window, so the card never hides the file
   // the operator just saved; every mutating control is separately blocked
   // while the Worker runs or the plan is no longer current.
   const savedPlanId =
-    preparation?.previewId == null
+    !organizeFlowEnded && preparation?.previewId == null
       ? (intent?.latestPlan?.previewId ?? null)
       : null;
-  const summaryPreviewId = preparation?.previewId ?? savedPlanId ?? "";
+  const summaryPreviewId =
+    !organizeFlowEnded || showLiveFileSettlement
+      ? (preparation?.previewId ?? savedPlanId ?? "")
+      : "";
   const previewQuery = useQuery(
     organizePreviewQueryOptions(
       token,
@@ -964,23 +963,6 @@ export function ManualOrganizeDialog({
       ? { id: linkedPlanId, time: performance.now() }
       : null;
   }, [linkedPlanId]);
-  /**
-   * The shared preparation first screen owns a settlement when this same card
-   * initiated the preparation or saw the same work as live, and had not
-   * handed over to a plan review. That identity is captured on mount, so it
-   * still holds when the very first durable read already returns the settled
-   * flow. A bounded-address reopen of an already ended flow, or a terminal
-   * state reached after the operator entered the review, keeps the existing
-   * read-only history entry instead.
-   */
-  const [preparationObservedLive, setPreparationObservedLive] = useState(false);
-  if (
-    preparation !== undefined &&
-    !organizeFlowEnded &&
-    !preparationObservedLive
-  ) {
-    setPreparationObservedLive(true);
-  }
   const [preparationPlanObserved, setPreparationPlanObserved] = useState(false);
   /**
    * The exact summary whose own handoff read failed.  A readable summary is
@@ -1391,18 +1373,6 @@ export function ManualOrganizeDialog({
   );
   const items = useMemo(() => preview?.items ?? [], [preview]);
   const filesOrganizeTaskId = preparation?.organizeTaskId ?? null;
-  const historyItems = useQuery(
-    runItemsQueryOptions(token, {
-      runId:
-        organizeFlowEnded && summaryPreviewId !== ""
-          ? (filesOrganizeTaskId ?? "")
-          : "",
-      active: false,
-      status: null,
-      cursor: null,
-      limit: 100,
-    }),
-  );
   /**
    * A plan item whose exact TaskItem is still readable is the only place the
    * overview may learn that a published problem ended (skipped or ignored) or
@@ -1446,7 +1416,8 @@ export function ManualOrganizeDialog({
     queries: (["skipped", "ignored"] as const).map((status) =>
       filesSettledRecordsQueryOptions(token, {
         runId:
-          filesHost || (preview !== undefined && !organizeFlowEnded)
+          (!organizeFlowEnded && (filesHost || preview !== undefined)) ||
+          showLiveFileSettlement
             ? (filesOrganizeTaskId ?? "")
             : "",
         status,
@@ -1737,9 +1708,8 @@ export function ManualOrganizeDialog({
       row.item !== null && previewItemTechnicalStage(row.item) === "metadata",
   );
   const filesSettledOverview =
-    filesHost &&
     organizeFlowEnded &&
-    preparation?.organizeFlow?.status === "completed" &&
+    showLiveFileSettlement &&
     filesOverviewRows.length > 0 &&
     filesOverviewRows.every(
       (row) =>
@@ -2316,7 +2286,9 @@ export function ManualOrganizeDialog({
     organizePreviewQueryOptions(
       token,
       retainedPlanId,
-      retainedPlanId !== "" && retainedPlanId !== summaryPreviewId,
+      !organizeFlowEnded &&
+        retainedPlanId !== "" &&
+        retainedPlanId !== summaryPreviewId,
     ),
   );
   const retainedPlan =
@@ -2349,6 +2321,7 @@ export function ManualOrganizeDialog({
     latestWatchState.phase === "not_admitted" &&
     latestWatchState.attempt >= 2 &&
     !executeMutation.isPending &&
+    !organizeFlowEnded &&
     retainedSummaryPreviewMatches;
 
   /**
@@ -2490,7 +2463,7 @@ export function ManualOrganizeDialog({
     if (preview === undefined) return null;
     if (organizeFlowEnded) {
       return {
-        reason: "本次整理工作已结束，只读历史不再提供确认。",
+        reason: "本次整理工作已结束。",
         nextAction: "关闭后从资源库文件页重新选择发起。",
       };
     }
@@ -3741,11 +3714,11 @@ export function ManualOrganizeDialog({
     (preparationStartedFull ||
       preparationObservedLive ||
       (filesHost &&
-        summaryPreviewId === "" &&
+        preparation?.previewId == null &&
         (preparation?.status === "cancelled" ||
+          primaryLimitStopped ||
           preparationNoPrimarySources ||
-          (!primaryLimitStopped &&
-            preparation?.progress.materialRefusal != null))));
+          preparation?.progress.materialRefusal != null)));
   const firstPlanPreparationView =
     session.phase === "submitting" ||
     preparationUnavailable ||
@@ -3828,9 +3801,9 @@ export function ManualOrganizeDialog({
             : preparationNoPrimarySources
               ? "检查完成，所选范围内没有可整理的主文件。本次未生成方案，文件仍在原处。"
               : preparation?.status === "cancelled"
-                ? summaryPreviewId === ""
+                ? preparation.previewId === null
                   ? "后台已停止检查。本次未生成可确认方案，原文件仍在。"
-                  : "后台已停止检查。本次不再提供确认；已生成的原计划摘要保留为只读历史，原文件仍在。"
+                  : "后台已停止检查，原文件仍在。可在任务详情查看结果。"
                 : preparation?.progress.incomplete
                   ? "遍历达到范围限制，本次未产生可确认方案，也未变更媒体。回到文件页缩小范围。"
                   : "后台检查未完成，没有产生可确认方案，也未修改文件；请重新读取或从文件页重新发起。";
@@ -3939,6 +3912,7 @@ export function ManualOrganizeDialog({
     }
   })();
   const preparationProgressText = (() => {
+    if (preparationWorkerBlocking) return "当前等待后台恢复";
     if (preparation === undefined) {
       return originalRequest !== null
         ? "原请求结果待核对"
@@ -3997,194 +3971,6 @@ export function ManualOrganizeDialog({
     }
   })();
 
-  const renderTerminalPreparationSummary = () => {
-    if (summaryPreviewId === "") return null;
-    if (previewQuery.isError || previewQuery.data?.ok === false) {
-      return (
-        <StatusBanner variant="error" title="无法读取原计划摘要">
-          <p role="status">
-            原计划摘要暂时无法读取;没有重新分析、没有创建执行,也没有修改文件。
-          </p>
-          <div className="mf-actions">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => void previewQuery.refetch()}
-            >
-              重新读取原计划摘要
-            </Button>
-          </div>
-        </StatusBanner>
-      );
-    }
-    if (preview === undefined) {
-      return (
-        <div className="mf-modal-card-status" role="status" aria-busy="true">
-          <p>正在读取原计划摘要作为只读历史…</p>
-        </div>
-      );
-    }
-    const recordedItems =
-      historyItems.data?.ok === true &&
-      historyItems.data.model.taskId === filesOrganizeTaskId
-        ? historyItems.data.model.items
-        : [];
-    const resultsBySource = new Map(
-      recordedItems.map((record) => [
-        filesSourceIdentity(record.storageId, record.sourcePath),
-        record,
-      ]),
-    );
-    return (
-      <section className="mf-organize-section" aria-label="只读原计划摘要">
-        <h3>原计划摘要</h3>
-        <p className="mf-dashboard-meta">
-          任务已结束。以下为原计划与已记录的文件结果。
-        </p>
-        {preview.items.length === 0 ? (
-          <p className="mf-dashboard-meta">原摘要没有可读条目。</p>
-        ) : (
-          <ul className="mf-run-item-list" aria-label="原计划条目">
-            {preview.items.map((item) => {
-              const record = resultsBySource.get(
-                filesSourceIdentity(item.sourceStorageId, item.sourcePath),
-              );
-              const technical = previewItemTechnicalStage(item) === "metadata";
-              const certainty = record?.checkpoint?.effectCertainty;
-              const verified =
-                record?.status === "success" &&
-                certainty === "verified_complete";
-              const unconfirmed =
-                !technical &&
-                (certainty === "attempted_unverified" ||
-                  certainty === "unknown");
-              const status = verified
-                ? "已验证成功"
-                : unconfirmed
-                  ? "效果未确认"
-                  : record
-                    ? label(RUN_ITEM_STATUS_LABELS, record.status)
-                    : technical
-                      ? "失败"
-                      : "原计划";
-              const result = verified
-                ? "文件操作已验证，目标文件可用。"
-                : unconfirmed
-                  ? "目标文件结果尚未确认。"
-                  : technical
-                    ? metadataTechnicalFailureSummary(filesOrganizeTaskId, true)
-                    : (record?.failure?.message ??
-                      item.failure?.message ??
-                      status);
-              const source = filesSourceLocation(
-                item,
-                filesSystemStatusQuery.data?.resourceLibraries ?? [],
-              ).text.replace(/^来源 /, "");
-              const tone = verified
-                ? "normal"
-                : unconfirmed
-                  ? "warning"
-                  : technical || record?.status === "failed"
-                    ? "error"
-                    : "muted";
-              return (
-                <li key={item.itemId} className="mf-run-item-row">
-                  <div className="mf-run-item-row-button mf-organize-history-row">
-                    <span className="mf-run-item-tile" aria-hidden="true">
-                      ▷
-                    </span>
-                    <span className="mf-run-item-copy">
-                      <span className="mf-run-item-name">
-                        {item.sourceFilename ?? item.sourcePath}
-                      </span>
-                      <span className="mf-run-item-summary mf-exact-identity">
-                        {source}
-                      </span>
-                    </span>
-                    <span
-                      className={`mf-run-item-status mf-run-outcome-${tone}`}
-                    >
-                      {status}
-                    </span>
-                  </div>
-                  <div className="mf-run-item-evidence">
-                    <section className="mf-run-evidence">
-                      <dl className="mf-run-evidence-facts">
-                        <div>
-                          <dt>当前结果</dt>
-                          <dd>
-                            <span
-                              className={`mf-run-outcome mf-run-outcome-${tone}`}
-                            >
-                              {result}
-                            </span>
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>来源</dt>
-                          <dd className="mf-exact-identity">{source}</dd>
-                        </div>
-                        {record?.destinationPath != null && (
-                          <div>
-                            <dt>目标</dt>
-                            <dd className="mf-exact-identity">
-                              {record.destinationStorageId
-                                ? `${record.destinationStorageId}:${record.destinationPath}`
-                                : record.destinationPath}
-                            </dd>
-                          </div>
-                        )}
-                        {item.operation !== null && (
-                          <div>
-                            <dt>操作与影响</dt>
-                            <dd>
-                              原计划：{operationLabel(item.operation)}
-                              {operationImpactLabel(item.operation) !== null &&
-                                ` · ${operationImpactLabel(item.operation)}`}
-                            </dd>
-                          </div>
-                        )}
-                      </dl>
-                      {item.targetPath !== null && (
-                        <details className="mf-run-evidence-fold">
-                          <summary>处理依据</summary>
-                          <dl className="mf-run-evidence-facts">
-                            <div>
-                              <dt>原计划目标</dt>
-                              <dd className="mf-exact-identity">
-                                {item.targetStorageId
-                                  ? `${item.targetStorageId}:${item.targetPath}`
-                                  : item.targetPath}
-                              </dd>
-                            </div>
-                          </dl>
-                        </details>
-                      )}
-                      <details className="mf-run-evidence-fold">
-                        <summary>技术诊断</summary>
-                        <ItemFindings item={item} />
-                        {!technical && record?.failure && (
-                          <p className="mf-dashboard-meta">
-                            {record.failure.nextAction}
-                          </p>
-                        )}
-                      </details>
-                    </section>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        {preview.truncated ? (
-          <p className="mf-dashboard-meta" role="status">
-            该历史摘要曾被截断,只保留了部分条目。
-          </p>
-        ) : null}
-      </section>
-    );
-  };
-
   const renderFirstPlanPreparation = () => {
     // A linked plan needs no Worker, only the summary read that is already in
     // flight, so that compact wait keeps its animation.  Everything that still
@@ -4195,6 +3981,7 @@ export function ManualOrganizeDialog({
     const statusView = preparationStatusView;
     const parityPreparation =
       originalRequest !== null ||
+      preparationWorkerBlocking ||
       preparationSummaryReadFailed ||
       preparationSourceReadIncomplete ||
       primaryLimitStopped ||
@@ -4349,9 +4136,6 @@ export function ManualOrganizeDialog({
             </div>
           </div>
         ) : null}
-        {preparationTerminalFirstScreen
-          ? renderTerminalPreparationSummary()
-          : null}
         {preparation !== undefined &&
         !preparationSourceReadIncomplete &&
         (preparationStoppedTitle === null || preparationNoPrimarySources) &&
@@ -4444,77 +4228,9 @@ export function ManualOrganizeDialog({
     }
     if (organizeFlowEnded && !preparationTerminalFirstScreen) {
       return (
-        <>
-          {summaryPreviewId === "" ? (
-            primaryLimitStopped ? (
-              <StatusBanner variant="warning" title="本次整理工作已结束">
-                <p>
-                  本次未执行整理。最多支持 100
-                  个主文件，请缩小选择范围后重新发起。
-                </p>
-              </StatusBanner>
-            ) : historyPlanPending ? (
-              <div
-                className="mf-modal-card-status"
-                role="status"
-                aria-busy="true"
-              >
-                <p>正在读取原计划摘要作为只读历史…</p>
-              </div>
-            ) : intentReadFailed ? (
-              <StatusBanner variant="error" title="无法读取原计划摘要">
-                <p role="status">
-                  原计划摘要暂时无法读取;没有重新分析、没有创建执行,也没有修改文件。
-                </p>
-                {intentReadFailure !== null ? (
-                  <p role="status">
-                    读取失败:{intentReadFailure.title};
-                    {intentReadFailure.nextAction}
-                  </p>
-                ) : null}
-                <div className="mf-actions">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => void intentQuery.refetch()}
-                  >
-                    重新读取原计划摘要
-                  </Button>
-                </div>
-              </StatusBanner>
-            ) : (
-              <p className="mf-dashboard-meta" role="status">
-                本次整理从未生成过计划摘要,因此没有可读取的只读历史。
-                失败阶段与已知效果请在任务中心对应任务中核对。
-              </p>
-            )
-          ) : previewQuery.isError || previewQuery.data?.ok === false ? (
-            <StatusBanner variant="error" title="无法读取原计划摘要">
-              <p role="status">
-                原计划摘要暂时无法读取;没有重新分析、没有创建执行,也没有修改文件。
-              </p>
-              <div className="mf-actions">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => void previewQuery.refetch()}
-                >
-                  重新读取原计划摘要
-                </Button>
-              </div>
-            </StatusBanner>
-          ) : preview === undefined ? (
-            <div
-              className="mf-modal-card-status"
-              role="status"
-              aria-busy="true"
-            >
-              <p>正在读取原计划摘要作为只读历史…</p>
-            </div>
-          ) : (
-            renderTerminalPreparationSummary()
-          )}
-        </>
+        <StatusBanner variant="warning" title="本次整理工作已结束">
+          <p>可在任务详情查看流程和文件结果。</p>
+        </StatusBanner>
       );
     }
     return renderFirstPlanPreparation();
@@ -5057,13 +4773,11 @@ export function ManualOrganizeDialog({
             : "已忽略"
           : admittedItemIds.has(item.itemId)
             ? "已受理执行"
-            : organizeFlowEnded
-              ? "只读历史"
-              : !executableIds.includes(item.itemId)
-                ? "未就绪"
-                : isIncluded
-                  ? "纳入本次整理"
-                  : "暂不纳入"}
+            : !executableIds.includes(item.itemId)
+              ? "未就绪"
+              : isIncluded
+                ? "纳入本次整理"
+                : "暂不纳入"}
       </span>
     );
     /**
@@ -5161,8 +4875,8 @@ export function ManualOrganizeDialog({
             className="mf-organize-section mf-organize-files-plan"
             aria-label="文件记录"
           >
-            <span className="mf-organize-overview-status mf-organize-overview-status-recorded">
-              失败
+            <span className="mf-organize-overview-status mf-organize-overview-status-failed">
+              失败 · 未变更
             </span>
             <div className="mf-organize-section-head">
               <h4>文件记录</h4>
@@ -6095,15 +5809,15 @@ export function ManualOrganizeDialog({
           >
             <div>
               <dt>本次确认</dt>
-              <dd>{selection.length} 项</dd>
+              <dd>{selection.length}</dd>
             </div>
             <div>
               <dt>未纳入</dt>
-              <dd>{omittedCount} 项</dd>
+              <dd>{omittedCount}</dd>
             </div>
             <div>
               <dt>关联附件</dt>
-              <dd>{attachmentCount} 个</dd>
+              <dd>{attachmentCount}</dd>
             </div>
           </dl>
         </section>
@@ -6115,6 +5829,7 @@ export function ManualOrganizeDialog({
               confirmationRejection === "permission" ? "error" : "warning"
             }
             title={confirmationNotice.title}
+            className="mf-operations-inline-notice"
           >
             <p>{confirmationNotice.copy}</p>
           </StatusBanner>
@@ -6284,11 +5999,6 @@ export function ManualOrganizeDialog({
             当前没有选中任何就绪文件;请返回逐项复核并至少纳入一个文件。
           </p>
         ) : null}
-        {preview.executeAction.available === true && organizeFlowEnded ? (
-          <StatusBanner variant="warning" title="本次整理工作已结束">
-            <p>已结束的流程只读,不再提供确认。</p>
-          </StatusBanner>
-        ) : null}
         {overwriteCount > 0 ||
         latestRetained?.submission.allowOverwrite === true ? (
           <label className="mf-organize-confirm-authorization">
@@ -6365,7 +6075,7 @@ export function ManualOrganizeDialog({
     : firstPlanPreparationView && analysisReadbackFile === null
       ? `preparation:${preparationStep ?? preparationStatusView?.title ?? "loading"}`
       : organizeFlowEnded && !filesSettledOverview
-        ? "history"
+        ? "ended"
         : filesRecordDetail !== null
           ? `record:${filesRecordDetail.taskItemId}`
           : filesHost && filesOverviewVisible
@@ -6488,9 +6198,7 @@ export function ManualOrganizeDialog({
     );
 
   // ---- footer ---------------------------------------------------------
-  // Ended work is read-only history: it keeps one ordinary close action and
-  // never offers paging over a live plan, a batch confirmation or a second
-  // re-analysis entry.
+  // The first preparation has no per-file navigation or confirmation.
   const preparationOnlyFooter =
     !organizeFlowEnded &&
     analysisReadbackFile === null &&
@@ -6550,7 +6258,9 @@ export function ManualOrganizeDialog({
     intent !== undefined;
   const preparationTerminalFirstScreenFooter =
     organizeFlowEnded && preparationTerminalFirstScreen;
-  const defaultFooter = filesSettledOverview ? (
+  const filesSettlementFooter =
+    filesSettledOverview && (filesOverviewVisible || step !== "review");
+  const defaultFooter = filesSettlementFooter ? (
     <>
       {!filesOverviewVisible && (
         <Button
@@ -6575,11 +6285,9 @@ export function ManualOrganizeDialog({
         </Button>
       )}
     </>
-  ) : organizeFlowEnded || preparationOnlyFooter ? (
+  ) : preparationOnlyFooter ? (
     <>
-      <span className="mf-dashboard-meta">
-        {organizeFlowEnded ? "只读历史" : "此阶段无媒体变更"}
-      </span>
+      <span className="mf-dashboard-meta">此阶段无媒体变更</span>
       <span className="mf-modal-footer-spacer" />
       <Button
         type="button"
@@ -6917,7 +6625,7 @@ export function ManualOrganizeDialog({
   );
   const footer =
     originalRequest !== null ||
-    (preparationSummaryReadFailed &&
+    ((preparationSummaryReadFailed || preparationWorkerBlocking) &&
       firstPlanPreparationView &&
       !organizeFlowEnded) ? (
       <>
@@ -6933,14 +6641,19 @@ export function ManualOrganizeDialog({
           disabled={
             originalRequest !== null
               ? originalRequestRead.isFetching
-              : previewQuery.isFetching
+              : preparationWorkerBlocking
+                ? preparationQuery.isFetching
+                : previewQuery.isFetching
           }
           onClick={() => {
             if (originalRequest !== null) void originalRequestRead.refetch();
+            else if (preparationWorkerBlocking) void preparationQuery.refetch();
             else void previewQuery.refetch();
           }}
         >
-          {originalRequest !== null ? "核对原请求" : "重新读取原计划"}
+          {originalRequest !== null || preparationWorkerBlocking
+            ? "核对原请求"
+            : "重新读取原计划"}
         </Button>
       </>
     ) : preparationTerminalFirstScreenFooter ? (
@@ -6964,11 +6677,19 @@ export function ManualOrganizeDialog({
       </>
     ) : organizeFlowEnded && !filesSettledOverview ? (
       <>
-        <span className="mf-dashboard-meta">只读历史</span>
         <span className="mf-modal-footer-spacer" />
         <Button type="button" variant="secondary" onClick={attemptClose}>
-          关闭
+          {filesHost ? "返回文件页" : "关闭"}
         </Button>
+        {filesHost && filesOrganizeTaskId !== null && (
+          <Button
+            type="button"
+            disabled={openingTaskDetail}
+            onClick={() => void handleHandoff(filesOrganizeTaskId, () => {})}
+          >
+            查看任务结果
+          </Button>
+        )}
       </>
     ) : (
       defaultFooter

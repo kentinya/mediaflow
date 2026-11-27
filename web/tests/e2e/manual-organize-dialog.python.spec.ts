@@ -593,8 +593,8 @@ async function expectReadableBatch(
       ),
     );
   expect(facts).toMatchObject({
-    本次确认: `${expected.selected} 项`,
-    未纳入: `${expected.skipped} 项`,
+    本次确认: String(expected.selected),
+    未纳入: String(expected.skipped),
   });
   const sourceAndTarget = card.getByRole("region", { name: "来源与目标" });
   await expect(sourceAndTarget).toBeVisible();
@@ -722,15 +722,14 @@ async function expectFilesConfirmFirstScreen(
 async function expectBatchSelected(
   card: Locator,
   selected: number,
-  term: "本次确认" | "将整理" = "本次确认",
 ): Promise<void> {
   const summary = card
     .getByRole("region", { name: "整批复核" })
     .locator(".mf-organize-batch-summary");
   await expect(summary).toBeVisible();
-  const row = summary.locator("> div").filter({ hasText: term });
-  await expect(row.locator("dt")).toHaveText(term);
-  await expect(row.locator("dd")).toHaveText(`${selected} 项`);
+  const row = summary.locator("> div").filter({ hasText: "本次确认" });
+  await expect(row.locator("dt")).toHaveText("本次确认");
+  await expect(row.locator("dd")).toHaveText(String(selected));
 }
 
 test("Task59.1 ten per-file candidate decisions lead to one exact ten-item Task handoff", async ({
@@ -1370,7 +1369,7 @@ test("Task59.1 a second confirmation on the same Task is reconciled from its own
     },
   );
   await reopened.getByRole("button", { name: /整批复核/ }).click();
-  await expectBatchSelected(card, 1, "将整理");
+  await expectBatchSelected(card, 1);
   await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(page).toHaveURL(/\/operations\?.*run=/, {
     timeout: 30_000,
@@ -2074,8 +2073,8 @@ test("Task59.1 A59-01 a real conflict skip returns to the overview with the dura
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(card.getByRole("region", { name: "整批复核" })).toBeVisible();
   const summary = card.locator(".mf-organize-batch-summary");
-  await expect(summary).toContainText(/本次确认\s*1 项/);
-  await expect(summary).toContainText(/未纳入\s*1 项/);
+  await expect(summary).toContainText(/本次确认\s*1\s*未纳入/);
+  await expect(summary).toContainText(/未纳入\s*1\s*关联附件/);
   await expect(
     card.getByRole("region", { name: "来源与目标" }),
   ).not.toContainText(conflictFile);
@@ -2274,7 +2273,7 @@ test("Task59.1 A59-01 a lost decision response returns from the durable same-ite
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(card.getByRole("region", { name: "整批复核" })).toBeVisible();
   await expect(card.locator(".mf-organize-batch-summary")).toContainText(
-    /本次确认\s*1 项/,
+    /本次确认\s*1\s*未纳入/,
   );
   await card.getByRole("button", { name: "返回整理概览" }).click();
   await card.getByRole("button", { name: "关闭整理弹窗" }).click();
@@ -2705,8 +2704,8 @@ test("Task59.1 AC-02 mixed Files decisions cover recognition, metadata, search, 
   await card.getByRole("button", { name: /整批复核/ }).click();
   await expect(card.getByRole("region", { name: "整批复核" })).toBeVisible();
   const summary = card.locator(".mf-organize-batch-summary");
-  await expect(summary).toContainText(/本次确认\s*4 项/);
-  await expect(summary).toContainText(/未纳入\s*1 项/);
+  await expect(summary).toContainText(/本次确认\s*4\s*未纳入/);
+  await expect(summary).toContainText(/未纳入\s*1\s*关联附件/);
   await expect(
     card.getByRole("region", { name: "来源与目标" }),
   ).not.toContainText(conflictFile);
@@ -4360,10 +4359,8 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
     ),
   ).toHaveLength(0);
 
-  // A preparation with only the failing source has no executable sibling, so
-  // its real Task settles failed and the same dialog keeps the original plan
-  // as read-only history. The ended summary must name the same metadata stage
-  // and offer the Files re-entry, not the generic Storage failure.
+  // With no executable sibling the Task settles. Its file evidence
+  // keeps the failure after the organizer closes.
   await card.getByRole("button", { name: "关闭整理弹窗", exact: true }).click();
   await expect(card).toBeHidden();
   await openReadabilityDirectory(page, "ProviderFailure", endedFile);
@@ -4377,22 +4374,28 @@ test("Task59.1 a metadata provider technical failure is not a candidate decision
   );
   expect(endedDiscoveryId).toBeTruthy();
   await driveDiscoveryFor(page, request, endedDiscoveryId as string);
-  await expect(
-    endedCard.getByText("任务已结束。以下为原计划与已记录的文件结果。"),
-  ).toBeVisible({
+  await expect(endedCard.getByText("本次整理工作已结束")).toBeVisible({
     timeout: 30_000,
   });
-  const history = endedCard.getByRole("region", {
-    name: "只读原计划摘要",
-  });
-  await expect(history).toContainText("元数据服务查询失败");
-  await expect(history).toContainText(/原整理准备任务/);
-  await expect(history).toContainText(/重新选择该文件发起新的整理/);
-  await expect(history).not.toContainText("重新分析同一准备");
-  await expect(history).not.toContainText("Storage failure");
+  await expect(
+    endedCard.getByRole("region", { name: "只读原计划摘要" }),
+  ).toHaveCount(0);
   await expect(endedCard.getByRole("button", { name: /确认整理/ })).toHaveCount(
     0,
   );
+  await endedCard.getByRole("button", { name: "查看任务结果" }).click();
+  const endedDetail = page.getByRole("dialog", { name: "运行详情" });
+  await expect(endedDetail).toBeVisible();
+  await expect(
+    endedDetail.getByRole("heading", { name: "流程已完成，有文件结果缺失" }),
+  ).toBeVisible();
+  await endedDetail
+    .getByRole("button", { name: new RegExp(endedFile.replaceAll(".", "\\.")) })
+    .first()
+    .click();
+  await expect(
+    endedDetail.getByRole("region", { name: "条目证据" }),
+  ).toContainText(/元数据|Metadata/i);
   expect(
     commands.filter(
       (command) =>
@@ -5261,7 +5264,7 @@ test("Task59.4 a preparation cancelled from another tab keeps the shared Files f
   await other.close();
 });
 
-test("Task59.4 a cancellation during the first linked-summary read keeps the terminal preparation and its late read-only summary", async ({
+test("Task59.4 a cancellation during the first linked-summary read keeps the terminal preparation without reopening the late summary", async ({
   page,
   request,
 }) => {
@@ -5384,10 +5387,9 @@ test("Task59.4 a cancellation during the first linked-summary read keeps the ter
       card.getByRole("heading", { name: "整理准备已取消" }),
     ).toBeVisible({ timeout: 15_000 });
     await expect(
-      card.getByText(
-        "后台已停止检查。本次不再提供确认；已生成的原计划摘要保留为只读历史，原文件仍在。",
-        { exact: true },
-      ),
+      card.getByText("后台已停止检查，原文件仍在。可在任务详情查看结果。", {
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       card.getByText("在准备阶段停止", { exact: true }),
@@ -5408,8 +5410,8 @@ test("Task59.4 a cancellation during the first linked-summary read keeps the ter
       card.getByRole("button", { name: "返回文件页" }),
     ).toBeVisible();
     await expect(
-      card.getByText(/正在读取原计划摘要作为只读历史/),
-    ).toBeVisible();
+      card.getByRole("region", { name: "只读原计划摘要" }),
+    ).toHaveCount(0);
     await page.screenshot({
       path: "test-results/task59.4-cancelled-summary-pending-1440.png",
       fullPage: false,
@@ -5418,12 +5420,11 @@ test("Task59.4 a cancellation during the first linked-summary read keeps the ter
     release();
   }
 
-  // The late summary joins the same terminal first screen as read-only
-  // content. It never turns the page into a confirmable overview.
-  const history = card.getByRole("region", { name: "只读原计划摘要" });
-  await expect(history).toBeVisible({ timeout: 15_000 });
+  // A late response never replaces the cancellation with a plan.
   expect(linkedPlan.id).not.toBe("");
-  await expect(history).toContainText(linkedPlan.id);
+  await expect(
+    card.getByRole("region", { name: "只读原计划摘要" }),
+  ).toHaveCount(0);
   await expect(
     card.getByRole("heading", { name: "整理准备已取消" }),
   ).toBeVisible();
@@ -5456,7 +5457,7 @@ test("Task59.4 a cancellation during the first linked-summary read keeps the ter
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(card.getByRole("button", { name: "返回文件页" })).toBeVisible();
   await page.screenshot({
-    path: "test-results/task59.4-cancelled-summary-readonly-390.png",
+    path: "test-results/task59.4-cancelled-preparation-without-plan-390.png",
     fullPage: false,
   });
 
@@ -5642,10 +5643,9 @@ test("Task59.4 keeps the first-plan preparation while the linked summary is deli
       card.getByRole("heading", { name: "整理准备已取消" }),
     ).toBeVisible({ timeout: 15_000 });
     await expect(
-      card.getByText(
-        "后台已停止检查。本次不再提供确认；已生成的原计划摘要保留为只读历史，原文件仍在。",
-        { exact: true },
-      ),
+      card.getByText("后台已停止检查，原文件仍在。可在任务详情查看结果。", {
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       card.getByText("在准备阶段停止", { exact: true }),
@@ -5662,9 +5662,9 @@ test("Task59.4 keeps the first-plan preparation while the linked summary is deli
       card.getByRole("region", { name: "本次整理概览" }),
     ).toHaveCount(0);
     await expect(card.getByRole("button", { name: /整批复核/ })).toHaveCount(0);
-    const history = card.getByRole("region", { name: "只读原计划摘要" });
-    await expect(history).toBeVisible({ timeout: 15_000 });
-    await expect(history).toContainText(plan);
+    await expect(
+      card.getByRole("region", { name: "只读原计划摘要" }),
+    ).toHaveCount(0);
     await expect(
       card.getByRole("button", { name: "返回文件页" }),
     ).toBeVisible();
@@ -5690,7 +5690,7 @@ test("Task59.4 keeps the first-plan preparation while the linked summary is deli
       card.getByRole("button", { name: "返回文件页" }),
     ).toBeVisible();
     await page.screenshot({
-      path: "test-results/task59.4-summary-first-readonly-390.png",
+      path: "test-results/task59.4-summary-first-cancelled-390.png",
       fullPage: false,
     });
 
