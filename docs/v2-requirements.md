@@ -389,7 +389,7 @@ When Files preparation crosses the 100-primary limit, the Task ends as failed un
 Its truncated findings remain history and cannot authorize any subset. Once the Task settles,
 the same source can enter a new smaller request. Supported waiting records with durable evidence
 of this stop before planning or execution admission also settle automatically, preserving their
-original identity and history. See the [Files recovery journey](product-experience.md#current--manual-organize-dialog-slice53-pass--closed).
+original identity and history. See the [Files recovery journey](product-experience.md#manual-organize).
 
 `V2-FILES-007` changes ordinary recovery ownership without weakening
 `V2-FILES-002/003`, `REQ-TASK-009/010`, RBAC, immutable pins, fences or durable results.
@@ -601,7 +601,9 @@ composition, copy, layout and visual acceptance; [MediaLibrary specification](me
 owns its separate page. The obsolete image remains only in Git and is no longer a design or
 acceptance baseline. Shared chrome does not create another authority or imply unrelated business-page redesign.
 
-## CURRENT — Manual organize dialog (Slice53 PASS / CLOSED)
+<a name="current--manual-organize-dialog-slice53-pass--closed"></a>
+
+## Manual organize foundations — V2-OPS-018/019 (Slice53 PASS / CLOSED)
 
 Accepted 2026-11-10 under [Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review), including the corrected original-request
 reconciliation after sibling reanalysis. The user explicitly authorized the B reviewer to perform
@@ -624,8 +626,8 @@ changing the exact confirmation, scheduling or execution-authority contracts.
 | V2-OPS-019 | Proven manual execution admission closes the organizer and opens the exact returned Task using existing Task Center detail UI. | Show 正在提交… and prevent duplicate confirmation. Lost responses retain the original summary/subset/version/effect identity for every reconciliation even after a sibling reanalysis publishes a new summary; known admission takes the same exact-task handoff. Unavailable Task association/read preserves exact known context and reread, never guesses the newest Task or resubmits. Admission is not file success. Task Center retains its detail/progress/results/recovery; the Slice 59 amendment uses shared Task detail over the originating Files directory or Task Center list; the top-level 继续整理 also requires ordinary batch confirmation, not a four-type recovery plan. Eligible continue links reopen the exact organizer above the preserved `/operations` background using the exact `run` plus the closed `dialog=organize` marker. The preparation is resolved only from that Task's backend association. The Slice 59 amendment retires the ended-preparation original-plan view. An old Task Center continuation address for ended work opens the same Task detail with the marker removed. The Files preparation address offers the linked Task result when the preparation has ended. The retired standalone receiving route and its old addresses have no page, route, redirect, alias or authentication continuation; they are ordinary not-found. Shared organizer status text retains readable horizontal padding. Preserve pins, independent outcomes and completed/uncertain non-replay. |
 
 Slice 53 did not redesign Task Center. The accepted Slice 59 amendment below changes Web presentation and read projections without adding a new Task engine, schema, permission or Provider.
-The [CURRENT journey](product-experience.md#current--manual-organize-dialog-slice53-pass--closed)
-supplies the complete operator sequence. Earlier accepted safety and deferral contracts remain authoritative.
+The [current Slice 59 journey](product-experience.md#current--files-organize-overview-and-task-center-slice59-pass--closed)
+supplies the operator sequence and supersedes the older screen flow. Earlier accepted safety and deferral contracts remain authoritative.
 
 PATCH-20261113-3 replaced the standalone `/operations/organize/new` receiving surface with the
 in-place Task Center host described in V2-OPS-019. It reuses the same organizer, API, admission and
@@ -633,13 +635,12 @@ reconciliation engine; it adds no backend state, schema, permission or execution
 exact canonical address is refresh/re-authentication safe and the closed marker never carries a
 preparation or library identity.
 
-The accepted PATCH-20261120-3 refines final confirmation under `V2-OPS-019` across Files,
-Task Center continuation and per-item recovery. The system checks the exact original confirmation
-automatically after a lost response, including after the same account reconnects in the same browser.
-Task detail shows progress and independent file results. A related pending or newly resolved check
-appears as one status line. If the service has no admission record and the original batch remains
-eligible, an explicit confirmation of that same batch uses the existing atomic admission check.
-[B acceptance](https://github.com/kentinya/mediaflow/blob/455ad4f70c645b1a2e65f4af61378101a25435d8/TASK.md#patch-20261120-3--b-验收-pass).
+PATCH-20261120-3 established read-only reconciliation for the exact original confirmation across
+Files, Task Center continuation and per-item recovery, including same-account reconnect. Task detail
+keeps the check separate from progress and file results. Slice 59's batch review retains the
+automatic first check, then requires a deliberate reread if the read fails or finds no record.
+Only a still-eligible original batch may be explicitly confirmed again, under the existing atomic
+admission check. [Original B acceptance](https://github.com/kentinya/mediaflow/blob/455ad4f70c645b1a2e65f4af61378101a25435d8/TASK.md#patch-20261120-3--b-验收-pass).
 
 ## CURRENT — Slice 59 Files manual organize and Task Center (PASS / CLOSED)
 

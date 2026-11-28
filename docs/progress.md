@@ -15,9 +15,11 @@ workflow authority. Closure rules live only in
 Files keeps the original directory through exact confirmation and result handoff. Task Center unifies
 four-type recovery under Attention and opens inline evidence for the original file. The ended list and
 detail agree on verified, partial, failed, uncertain and missing file outcomes.
-[Independent A Final Review](../SLICE.md#a-final-review--pass--closed).
+[Fixed A Final Review](https://github.com/kentinya/mediaflow/blob/7917412b7d2549280b50e22c40fb0fb0d1ca5a5c/SLICE.md#a-final-review--pass--closed) · [B Closure Packet](https://github.com/kentinya/mediaflow/blob/c136b03e3ba0a073f2ec28f155bf9abb2504002b/TASK.md#b-closure-packet--slice-59)
 
-## Latest accepted closure — Slice 58
+<a name="latest-accepted-closure--slice-58"></a>
+
+## Prior accepted closure — Slice 58
 
 The general CLI and configuration schema 11 switch are retired. Four fixed services and a
 dedicated host entry cover startup, account codes and offline SQLite recovery. A independently

@@ -119,10 +119,9 @@ Files 手动整理及普通文件操作。成功率为 completed/(completed+fail
 A失败、B/C仍合法待确认时，A不可选并可从文件页新发起，B/C保留原摘要确认；整流程结束后
 全部旧确认资格结束。完整旅程与新整理历史规则见 [Manual organize](product-experience.md#manual-organize)。
 
-[入口与提示留白修正 B PASS](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)
-确定上述入口收敛；此前独立修复的接受身份与原结果保留。Files 整理、继续整理及历史
-地址共用的整理弹窗仍保留提示框水平留白，文字不紧贴左侧状态条。PATCH-20261113-3 进一步
-删除独立继续／历史接收页，旧独立地址为普通未找到；现行同任务地址规则如上。
+Files 整理与合资格的「继续整理」共用弹窗，提示文字与左侧状态条保持留白。
+结束任务不再打开整理弹窗：旧的同任务续作地址只回原任务详情，已退役的独立接收页地址仍为普通未找到。
+[历史入口与提示留白修正 B PASS](https://github.com/kentinya/mediaflow/blob/eced270336a93e93c128fbf274eb0537effbaed2/TASK.md#b-final-review--patch-20261111-5-pass)
 
 ### 四类需要处理与八个视图
 

@@ -1616,7 +1616,9 @@ filters/selection through Files and recovery without a second address-bar-derive
 credential-shaped/oversized keys. Detailed Task46.3 repair history remains at
 `29a6d6d0064a5de766086446b345ae5ec2fe790f:docs/architecture.md`; it is not a second current contract.
 
-### CURRENT — Manual organize dialog (Slice53 PASS / CLOSED)
+<a name="current--manual-organize-dialog-slice53-pass--closed"></a>
+
+### CURRENT — Shared manual organizer and exact submission
 
 Accepted [Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review), `V2-OPS-018/019`, reuses existing typed API/query, durable
 discovery/intent/plan, exact selected execution and original-request reconciliation. CURRENT
@@ -1648,26 +1650,25 @@ instead of re-enabling a request that was already accepted. No second analysis a
 button exists. Navigation is read-only. Late responses cannot switch files or overwrite unrelated
 drafts. Summary/subset changes invalidate stale dangerous authorization; server gates remain
 authoritative.
-Preparation presentation derives from the actual discovery stage/counts, with technical messages
-in diagnostics and no empty file pager. A stable organizer content boundary owns the local fade;
-current file, review step, preparation/plan identity and saved-analysis stage determine its changes.
-Unchanged polling leaves it still. File/step changes reset body scroll before the transition, and
-replaced focused controls return focus to that boundary. Reduced-motion removes the animation.
-The primary decision form uses organizer-scoped styling; Task Center's other recovery forms retain
-their own presentation. These are presentation states, not new durable workflow or admission states.
+Preparation presentation derives from actual discovery stages and counts, with technical messages
+in diagnostics and no empty file pager. The organizer keeps a stable presentation boundary for real
+step changes; unchanged polling preserves it, and reduced motion presents the new state without
+animation. File/step changes reset body scroll and keep focus within the dialog. These are
+presentation states, not new durable workflow or admission states.
 The browser saves the immutable submission identity (previewId, copied itemIds, intentVersion,
 allowOverwrite and allowSourceCleanup) before sending the final Execute request. Browser storage
 binds this record to the verified principal and exact Files preparation or recovery item. Credentials
 and execution authority stay outside the record. Sibling reanalysis can replace the editable summary
 while the saved submission remains available for the admission read.
 
-The organizer, Task detail and per-item recovery use the existing read-only admission endpoint for
-automatic reconciliation. The browser limits retries with backoff, deduplicates concurrent checks for
-the same principal and submission, and resumes pending checks after reconnect or reopening the same
-work. An absent record after a lost response leaves the original confirmation pending. When the same
-batch is still eligible, the operator can explicitly confirm it and the backend atomic admission check
-deduplicates a racing request. Task detail displays progress and durable file results and shows the
-related admission check as a status line.
+The organizer, Task detail and per-item recovery use the existing read-only admission endpoint.
+The browser deduplicates concurrent checks for the same principal and exact submission. Task
+detail and per-item recovery keep bounded automatic checks; Slice 59 batch review instead uses
+the explicit follow-up described below. An absent record after a lost response leaves the original
+confirmation pending until checked. When the same batch is still eligible and reconfirmation is
+available, the operator can explicitly confirm it and the backend atomic admission check
+deduplicates a racing request. Task detail shows admission checks separately from progress and
+durable file results.
 
 Both normal execution admission and reconciliation-proven admission use the returned exact taskId
 and shared Task detail, closing the organizer. Slice 59 leaves Files on its original directory;
@@ -1703,12 +1704,10 @@ checks remain required. The original submitted plan and exact selected effects a
 independently of the current editable plan. A single initial confirmation read never resubmits;
 if admission cannot be proved, the review offers a deliberate reread.
 
-Slice53 preserved Task Center task-detail layout/content/progress/results/recovery UI. The later
-independent entry correction follows the current preparation-section contract above; shared recovery
-logic and authority are unchanged. Eligible continue links reuse the Files organizer. Explicit
-organizer-local section classes preserve status padding and borders in both hosts. The organizer has no second
-progress/result center. Early task admission, legitimate pins, source ownership, five-state flow versus
-file effects, Executor-only mutation, RBAC/fences and completed/uncertain non-replay remain CURRENT.
+Task detail owns progress and file results. Ordinary batch confirmation can reopen the exact
+organizer; four-type plans are confirmed in the original file evidence. Early Task admission,
+legitimate pins, source ownership, five-state flow versus file effects, Executor-only mutation,
+RBAC/fences and completed/uncertain non-replay remain CURRENT.
 
 ## Automation and unattended execution
 

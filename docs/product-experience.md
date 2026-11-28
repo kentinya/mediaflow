@@ -1132,11 +1132,14 @@ explicitly deferred; exact pins, source checks, independent results and non-repl
 Discovery controls/progress/readiness and return-to-Files remain in the exact admitted task/
 preparation context, with no global discovery block.
 
-## CURRENT — Manual organize dialog (Slice53 PASS / CLOSED)
+<a name="current--manual-organize-dialog-slice53-pass--closed"></a>
+
+## Prior baseline — Manual organize dialog (Slice53 PASS / CLOSED)
 
 Accepted `V2-OPS-018/019` under [Slice53](https://github.com/kentinya/mediaflow/blob/8bc3ef905a76b96ef8ec327154b92e9b9972ea05/SLICE.md#closure-packet-and-a-final-review) established the Files review and
-exact-task handoff. The Slice 59 journey below supersedes its screen sequence and handoff host. Existing early Task admission, exact confirmation, independent effects
-and the Tasks/recovery journey below remain.
+exact-task handoff. The sequence below is historical: use the [current Slice 59 journey](#current--files-organize-overview-and-task-center-slice59-pass--closed)
+for screens, handoff and follow-up reads. Early Task admission, exact confirmation and independent
+effects still apply.
 
 1. **Entry/state:** clicking ResourceLibrary Files single/batch/folder Organize immediately opens
    a centered modal above the preserved directory/selection/scroll. Show actual admission,
@@ -1231,10 +1234,13 @@ new edits. An unresolved decision or failed check stays actionable in place. Lat
 move the operator or replace another draft.
 
 Batch review confirms only the current eligible selection, including any separately authorized
-overwrite and cleanup. The original submission remains pinned during response-loss checks; if
-the first check cannot establish admission, use `核对本次提交` rather than resending. Files opens
-the exact returned Task over the same directory and selection. The ordinary same-task continuation
-opens over the original Task Center detail; after partial confirmation, previously unselected
+overwrite and cleanup. If the batch confirmation response is lost, the organizer reads the original
+submission without resending it. An unavailable read or missing record leaves the review on
+`核对本次提交`; only an explicit check that finds no record can restore confirmation of a still-valid
+original batch. Reanalysis of another file cannot change the retained submission. Proven admission
+opens the exact returned Task over the original Files directory and selection, or over the Task
+Center list if continued there. The ordinary same-task continuation opens over the original Task
+Center detail. After partial confirmation, previously unselected
 eligible files are unselected by default and reviewed on the current zero-change plan. Already
 admitted siblings are not replayed. Ended plans have no history/reopen view; the exact original
 Task and its file evidence remain readable.
